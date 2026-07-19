@@ -324,3 +324,11 @@ Verified: root `go build ./...`/`go test ./...` green; from
 `examples/hello`: `go test ./...`, `go run ../../cmd/tako gen graph`, and
 `PORT=8090 go run ../../cmd/tako dev` → ready in 684ms, curl serves,
 Ctrl-C frees the port. Gate G0 request stands.
+
+**Discovered work addendum (2026-07-19, from G0 review):** `tako gen graph`
+currently prints JSON with the human summary appended on the same stream, so
+the output isn't jq-able. Wanted (human-requested): (a) a JSON mode whose
+output is clean, pipeable `jq` input, and (b) a mermaid output mode for
+visualizing the graph (services, endpoints, resources, edges). Likely shape
+`tako gen graph [--json|--mermaid]` with the human summary as default —
+CLI surface, so it gets a mini DX proposal when scheduled.
