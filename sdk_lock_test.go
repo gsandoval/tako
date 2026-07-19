@@ -1,12 +1,12 @@
 package tako_test
 
-// This test locks pkg/sdk's exported surface. It renders every exported
+// This test locks the SDK's exported surface. It renders every exported
 // symbol — including exported methods on exported types — to a stable
 // textual form and compares it to testdata/sdk_lock.golden. Any addition,
 // removal, or re-shaping of the API fails here first; regenerate the
 // snapshot deliberately with:
 //
-//	go test ./pkg/sdk -run TestSDKLock -update
+//	go test . -run TestSDKLock -update
 
 import (
 	"flag"
@@ -25,12 +25,12 @@ var update = flag.Bool("update", false, "rewrite testdata/sdk_lock.golden")
 
 func TestSDKLock(t *testing.T) {
 	cfg := &packages.Config{Mode: packages.NeedName | packages.NeedTypes}
-	pkgs, err := packages.Load(cfg, "github.com/gsandoval/tako/pkg/sdk")
+	pkgs, err := packages.Load(cfg, "github.com/gsandoval/tako")
 	if err != nil {
-		t.Fatalf("loading pkg/sdk: %v", err)
+		t.Fatalf("loading the tako package: %v", err)
 	}
 	if packages.PrintErrors(pkgs) > 0 || len(pkgs) != 1 {
-		t.Fatal("pkg/sdk did not load cleanly")
+		t.Fatal("the tako package did not load cleanly")
 	}
 	pkg := pkgs[0].Types
 

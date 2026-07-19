@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	tako "github.com/gsandoval/tako/pkg/sdk"
+	tako "github.com/gsandoval/tako"
 )
 
 var (

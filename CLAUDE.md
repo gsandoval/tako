@@ -13,9 +13,10 @@ Documents (read the section you're pointed at, not the whole file):
 
 ## Normative API
 
-`pkg/sdk` is the single source of truth for the user-facing API. The spec's
-code samples are illustrative; if they disagree with `pkg/sdk`, `pkg/sdk` wins
-and the spec gets a fix-up PR. Never add, rename, or re-shape an exported SDK
+The root `tako` package (module root, imported as
+`github.com/gsandoval/tako`) is the single source of truth for the
+user-facing API. The spec's code samples are illustrative; if they disagree
+with the root package, the root package wins and the spec gets a fix-up PR. Never add, rename, or re-shape an exported SDK
 symbol as a side effect of another task — API changes are their own task.
 
 ## Settled decisions — do not revisit or "improve"
@@ -93,7 +94,7 @@ when they do.)
 
 ```
 cmd/tako/          CLI (dev, deploy, gen, test, logs, destroy, prune)
-pkg/sdk/           user-facing API — normative, changes are their own task
+*.go (root)        user-facing SDK, package tako — normative, changes are their own task
 pkg/analyzer/      go/packages + go/types → AppGraph; testdata/ goldens
 pkg/codegen/       AppGraph → .tako/gen/<service>/main.go
 pkg/runtime/       middleware, codecs, auth shim, Ctx implementation
