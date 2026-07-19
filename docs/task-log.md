@@ -1045,3 +1045,141 @@ green in all four modules.
 `validate/bucket.md` — the centerpiece is §5 (the on-disk layout
 explaining itself) and §3 (streaming correctness) — and record the
 verdict in `docs/validation-log.md`.
+
+---
+
+## F4 — DX proposal: Queue + Worker (2026-07-19)
+
+*Status: awaiting human approval. Scope per agent plan F4: `Publish`,
+`tako.Worker` binding (compile-checked payload), ack/retry/`Permanent`
+mapping, dead-letter surfacing in dev output; channel local backend;
+conformance grows. Gallery grows its thumbnail pipeline.*
+
+### 1. User code — gallery grows the worker
+
+```go
+var thumbs = tako.Queue[ThumbJob]("thumbnails")
+
+type ThumbJob struct {
+	PhotoID string `json:"photoID"`
+}
+
+type Photo struct {
+	ID      string `entity:"id" json:"id"`
+	Caption string `json:"caption"`
+	Ready   bool   `json:"ready"`   // flipped by the worker
+}
+
+// upload now enqueues work after storing the original:
+//	if err := thumbs.Publish(ctx, ThumbJob{PhotoID: p.ID}); err != nil { … }
+
+// Exactly one worker per queue — a second is an analysis error.
+var MakeThumb = tako.Worker(thumbs, makeThumb)
+
+// One async shape everywhere: nil → ack, error → retry,
+// tako.Permanent(err) → give up and dead-letter.
+func makeThumb(ctx tako.Ctx, job ThumbJob) error {
+	img, err := photos.Get(ctx, job.PhotoID)
+	if err != nil {
+		return err // transient (object may lag the message): retry
+	}
+	if img.Size == 0 {
+		return tako.Permanent(errors.New("empty upload")) // never retriable
+	}
+	if !strings.HasPrefix(img.ContentType, "image/") {
+		return fmt.Errorf("unsupported content type %q", img.ContentType) // retries, then dead-letters
+	}
+	thumb := tako.Blob{Reader: img.Reader, ContentType: img.ContentType, Size: img.Size}
+	if err := photos.Put(ctx, job.PhotoID+"_thumb", thumb); err != nil {
+		return err
+	}
+	return photoStore.Update(ctx, job.PhotoID, func(p *Photo) { p.Ready = true })
+}
+
+// New endpoint: GET /api/photos/{id}/thumb streams the worker's output.
+```
+
+(v0 "thumbnail" is a passthrough copy — real resizing is app code and
+arrives with F9's full gallery; the pipeline is what F4 ships.)
+
+### 2. Semantics being locked (v0 Queue/Worker contract)
+
+- `Publish(ctx, msg)` enqueues; the worker runs asynchronously,
+  in-process locally (breakpoints step from publish into the worker).
+- Return mapping: `nil` acks; any other error redelivers with backoff
+  until an attempt cap, then dead-letters; `tako.Permanent(err)`
+  dead-letters immediately, no retries.
+- Local policy, stated honestly in dev output: 5 attempts, fixed 200ms
+  backoff (cloud uses the real Pub/Sub retry policy from Phase F).
+- Dead letters are inspectable files:
+  `.tako/data/deadletter/<queue>/<id>.json` — payload, error, attempts.
+- Conformance grows a Queue suite: deliver, ack-stops-redelivery,
+  error→redelivery→success, Permanent→one attempt, attempt-cap→dead-
+  letter, queue isolation.
+- Test plumbing until F7's DrainQueues: `runtime.WaitIdle(timeout)`
+  blocks until local queues are drained.
+
+### 3. Dev output (the gate's centerpiece)
+
+Banner adds the worker with its binding:
+
+```
+  worker MakeThumb ← queue thumbnails (app.go:31)
+  bucket photos
+  entity photos
+  queue thumbnails
+```
+
+Happy path (curl an image):
+
+```
+⚙ thumbnails → MakeThumb ok (2ms)
+```
+
+Failing worker — retry then dead-letter (curl a .txt as text/plain):
+
+```
+⚙ thumbnails → MakeThumb attempt 1/5 failed: unsupported content type "text/plain" — retrying in 200ms
+⚙ thumbnails → MakeThumb attempt 2/5 failed: … — retrying in 200ms
+…
+✗ dead-letter thumbnails: MakeThumb gave up after 5 attempts: unsupported content type "text/plain"
+  payload → .tako/data/deadletter/thumbnails/<id>.json
+```
+
+Permanent (upload an empty file):
+
+```
+✗ dead-letter thumbnails: MakeThumb permanent failure: empty upload
+  payload → .tako/data/deadletter/thumbnails/<id>.json
+```
+
+### 4. New analyzer errors (exact texts, golden-tested)
+
+```
+app.go:40:24: queue "thumbnails" already has worker MakeThumb (app.go:31)
+— a queue has exactly one worker; use a Topic for fan-out
+(tako/one-worker)
+
+app.go:31:25: tako.Worker must bind a queue declared as a package-level
+var in this module (tako/worker-binding)
+
+app.go:31:40: tako.WithTTL is not a tako.Worker option (tako.Worker
+accepts WithProfile) (tako/invalid-option)
+```
+
+(Queue names join `tako/const-name`. Payload-shape mismatches stay
+compile errors — the compile fixture grows a Worker case.)
+
+### 5. Service partitioning honesty
+
+The AppGraph now records each worker as its own service (spec §4.1) —
+`gen graph` shows `service gallery-makethumb (worker)`. Locally one
+process runs everything: the generated app main also wires workers into
+the in-process dispatcher, and that collapse is printed in the banner
+(`local: workers run in-process`). Real per-worker services arrive with
+the cloud phases.
+
+### 6. Not in scope (F4 non-goals)
+
+Topics/Subscribe/fan-out (F5), bucket events (F5), `WithDelay`/rate
+limits (F8), chaos mode (F7), Pub/Sub (Phase F), retry-policy options.
