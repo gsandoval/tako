@@ -300,3 +300,27 @@ text, codegen golden) and hello module — all ok.
 **GATE REQUEST — G0 (local): walking skeleton.** Please run
 `validate/skeleton.md` end-to-end and record the verdict in
 `docs/validation-log.md`. No further feature work until then.
+
+---
+
+## S0.2 fix — G0 validation feedback: `go run ../../cmd/tako dev` (2026-07-19)
+
+Gate G0 dry-run feedback: from `examples/hello`,
+`go run ../../cmd/tako dev` failed with missing go.sum entries (fsnotify).
+Cause: the CLI was being resolved *through hello's module* via its
+`replace`, and hello's go.sum lacks the framework's own dependencies. My
+tier-2 transcript used a pre-built binary, which masked this — the
+validation script's exact command was never run as written. Noted.
+
+Fix: committed `go.work` (uses `.` and `./examples/hello`). In workspace
+mode sums come from the union of member go.sums, so every `go` command
+works from any directory in the repo. The earlier go.work attempt failed
+only because it predated hello's `replace` and had a go-version mismatch;
+with both in place the workspace is clean. The per-example `replace` stays
+so examples also build standalone (GOWORK=off), which the analyzer's
+fixture tests rely on.
+
+Verified: root `go build ./...`/`go test ./...` green; from
+`examples/hello`: `go test ./...`, `go run ../../cmd/tako gen graph`, and
+`PORT=8090 go run ../../cmd/tako dev` → ready in 684ms, curl serves,
+Ctrl-C frees the port. Gate G0 request stands.
