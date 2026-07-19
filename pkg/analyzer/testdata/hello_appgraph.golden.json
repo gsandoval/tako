@@ -5,7 +5,9 @@
       "name": "hello",
       "package": "hello",
       "handlers": [
-        "hello.Hello"
+        "hello.Hello",
+        "hello.Greet",
+        "hello.Echo"
       ],
       "profile": "default"
     }
@@ -18,7 +20,40 @@
       "package": "hello",
       "service": "hello",
       "route": "GET /hello",
-      "pos": "hello.go:5:5"
+      "pos": "hello.go:9:5"
+    },
+    {
+      "kind": "api",
+      "var": "hello.Greet",
+      "package": "hello",
+      "service": "hello",
+      "route": "GET /greet/{name}",
+      "req_type": "GreetReq",
+      "bindings": [
+        {
+          "field": "Name",
+          "kind": "path",
+          "name": "name",
+          "type": "string"
+        },
+        {
+          "field": "Loud",
+          "kind": "query",
+          "name": "loud",
+          "type": "bool"
+        }
+      ],
+      "pos": "hello.go:10:5"
+    },
+    {
+      "kind": "api",
+      "var": "hello.Echo",
+      "package": "hello",
+      "service": "hello",
+      "route": "POST /echo",
+      "req_type": "EchoReq",
+      "has_body": true,
+      "pos": "hello.go:11:5"
     }
   ],
   "edges": []

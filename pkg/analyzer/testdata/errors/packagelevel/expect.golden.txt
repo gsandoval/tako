@@ -1,0 +1,1 @@
+app.go:6:6: tako.API must initialize a package-level var — handlers declared inside functions are invisible to analysis (tako/package-level)

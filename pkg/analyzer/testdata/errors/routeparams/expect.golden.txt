@@ -1,0 +1,2 @@
+app.go:5:22: route "GET /greet/{name}" has path parameter {name} but GreetReq has no field tagged path:"name" (tako/route-params)
+app.go:10:2: GreetReq field Nick is tagged path:"nick" but route "GET /greet/{name}" has no {nick} parameter (tako/route-params)

@@ -1,0 +1,1 @@
+app.go:5:43: request type greetReq must be exported — generated services construct it outside the package (tako/unexported-req)

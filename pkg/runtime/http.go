@@ -1,8 +1,11 @@
 package runtime
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"time"
@@ -10,20 +13,47 @@ import (
 	tako "github.com/gsandoval/tako"
 )
 
-// JSONHandler adapts an API endpoint to net/http: build the request Ctx,
-// invoke the handler, encode the result as JSON. S0.2 serves empty-Req
-// endpoints only; request binding is generated statically from F1 on.
-func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res]) http.Handler {
+// JSONHandler adapts an API endpoint to net/http: decode the request via
+// the generated decode function, invoke the handler, encode the result as
+// JSON. A nil decode means the endpoint takes an empty Req. Binding code
+// is generated statically — decode is plain function calls, never
+// reflection.
+func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Request) (Req, error)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := NewCtx(r.Context())
+		reqID := newRequestID()
+		ctx := &requestCtx{
+			Context: r.Context(),
+			log:     slog.Default().With("req", reqID),
+		}
+
 		var req Req
+		if decode != nil {
+			var err error
+			if req, err = decode(r); err != nil {
+				writeError(w, ctx, reqID, err)
+				return
+			}
+		}
 		res, err := e.Call(ctx, req)
 		if err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+			writeError(w, ctx, reqID, err)
 			return
 		}
 		writeJSON(w, http.StatusOK, res)
 	})
+}
+
+// writeError maps a handler or decode error to its response. Errors with
+// an explicit status (Errorf, NotFound, decode failures) surface as-is;
+// anything else is an opaque 500 — the real error is logged with the
+// request id, never sent to the client.
+func writeError(w http.ResponseWriter, ctx tako.Ctx, reqID string, err error) {
+	if he, ok := err.(interface{ HTTPStatus() int }); ok {
+		writeJSON(w, he.HTTPStatus(), map[string]string{"error": err.Error()})
+		return
+	}
+	ctx.Log().Error("handler error", "err", err)
+	writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "internal error"})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -31,6 +61,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.WriteHeader(status)
 	enc := json.NewEncoder(w)
 	_ = enc.Encode(v)
+}
+
+func newRequestID() string {
+	var b [3]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
 }
 
 // Serve runs the service on PORT (default 8080) with request logging.
@@ -46,8 +82,8 @@ func Serve(h http.Handler) {
 	}
 }
 
-// logRequests prints one plain line per request during dev; structured
-// request logs are an F1 feature.
+// logRequests prints one terse line per request in dev; structured JSON
+// request logs become the default when the cloud runtime lands (Phase E).
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()

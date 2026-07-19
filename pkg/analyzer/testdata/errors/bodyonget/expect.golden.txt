@@ -1,0 +1,1 @@
+app.go:9:2: GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag (tako/body-on-get)

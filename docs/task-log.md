@@ -332,3 +332,232 @@ output is clean, pipeable `jq` input, and (b) a mermaid output mode for
 visualizing the graph (services, endpoints, resources, edges). Likely shape
 `tako gen graph [--json|--mermaid]` with the human summary as default —
 CLI surface, so it gets a mini DX proposal when scheduled.
+
+---
+
+## F1 — DX proposal: API endpoints, complete (2026-07-19)
+
+*Status: awaiting human approval. Scope per agent plan F1: Req-struct
+binding (`path:`/`query:`/JSON body/`form:`), error helpers (`Errorf`,
+`NotFound`, `IsNotFound`), structured request logs, hello extended with a
+parameterized route, analyzer rules (route↔`path:` matching, option
+validity, package-level enforcement) + compile-error fixture.*
+
+### 1. User code — hello grows two endpoints
+
+```go
+var Hello = tako.API("GET /hello", hello)
+var Greet = tako.API("GET /greet/{name}", greet)
+var Echo  = tako.API("POST /echo", echo)
+
+type GreetReq struct {
+	Name string `path:"name"`
+	Loud bool   `query:"loud"`
+}
+
+func greet(ctx tako.Ctx, req GreetReq) (Greeting, error) {
+	if req.Name == "nobody" {
+		return Greeting{}, tako.NotFound()
+	}
+	msg := "Hello, " + req.Name + "!"
+	if req.Loud {
+		msg = strings.ToUpper(msg)
+	}
+	return Greeting{Message: msg}, nil
+}
+
+type EchoReq struct {
+	Message string `json:"message"` // untagged/JSON fields bind from the body
+}
+
+func echo(ctx tako.Ctx, req EchoReq) (Greeting, error) {
+	if req.Message == "" {
+		return Greeting{}, tako.Errorf(422, "message must not be empty")
+	}
+	return Greeting{Message: req.Message}, nil
+}
+```
+
+Binding rules (as spec §2.8, now concrete):
+- `path:"x"` ← route `{x}`; `query:"x"` ← query string; `form:"x"` ←
+  urlencoded form posts; everything else ← JSON body (only for
+  non-GET/HEAD; a GET handler whose Req has untagged fields is an
+  analysis error, see §4).
+- Bindable field types v0: `string`, `bool`, `int`, `int64`, `float64`.
+  `tako.Blob` fields (multipart) arrive with F3.
+- All binding code is generated per endpoint — no reflection at request
+  time.
+
+### 2. Error helpers — final shapes (settles the S0.1 flag)
+
+- `tako.Errorf(status int, format string, args ...any) error` — handler
+  surfaces as that HTTP status with body `{"error":"<message>"}`.
+- `tako.NotFound() error` — surfaces as 404 `{"error":"not found"}`.
+  **Single-value error constructor**: handlers write
+  `return Greeting{}, tako.NotFound()`. (The spec's two-value
+  `return tako.NotFound()` cannot compile for generic API handlers; spec
+  Part 3/3b get a fix-up PR after approval.)
+- `tako.IsNotFound(err) bool` — true for `NotFound()` now; F2 extends it
+  to store misses so handler code can pass them straight through.
+- Any other handler error → 500 with body `{"error":"internal error"}`;
+  the real error is logged with the request id, never leaked to clients.
+
+### 3. Expected CLI transcript (good and bad requests)
+
+```
+$ curl -s localhost:8090/greet/memo
+{"message":"Hello, memo!"}
+
+$ curl -s "localhost:8090/greet/memo?loud=true"
+{"message":"HELLO, MEMO!"}
+
+$ curl -si localhost:8090/greet/nobody | head -1
+HTTP/1.1 404 Not Found                    # body: {"error":"not found"}
+
+$ curl -si "localhost:8090/greet/memo?loud=banana" | head -1
+HTTP/1.1 400 Bad Request
+# body: {"error":"query \"loud\": \"banana\" is not a bool"}
+
+$ curl -s -X POST localhost:8090/echo -d '{"message":"hi"}'
+{"message":"hi"}
+
+$ curl -si -X POST localhost:8090/echo -d '{oops' | head -1
+HTTP/1.1 400 Bad Request
+# body: {"error":"body: invalid JSON"}
+
+$ curl -si -X POST localhost:8090/echo -d '{"message":""}' | head -1
+HTTP/1.1 422 Unprocessable Entity         # body: {"error":"message must not be empty"}
+```
+
+Decode-failure texts are product UX and get golden tests:
+`query "loud": "banana" is not a bool` · `path "id": "abc" is not an int`
+· `body: invalid JSON`.
+
+### 4. New analyzer errors (exact texts, all golden-tested)
+
+```
+hello.go:9:13: route "GET /greet/{name}" has path parameter {name} but
+GreetReq has no field tagged path:"name" (tako/route-params)
+
+hello.go:13:2: GreetReq field Extra is tagged path:"extra" but route
+"GET /greet/{name}" has no {extra} parameter (tako/route-params)
+
+hello.go:9:38: tako.WithTTL is not a tako.API option (tako.API accepts
+WithAuth, WithPrivate, WithProfile) (tako/invalid-option)
+
+hello.go:17:9: tako.API must initialize a package-level var — handlers
+declared inside functions are invisible to analysis (tako/package-level)
+
+hello.go:9:13: GET route "GET /greet/{name}" cannot bind a JSON body, but
+GreetReq field Extra has no path:/query: tag (tako/body-on-get)
+```
+
+Plus a compile-error fixture (not an analyzer test): a program whose
+handler signature doesn't match its Req/Res, asserting *the compiler*
+rejects it — payload shape is the type system's job, per interface rule 1.
+
+### 5. Structured request logs
+
+Generated services log one structured line per request via `slog`
+(request id, method, path, status, duration); `ctx.Log()` carries the
+request id, so handler logs correlate. In `tako dev` the terse line stays
+(`GET /greet/memo → 200 (0.3ms)`) — structured JSON becomes the cloud
+default in Phase E. Example handler log in dev:
+
+```
+level=INFO msg=resized photo=p42 req=8c31f2
+GET /greet/memo → 200 (0.3ms)
+```
+
+### 6. Not in scope (F1 non-goals)
+
+Auth enforcement (`WithAuth` accepted, enforced when Auth lands), `form:`
+multipart/Blob (F3), Page handlers (Stage 3), `IsNotFound` on stores (F2),
+`gen graph --json/--mermaid` (separate noted task).
+
+---
+
+## F1 — implementation: API endpoints, complete (2026-07-19)
+
+DX proposal approved as written; shipped surface matches it.
+
+**What shipped**
+
+- **Error helpers live**: `Errorf` (status + `{"error":…}` body),
+  `NotFound` (404), `IsNotFound` (sentinel match; stores join in F2).
+  Non-status errors surface as opaque 500 `{"error":"internal error"}`
+  with the real error logged under the request id. Spec fix-up applied:
+  the three `return tako.NotFound()` samples in Parts 3/3b/§2.11 now read
+  `return tako.HTML{}, tako.NotFound()`.
+- **Static binding**: analyzer extracts each API handler's Req struct
+  (fields, tags, types) into the AppGraph (`req_type`, `bindings`,
+  `has_body`); codegen emits one plain decode function per endpoint
+  (`decodeGreet` etc.) calling typed `pkg/runtime` helpers
+  (`PathString`, `QueryBool`, `DecodeJSON`, …). No reflection anywhere.
+- **Analyzer rules + goldens**: `tako/route-params` (both directions),
+  `tako/invalid-option`, `tako/package-level`, `tako/body-on-get` — plus
+  the compile-error fixture proving payload shape is the compiler's job.
+- **Request logs**: every request gets a short id; `ctx.Log()` carries
+  `req=<id>` so handler logs correlate with the terse request line.
+  Structured JSON stays a Phase E (cloud) default per the proposal.
+- **hello** grows `Greet` (path+query binding, NotFound) and `Echo`
+  (JSON body, Errorf 422); its test suite hits all eight good/bad cases
+  over HTTP with exact bodies, plus `.Call` + `IsNotFound` in-process.
+- Decode error texts unit-tested exactly (`query "loud": "banana" is not
+  a bool`, `path "id": "abc" is not an int`, `body: invalid JSON`;
+  absent values are zero values, never errors).
+
+**Deviations from the approved proposal (flagged for the gate)**
+
+Two analyzer rules were *added* beyond the approved five, both to prevent
+generated code failing to compile as the user-facing symptom:
+1. `tako/unexported-req` — request types must be exported (or `struct{}`)
+   because generated services construct them outside the package.
+2. `tako/bind-type` — tagged fields must be a bindable type
+   (string, bool, int, int64, float64).
+Both texts are golden-tested; veto or amend at the gate.
+
+**Tier-2 validation — real transcript (validate/api.md §§1–3, 6)**
+
+```
+$ cd examples/hello && PORT=8090 tako dev
+  analyzing   1 service, 3 endpoints
+  GET /hello → Hello (hello.go:9)
+  GET /greet/{name} → Greet (hello.go:10)
+  POST /echo → Echo (hello.go:11)
+ready in 691ms — watching (backends: local, in-process)
+
+$ curl -s localhost:8090/greet/memo
+{"message":"Hello, memo!"}
+$ curl -s 'localhost:8090/greet/memo?loud=true'
+{"message":"HELLO, MEMO!"}
+$ curl -s localhost:8090/greet/nobody            # 404
+{"error":"not found"}
+$ curl -s 'localhost:8090/greet/memo?loud=banana' # 400
+{"error":"query \"loud\": \"banana\" is not a bool"}
+$ curl -s -X POST localhost:8090/echo -d '{"message":"hi"}'
+{"message":"hi"}
+$ curl -s -X POST localhost:8090/echo -d '{oops'  # 400
+{"error":"body: invalid JSON"}
+$ curl -s -X POST localhost:8090/echo -d '{"message":""}'  # 422
+{"error":"message must not be empty"}
+# Ctrl-C: 0 listeners left
+```
+
+Analyzer error texts: `pkg/analyzer/testdata/errors/*/expect.golden.txt`
+— texts match the proposal §4 exactly. `go test ./...` green in both
+modules (sdk lock unchanged).
+
+**Discovered work (not done)**
+
+- Multiple tags on one field (`path:` + `query:`) resolve by silent
+  precedence; an analysis error would be more honest.
+- Route *format* validity (bad method token, malformed pattern) surfaces
+  at serve time via net/http; an analysis rule would move it earlier.
+- `Endpoint.Call` bypasses handler-level option middleware (none exists
+  yet); revisit when WithAuth is enforced.
+
+**GATE REQUEST — F1 (local): API endpoints.** Please run
+`validate/api.md` end-to-end — especially §4's six error texts, which are
+the product surface this gate exists to judge — and record the verdict in
+`docs/validation-log.md`.

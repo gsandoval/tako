@@ -261,7 +261,7 @@ var PhotoPage = tako.Page("GET /p/{id}", photoPage)
 
 func photoPage(ctx tako.Ctx, req PhotoPageReq) (tako.HTML, error) {
     p, err := photoStore.Get(ctx, req.ID)
-    if tako.IsNotFound(err) { return tako.NotFound() }
+    if tako.IsNotFound(err) { return tako.HTML{}, tako.NotFound() }
     return site.Render(ctx, "photo.html", p)            // templates live in ./web/templates, layout support built in
 }
 type PhotoPageReq struct{ ID string `path:"id"` }
@@ -440,7 +440,7 @@ type PhotoPageReq struct{ ID string `path:"id"` }
 
 func photoPage(ctx tako.Ctx, req PhotoPageReq) (tako.HTML, error) {
     p, err := photoStore.Get(ctx, req.ID)
-    if tako.IsNotFound(err) { return tako.NotFound() }
+    if tako.IsNotFound(err) { return tako.HTML{}, tako.NotFound() }
     return tmpl.Render("photo.html", p)
 }
 
@@ -504,7 +504,7 @@ type ReadReq struct{ ID string `path:"id"` }
 
 func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
     p, err := posts.Get(ctx, req.ID)
-    if tako.IsNotFound(err) { return tako.NotFound() }
+    if tako.IsNotFound(err) { return tako.HTML{}, tako.NotFound() }
     return site.Render(ctx, "post.html", p)          // post.html uses {{ markdown .Body }}
 }
 

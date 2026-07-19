@@ -1,3 +1,5 @@
 hello: 1 service
   service hello (package hello, profile default)
-    GET /hello → Hello (hello.go:5)
+    GET /hello → Hello (hello.go:9)
+    GET /greet/{name} → Greet (hello.go:10)
+    POST /echo → Echo (hello.go:11)

@@ -87,18 +87,18 @@ func Analyze(cfg Config) (*AppGraph, error) {
 						if i >= len(vs.Values) {
 							continue
 						}
-						h, herr := extractHandler(cfg.Dir, pkg, name, vs.Values[i])
-						if herr != nil {
-							errs = append(errs, herr)
-							continue
+						call, ok := vs.Values[i].(*ast.CallExpr)
+						if !ok || sdkConstructor(pkg, call) != "API" {
+							continue // S0.2/F1: tako.API only; the rest arrive with their slices
 						}
-						if h != nil {
+						if h := extractAPI(cfg.Dir, pkg, name, call, &errs); h != nil {
 							graph.Handlers = append(graph.Handlers, *h)
 						}
 					}
 				}
 			}
 		}
+		checkPackageLevel(cfg.Dir, pkg, &errs)
 	}
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
@@ -110,41 +110,6 @@ func Analyze(cfg Config) (*AppGraph, error) {
 	})
 	graph.Services = partition(graph.Handlers)
 	return graph, nil
-}
-
-// extractHandler recognizes a package-level var initialized by a known
-// handler constructor and returns its AppGraph entry; (nil, nil) when the
-// var is something else.
-func extractHandler(dir string, pkg *packages.Package, name *ast.Ident, value ast.Expr) (*Handler, *Error) {
-	call, ok := value.(*ast.CallExpr)
-	if !ok {
-		return nil, nil
-	}
-	ctor := sdkConstructor(pkg, call)
-	if ctor != "API" { // S0.2: tako.API only; the rest arrive with their slices
-		return nil, nil
-	}
-	if name.Name == "_" || len(call.Args) < 1 {
-		return nil, nil
-	}
-
-	route, err := constString(pkg, call.Args[0])
-	if err != nil {
-		return nil, &Error{
-			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg: fmt.Sprintf("tako.API route must be a string constant — routes are read at analysis time, not run time; got %s",
-				describeExpr(call.Args[0])),
-			Rule: "const-route",
-		}
-	}
-	return &Handler{
-		Kind:    "api",
-		Var:     pkg.Name + "." + name.Name,
-		Package: pkg.PkgPath,
-		Service: pkg.Name,
-		Route:   route,
-		Pos:     relPos(dir, pkg.Fset, name.Pos()),
-	}, nil
 }
 
 // sdkConstructor returns the SDK constructor name a call invokes ("API",

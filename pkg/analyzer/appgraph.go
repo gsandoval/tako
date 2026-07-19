@@ -71,8 +71,29 @@ type Handler struct {
 	// Binding is the bound resource's Name for Worker/Subscribe/Job
 	// handlers.
 	Binding string `json:"binding,omitempty"`
+	// ReqType names the request struct as generated code references it
+	// within the handler's package; empty for struct{}.
+	ReqType string `json:"req_type,omitempty"`
+	// Bindings are the request struct's tagged fields, in source order.
+	Bindings []Binding `json:"bindings,omitempty"`
+	// HasBody reports whether untagged request fields bind from the JSON
+	// body.
+	HasBody bool `json:"has_body,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
+}
+
+// Binding is one tagged request-struct field: where it binds from and the
+// static type the generated decode uses.
+type Binding struct {
+	// Field is the request struct field name.
+	Field string `json:"field"`
+	// Kind is "path", "query", or "form".
+	Kind string `json:"kind"`
+	// Name is the parameter name bound from (tag value).
+	Name string `json:"name"`
+	// Type is the field's Go type: string, bool, int, int64, or float64.
+	Type string `json:"type"`
 }
 
 // Edge records that a handler uses a resource or calls another service's

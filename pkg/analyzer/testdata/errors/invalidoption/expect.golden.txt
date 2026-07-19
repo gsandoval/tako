@@ -1,0 +1,1 @@
+app.go:9:43: tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate, WithProfile) (tako/invalid-option)

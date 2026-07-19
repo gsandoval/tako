@@ -1,0 +1,1 @@
+app.go:12:2: field When: query:-tagged fields must be string, bool, int, int64, or float64; got time.Time (tako/bind-type)

@@ -5,6 +5,7 @@ import (
 	"flag"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -87,4 +88,19 @@ func repoPath(t *testing.T, rel string) string {
 		t.Fatal(err)
 	}
 	return abs
+}
+
+// TestPayloadShapeIsCompilersJob proves a mis-shaped handler is a compile
+// error, not an analysis error — the fixture must fail to load.
+func TestPayloadShapeIsCompilersJob(t *testing.T) {
+	_, err := Analyze(Config{Dir: "testdata/compile/payloadmismatch", Env: []string{"GOWORK=off"}})
+	if err == nil {
+		t.Fatal("expected the fixture to fail compilation")
+	}
+	if _, ok := err.(ErrorList); ok {
+		t.Fatalf("expected a compile error, got analysis errors:\n%v", err)
+	}
+	if !strings.Contains(err.Error(), "greet") {
+		t.Fatalf("compile error does not mention the handler:\n%v", err)
+	}
 }

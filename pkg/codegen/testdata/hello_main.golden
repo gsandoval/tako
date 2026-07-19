@@ -16,8 +16,34 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// GET /hello → hello.Hello (hello.go:5)
-	mux.Handle("GET /hello", runtime.JSONHandler(hello.Hello))
+	// GET /hello → hello.Hello (hello.go:9)
+	mux.Handle("GET /hello", runtime.JSONHandler(hello.Hello, nil))
+
+	// GET /greet/{name} → hello.Greet (hello.go:10)
+	mux.Handle("GET /greet/{name}", runtime.JSONHandler(hello.Greet, decodeGreet))
+
+	// POST /echo → hello.Echo (hello.go:11)
+	mux.Handle("POST /echo", runtime.JSONHandler(hello.Echo, decodeEcho))
 
 	runtime.Serve(mux)
+}
+
+// decodeGreet binds GET /greet/{name} requests to hello.GreetReq.
+func decodeGreet(r *http.Request) (hello.GreetReq, error) {
+	var req hello.GreetReq
+	var err error
+	req.Name = runtime.PathString(r, "name")
+	if req.Loud, err = runtime.QueryBool(r, "loud"); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+// decodeEcho binds POST /echo requests to hello.EchoReq.
+func decodeEcho(r *http.Request) (hello.EchoReq, error) {
+	var req hello.EchoReq
+	if err := runtime.DecodeJSON(r, &req); err != nil {
+		return req, err
+	}
+	return req, nil
 }
