@@ -71,9 +71,13 @@ func main() {
 			decode = decodeName(h)
 			decoders = append(decoders, h)
 		}
+		wrapper := "JSONHandler"
+		if h.ResBlob {
+			wrapper = "BlobHandler"
+		}
 		fmt.Fprintf(&b, "\t// %s → %s (%s)\n", h.Route, h.Var, analyzer.ShortPos(h.Pos))
-		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.JSONHandler(%s.%s, %s))\n\n",
-			h.Route, alias, analyzer.ShortVar(h), decode)
+		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s))\n\n",
+			h.Route, wrapper, alias, analyzer.ShortVar(h), decode)
 	}
 
 	b.WriteString("\truntime.Serve(mux)\n}\n")
@@ -116,6 +120,9 @@ func writeDecoder(b *strings.Builder, alias string, h analyzer.Handler) {
 
 // helperName maps a binding to its pkg/runtime helper.
 func helperName(b analyzer.Binding) string {
+	if b.Kind == "blob" {
+		return "FormBlob"
+	}
 	kind := map[string]string{"path": "Path", "query": "Query", "form": "Form"}[b.Kind]
 	typ := map[string]string{
 		"string":  "String",
@@ -143,10 +150,10 @@ func needsDecode(h analyzer.Handler) bool {
 }
 
 // fallible reports whether any non-body binding can fail (string bindings
-// cannot).
+// cannot; blob and parsed bindings can).
 func fallible(h analyzer.Handler) bool {
 	for _, b := range h.Bindings {
-		if b.Type != "string" {
+		if b.Type != "string" || b.Kind == "blob" {
 			return true
 		}
 	}

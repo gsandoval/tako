@@ -64,6 +64,30 @@ func extractEntity(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	return res, payload.String(), et
 }
 
+// extractBucket validates one tako.Bucket declaration.
+func extractBucket(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return nil
+	}
+	resName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Bucket name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	return &Resource{
+		Kind:    "bucket",
+		Name:    resName,
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+}
+
 // entitySchemaOf validates the payload struct's entity tags: exactly one
 // entity:"id" field, of type string.
 func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs *ErrorList) (*entityType, bool) {

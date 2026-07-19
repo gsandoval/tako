@@ -104,6 +104,10 @@ func Analyze(cfg Config) (*AppGraph, error) {
 								entities[key] = et
 								entityRes[key] = &graph.Resources[len(graph.Resources)-1]
 							}
+						case "Bucket":
+							if r := extractBucket(cfg.Dir, pkg, name, call, &errs); r != nil {
+								graph.Resources = append(graph.Resources, *r)
+							}
 						}
 					}
 				}

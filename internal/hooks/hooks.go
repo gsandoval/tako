@@ -8,3 +8,6 @@ import "github.com/gsandoval/tako/pkg/backends"
 
 // Entity is the wired entity backend; nil until boot.
 var Entity backends.Entity
+
+// Bucket is the wired bucket backend; nil until boot.
+var Bucket backends.Bucket

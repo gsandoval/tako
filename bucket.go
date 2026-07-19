@@ -1,6 +1,11 @@
 package tako
 
-import "time"
+import (
+	"time"
+
+	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/pkg/backends"
+)
 
 // Bucket declares an object store. The name is the bucket's stable identity
 // and must be a string constant (analyzer-enforced).
@@ -23,27 +28,43 @@ type BucketHandle struct {
 
 // Get returns the object stored under key. tako.IsNotFound reports absence.
 func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
-	panic("tako: not implemented")
+	data, err := bucketBackend().Get(ctx, b.name, key)
+	if err != nil {
+		return Blob{}, mapNotFound(err)
+	}
+	return Blob{Reader: data.Reader, ContentType: data.ContentType, Size: data.Size}, nil
 }
 
 // Put stores blob under key, replacing any existing object.
 func (b *BucketHandle) Put(ctx Ctx, key string, blob Blob) error {
-	panic("tako: not implemented")
+	return bucketBackend().Put(ctx, b.name, key, backends.BlobData{
+		Reader: blob.Reader, ContentType: blob.ContentType, Size: blob.Size,
+	})
 }
 
-// Delete removes the object stored under key.
+// Delete removes the object stored under key; deleting an absent key is
+// not an error.
 func (b *BucketHandle) Delete(ctx Ctx, key string) error {
-	panic("tako: not implemented")
+	return bucketBackend().Delete(ctx, b.name, key)
 }
 
 // Exists reports whether an object is stored under key.
 func (b *BucketHandle) Exists(ctx Ctx, key string) (bool, error) {
-	panic("tako: not implemented")
+	return bucketBackend().Exists(ctx, b.name, key)
 }
 
-// List iterates the objects whose keys start with prefix.
+// List iterates the objects whose keys start with prefix, in
+// lexicographic key order.
 func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
-	panic("tako: not implemented")
+	metas, err := bucketBackend().List(ctx, b.name, prefix)
+	if err != nil {
+		return Iter[ObjectInfo]{err: err}
+	}
+	items := make([]ObjectInfo, len(metas))
+	for i, m := range metas {
+		items[i] = ObjectInfo{Key: m.Key, Size: m.Size, ContentType: m.ContentType, Updated: m.Updated}
+	}
+	return Iter[ObjectInfo]{items: items}
 }
 
 // SignedPut returns a URL that lets a client upload directly to key for the
@@ -66,3 +87,14 @@ type BucketEvent struct {
 }
 
 func (BucketEvent) eventSource(ObjectInfo) {}
+
+// bucketBackend returns the wired bucket backend, which boot (generated
+// mains, tako dev, and — from F7 — NewTestApp) is responsible for
+// installing.
+func bucketBackend() backends.Bucket {
+	b := hooks.Bucket
+	if b == nil {
+		panic("tako: no bucket backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+	}
+	return b
+}

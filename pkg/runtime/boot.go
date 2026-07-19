@@ -42,6 +42,7 @@ func BootLocal(dir string) error {
 		return err
 	}
 	hooks.Entity = store
+	hooks.Bucket = local.NewBucketStore(dir)
 	bootedStore = store
 	return nil
 }

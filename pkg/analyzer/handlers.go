@@ -72,11 +72,38 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 		return nil
 	}
 
+	hasBlob := false
+	for _, f := range req.fields {
+		if f.isBlob() {
+			hasBlob = true
+		}
+	}
+	if hasBlob && (method == "GET" || method == "HEAD") {
+		fail(&Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("%s route %q cannot receive an upload — requests with tako.Blob fields need a non-GET route",
+				method, route),
+			Rule: "blob-binding",
+		})
+	}
+
 	var bindings []Binding
 	hasBody := false
 	seenPath := map[string]bool{}
 	for _, f := range req.fields {
 		switch {
+		case f.isBlob():
+			formName := f.tag("form")
+			if formName == "" {
+				fail(&Error{
+					Pos: relPos(dir, pkg.Fset, f.pos),
+					Msg: fmt.Sprintf("tako.Blob field %s needs a form:\"…\" tag — blobs bind from multipart form fields",
+						f.name),
+					Rule: "blob-binding",
+				})
+				continue
+			}
+			bindings = append(bindings, Binding{Field: f.name, Kind: "blob", Name: formName, Type: "blob"})
 		case f.tag("path") != "":
 			param := f.tag("path")
 			seenPath[param] = true
@@ -95,6 +122,15 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 		case f.tag("form") != "":
 			bindings = append(bindings, f.binding(dir, pkg, "form", f.tag("form"), fail))
 		default:
+			if hasBlob {
+				fail(&Error{
+					Pos: relPos(dir, pkg.Fset, f.pos),
+					Msg: fmt.Sprintf("%s mixes a tako.Blob field with untagged field %s — when a blob is present every other field needs a path:/query:/form: tag",
+						req.name, f.name),
+					Rule: "blob-binding",
+				})
+				continue
+			}
 			if method == "GET" || method == "HEAD" {
 				fail(&Error{
 					Pos: relPos(dir, pkg.Fset, f.pos),
@@ -130,6 +166,7 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 		ReqType:  req.ref,
 		Bindings: bindings,
 		HasBody:  hasBody,
+		ResBlob:  resIsBlob(pkg, call.Args[1]),
 		Pos:      relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
@@ -176,6 +213,21 @@ type field struct {
 }
 
 func (f field) tag(key string) string { return f.rawTag.Get(key) }
+
+func (f field) isBlob() bool { return f.typ.String() == sdkPath+".Blob" }
+
+// resIsBlob reports whether the handler's result type is tako.Blob.
+func resIsBlob(pkg *packages.Package, fnExpr ast.Expr) bool {
+	tv, ok := pkg.TypesInfo.Types[fnExpr]
+	if !ok {
+		return false
+	}
+	sig, ok := tv.Type.(*types.Signature)
+	if !ok || sig.Results().Len() < 1 {
+		return false
+	}
+	return sig.Results().At(0).Type().String() == sdkPath+".Blob"
+}
 
 // tagOf parses a raw struct-tag string.
 func tagOf(raw string) reflect.StructTag { return reflect.StructTag(raw) }

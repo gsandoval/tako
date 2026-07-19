@@ -83,6 +83,9 @@ type Handler struct {
 	// HasBody reports whether untagged request fields bind from the JSON
 	// body.
 	HasBody bool `json:"has_body,omitempty"`
+	// ResBlob reports whether the result type is tako.Blob, streamed
+	// instead of JSON-encoded.
+	ResBlob bool `json:"res_blob,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
 }
@@ -92,7 +95,7 @@ type Handler struct {
 type Binding struct {
 	// Field is the request struct field name.
 	Field string `json:"field"`
-	// Kind is "path", "query", or "form".
+	// Kind is "path", "query", "form", or "blob" (multipart file field).
 	Kind string `json:"kind"`
 	// Name is the parameter name bound from (tag value).
 	Name string `json:"name"`

@@ -60,6 +60,21 @@ func TestShortlinkSummary(t *testing.T) {
 	compareGolden(t, "testdata/shortlink_summary.golden.txt", []byte(Summary(g)))
 }
 
+// TestGalleryGraph goldens the AppGraph of examples/gallery — the first
+// graph with a bucket, blob bindings, and a streamed result.
+func TestGalleryGraph(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/gallery")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/gallery): %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	compareGolden(t, "testdata/gallery_appgraph.golden.json", got)
+}
+
 // TestErrors runs each testdata/errors/* fixture module and asserts the
 // exact analysis-error text — error messages are the product's primary UX
 // and are under test, byte for byte.

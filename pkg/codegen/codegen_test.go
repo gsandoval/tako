@@ -24,6 +24,11 @@ func TestShortlinkMain(t *testing.T) {
 	goldenService(t, "../../examples/shortlink", "shortlink", "testdata/shortlink_main.golden")
 }
 
+// Gallery is the first service with multipart decode and blob streaming.
+func TestGalleryMain(t *testing.T) {
+	goldenService(t, "../../examples/gallery", "gallery", "testdata/gallery_main.golden")
+}
+
 func goldenService(t *testing.T, appDir, service, golden string) {
 	t.Helper()
 	abs, err := filepath.Abs(appDir)

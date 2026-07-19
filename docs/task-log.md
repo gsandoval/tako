@@ -962,3 +962,86 @@ Signed URLs (F6), bucket events / `photos.Uploaded` (F5), size/type
 constraints (F6 options), thumbnails and queues (F4), GCS backend
 (Phase E), response blobs from anything but Bucket.Get (works, but no
 example demands constructing Blobs by hand yet).
+
+---
+
+## F3 — implementation: Bucket + Blob (2026-07-19)
+
+DX proposal approved as written; shipped surface matches it.
+
+**What shipped**
+
+- **Bucket contract** in `pkg/backends` (streams + ObjectMeta, ErrNotFound,
+  idempotent delete, prefix List in key order) and the **fs local
+  backend**: the file at `.tako/data/buckets/<bucket>/<key>` IS the
+  object; content types in a `.meta/` sidecar; `..`/absolute keys
+  rejected. Conformance grows 7 bucket cases (roundtrip incl. content
+  type, overwrite, isolation across buckets, prefix list order).
+- **SDK Bucket live**: Get/Put/Delete/Exists/List through the boot seam
+  (`hooks.Bucket`, wired by `runtime.Boot`/`BootLocal`); `Iter[ObjectInfo]`
+  materialized in key order; SignedPut/SignedGet stay stubbed for F6.
+  `tako.NewID()` implemented (16-char lowercase base32, crypto/rand).
+  ObjectInfo gains JSON tags (key/size/contentType/updated).
+- **Blob streaming both directions**: `runtime.BlobHandler` streams
+  Blob results with Content-Type + Content-Length (falls back to
+  application/octet-stream), closes closers; `runtime.FormBlob` binds
+  multipart file fields with the part's Content-Type and size; error
+  texts `form "img": missing file upload` and `body: invalid multipart
+  form` (both 400).
+- **Analyzer**: Bucket resource extraction (joins `tako/const-name`),
+  `res_blob` detection choosing BlobHandler in codegen, blob `Binding`
+  kind, and the three `tako/blob-binding` rules with the proposal's exact
+  texts (needs-form-tag, no-uploads-on-GET, no-mixing-blob-and-body).
+- **examples/gallery** (first slice): Upload (multipart) / Image
+  (streamed) / List / Objects; suite covers byte-for-byte roundtrip with
+  headers, object listing, 404, and the missing-file 400.
+
+**Fixed during validation:** first smoke run showed `entity photos` but
+no `bucket photos` in the dev banner — Bucket resource extraction had
+been missed; added, goldens regenerated, banner verified.
+
+**Tier-2 validation — real transcript (validate/bucket.md §§1–5, 7)**
+
+```
+$ cd examples/gallery && PORT=8090 tako dev
+  POST /api/photos → Upload (app.go:16)
+  GET /api/photos/{id}/image → Image (app.go:17)
+  GET /api/photos → List (app.go:18)
+  GET /api/objects → Objects (app.go:19)
+  bucket photos
+  entity photos
+ready in 447ms — watching (backends: local, in-process)
+
+$ curl -s -F caption=cat -F 'img=@cat.jpg;type=image/jpeg' …/api/photos
+{"id":"v54nizkly7ibluym","caption":"cat"}
+$ curl -sI …/api/photos/v54nizkly7ibluym/image | grep -i content-
+Content-Length: 23
+Content-Type: image/jpeg
+$ curl -s …/…/image -o out.jpg && cmp cat.jpg out.jpg && echo identical
+identical
+$ curl -s …/api/objects
+[{"key":"v54nizkly7ibluym","size":23,"contentType":"image/jpeg","updated":"…"}]
+$ curl -s …/api/photos/nope/image        # 404
+{"error":"not found"}
+$ ls .tako/data/buckets/photos/
+v54nizkly7ibluym                          ← the file is the object
+# Ctrl-C: 0 listeners
+```
+
+Conformance(local): entity 17 + bucket 7 cases ok. `go test ./...`
+green in all four modules.
+
+**Discovered work (not done)**
+
+- Multipart uploads buffer up to 32MB in memory/temp before the handler
+  runs; fine for v0 (signed URLs are the large-upload story), but a
+  streaming multipart reader would drop the buffering.
+- Bucket.List materializes; a cursor-based Iter would matter for large
+  buckets — revisit when a real example lists thousands of objects.
+- `file` on macOS shows the object plainly — good; Finder preview needs
+  an extension, which keys don't have. Cosmetic, noted only.
+
+**GATE REQUEST — F3 (local): Bucket + Blob.** Please run
+`validate/bucket.md` — the centerpiece is §5 (the on-disk layout
+explaining itself) and §3 (streaming correctness) — and record the
+verdict in `docs/validation-log.md`.

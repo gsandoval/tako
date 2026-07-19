@@ -1,0 +1,3 @@
+app.go:9:2: tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
+app.go:15:18: GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
+app.go:28:2: CReq mixes a tako.Blob field with untagged field Extra — when a blob is present every other field needs a path:/query:/form: tag (tako/blob-binding)

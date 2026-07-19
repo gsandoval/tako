@@ -27,3 +27,16 @@ func TestEntity(t *testing.T) {
 		t.Fatalf("unknown -backend %q", *backend)
 	}
 }
+
+func TestBucket(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunBucket(t, func(t *testing.T) backends.Bucket {
+			return local.NewBucketStore(t.TempDir())
+		})
+	case "gcp":
+		t.Skip("gcp backend arrives in Phase E")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
