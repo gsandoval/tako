@@ -561,3 +561,174 @@ modules (sdk lock unchanged).
 `validate/api.md` end-to-end — especially §4's six error texts, which are
 the product surface this gate exists to judge — and record the verdict in
 `docs/validation-log.md`.
+
+---
+
+## F2 — DX proposal: Entity + shortlink (2026-07-19)
+
+*Status: awaiting human approval. Scope per agent plan F2: Entity
+Get/Put/Delete/Exists, Query builder, Update, Tx; bbolt local backend;
+conformance suite skeleton (Entity first citizen); index derivation with
+unindexed-query error; `examples/shortlink`.*
+
+### 1. User code — `examples/shortlink`
+
+```go
+package shortlink
+
+import (
+	"time"
+
+	"github.com/gsandoval/tako"
+)
+
+var links = tako.Entity[Link]("links")
+
+// Link's schema comes from the struct: entity:"id" is the key,
+// entity:"index" marks queryable fields.
+type Link struct {
+	Slug    string    `entity:"id"`
+	URL     string    `json:"url"`
+	Owner   string    `entity:"index" json:"owner"`
+	Created time.Time `entity:"index" json:"created"`
+	Hits    int       `json:"hits"`
+}
+
+var (
+	Create  = tako.API("POST /api/links", create)
+	Resolve = tako.API("GET /api/links/{slug}", resolve)
+	List    = tako.API("GET /api/links", list)
+)
+
+type CreateReq struct {
+	Slug  string `json:"slug"`
+	URL   string `json:"url"`
+	Owner string `json:"owner"` // no auth yet; owner is honest input until F-auth
+}
+
+func create(ctx tako.Ctx, req CreateReq) (Link, error) {
+	if req.Slug == "" || req.URL == "" {
+		return Link{}, tako.Errorf(422, "slug and url must not be empty")
+	}
+	link := Link{Slug: req.Slug, URL: req.URL, Owner: req.Owner, Created: time.Now()}
+	// Claim the slug atomically: check-then-put inside one transaction.
+	err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
+		_, err := tx.Get(req.Slug)
+		if err == nil {
+			return tako.Errorf(409, "slug %q is taken", req.Slug)
+		}
+		if !tako.IsNotFound(err) {
+			return err
+		}
+		return tx.Put(link)
+	})
+	return link, err
+}
+
+type ResolveReq struct {
+	Slug string `path:"slug"`
+}
+
+func resolve(ctx tako.Ctx, req ResolveReq) (Link, error) {
+	err := links.Update(ctx, req.Slug, func(l *Link) { l.Hits++ })
+	if err != nil {
+		return Link{}, err // Update on a missing id is IsNotFound → 404
+	}
+	return links.Get(ctx, req.Slug)
+}
+
+type ListReq struct {
+	Owner string `query:"owner"`
+}
+
+func list(ctx tako.Ctx, req ListReq) ([]Link, error) {
+	q := links.Query(ctx)
+	if req.Owner != "" {
+		q = q.Where("Owner", "=", req.Owner)
+	}
+	return q.OrderBy("-Created").Limit(100).All()
+}
+```
+
+### 2. Semantics being locked (v0 Entity contract)
+
+- Keys: exactly one `entity:"id"` field, type `string` (analyzer-enforced).
+- `Put` is an upsert; `Get`/`Update`/query `First` miss → `IsNotFound`.
+- `Update` is transactional read-modify-write; `Tx` gives multi-op
+  atomicity scoped to one store; an error from the fn rolls everything
+  back — and the fn's error (e.g. the 409 above) is returned as-is, so
+  status errors compose with transactions.
+- Query ops: `=`, `<`, `<=`, `>`, `>=`; `Where`/`OrderBy` accept only
+  `entity:"index"` fields (analysis-time error otherwise); `OrderBy("-X")`
+  is descending; results are deterministic (order-by, then key).
+- Local backend: bbolt file `.tako/data/entity.db` — survives dev-server
+  restarts; deleted only by deleting `.tako/`.
+- The **conformance suite** is born here: one shared behavior suite for
+  the entity contract, run against `local` now (`go test
+  ./pkg/backends/conformance -backend=local`), `gcp` in Phase E.
+
+### 3. Expected CLI transcript
+
+```
+$ cd examples/shortlink && PORT=8090 go run ../../cmd/tako dev
+  analyzing   1 service, 3 endpoints
+  ...
+  entity links (indexes: Owner, Created)      ← resources now listed
+
+$ curl -s -X POST localhost:8090/api/links \
+    -d '{"slug":"gh","url":"https://github.com","owner":"memo"}'
+{"url":"https://github.com","owner":"memo","created":"…","hits":0}
+
+$ curl -s -X POST localhost:8090/api/links -d '{"slug":"gh","url":"https://x.com"}'
+{"error":"slug \"gh\" is taken"}                       # 409, from inside Tx
+
+$ curl -s localhost:8090/api/links/gh
+{"url":"https://github.com","owner":"memo","created":"…","hits":1}
+
+$ curl -s localhost:8090/api/links/nope
+{"error":"not found"}                                  # 404 via Update miss
+
+$ curl -s "localhost:8090/api/links?owner=memo"
+[{"url":"https://github.com",…,"hits":1}]
+
+# Ctrl-C, restart tako dev, curl again → hits and links survive (bbolt).
+```
+
+### 4. New analyzer errors (exact texts, golden-tested)
+
+```
+app.go:31:24: query filters on Link.URL, but URL is not indexed — tag it
+entity:"index" to make it queryable (tako/unindexed-query)
+
+app.go:33:15: query orders by Link.Hits, but Hits is not indexed — tag it
+entity:"index" to make it orderable (tako/unindexed-query)
+
+app.go:9:6: entity type Link must have exactly one field tagged
+entity:"id" (tako/entity-id)
+
+app.go:12:2: entity id field Slug must be a string; got int (tako/entity-id)
+
+app.go:7:30: tako.Entity name must be a string constant — names are read
+at analysis time, not run time; got variable "n" (tako/const-name)
+
+app.go:31:26: query field must be a string constant — indexes are derived
+at analysis time; got variable "f" (tako/const-query-field)
+```
+
+(`tako/const-name` extends the const rule to all resource constructors;
+`gen graph` now also derives and prints each store's index set from the
+actual `Where`/`OrderBy` call sites.)
+
+### 5. Internals preview (not surface, for orientation)
+
+`pkg/backends` gains the entity contract interface; `local` implements it
+on bbolt (JSON values, in-process index scans); the SDK's `EntityHandle`
+methods delegate to the backend wired at boot by the generated main.
+Conformance suite exercises the contract (CRUD, queries, tx atomicity,
+ordering, IsNotFound) against any backend.
+
+### 6. Not in scope (F2 non-goals)
+
+Usage edges / derived IAM (Phase A completion, later slice), migrations,
+non-string keys, `!=`/`IN` operators, cross-store Tx (never), auth-scoped
+owner (arrives with Auth), Datastore backend (Phase E).
