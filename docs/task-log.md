@@ -817,3 +817,148 @@ modules; hello goldens unchanged.
 `validate/entity.md` — the centerpiece is §3 (kill/restart persistence)
 and §4 (the unindexed-query error text) — and record the verdict in
 `docs/validation-log.md`.
+
+---
+
+## F3 — DX proposal: Bucket + Blob (2026-07-19)
+
+*Status: awaiting human approval. Scope per agent plan F3: keyed verbs,
+`List`, streaming Blob through endpoints; fs local backend; conformance
+grows. This slice starts `examples/gallery` — the example that demands
+buckets — as a minimal upload/download app that later slices (F4–F9)
+grow into spec Part 3.*
+
+### 1. User code — `examples/gallery`, first slice
+
+```go
+package gallery
+
+import "github.com/gsandoval/tako"
+
+var (
+	photos     = tako.Bucket("photos")
+	photoStore = tako.Entity[Photo]("photos")
+)
+
+type Photo struct {
+	ID      string `entity:"id" json:"id"`
+	Caption string `json:"caption"`
+}
+
+var (
+	Upload  = tako.API("POST /api/photos", upload)
+	Image   = tako.API("GET /api/photos/{id}/image", image)
+	List    = tako.API("GET /api/photos", list)
+	Objects = tako.API("GET /api/objects", objects)
+)
+
+// A tako.Blob field makes the request multipart: img streams from the
+// form field, caption arrives beside it.
+type UploadReq struct {
+	Caption string    `form:"caption"`
+	Img     tako.Blob `form:"img"`
+}
+
+func upload(ctx tako.Ctx, req UploadReq) (Photo, error) {
+	p := Photo{ID: tako.NewID(), Caption: req.Caption}
+	if err := photos.Put(ctx, p.ID, req.Img); err != nil {
+		return Photo{}, err
+	}
+	if err := photoStore.Put(ctx, p); err != nil {
+		return Photo{}, err
+	}
+	return p, nil
+}
+
+type ImageReq struct {
+	ID string `path:"id"`
+}
+
+// Returning tako.Blob streams the object: correct Content-Type, no JSON.
+func image(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
+	return photos.Get(ctx, req.ID) // miss → IsNotFound → 404
+}
+
+func list(ctx tako.Ctx, _ struct{}) ([]Photo, error) {
+	return photoStore.Query(ctx).Limit(100).All()
+}
+
+// Bucket.List iterates keys by prefix.
+func objects(ctx tako.Ctx, _ struct{}) ([]tako.ObjectInfo, error) {
+	var out []tako.ObjectInfo
+	it := photos.List(ctx, "")
+	for o, ok := it.Next(); ok; o, ok = it.Next() {
+		out = append(out, o)
+	}
+	return out, it.Err()
+}
+```
+
+### 2. Semantics being locked (v0 Bucket/Blob contract)
+
+- `Blob{Reader, ContentType, Size}`; `Size` -1 when unknown.
+- **Response streaming**: a `tako.Blob` result streams with its
+  Content-Type (and Content-Length when Size ≥ 0); error → the usual
+  JSON error body. Codegen picks the blob path statically — the AppGraph
+  knows the Res type.
+- **Request blobs**: a `tako.Blob` field switches the endpoint to
+  multipart; the blob streams from its `form:"…"` field with the part's
+  Content-Type; other fields must be tagged (path/query/form).
+- Keyed verbs mirror Entity: `Put` overwrites, `Get` miss → IsNotFound,
+  `Delete` idempotent, `Exists`; `List(ctx, prefix)` yields ObjectInfo
+  (Key, Size, ContentType, Updated) in lexicographic key order.
+- Local backend: raw object bytes at `.tako/data/buckets/<bucket>/<key>`
+  — inspectable, file IS the object; metadata (content type) in a
+  `.meta/` sidecar directory beside the keys.
+- `tako.NewID()` implemented: 16-char lowercase base32, crypto/rand.
+- Conformance grows a Bucket contract suite (roundtrip incl. content
+  type, overwrite, ErrNotFound, idempotent delete, prefix list + order).
+
+### 3. Expected CLI transcript
+
+```
+$ cd examples/gallery && PORT=8090 go run ../../cmd/tako dev
+  analyzing   1 service, 4 endpoints
+  …
+  bucket photos
+  entity photos
+
+$ curl -s -F caption=cat -F img=@cat.jpg localhost:8090/api/photos
+{"id":"k7m2…","caption":"cat"}
+
+$ curl -sI localhost:8090/api/photos/k7m2…/image | grep -i content-type
+Content-Type: image/jpeg
+
+$ curl -s localhost:8090/api/photos/k7m2…/image -o out.jpg && cmp cat.jpg out.jpg && echo identical
+identical
+
+$ curl -s localhost:8090/api/objects
+[{"key":"k7m2…","size":51213,"contentType":"image/jpeg","updated":"…"}]
+
+$ ls .tako/data/buckets/photos/
+k7m2…                       ← the file is the object, byte for byte
+```
+
+### 4. New analyzer errors (exact texts, golden-tested)
+
+```
+app.go:14:2: tako.Blob field Img needs a form:"…" tag — blobs bind from
+multipart form fields (tako/blob-binding)
+
+app.go:12:15: GET route "GET /api/photos" cannot receive an upload —
+requests with tako.Blob fields need a non-GET route (tako/blob-binding)
+
+app.go:15:2: UploadReq mixes a tako.Blob field with untagged field Extra
+— when a blob is present every other field needs a path:/query:/form:
+tag (tako/blob-binding)
+```
+
+(Also: `tako.Bucket` name joins `tako/const-name` via the same resource
+extraction as Entity.)
+
+### 5. Not in scope (F3 non-goals)
+
+Signed URLs (F6), bucket events / `photos.Uploaded` (F5), size/type
+constraints (F6 options), thumbnails and queues (F4), GCS backend
+(Phase E), response blobs from anything but Bucket.Get (works, but no
+example demands constructing Blobs by hand yet).
