@@ -1,0 +1,70 @@
+package tako
+
+// Handlers are declared exactly like resources: a package-level var, a
+// constructor, options. The var is the registration, the documentation,
+// and — for API and Page — the callable endpoint. Handler bodies are
+// ordinary (usually unexported) functions.
+
+// Endpoint is a declared API or Page route. The value is the callable
+// surface: within a package Call is a direct invocation, and an exported
+// Endpoint var is callable from other service packages as a typed RPC.
+type Endpoint[Req, Res any] struct {
+	route string
+	opts  []Option
+}
+
+// Call invokes the endpoint. In dev, tests, and co-located packages this is
+// a direct in-process call; against a remote service it is an authenticated
+// HTTP call. The hop is deliberately visible at the call site.
+func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
+	panic("tako: not implemented")
+}
+
+// Handler is a declared asynchronous or scheduled handler binding, returned
+// by Worker, Subscribe, JobHandler, Cron, and Singleton.
+type Handler struct {
+	kind string
+}
+
+// API declares a synchronous JSON endpoint on route (a Go 1.22+
+// method-and-pattern route like "POST /api/photos", constant —
+// analyzer-enforced). Req fields bind by tag — path:, query:, form: — and
+// untagged fields bind from the JSON body; binding code is generated
+// statically. An empty Req struct is fine.
+func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res] {
+	return Endpoint[Req, Res]{route: route, opts: opts}
+}
+
+// Page declares a server-rendered route. It binds Req exactly like API
+// (form: tags cover browser form posts) and returns HTML; CSRF is enforced
+// automatically on unsafe-method page routes.
+func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML] {
+	return Endpoint[Req, HTML]{route: route, opts: opts}
+}
+
+// Worker binds fn as the single consumer of queue. Like every async
+// handler it is func(Ctx, T) error: return nil to ack, an error to retry,
+// tako.Permanent to give up and dead-letter. A queue with two workers is
+// an analysis error.
+func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
+	return Handler{kind: "worker"}
+}
+
+// Subscribe binds fn as one subscriber of an event source — a topic or a
+// bucket event. Subscribers fan out independently: each gets every event
+// and retries on its own.
+func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler {
+	return Handler{kind: "subscribe"}
+}
+
+// Cron declares a scheduled handler. The schedule must be a string constant
+// (analyzer-enforced); WithSingleflight collapses overlapping runs.
+func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler {
+	return Handler{kind: "cron"}
+}
+
+// Singleton declares a long-running loop of which exactly one instance runs
+// across all revisions, with clean handoff between deploys.
+func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler {
+	return Handler{kind: "singleton"}
+}

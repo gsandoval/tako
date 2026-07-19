@@ -1,0 +1,130 @@
+    func (*BucketHandle).Delete(ctx Ctx, key string) error
+    func (*BucketHandle).Exists(ctx Ctx, key string) (bool, error)
+    func (*BucketHandle).Get(ctx Ctx, key string) (Blob, error)
+    func (*BucketHandle).List(ctx Ctx, prefix string) Iter[ObjectInfo]
+    func (*BucketHandle).Put(ctx Ctx, key string, blob Blob) error
+    func (*BucketHandle).SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error)
+    func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, opts ...Option) (string, error)
+    func (*CacheHandle[T]).Delete(ctx Ctx, key string) error
+    func (*CacheHandle[T]).Exists(ctx Ctx, key string) (bool, error)
+    func (*CacheHandle[T]).Get(ctx Ctx, key string) (T, error)
+    func (*CacheHandle[T]).GetOrFill(ctx Ctx, key string, fill func(Ctx) (T, error)) (T, error)
+    func (*CacheHandle[T]).Put(ctx Ctx, key string, value T) error
+    func (*CounterHandle).Add(ctx Ctx, delta int64)
+    func (*EntityHandle[T]).Delete(ctx Ctx, id string) error
+    func (*EntityHandle[T]).Exists(ctx Ctx, id string) (bool, error)
+    func (*EntityHandle[T]).Get(ctx Ctx, id string) (T, error)
+    func (*EntityHandle[T]).Put(ctx Ctx, entity T) error
+    func (*EntityHandle[T]).Query(ctx Ctx) *EntityQuery[T]
+    func (*EntityHandle[T]).Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error
+    func (*EntityHandle[T]).Update(ctx Ctx, id string, mutate func(*T)) error
+    func (*EntityQuery[T]).All() ([]T, error)
+    func (*EntityQuery[T]).First() (T, error)
+    func (*EntityQuery[T]).Iter() Iter[T]
+    func (*EntityQuery[T]).Limit(n int) *EntityQuery[T]
+    func (*EntityQuery[T]).OrderBy(field string) *EntityQuery[T]
+    func (*EntityQuery[T]).Where(field string, op string, value any) *EntityQuery[T]
+    func (*HistogramHandle).Observe(ctx Ctx, value float64)
+    func (*Iter[T]).Err() error
+    func (*Iter[T]).Next() (T, bool)
+    func (*JobHandle[T]).Run(ctx Ctx, params T) error
+    func (*LockHandle).Do(ctx Ctx, fn func(Ctx) error) error
+    func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
+    func (*QueueHandle[T]).Publish(ctx Ctx, msg T, opts ...Option) error
+    func (*SecretHandle).Value() string
+    func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
+    func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
+    func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
+    func (*TestApp).AdvanceCron(name string)
+    func (*TestApp).Chaos()
+    func (*TestApp).Ctx(as ...User) Ctx
+    func (*TestApp).DrainQueues()
+    func (*TestApp).SignIn(name string) User
+    func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
+    func (Ctx).IsHTMX() bool
+    func (Ctx).Log() *log/slog.Logger
+    func (Ctx).MaybeUser() (User, bool)
+    func (Ctx).User() User
+    func (Endpoint[Req, Res]).Call(ctx Ctx, req Req) (Res, error)
+    func (EntityTx[T any]).Delete(id string) error
+    func (EntityTx[T any]).Get(id string) (T, error)
+    func (EntityTx[T any]).Put(entity T) error
+    func (context.Context).Deadline() (deadline time.Time, ok bool)
+    func (context.Context).Done() <-chan struct{}
+    func (context.Context).Err() error
+    func (context.Context).Value(key any) any
+const Batch Profile
+const Default Profile
+const Latency Profile
+func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res]
+func Auth(opts ...Option) *AuthHandle
+func Bucket(name string, opts ...Option) *BucketHandle
+func Cache[T any](name string, opts ...Option) *CacheHandle[T]
+func Counter(name string, opts ...Option) *CounterHandle
+func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler
+func Entity[T any](name string, opts ...Option) *EntityHandle[T]
+func Errorf(status int, format string, args ...any) error
+func Histogram(name string, opts ...Option) *HistogramHandle
+func IsNotFound(err error) bool
+func JobHandler[T any](job *JobHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
+func Job[T any](name string, opts ...Option) *JobHandle[T]
+func Lock(name string, opts ...Option) *LockHandle
+func NewID() string
+func NewTestApp(tb testing.TB) *TestApp
+func NotFound() error
+func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML]
+func Permanent(err error) error
+func Queue[T any](name string, opts ...Option) *QueueHandle[T]
+func Redirect(target string) (HTML, error)
+func SPA() Option
+func Secret(name string, opts ...Option) *SecretHandle
+func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler
+func Site(dir string, opts ...Option) *SiteHandle
+func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler
+func Topic[T any](name string, opts ...Option) *TopicHandle[T]
+func WithAuth() Option
+func WithBuild(command string, outDir string) Option
+func WithCDN() Option
+func WithContentType(pattern string) Option
+func WithDelay(d time.Duration) Option
+func WithDevProxy(url string) Option
+func WithDomain(domain string) Option
+func WithEmail() Option
+func WithGoogle() Option
+func WithMaxSize(bytes int64) Option
+func WithParallel(n int) Option
+func WithPrivate() Option
+func WithProfile(p Profile) Option
+func WithRateLimit(n int) Option
+func WithRedirect(from string, to string) Option
+func WithSingleflight() Option
+func WithTTL(d time.Duration) Option
+func WithTrustedHTML() Option
+func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
+type AuthHandle struct{}
+type Blob struct{Reader io.Reader; ContentType string; Size int64}
+type BucketEvent struct{}
+type BucketHandle struct{Uploaded BucketEvent}
+type CacheHandle[T any] struct{}
+type CounterHandle struct{}
+type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); User() User; context.Context}
+type Endpoint[Req any, Res any] struct{}
+type EntityHandle[T any] struct{}
+type EntityQuery[T any] struct{}
+type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
+type EventSource[T any] interface{eventSource(T)}
+type HTML struct{}
+type Handler struct{}
+type HistogramHandle struct{}
+type Iter[T any] struct{}
+type JobHandle[T any] struct{}
+type LockHandle struct{}
+type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
+type Option struct{}
+type Profile int
+type QueueHandle[T any] struct{}
+type SecretHandle struct{}
+type SiteHandle struct{}
+type TestApp struct{}
+type TopicHandle[T any] struct{}
+type User struct{ID string; Email string; Name string}

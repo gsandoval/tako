@@ -1,0 +1,91 @@
+// Package analyzer loads a Tako module via go/packages and go/types and
+// produces its AppGraph: the resources, handlers, usage edges, and service
+// partitioning that drive code generation and provisioning.
+package analyzer
+
+// AppGraph is the analyzer's output: everything the generators and the
+// provisioner need to know about an app, derived from its source.
+type AppGraph struct {
+	// Module is the Go module path of the analyzed app.
+	Module string `json:"module"`
+	// Services is the derived service partitioning (package = service).
+	Services []Service `json:"services"`
+	// Resources are the declared resource vars, in source order.
+	Resources []Resource `json:"resources"`
+	// Handlers are the declared handler vars, in source order.
+	Handlers []Handler `json:"handlers"`
+	// Edges are resource-usage and service-call edges.
+	Edges []Edge `json:"edges"`
+}
+
+// Service is one deployable unit. Within a package, API/Page/Cron handlers
+// deploy together as that package's service; each worker and subscriber
+// gets its own.
+type Service struct {
+	// Name is the service's stable identity.
+	Name string `json:"name"`
+	// Package is the import path of the Go package the service comes from.
+	Package string `json:"package"`
+	// Handlers lists the vars (package-qualified) that run in this service.
+	Handlers []string `json:"handlers"`
+	// Profile is the service's scaling profile: "default", "latency", or
+	// "batch".
+	Profile string `json:"profile"`
+}
+
+// Resource is one declared resource var.
+type Resource struct {
+	// Kind is the constructor: "bucket", "entity", "cache", "queue",
+	// "topic", "lock", "secret", "auth", "site", "job", "counter",
+	// "histogram".
+	Kind string `json:"kind"`
+	// Name is the constant name passed to the constructor — the resource's
+	// stable identity.
+	Name string `json:"name"`
+	// Var is the declaring var, package-qualified.
+	Var string `json:"var"`
+	// Package is the import path of the declaring package.
+	Package string `json:"package"`
+	// Type is the payload type for generic resources (Entity, Cache,
+	// Queue, Topic, Job), empty otherwise.
+	Type string `json:"type,omitempty"`
+	// Pos is the declaration position as path:line:col.
+	Pos string `json:"pos"`
+}
+
+// Handler is one declared handler var.
+type Handler struct {
+	// Kind is the constructor: "api", "page", "worker", "subscribe",
+	// "job", "cron", "singleton".
+	Kind string `json:"kind"`
+	// Var is the declaring var, package-qualified.
+	Var string `json:"var"`
+	// Package is the import path of the declaring package.
+	Package string `json:"package"`
+	// Service is the name of the Service the handler runs in.
+	Service string `json:"service"`
+	// Route is the method-and-pattern route for API/Page handlers.
+	Route string `json:"route,omitempty"`
+	// Schedule is the schedule for Cron handlers.
+	Schedule string `json:"schedule,omitempty"`
+	// Binding is the bound resource's Name for Worker/Subscribe/Job
+	// handlers.
+	Binding string `json:"binding,omitempty"`
+	// Pos is the declaration position as path:line:col.
+	Pos string `json:"pos"`
+}
+
+// Edge records that a handler uses a resource or calls another service's
+// endpoint; edges drive derived IAM.
+type Edge struct {
+	// From is the using handler's Var.
+	From string `json:"from"`
+	// To is the used Resource's Name, or the callee Handler's Var for call
+	// edges.
+	To string `json:"to"`
+	// Kind is "resource" or "call".
+	Kind string `json:"kind"`
+	// Verb is the access class: "read", "write", "publish", "sign",
+	// "run", or "call".
+	Verb string `json:"verb"`
+}
