@@ -1,0 +1,3 @@
+hello: 1 service
+  service hello (package hello, profile default)
+    GET /hello → Hello (hello.go:5)

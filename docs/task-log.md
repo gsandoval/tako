@@ -200,3 +200,103 @@ invoke the handler through the var (lock test unaffected — unexported
 fields are pruned). Golden test: hello's AppGraph JSON under
 `pkg/analyzer/testdata/`; error-case golden for `const-route` asserting the
 exact text above.
+
+---
+
+## S0.2 — implementation: one endpoint, `tako dev`, hello (2026-07-19)
+
+DX proposal approved (both questions): SDK moved to module root
+(`import "github.com/gsandoval/tako"`), proposal implemented as written.
+
+**What shipped**
+
+- SDK at module root; CLAUDE.md repo map updated; lock golden unchanged.
+- `Endpoint` now records its handler fn; `Endpoint.Call` is a direct
+  in-process invocation (dev/test transport).
+- `pkg/runtime`: `NewCtx` (auth-less request Ctx), `JSONHandler` (empty-Req
+  endpoints → JSON response), `Serve` (PORT env, request-log lines).
+- `pkg/analyzer`: `Analyze(Config)` — go/packages load, `tako.API` var
+  extraction, constant-route enforcement (`tako/const-route`), service
+  partitioning (package = service), `Summary` renderer. `Error` format is
+  `path:line:col: message (tako/rule-id)`, positions module-relative.
+- `pkg/codegen`: `Generate` — per-service `.tako/gen/<svc>/main.go`,
+  gofmt-clean, one readable line per endpoint, golden-tested byte-for-byte.
+- `pkg/devserver`: watch (fsnotify, debounced) → analyze → generate →
+  `go build` → run; keeps last good build serving on failure; honors PORT.
+- `cmd/tako`: `dev` and `gen graph`.
+- `examples/hello` (own module, `replace`-wired) + HTTP test.
+- Tests: analyzer AppGraph + summary + error-text goldens, codegen golden,
+  hello endpoint test, SDK lock + compile fixture — all green
+  (`go test ./...` in both modules).
+
+**Deviations from the approved proposal (small, flagged for the gate)**
+
+1. `go.work` → per-example `replace` directive. Workspace mode broke root
+   builds (module graph tried to fetch the unpublished module); `replace`
+   in the example's go.mod is the standard pattern and needs no workspace.
+2. `tako dev` honors `PORT` env (flag still deferred). Discovered during
+   validation: this machine already has a Java service on 127.0.0.1:8080,
+   so validation runs on PORT=8090. Not a new flag — the Cloud Run
+   convention applied to dev.
+3. Cosmetic: durations print as Go durations ("407ms" not "407 ms");
+   reload after an error prints below the error block.
+
+**Tier-2 validation — real transcript (validate/skeleton.md executed)**
+
+```
+$ cd examples/hello && PORT=8090 tako dev
+tako dev · hello
+
+  analyzing   1 service, 1 endpoint
+  generating  .tako/gen/hello/main.go
+  starting    http://localhost:8090
+
+  GET /hello → Hello (hello.go:5)
+
+ready in 407ms — watching (backends: local, in-process)
+
+$ curl -s localhost:8090/hello
+{"message":"Hello from Tako!"}
+
+# edited the message string, saved:
+GET /hello → 200 (0.0ms)
+reloaded in 693ms
+
+$ curl -s localhost:8090/hello
+{"message":"Hello, reloaded Tako!"}
+
+# replaced the route constant with `var route = ...`:
+✗ analysis failed — still serving last good build
+  hello.go:7:22: tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route" (tako/const-route)
+
+$ curl -s localhost:8090/hello       # old build still answering
+{"message":"Hello, reloaded Tako!"}
+
+# reverted; Ctrl-C: port freed, clean exit.
+
+$ tako gen graph        # (from examples/hello; output stable across runs)
+{ "module": "hello", … "route": "GET /hello", "pos": "hello.go:5:5" … }
+
+hello: 1 service
+  service hello (package hello, profile default)
+    GET /hello → Hello (hello.go:5)
+```
+
+`go test ./...`: tako module (sdk lock, analyzer goldens incl. exact error
+text, codegen golden) and hello module — all ok.
+
+**Discovered work (not done)**
+
+- Reload latency is ~700ms measured from save; most is `go build`. Fine
+  for G0; if it creeps toward 1s as services grow, cache generated-main
+  builds or skip regeneration when the graph hash is unchanged.
+- `waitReady` dials the port, which can false-positive if another process
+  already listens there (how the 8080 collision surfaced). A real health
+  endpoint on generated services would make readiness exact — natural once
+  services get more plumbing.
+- First-cycle failure then fix: the recovery prints `reloaded in …` though
+  nothing was serving before; "up in …" would be more honest.
+
+**GATE REQUEST — G0 (local): walking skeleton.** Please run
+`validate/skeleton.md` end-to-end and record the verdict in
+`docs/validation-log.md`. No further feature work until then.

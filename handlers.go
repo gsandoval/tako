@@ -11,13 +11,17 @@ package tako
 type Endpoint[Req, Res any] struct {
 	route string
 	opts  []Option
+	fn    func(Ctx, Req) (Res, error)
 }
 
 // Call invokes the endpoint. In dev, tests, and co-located packages this is
 // a direct in-process call; against a remote service it is an authenticated
 // HTTP call. The hop is deliberately visible at the call site.
 func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
-	panic("tako: not implemented")
+	if e.fn == nil {
+		panic("tako: Call on a zero Endpoint — endpoints are declared with tako.API or tako.Page")
+	}
+	return e.fn(ctx, req)
 }
 
 // Handler is a declared asynchronous or scheduled handler binding, returned
@@ -32,14 +36,14 @@ type Handler struct {
 // untagged fields bind from the JSON body; binding code is generated
 // statically. An empty Req struct is fine.
 func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res] {
-	return Endpoint[Req, Res]{route: route, opts: opts}
+	return Endpoint[Req, Res]{route: route, opts: opts, fn: fn}
 }
 
 // Page declares a server-rendered route. It binds Req exactly like API
 // (form: tags cover browser form posts) and returns HTML; CSRF is enforced
 // automatically on unsafe-method page routes.
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML] {
-	return Endpoint[Req, HTML]{route: route, opts: opts}
+	return Endpoint[Req, HTML]{route: route, opts: opts, fn: fn}
 }
 
 // Worker binds fn as the single consumer of queue. Like every async

@@ -1,0 +1,2 @@
+app.go:7:22: tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route" (tako/const-route)
+app.go:9:21: tako.API route must be a string constant — routes are read at analysis time, not run time; got a call expression (tako/const-route)

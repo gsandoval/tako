@@ -1,0 +1,25 @@
+{
+  "module": "hello",
+  "services": [
+    {
+      "name": "hello",
+      "package": "hello",
+      "handlers": [
+        "hello.Hello"
+      ],
+      "profile": "default"
+    }
+  ],
+  "resources": [],
+  "handlers": [
+    {
+      "kind": "api",
+      "var": "hello.Hello",
+      "package": "hello",
+      "service": "hello",
+      "route": "GET /hello",
+      "pos": "hello.go:5:5"
+    }
+  ],
+  "edges": []
+}
