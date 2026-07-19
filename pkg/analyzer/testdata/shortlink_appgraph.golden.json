@@ -1,0 +1,76 @@
+{
+  "module": "shortlink",
+  "services": [
+    {
+      "name": "shortlink",
+      "package": "shortlink",
+      "handlers": [
+        "shortlink.Create",
+        "shortlink.Resolve",
+        "shortlink.List"
+      ],
+      "profile": "default"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "entity",
+      "name": "links",
+      "var": "shortlink.links",
+      "package": "shortlink",
+      "type": "Link",
+      "indexes": [
+        "Owner",
+        "Created"
+      ],
+      "pos": "app.go:9:5"
+    }
+  ],
+  "handlers": [
+    {
+      "kind": "api",
+      "var": "shortlink.Create",
+      "package": "shortlink",
+      "service": "shortlink",
+      "route": "POST /api/links",
+      "req_type": "CreateReq",
+      "has_body": true,
+      "pos": "app.go:22:2"
+    },
+    {
+      "kind": "api",
+      "var": "shortlink.Resolve",
+      "package": "shortlink",
+      "service": "shortlink",
+      "route": "GET /api/links/{slug}",
+      "req_type": "ResolveReq",
+      "bindings": [
+        {
+          "field": "Slug",
+          "kind": "path",
+          "name": "slug",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:23:2"
+    },
+    {
+      "kind": "api",
+      "var": "shortlink.List",
+      "package": "shortlink",
+      "service": "shortlink",
+      "route": "GET /api/links",
+      "req_type": "ListReq",
+      "bindings": [
+        {
+          "field": "Owner",
+          "kind": "query",
+          "name": "owner",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:24:2"
+    }
+  ],
+  "edges": []
+}

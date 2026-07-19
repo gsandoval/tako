@@ -54,9 +54,12 @@ import (
 )
 
 func main() {
-	mux := http.NewServeMux()
-
 `, svc.Name, alias, svc.Package)
+
+	if hasResources(g, svc) {
+		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
+	}
+	b.WriteString("\tmux := http.NewServeMux()\n\n")
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
@@ -122,6 +125,17 @@ func helperName(b analyzer.Binding) string {
 		"float64": "Float64",
 	}[b.Type]
 	return kind + typ
+}
+
+// hasResources reports whether the service's package declares resources
+// needing a booted backend.
+func hasResources(g *analyzer.AppGraph, svc analyzer.Service) bool {
+	for _, r := range g.Resources {
+		if r.Package == svc.Package {
+			return true
+		}
+	}
+	return false
 }
 
 func needsDecode(h analyzer.Handler) bool {

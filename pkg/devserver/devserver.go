@@ -132,6 +132,9 @@ func (s *session) cycle(first bool) error {
 		for _, h := range graph.Handlers {
 			fmt.Fprintf(s.out(), "  %s → %s (%s)\n", h.Route, analyzer.ShortVar(h), analyzer.ShortPos(h.Pos))
 		}
+		for _, r := range graph.Resources {
+			fmt.Fprintf(s.out(), "  %s\n", analyzer.ResourceLine(r))
+		}
 		fmt.Fprintln(s.out())
 	}
 

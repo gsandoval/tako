@@ -1,0 +1,2 @@
+app.go:18:9: query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable (tako/unindexed-query)
+app.go:19:11: query orders by Link.Hits, but Hits is not indexed — tag it entity:"index" to make it orderable (tako/unindexed-query)

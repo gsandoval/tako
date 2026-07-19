@@ -1,0 +1,6 @@
+shortlink: 1 service
+  service shortlink (package shortlink, profile default)
+    POST /api/links → Create (app.go:22)
+    GET /api/links/{slug} → Resolve (app.go:23)
+    GET /api/links → List (app.go:24)
+    entity links (indexes: Owner, Created)

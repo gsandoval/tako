@@ -18,8 +18,24 @@ func Summary(g *AppGraph) string {
 			}
 			fmt.Fprintf(&b, "    %s → %s (%s)\n", h.Route, ShortVar(h), ShortPos(h.Pos))
 		}
+		for _, r := range g.Resources {
+			if r.Package != svc.Package {
+				continue
+			}
+			fmt.Fprintf(&b, "    %s\n", ResourceLine(r))
+		}
 	}
 	return b.String()
+}
+
+// ResourceLine renders one resource for summaries and the dev banner,
+// e.g. `entity links (indexes: Owner, Created)`.
+func ResourceLine(r Resource) string {
+	line := r.Kind + " " + r.Name
+	if len(r.Indexes) > 0 {
+		line += " (indexes: " + strings.Join(r.Indexes, ", ") + ")"
+	}
+	return line
 }
 
 // ShortVar is the handler var without its package qualifier, for display

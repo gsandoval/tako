@@ -1,0 +1,1 @@
+app.go:8:2: entity id field Slug must be a string; got int (tako/entity-id)

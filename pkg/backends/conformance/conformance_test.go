@@ -1,0 +1,29 @@
+package conformance
+
+import (
+	"flag"
+	"testing"
+
+	"github.com/gsandoval/tako/pkg/backends"
+	"github.com/gsandoval/tako/pkg/backends/local"
+)
+
+var backend = flag.String("backend", "local", "backend to run the conformance suite against (local|gcp)")
+
+func TestEntity(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunEntity(t, func(t *testing.T) backends.Entity {
+			s, err := local.OpenEntity(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = s.Close() })
+			return s
+		})
+	case "gcp":
+		t.Skip("gcp backend arrives in Phase E")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}

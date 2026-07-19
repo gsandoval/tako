@@ -1,0 +1,1 @@
+app.go:7:6: entity type Link must have exactly one field tagged entity:"id" (tako/entity-id)

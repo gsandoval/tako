@@ -11,14 +11,26 @@ import (
 
 var update = flag.Bool("update", false, "rewrite golden files")
 
-// TestHelloMain goldens the generated main for examples/hello — generated
-// code is user-readable surface, so its exact text is under test.
+// Generated code is user-readable surface, so its exact text is under
+// test for each example.
+
 func TestHelloMain(t *testing.T) {
-	appDir, err := filepath.Abs("../../examples/hello")
+	goldenService(t, "../../examples/hello", "hello", "testdata/hello_main.golden")
+}
+
+// Shortlink is the first service with backend boot and body+path+query
+// decoding.
+func TestShortlinkMain(t *testing.T) {
+	goldenService(t, "../../examples/shortlink", "shortlink", "testdata/shortlink_main.golden")
+}
+
+func goldenService(t *testing.T, appDir, service, golden string) {
+	t.Helper()
+	abs, err := filepath.Abs(appDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := analyzer.Analyze(analyzer.Config{Dir: appDir})
+	g, err := analyzer.Analyze(analyzer.Config{Dir: abs})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,26 +40,26 @@ func TestHelloMain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(written) != 1 || written[0] != filepath.Join(".tako", "gen", "hello", "main.go") {
-		t.Fatalf("written = %v, want one .tako/gen/hello/main.go", written)
+	want := filepath.Join(".tako", "gen", service, "main.go")
+	if len(written) != 1 || written[0] != want {
+		t.Fatalf("written = %v, want [%s]", written, want)
 	}
 	got, err := os.ReadFile(filepath.Join(outDir, written[0]))
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	golden := "testdata/hello_main.golden"
 	if *update {
 		if err := os.WriteFile(golden, got, 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
 	}
-	want, err := os.ReadFile(golden)
+	wantSrc, err := os.ReadFile(golden)
 	if err != nil {
 		t.Fatalf("reading %s (run with -update to create it): %v", golden, err)
 	}
-	if string(got) != string(want) {
-		t.Fatalf("%s differs.\n--- want\n%s--- got\n%s", golden, want, got)
+	if string(got) != string(wantSrc) {
+		t.Fatalf("%s differs.\n--- want\n%s--- got\n%s", golden, wantSrc, got)
 	}
 }

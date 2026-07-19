@@ -177,6 +177,9 @@ type field struct {
 
 func (f field) tag(key string) string { return f.rawTag.Get(key) }
 
+// tagOf parses a raw struct-tag string.
+func tagOf(raw string) reflect.StructTag { return reflect.StructTag(raw) }
+
 // binding builds one Binding, checking the field's type is bindable.
 func (f field) binding(dir string, pkg *packages.Package, kind, name string, fail func(*Error)) Binding {
 	typ, ok := bindableTypes[f.typ.String()]

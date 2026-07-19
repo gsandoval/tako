@@ -71,6 +71,8 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		Edges:     []Edge{},
 	}
 	var errs ErrorList
+	entities := map[string]*entityType{} // payload type key → schema
+	entityRes := map[string]*Resource{}  // payload type key → resource entry
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
 			graph.Module = pkg.Module.Path
@@ -88,17 +90,37 @@ func Analyze(cfg Config) (*AppGraph, error) {
 							continue
 						}
 						call, ok := vs.Values[i].(*ast.CallExpr)
-						if !ok || sdkConstructor(pkg, call) != "API" {
-							continue // S0.2/F1: tako.API only; the rest arrive with their slices
+						if !ok {
+							continue
 						}
-						if h := extractAPI(cfg.Dir, pkg, name, call, &errs); h != nil {
-							graph.Handlers = append(graph.Handlers, *h)
+						switch sdkConstructor(pkg, call) {
+						case "API":
+							if h := extractAPI(cfg.Dir, pkg, name, call, &errs); h != nil {
+								graph.Handlers = append(graph.Handlers, *h)
+							}
+						case "Entity":
+							if r, key, et := extractEntity(cfg.Dir, pkg, name, call, &errs); r != nil {
+								graph.Resources = append(graph.Resources, *r)
+								entities[key] = et
+								entityRes[key] = &graph.Resources[len(graph.Resources)-1]
+							}
 						}
 					}
 				}
 			}
 		}
 		checkPackageLevel(cfg.Dir, pkg, &errs)
+	}
+	for _, pkg := range pkgs {
+		scanQueries(cfg.Dir, pkg, entities, &errs)
+	}
+	for key, et := range entities {
+		res := entityRes[key]
+		for _, f := range et.declared { // derived indexes, struct order
+			if et.used[f] {
+				res.Indexes = append(res.Indexes, f)
+			}
+		}
 	}
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
@@ -107,6 +129,9 @@ func Analyze(cfg Config) (*AppGraph, error) {
 
 	sort.SliceStable(graph.Handlers, func(i, j int) bool {
 		return posLess(graph.Handlers[i].Pos, graph.Handlers[j].Pos)
+	})
+	sort.SliceStable(graph.Resources, func(i, j int) bool {
+		return posLess(graph.Resources[i].Pos, graph.Resources[j].Pos)
 	})
 	graph.Services = partition(graph.Handlers)
 	return graph, nil

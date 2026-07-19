@@ -33,15 +33,23 @@ type ObjectInfo struct {
 // Iter iterates a result stream. Call Next until it reports false, then
 // check Err.
 type Iter[T any] struct {
-	err error
+	items []T
+	next  int
+	err   error
 }
 
 // Next returns the next element and whether one was available.
 func (it *Iter[T]) Next() (T, bool) {
-	panic("tako: not implemented")
+	if it.err != nil || it.next >= len(it.items) {
+		var zero T
+		return zero, false
+	}
+	v := it.items[it.next]
+	it.next++
+	return v, true
 }
 
 // Err returns the error that ended iteration early, if any.
 func (it *Iter[T]) Err() error {
-	panic("tako: not implemented")
+	return it.err
 }

@@ -49,6 +49,10 @@ type Resource struct {
 	// Type is the payload type for generic resources (Entity, Cache,
 	// Queue, Topic, Job), empty otherwise.
 	Type string `json:"type,omitempty"`
+	// Indexes are the entity fields the app actually queries
+	// (Where/OrderBy call sites), in struct declaration order — the
+	// derived index set.
+	Indexes []string `json:"indexes,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
 }

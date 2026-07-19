@@ -732,3 +732,88 @@ ordering, IsNotFound) against any backend.
 Usage edges / derived IAM (Phase A completion, later slice), migrations,
 non-string keys, `!=`/`IN` operators, cross-store Tx (never), auth-scoped
 owner (arrives with Auth), Datastore backend (Phase E).
+
+---
+
+## F2 — implementation: Entity + shortlink (2026-07-19)
+
+DX proposal approved as written; shipped surface matches it.
+
+**What shipped**
+
+- **Backend contract born** (`pkg/backends`): `Entity` interface — JSON
+  documents keyed by (kind, id), filtered/ordered/limited queries,
+  atomic Update and Tx with error-passthrough rollback.
+- **bbolt local backend** (`pkg/backends/local`): one bucket per kind at
+  `.tako/data/entity.db`; queries are in-process scans with type-aware
+  comparison (RFC 3339 strings compare as instants, so time.Time fields
+  order correctly across zones); persistence-across-reopen under test.
+- **Conformance suite born** (`pkg/backends/conformance`): 17 entity
+  contract cases (CRUD, upsert, idempotent delete, query ops/AND/order/
+  limit, tx commit/rollback/reads) — run via
+  `go test ./pkg/backends/conformance -backend=local`; `-backend=gcp`
+  skips until Phase E.
+- **SDK Entity live**: Get/Put/Delete/Exists/Query/Update/Tx on the
+  backend via the internal boot seam (`internal/hooks`); schema (id +
+  indexed fields) read once per handle from struct tags — init-shaped
+  reflection only, request path stays on encoding/json; `Iter[T]`
+  implemented. Runtime gains `Boot()` (TAKO_BACKEND, default local) and
+  `BootLocal(dir)` for tests; generated mains call `runtime.Boot()` when
+  the package declares resources.
+- **Analyzer**: Entity resource extraction (`tako/const-name`), schema
+  validation (`tako/entity-id` ×2), query-site scan on
+  `EntityQuery[T]` receivers — no dataflow needed, the type parameter
+  identifies the store — with `tako/unindexed-query` (filter + order
+  variants) and `tako/const-query-field`; derived index set lands in the
+  AppGraph and prints as `entity links (indexes: Owner, Created)` in
+  `gen graph` and the dev banner. All six texts golden, matching the
+  proposal exactly.
+- **examples/shortlink**: the approved app (Tx slug claim → 409,
+  Update-miss → 404, filtered ordered list) with a suite covering all
+  semantics incl. rollback-preserves-original.
+
+**Tier-2 validation — real transcript (validate/entity.md §§1–4, 6)**
+
+```
+$ cd examples/shortlink && PORT=8090 tako dev
+  POST /api/links → Create (app.go:22)
+  GET /api/links/{slug} → Resolve (app.go:23)
+  GET /api/links → List (app.go:24)
+  entity links (indexes: Owner, Created)
+ready in 728ms — watching (backends: local, in-process)
+
+$ curl -s -X POST …/api/links -d '{"slug":"gh","url":"https://github.com","owner":"memo"}'
+{"slug":"gh","url":"https://github.com","owner":"memo","created":"…","hits":0}
+$ curl -s -X POST …/api/links -d '{"slug":"gh","url":"https://x.com"}'   # 409
+{"error":"slug \"gh\" is taken"}
+$ curl -s …/api/links/gh   # second resolve
+{"slug":"gh",…,"hits":2}
+$ curl -s …/api/links/nope   # 404
+{"error":"not found"}
+$ curl -s '…/api/links?owner=memo'
+[{"slug":"gh",…,"hits":2}]
+
+# Ctrl-C, restart tako dev:
+$ curl -s …/api/links/gh
+{"slug":"gh",…,"hits":3}          ← survived restart (.tako/data/entity.db)
+```
+
+Conformance(local): 17/17 ok. `go test ./...` green in all three
+modules; hello goldens unchanged.
+
+**Discovered work (not done)**
+
+- Composite-index derivation (Where+OrderBy combinations → Datastore
+  index.yaml) — F2 derives the per-store field set; composites are
+  Phase E work when the Datastore backend makes them real.
+- Query-chain attribution uses the payload type parameter; two stores
+  sharing one payload type would pool their derived indexes. Harmless
+  (over-indexing), but worth an analyzer note when a real example hits
+  it.
+- `runtime.BootLocal` is test plumbing that F7's NewTestApp replaces;
+  the panic message for an unwired backend names both.
+
+**GATE REQUEST — F2 (local): Entity + shortlink.** Please run
+`validate/entity.md` — the centerpiece is §3 (kill/restart persistence)
+and §4 (the unindexed-query error text) — and record the verdict in
+`docs/validation-log.md`.

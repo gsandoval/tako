@@ -36,6 +36,30 @@ func TestHelloSummary(t *testing.T) {
 	compareGolden(t, "testdata/hello_summary.golden.txt", []byte(Summary(g)))
 }
 
+// TestShortlinkGraph goldens the AppGraph of examples/shortlink — the
+// first graph with resources and derived indexes.
+func TestShortlinkGraph(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/shortlink")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/shortlink): %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	compareGolden(t, "testdata/shortlink_appgraph.golden.json", got)
+}
+
+// TestShortlinkSummary goldens the summary with a resource line.
+func TestShortlinkSummary(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/shortlink")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/shortlink): %v", err)
+	}
+	compareGolden(t, "testdata/shortlink_summary.golden.txt", []byte(Summary(g)))
+}
+
 // TestErrors runs each testdata/errors/* fixture module and asserts the
 // exact analysis-error text — error messages are the product's primary UX
 // and are under test, byte for byte.
