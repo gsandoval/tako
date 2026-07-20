@@ -1,6 +1,9 @@
 package tako
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Option configures a resource or handler declaration, or a single operation
 // such as Publish or SignedPut. All options live in one namespace; which
@@ -95,3 +98,19 @@ func WithCDN() Option { return option("cdn") }
 // trusted (never user-supplied). Sanitized output is the default because
 // user-supplied markdown is an XSS vector.
 func WithTrustedHTML() Option { return option("trusted_html") }
+
+// optionDisplayName maps an option's internal name back to its
+// constructor's exported name for error texts: "max_size" → "WithMaxSize".
+func optionDisplayName(name string) string {
+	acronyms := map[string]string{"ttl": "TTL", "cdn": "CDN", "html": "HTML"}
+	var b strings.Builder
+	b.WriteString("With")
+	for _, part := range strings.Split(name, "_") {
+		if a, ok := acronyms[part]; ok {
+			b.WriteString(a)
+			continue
+		}
+		b.WriteString(strings.ToUpper(part[:1]) + part[1:])
+	}
+	return b.String()
+}

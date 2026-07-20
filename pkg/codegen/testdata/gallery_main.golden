@@ -18,31 +18,40 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// POST /api/photos → gallery.Upload (app.go:36)
+	// Signed upload/download URLs land here (SignedPut/SignedGet).
+	mux.Handle("/_tako/signed/", runtime.SignedURLHandler())
+
+	// POST /api/photos → gallery.Upload (app.go:37)
 	mux.Handle("POST /api/photos", runtime.JSONHandler(gallery.Upload, decodeUpload))
 
-	// GET /api/photos/{id}/image → gallery.Image (app.go:37)
+	// POST /api/uploads → gallery.StartUpload (app.go:38)
+	mux.Handle("POST /api/uploads", runtime.JSONHandler(gallery.StartUpload, decodeStartUpload))
+
+	// GET /api/photos/{id}/download → gallery.Download (app.go:39)
+	mux.Handle("GET /api/photos/{id}/download", runtime.JSONHandler(gallery.Download, decodeDownload))
+
+	// GET /api/photos/{id}/image → gallery.Image (app.go:40)
 	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(gallery.Image, decodeImage))
 
-	// GET /api/photos/{id}/thumb → gallery.Thumb (app.go:38)
+	// GET /api/photos/{id}/thumb → gallery.Thumb (app.go:41)
 	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb))
 
-	// GET /api/photos → gallery.List (app.go:39)
+	// GET /api/photos → gallery.List (app.go:42)
 	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, nil))
 
-	// GET /api/objects → gallery.Objects (app.go:40)
+	// GET /api/objects → gallery.Objects (app.go:43)
 	mux.Handle("GET /api/objects", runtime.JSONHandler(gallery.Objects, nil))
 
-	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:44) — local mode runs the subscriber in-process
+	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:47) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("OnUploaded", gallery.OnUploaded)
 
-	// worker MakeThumb ← queue thumbnails (app.go:45) — local mode runs the worker in-process
+	// worker MakeThumb ← queue thumbnails (app.go:48) — local mode runs the worker in-process
 	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
 
-	// subscriber NotifyOwner ← topic photo-ready (app.go:46) — local mode runs the subscriber in-process
+	// subscriber NotifyOwner ← topic photo-ready (app.go:49) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("NotifyOwner", gallery.NotifyOwner)
 
-	// subscriber WarmFeed ← topic photo-ready (app.go:47) — local mode runs the subscriber in-process
+	// subscriber WarmFeed ← topic photo-ready (app.go:50) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("WarmFeed", gallery.WarmFeed)
 
 	runtime.Serve(mux)
@@ -56,6 +65,22 @@ func decodeUpload(r *http.Request) (gallery.UploadReq, error) {
 	if req.Img, err = runtime.FormBlob(r, "img"); err != nil {
 		return req, err
 	}
+	return req, nil
+}
+
+// decodeStartUpload binds POST /api/uploads requests to gallery.StartUploadReq.
+func decodeStartUpload(r *http.Request) (gallery.StartUploadReq, error) {
+	var req gallery.StartUploadReq
+	if err := runtime.DecodeJSON(r, &req); err != nil {
+		return req, err
+	}
+	return req, nil
+}
+
+// decodeDownload binds GET /api/photos/{id}/download requests to gallery.DownloadReq.
+func decodeDownload(r *http.Request) (gallery.DownloadReq, error) {
+	var req gallery.DownloadReq
+	req.ID = runtime.PathString(r, "id")
 	return req, nil
 }
 

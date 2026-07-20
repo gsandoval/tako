@@ -6,6 +6,8 @@
       "package": "gallery",
       "handlers": [
         "gallery.Upload",
+        "gallery.StartUpload",
+        "gallery.Download",
         "gallery.Image",
         "gallery.Thumb",
         "gallery.List",
@@ -52,7 +54,7 @@
       "name": "photos",
       "var": "gallery.photos",
       "package": "gallery",
-      "pos": "app.go:12:2"
+      "pos": "app.go:13:2"
     },
     {
       "kind": "entity",
@@ -60,7 +62,7 @@
       "var": "gallery.photoStore",
       "package": "gallery",
       "type": "Photo",
-      "pos": "app.go:13:2"
+      "pos": "app.go:14:2"
     },
     {
       "kind": "queue",
@@ -68,7 +70,7 @@
       "var": "gallery.thumbs",
       "package": "gallery",
       "type": "ThumbJob",
-      "pos": "app.go:14:2"
+      "pos": "app.go:15:2"
     },
     {
       "kind": "topic",
@@ -76,7 +78,7 @@
       "var": "gallery.ready",
       "package": "gallery",
       "type": "PhotoReady",
-      "pos": "app.go:15:2"
+      "pos": "app.go:16:2"
     }
   ],
   "handlers": [
@@ -101,7 +103,34 @@
           "type": "blob"
         }
       ],
-      "pos": "app.go:36:2"
+      "pos": "app.go:37:2"
+    },
+    {
+      "kind": "api",
+      "var": "gallery.StartUpload",
+      "package": "gallery",
+      "service": "gallery",
+      "route": "POST /api/uploads",
+      "req_type": "StartUploadReq",
+      "has_body": true,
+      "pos": "app.go:38:2"
+    },
+    {
+      "kind": "api",
+      "var": "gallery.Download",
+      "package": "gallery",
+      "service": "gallery",
+      "route": "GET /api/photos/{id}/download",
+      "req_type": "DownloadReq",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:39:2"
     },
     {
       "kind": "api",
@@ -119,7 +148,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:37:2"
+      "pos": "app.go:40:2"
     },
     {
       "kind": "api",
@@ -137,7 +166,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:38:2"
+      "pos": "app.go:41:2"
     },
     {
       "kind": "api",
@@ -145,7 +174,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos",
-      "pos": "app.go:39:2"
+      "pos": "app.go:42:2"
     },
     {
       "kind": "api",
@@ -153,7 +182,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/objects",
-      "pos": "app.go:40:2"
+      "pos": "app.go:43:2"
     },
     {
       "kind": "subscribe",
@@ -162,7 +191,7 @@
       "service": "gallery-onuploaded",
       "binding": "photos.Uploaded",
       "binding_kind": "bucket",
-      "pos": "app.go:44:2"
+      "pos": "app.go:47:2"
     },
     {
       "kind": "worker",
@@ -170,7 +199,7 @@
       "package": "gallery",
       "service": "gallery-makethumb",
       "binding": "thumbnails",
-      "pos": "app.go:45:2"
+      "pos": "app.go:48:2"
     },
     {
       "kind": "subscribe",
@@ -179,7 +208,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:46:2"
+      "pos": "app.go:49:2"
     },
     {
       "kind": "subscribe",
@@ -188,7 +217,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:47:2"
+      "pos": "app.go:50:2"
     }
   ],
   "edges": []

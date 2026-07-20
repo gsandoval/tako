@@ -3,6 +3,7 @@ package runtime
 import (
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"time"
 
@@ -11,8 +12,10 @@ import (
 )
 
 var (
-	bootedStore io.Closer
-	bootedQueue *local.QueueDispatcher
+	bootedStore   io.Closer
+	bootedQueue   *local.QueueDispatcher
+	bootedBuckets *local.BucketStore
+	bootedSigner  *local.URLSigner
 )
 
 // Boot wires the service's backends per TAKO_BACKEND (default "local":
@@ -55,9 +58,33 @@ func BootLocal(dir string) error {
 	// Every bucket write publishes on "<bucket>.Uploaded" — the local
 	// stand-in for GCS notifications.
 	local.WireBucketEvents(buckets, dispatcher)
+	// Signed URLs point back at this service's own /_tako/signed/
+	// endpoint; the signing key persists under dir so URLs survive
+	// reloads.
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	signer, err := local.NewURLSigner(dir, "http://localhost:"+port)
+	if err != nil {
+		return err
+	}
+	hooks.Signer = signer
+	bootedSigner = signer
+	bootedBuckets = buckets
 	bootedQueue = dispatcher
 	bootedStore = store
 	return nil
+}
+
+// SignedURLHandler serves the local signed-URL endpoint
+// (/_tako/signed/<token>) against the booted backends. Generated mains
+// mount it when the app declares a bucket.
+func SignedURLHandler() http.Handler {
+	if bootedSigner == nil || bootedBuckets == nil {
+		panic("tako: SignedURLHandler before Boot")
+	}
+	return local.SignedURLEndpoint(bootedSigner, bootedBuckets)
 }
 
 // WaitIdle blocks until local queues drain (every published message has

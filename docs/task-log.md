@@ -1744,3 +1744,107 @@ GCS V4 signing and `iam.serviceAccountTokenCreator` (Phase F), browser
 CORS on the signed endpoints (F9, when the gallery grows its web UI),
 resumable/chunked uploads, one-time-use URLs, signed DELETE, per-URL
 rate limits, auth on StartUpload (F9 adds `tako.WithAuth()` per spec).
+
+---
+
+## F6 — implementation: Signed URLs, local (2026-07-20)
+
+DX proposal approved as written; shipped surface matches it, with one
+addition to the locked texts: a lying stream (no/false Content-Length)
+gets its own 413 body — `upload exceeds the signed URL's <n>-byte
+limit` — since the actual size is unknowable mid-stream; the declared-
+length text from §4 is used when Content-Length is present. Both are
+under test.
+
+**What shipped**
+
+- **Signer seam** (`pkg/backends/signed.go`): `SignConstraints{MaxSize,
+  ContentType}` + `URLSigner{SignPut, SignGet}`; wired via
+  `hooks.Signer`. The GCS V4 signer arrives Phase F behind the same
+  interface.
+- **Local signer** (`pkg/backends/local/signer.go`): URLs are
+  `<base>/_tako/signed/<base64url claims>.<HMAC-SHA256>`; the secret
+  persists at `.tako/data/signing.key` (0600), so URLs survive reloads
+  and restarts. Claims carry bucket/key/method/expiry/constraints.
+- **Local enforcer** (`pkg/backends/local/signedhttp.go`):
+  `SignedURLEndpoint(signer, store)` — verb check (405 texts per
+  method), content-type pattern match (415), size enforced twice (413
+  on declared Content-Length; a capped reader catches lying streams and
+  the partial object is deleted), 403 for expired vs. tampered as
+  distinct texts, 404 JSON on absent downloads. A signed upload goes
+  through `BucketStore.Put`, so `photos.Uploaded` fires exactly like
+  any write — the F5 spine needs zero changes.
+- **SDK live**: `SignedPut` (parses WithMaxSize/WithContentType;
+  any other option errors at call time with the exact proposal text —
+  `optionDisplayName` maps internal names back to `WithX`),
+  `SignedGet`. No surface change; the two methods existed as stubs
+  since F3, so the SDK lock is untouched.
+- **Boot**: `BootLocal` mints the signer with base
+  `http://localhost:$PORT`; `runtime.SignedURLHandler()` adapts the
+  booted pair for mains.
+- **Codegen**: the mount is explicit and commented in the generated
+  main whenever the app declares a bucket — no hidden routes.
+- **Conformance grows a SignedURL chapter** (7 cases): put-roundtrip +
+  upload event, declared-oversize, lying-stream, content-type, expired,
+  tampered, get-roundtrip/absent. It asserts statuses and effects (no
+  object survives a rejection), not texts — in the cloud GCS is the
+  enforcer and words its own refusals; the exact local texts are
+  asserted in the gallery suite instead.
+- **Gallery**: `StartUpload` (ticket with signed PUT URL, image/*,
+  20MB) and `Download` (signed GET URL) per spec Part 3 minus auth;
+  the F3 multipart endpoint stays until F9 decides. Tests:
+  `TestSignedUploadPipeline` (ticket → PUT → spine → ready → signed
+  download roundtrip) and `TestSignedUploadRejections` (all six
+  rejection texts byte-for-byte, partial-object cleanup, negative-ttl
+  expiry, call-time option error).
+
+**Validation transcript (tier 2, validate/signed.md, PORT=8090)**
+
+Banner: `analyzing 5 services, 7 endpoints, 1 worker, 3 subscribers`;
+generated main shows the explicit
+`mux.Handle("/_tako/signed/", runtime.SignedURLHandler())`.
+
+§2 ticket → direct PUT → spine:
+
+```
+POST /api/uploads → {"photo":{"id":"d26uib6z…","ready":false},
+  "uploadURL":"http://localhost:8090/_tako/signed/eyJiIjoi…"}
+PUT <uploadURL> → 200
+⚙ photos.Uploaded → OnUploaded ok (0s)   ×2 (original + _thumb, filter acks)
+⚙ thumbnails → MakeThumb ok (8ms)
+⚙ photo-ready → NotifyOwner ok / WarmFeed ok
+GET /api/photos → "ready":true
+```
+
+§3 rejections, exact texts live:
+
+```
+415 {"error":"content type \"text/plain\" does not match required \"image/*\""}
+413 {"error":"upload is 22020096 bytes; the signed URL allows at most 20971520"}
+403 {"error":"invalid signature"}
+```
+
+`/api/objects` afterward: only the good photo + its `_thumb` — no
+partial objects, no pipeline noise from rejected uploads.
+
+§4 signed download: 200 with `Content-Type: image/jpeg` +
+`Content-Length`; PUT on a download URL →
+`405 {"error":"signed download URLs accept GET only"}`.
+
+§5 minted a URL, forced a reload (2 reloads logged), PUT to the
+pre-reload URL → 200 and the spine ran — signing.key persistence works.
+
+§6: conformance 47 cases green; `go test ./...` green in all four
+modules.
+
+**Discovered work (noted, not done)**
+
+- Request log prints the full signed token path — consider truncating
+  `/_tako/signed/<token>` in the dev request log for readability.
+- CORS headers on /_tako/signed for browser-direct uploads (F9's web
+  UI will need them).
+
+**GATE REQUEST — F6 (local): Signed URLs.** Please run
+`validate/signed.md` — the centerpiece is §3, judging whether each
+rejection body alone tells a client-side engineer what to fix — and
+record the verdict in `docs/validation-log.md`.

@@ -1,34 +1,36 @@
 gallery: 5 services
   service gallery (package gallery, profile default)
-    POST /api/photos → Upload (app.go:36)
-    GET /api/photos/{id}/image → Image (app.go:37)
-    GET /api/photos/{id}/thumb → Thumb (app.go:38)
-    GET /api/photos → List (app.go:39)
-    GET /api/objects → Objects (app.go:40)
+    POST /api/photos → Upload (app.go:37)
+    POST /api/uploads → StartUpload (app.go:38)
+    GET /api/photos/{id}/download → Download (app.go:39)
+    GET /api/photos/{id}/image → Image (app.go:40)
+    GET /api/photos/{id}/thumb → Thumb (app.go:41)
+    GET /api/photos → List (app.go:42)
+    GET /api/objects → Objects (app.go:43)
     bucket photos
     entity photos
     queue thumbnails
     topic photo-ready
   service gallery-onuploaded (package gallery, profile default)
-    subscriber OnUploaded ← bucket photos.Uploaded (app.go:44)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:47)
     bucket photos
     entity photos
     queue thumbnails
     topic photo-ready
   service gallery-makethumb (package gallery, profile default)
-    worker MakeThumb ← queue thumbnails (app.go:45)
+    worker MakeThumb ← queue thumbnails (app.go:48)
     bucket photos
     entity photos
     queue thumbnails
     topic photo-ready
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:46)
+    subscriber NotifyOwner ← topic photo-ready (app.go:49)
     bucket photos
     entity photos
     queue thumbnails
     topic photo-ready
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:47)
+    subscriber WarmFeed ← topic photo-ready (app.go:50)
     bucket photos
     entity photos
     queue thumbnails

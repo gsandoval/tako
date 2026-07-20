@@ -18,6 +18,9 @@ var Queue backends.Queue
 // Topic is the wired topic backend; nil until boot.
 var Topic backends.Topic
 
+// Signer is the wired URL signer; nil until boot.
+var Signer backends.URLSigner
+
 // HandlerInfo is set by the SDK at init: it opens a Handler record for
 // the runtime — kind, bound source (queue or topic name), and the
 // payload-decoding invoke closure (typed func(tako.Ctx, []byte) error,

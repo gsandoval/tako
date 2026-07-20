@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako"
 )
@@ -33,11 +34,13 @@ type PhotoReady struct {
 }
 
 var (
-	Upload  = tako.API("POST /api/photos", upload)
-	Image   = tako.API("GET /api/photos/{id}/image", image)
-	Thumb   = tako.API("GET /api/photos/{id}/thumb", thumb)
-	List    = tako.API("GET /api/photos", list)
-	Objects = tako.API("GET /api/objects", objects)
+	Upload      = tako.API("POST /api/photos", upload)
+	StartUpload = tako.API("POST /api/uploads", startUpload)
+	Download    = tako.API("GET /api/photos/{id}/download", download)
+	Image       = tako.API("GET /api/photos/{id}/image", image)
+	Thumb       = tako.API("GET /api/photos/{id}/thumb", thumb)
+	List        = tako.API("GET /api/photos", list)
+	Objects     = tako.API("GET /api/objects", objects)
 
 	// The pipeline is event-driven end to end:
 	// upload → bucket event → queue → worker → topic → 2 subscribers.
@@ -65,6 +68,37 @@ func upload(ctx tako.Ctx, req UploadReq) (Photo, error) {
 		return Photo{}, err
 	}
 	return p, nil
+}
+
+// StartUpload is the direct-transfer flow: the client gets a ticket and
+// PUTs the bytes straight to storage — no 32MB request cap, no proxying
+// through the service. The signed upload fires photos.Uploaded exactly
+// like a Put, so the event spine below runs unchanged.
+type StartUploadReq struct {
+	Caption string `json:"caption"`
+}
+
+type UploadTicket struct {
+	Photo     Photo  `json:"photo"`
+	UploadURL string `json:"uploadURL"`
+}
+
+func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
+	p := Photo{ID: tako.NewID(), Caption: req.Caption}
+	if err := photoStore.Put(ctx, p); err != nil {
+		return UploadTicket{}, err
+	}
+	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
+		tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
+	return UploadTicket{Photo: p, UploadURL: url}, err
+}
+
+type DownloadReq struct {
+	ID string `path:"id"`
+}
+
+func download(ctx tako.Ctx, req DownloadReq) (string, error) {
+	return photos.SignedGet(ctx, req.ID, 15*time.Minute)
 }
 
 // Bucket events see EVERY successful write — including the worker's own

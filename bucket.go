@@ -1,6 +1,7 @@
 package tako
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -69,15 +70,27 @@ func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
 
 // SignedPut returns a URL that lets a client upload directly to key for the
 // given duration, bypassing the service's request-size cap. Constrain
-// uploads with WithMaxSize and WithContentType.
+// uploads with WithMaxSize and WithContentType; constraints are enforced
+// when the client uploads, not when the URL is minted.
 func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, opts ...Option) (string, error) {
-	panic("tako: not implemented")
+	var c backends.SignConstraints
+	for _, opt := range opts {
+		switch opt.name {
+		case "max_size":
+			c.MaxSize = opt.args[0].(int64)
+		case "content_type":
+			c.ContentType = opt.args[0].(string)
+		default:
+			return "", fmt.Errorf("tako.%s is not a SignedPut option (SignedPut accepts WithMaxSize, WithContentType)", optionDisplayName(opt.name))
+		}
+	}
+	return signerBackend().SignPut(ctx, b.name, key, ttl, c)
 }
 
 // SignedGet returns a URL that lets a client download key directly for the
 // given duration.
 func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error) {
-	panic("tako: not implemented")
+	return signerBackend().SignGet(ctx, b.name, key, ttl)
 }
 
 // BucketEvent is a bucket's event source, usable as a Subscribe binding.
@@ -89,6 +102,17 @@ type BucketEvent struct {
 func (BucketEvent) eventSource(ObjectInfo) {}
 
 func (e BucketEvent) sourceName() string { return e.bucket.name + ".Uploaded" }
+
+// signerBackend returns the wired URL signer, which boot (generated
+// mains, tako dev, and — from F7 — NewTestApp) is responsible for
+// installing.
+func signerBackend() backends.URLSigner {
+	s := hooks.Signer
+	if s == nil {
+		panic("tako: no URL signer wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+	}
+	return s
+}
 
 // bucketBackend returns the wired bucket backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for

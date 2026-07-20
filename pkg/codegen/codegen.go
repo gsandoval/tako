@@ -63,6 +63,10 @@ func main() {
 		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
 	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
+	if hasBucket(g, svc) {
+		b.WriteString("\t// Signed upload/download URLs land here (SignedPut/SignedGet).\n")
+		b.WriteString("\tmux.Handle(\"/_tako/signed/\", runtime.SignedURLHandler())\n\n")
+	}
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
@@ -149,6 +153,17 @@ func helperName(b analyzer.Binding) string {
 		"float64": "Float64",
 	}[b.Type]
 	return kind + typ
+}
+
+// hasBucket reports whether the service's package declares a bucket —
+// the signal to mount the local signed-URL endpoint.
+func hasBucket(g *analyzer.AppGraph, svc analyzer.Service) bool {
+	for _, r := range g.Resources {
+		if r.Package == svc.Package && r.Kind == "bucket" {
+			return true
+		}
+	}
+	return false
 }
 
 // hasResources reports whether the service's package declares resources

@@ -2,6 +2,7 @@ package conformance
 
 import (
 	"flag"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -67,6 +68,37 @@ func TestTopic(t *testing.T) {
 				Backoff:     10 * time.Millisecond,
 			}).Topics()
 		}, TopicParams{MaxAttempts: 3})
+	case "gcp":
+		t.Skip("gcp backend arrives in Phase F")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
+
+func TestSignedURL(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunSignedURL(t, func(t *testing.T) SignedURLEnv {
+			dir := t.TempDir()
+			store := local.NewBucketStore(dir)
+			d := local.NewQueueDispatcher(dir, local.QueueOptions{
+				MaxAttempts: 3,
+				Backoff:     10 * time.Millisecond,
+			})
+			local.WireBucketEvents(store, d)
+			signer, err := local.NewURLSigner(dir, "http://placeholder")
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv := httptest.NewServer(local.SignedURLEndpoint(signer, store))
+			t.Cleanup(srv.Close)
+			// Re-mint with the real server address as the base.
+			signer, err = local.NewURLSigner(dir, srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			return SignedURLEnv{Signer: signer, Client: srv.Client(), Bucket: store, Topic: d.Topics()}
+		})
 	case "gcp":
 		t.Skip("gcp backend arrives in Phase F")
 	default:
