@@ -39,10 +39,34 @@ func RegisterWorker(name string, h tako.Handler) {
 	})
 }
 
-func workerName(queue string) string {
+// RegisterSubscriber binds a tako.Subscribe handler to its event source —
+// a topic or a bucket's Uploaded event — on the wired backend. Generated
+// mains call it once per subscriber at startup; subscribers of one source
+// deliver independently.
+func RegisterSubscriber(name string, h tako.Handler) {
+	kind, source, invoke := hooks.HandlerInfo(h)
+	if kind != "subscribe" {
+		panic(fmt.Sprintf("tako: RegisterSubscriber(%s): handler is %q, not a subscriber", name, kind))
+	}
+	fn, ok := invoke.(func(tako.Ctx, []byte) error)
+	if !ok || hooks.Topic == nil {
+		panic("tako: RegisterSubscriber before Boot")
+	}
+	hooks.Topic.Subscribe(source, name, func(ctx context.Context, payload []byte) error {
+		sctx := &requestCtx{Context: ctx, log: slog.Default().With("subscriber", name)}
+		return fn(sctx, payload)
+	})
+}
+
+// consumerName resolves the console name for one delivery: the subscriber
+// name topics carry, or the queue's registered worker.
+func consumerName(source, consumer string) string {
+	if consumer != "" {
+		return consumer
+	}
 	workerMu.Lock()
 	defer workerMu.Unlock()
-	if n := workerNames[queue]; n != "" {
+	if n := workerNames[source]; n != "" {
 		return n
 	}
 	return "worker"
@@ -51,21 +75,26 @@ func workerName(queue string) string {
 // attachQueueConsole narrates delivery on the dev console: ⚙ per attempt
 // and ack, ✗ per dead letter — the local async story stays visible.
 func attachQueueConsole(d *local.QueueDispatcher, dataDir string) {
-	d.OnAck(func(queue string, took time.Duration) {
-		fmt.Printf("⚙ %s → %s ok (%s)\n", queue, workerName(queue), took.Round(time.Millisecond))
+	d.OnAck(func(source, consumer string, took time.Duration) {
+		fmt.Printf("⚙ %s → %s ok (%s)\n", source, consumerName(source, consumer), took.Round(time.Millisecond))
 	})
-	d.OnAttempt(func(queue string, attempt, max int, err error, retryIn time.Duration) {
+	d.OnAttempt(func(source, consumer string, attempt, max int, err error, retryIn time.Duration) {
 		fmt.Printf("⚙ %s → %s attempt %d/%d failed: %v — retrying in %s\n",
-			queue, workerName(queue), attempt, max, err, retryIn)
+			source, consumerName(source, consumer), attempt, max, err, retryIn)
 	})
 	d.OnDeadLetter(func(dl backends.DeadLetter) {
+		who := consumerName(dl.Queue, dl.Subscriber)
 		if dl.Permanent {
 			fmt.Fprintf(os.Stdout, "✗ dead-letter %s: %s permanent failure: %s\n",
-				dl.Queue, workerName(dl.Queue), dl.LastError)
+				dl.Queue, who, dl.LastError)
 		} else {
 			fmt.Fprintf(os.Stdout, "✗ dead-letter %s: %s gave up after %d attempts: %s\n",
-				dl.Queue, workerName(dl.Queue), dl.Attempts, dl.LastError)
+				dl.Queue, who, dl.Attempts, dl.LastError)
 		}
-		fmt.Printf("  payload → %s/deadletter/%s/\n", dataDir, dl.Queue)
+		if dl.Subscriber != "" {
+			fmt.Printf("  payload → %s/deadletter/%s/%s/\n", dataDir, dl.Queue, dl.Subscriber)
+		} else {
+			fmt.Printf("  payload → %s/deadletter/%s/\n", dataDir, dl.Queue)
+		}
 	})
 }

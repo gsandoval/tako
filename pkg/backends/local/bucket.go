@@ -2,6 +2,7 @@ package local
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -9,9 +10,26 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
 )
+
+// WireBucketEvents connects a bucket store's writes to the dispatcher's
+// topics: every successful Put publishes the object's ObjectMeta (the
+// tako.ObjectInfo wire shape) on the topic "<bucket>.Uploaded" — the
+// local stand-in for GCS notifications (Phase F provides the same
+// contract in the cloud).
+func WireBucketEvents(s *BucketStore, d *QueueDispatcher) {
+	s.OnPut(func(bucket string, meta backends.ObjectMeta) {
+		payload, err := json.Marshal(meta)
+		if err != nil {
+			return
+		}
+		_ = d.Topics().Publish(context.Background(), bucket+".Uploaded", payload)
+	})
+}
 
 // BucketStore implements the bucket contract on the filesystem: the file
 // at <dir>/buckets/<bucket>/<key> IS the object, byte for byte, so dev
@@ -19,11 +37,23 @@ import (
 // directory beside the keys.
 type BucketStore struct {
 	dir string
+
+	mu    sync.Mutex
+	onPut []func(bucket string, meta backends.ObjectMeta)
 }
 
 // NewBucketStore roots a bucket store at dir (creating it lazily).
 func NewBucketStore(dir string) *BucketStore {
 	return &BucketStore{dir: dir}
+}
+
+// OnPut subscribes to successful writes — the local stand-in for GCS
+// upload notifications. It fires for EVERY write, including a handler's
+// own output.
+func (s *BucketStore) OnPut(fn func(bucket string, meta backends.ObjectMeta)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onPut = append(s.onPut, fn)
 }
 
 func (s *BucketStore) objectPath(bucket, key string) (string, error) {
@@ -70,7 +100,8 @@ func (s *BucketStore) Put(ctx context.Context, bucket, key string, data backends
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(f, data.Reader); err != nil {
+	written, err := io.Copy(f, data.Reader)
+	if err != nil {
 		f.Close()
 		return err
 	}
@@ -81,7 +112,21 @@ func (s *BucketStore) Put(ctx context.Context, bucket, key string, data backends
 	if err := os.MkdirAll(filepath.Dir(meta), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(meta, []byte(data.ContentType), 0o644)
+	if err := os.WriteFile(meta, []byte(data.ContentType), 0o644); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	observers := append([]func(string, backends.ObjectMeta){}, s.onPut...)
+	s.mu.Unlock()
+	for _, fn := range observers {
+		fn(bucket, backends.ObjectMeta{
+			Key:         key,
+			Size:        written,
+			ContentType: data.ContentType,
+			Updated:     time.Now().UTC(),
+		})
+	}
+	return nil
 }
 
 func (s *BucketStore) Delete(ctx context.Context, bucket, key string) error {

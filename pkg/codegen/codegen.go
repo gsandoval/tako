@@ -17,8 +17,8 @@ import (
 func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	var written []string
 	for _, svc := range g.Services {
-		if workerOnly(g, svc) {
-			continue // per-worker service mains arrive with the cloud phases
+		if asyncOnly(g, svc) {
+			continue // per-worker/per-subscriber service mains arrive with the cloud phases
 		}
 		src, err := serviceMain(g, svc)
 		if err != nil {
@@ -66,7 +66,7 @@ func main() {
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
-		if h.Service != svc.Name || h.Kind == "worker" {
+		if h.Service != svc.Name || h.Kind == "worker" || h.Kind == "subscribe" {
 			continue
 		}
 		decode := "nil"
@@ -84,11 +84,17 @@ func main() {
 	}
 
 	for _, h := range g.Handlers {
-		if h.Kind != "worker" || h.Package != svc.Package {
+		if h.Package != svc.Package {
 			continue
 		}
-		fmt.Fprintf(&b, "\t// %s — local mode runs the worker in-process\n", analyzer.HandlerLine(h))
-		fmt.Fprintf(&b, "\truntime.RegisterWorker(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
+		switch h.Kind {
+		case "worker":
+			fmt.Fprintf(&b, "\t// %s — local mode runs the worker in-process\n", analyzer.HandlerLine(h))
+			fmt.Fprintf(&b, "\truntime.RegisterWorker(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
+		case "subscribe":
+			fmt.Fprintf(&b, "\t// %s — local mode runs the subscriber in-process\n", analyzer.HandlerLine(h))
+			fmt.Fprintf(&b, "\truntime.RegisterSubscriber(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
+		}
 	}
 
 	b.WriteString("\truntime.Serve(mux)\n}\n")
@@ -156,16 +162,16 @@ func hasResources(g *analyzer.AppGraph, svc analyzer.Service) bool {
 	return false
 }
 
-// workerOnly reports whether every handler of the service is async — no
-// main is generated for it yet.
-func workerOnly(g *analyzer.AppGraph, svc analyzer.Service) bool {
+// asyncOnly reports whether every handler of the service is async (worker
+// or subscriber) — no main is generated for it yet.
+func asyncOnly(g *analyzer.AppGraph, svc analyzer.Service) bool {
 	any := false
 	for _, h := range g.Handlers {
 		if h.Service != svc.Name {
 			continue
 		}
 		any = true
-		if h.Kind != "worker" {
+		if h.Kind != "worker" && h.Kind != "subscribe" {
 			return false
 		}
 	}

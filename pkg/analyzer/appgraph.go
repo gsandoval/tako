@@ -72,9 +72,13 @@ type Handler struct {
 	Route string `json:"route,omitempty"`
 	// Schedule is the schedule for Cron handlers.
 	Schedule string `json:"schedule,omitempty"`
-	// Binding is the bound resource's Name for Worker/Subscribe/Job
-	// handlers.
+	// Binding is the bound source's name for Worker/Subscribe/Job
+	// handlers: the queue or topic name, or "<bucket>.Uploaded" for
+	// bucket-event subscribers.
 	Binding string `json:"binding,omitempty"`
+	// BindingKind distinguishes a Subscribe handler's source: "topic" or
+	// "bucket". Empty for workers (always a queue) and sync handlers.
+	BindingKind string `json:"binding_kind,omitempty"`
 	// ReqType names the request struct as generated code references it
 	// within the handler's package; empty for struct{}.
 	ReqType string `json:"req_type,omitempty"`

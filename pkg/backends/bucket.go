@@ -36,14 +36,15 @@ type BlobData struct {
 	Size int64
 }
 
-// ObjectMeta describes one stored object.
+// ObjectMeta describes one stored object. The json tags are the wire
+// shape of bucket-event payloads and match tako.ObjectInfo.
 type ObjectMeta struct {
 	// Key is the object's key within its bucket.
-	Key string
+	Key string `json:"key"`
 	// Size is the object's length in bytes.
-	Size int64
+	Size int64 `json:"size"`
 	// ContentType is the object's MIME type.
-	ContentType string
+	ContentType string `json:"contentType"`
 	// Updated is when the object was last written.
-	Updated time.Time
+	Updated time.Time `json:"updated"`
 }

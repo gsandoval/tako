@@ -1,5 +1,12 @@
 package tako
 
+import (
+	"encoding/json"
+
+	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/pkg/backends"
+)
+
 // Topic declares an event topic for payloads of type T: broadcast fan-out,
 // any number of Subscribe handlers, each with independent retries. The name
 // must be a string constant (analyzer-enforced).
@@ -13,16 +20,35 @@ type TopicHandle[T any] struct {
 	opts []Option
 }
 
-// Publish broadcasts event to every subscriber of the topic.
+// Publish broadcasts event to every subscriber of the topic. A topic with
+// no subscribers is legal — events broadcast into silence.
 func (t *TopicHandle[T]) Publish(ctx Ctx, event T) error {
-	panic("tako: not implemented")
+	raw, err := json.Marshal(event)
+	if err != nil {
+		return err
+	}
+	return topicBackend().Publish(ctx, t.name, raw)
 }
 
 func (t *TopicHandle[T]) eventSource(T) {}
+
+func (t *TopicHandle[T]) sourceName() string { return t.name }
 
 // EventSource is a stream of T events that Subscribe binds handlers to:
 // topics (TopicHandle) and bucket events (BucketEvent). It is implemented
 // only by SDK types.
 type EventSource[T any] interface {
 	eventSource(T)
+	sourceName() string
+}
+
+// topicBackend returns the wired topic backend, which boot (generated
+// mains, tako dev, and — from F7 — NewTestApp) is responsible for
+// installing.
+func topicBackend() backends.Topic {
+	b := hooks.Topic
+	if b == nil {
+		panic("tako: no topic backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+	}
+	return b
 }

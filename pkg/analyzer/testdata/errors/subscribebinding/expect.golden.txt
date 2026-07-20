@@ -1,0 +1,1 @@
+app.go:9:24: tako.Subscribe must bind a topic or bucket event declared as a package-level var in this module (tako/subscribe-binding)

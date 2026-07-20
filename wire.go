@@ -11,6 +11,6 @@ func init() {
 		if !ok {
 			return "", "", nil
 		}
-		return hd.kind, hd.queue, hd.invoke
+		return hd.kind, hd.source, hd.invoke
 	}
 }

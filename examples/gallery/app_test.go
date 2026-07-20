@@ -24,7 +24,7 @@ func serve(t *testing.T) *httptest.Server {
 	if err := runtime.BootLocal(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	registerWorkers(t)
+	registerHandlers(t)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/photos", runtime.JSONHandler(Upload, func(r *http.Request) (UploadReq, error) {
 		var req UploadReq
@@ -156,10 +156,14 @@ func TestMissingUploadFieldIs400(t *testing.T) {
 	}
 }
 
-// registerWorkers mirrors the generated main's worker wiring.
-func registerWorkers(t *testing.T) {
+// registerHandlers mirrors the generated main's async wiring: the worker
+// and all three subscribers.
+func registerHandlers(t *testing.T) {
 	t.Helper()
+	runtime.RegisterSubscriber("OnUploaded", OnUploaded)
 	runtime.RegisterWorker("MakeThumb", MakeThumb)
+	runtime.RegisterSubscriber("NotifyOwner", NotifyOwner)
+	runtime.RegisterSubscriber("WarmFeed", WarmFeed)
 }
 
 func TestThumbnailPipeline(t *testing.T) {
@@ -200,17 +204,16 @@ func TestNonImageDeadLetters(t *testing.T) {
 	if err := runtime.BootLocal(dir); err != nil {
 		t.Fatal(err)
 	}
-	registerWorkers(t)
+	registerHandlers(t)
 	ctx := runtime.NewCtx(t.Context())
 
-	txt := tako.Blob{Reader: strings.NewReader("notes"), ContentType: "text/plain", Size: 5}
-	if err := photos.Put(ctx, "doc", txt); err != nil {
-		t.Fatal(err)
-	}
+	// The bucket write alone starts the pipeline: its event enqueues the
+	// ThumbJob — nothing publishes by hand anymore.
 	if err := photoStore.Put(ctx, Photo{ID: "doc"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := thumbs.Publish(ctx, ThumbJob{PhotoID: "doc"}); err != nil {
+	txt := tako.Blob{Reader: strings.NewReader("notes"), ContentType: "text/plain", Size: 5}
+	if err := photos.Put(ctx, "doc", txt); err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.WaitIdle(30 * time.Second); err != nil {
@@ -245,14 +248,11 @@ func TestEmptyUploadIsPermanent(t *testing.T) {
 	if err := runtime.BootLocal(dir); err != nil {
 		t.Fatal(err)
 	}
-	registerWorkers(t)
+	registerHandlers(t)
 	ctx := runtime.NewCtx(t.Context())
 
 	empty := tako.Blob{Reader: strings.NewReader(""), ContentType: "image/png", Size: 0}
 	if err := photos.Put(ctx, "void", empty); err != nil {
-		t.Fatal(err)
-	}
-	if err := thumbs.Publish(ctx, ThumbJob{PhotoID: "void"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.WaitIdle(10 * time.Second); err != nil {
@@ -270,5 +270,65 @@ func TestEmptyUploadIsPermanent(t *testing.T) {
 	_ = json.Unmarshal(raw, &dl)
 	if dl.Attempts != 1 || !dl.Permanent {
 		t.Fatalf("dead letter = %+v", dl)
+	}
+}
+
+// TestFanOutIndependence is F5's core claim: one PhotoReady event, two
+// subscribers, independent fates — NotifyOwner retries into its own dead
+// letter while WarmFeed acks the same event untouched.
+func TestFanOutIndependence(t *testing.T) {
+	dir := t.TempDir()
+	if err := runtime.BootLocal(dir); err != nil {
+		t.Fatal(err)
+	}
+	registerHandlers(t)
+	ctx := runtime.NewCtx(t.Context())
+
+	if err := photoStore.Put(ctx, Photo{ID: "b1", Caption: "boom goes"}); err != nil {
+		t.Fatal(err)
+	}
+	img := tako.Blob{Reader: strings.NewReader("JPEGBYTES"), ContentType: "image/jpeg", Size: 9}
+	if err := photos.Put(ctx, "b1", img); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.WaitIdle(30 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// The pipeline itself succeeded: thumb written, photo ready.
+	p, err := photoStore.Get(ctx, "b1")
+	if err != nil || !p.Ready {
+		t.Fatalf("photo = %+v, %v", p, err)
+	}
+
+	// NotifyOwner dead-lettered in its own directory…
+	letters, err := filepath.Glob(filepath.Join(dir, "deadletter", "photo-ready", "NotifyOwner", "*.json"))
+	if err != nil || len(letters) != 1 {
+		t.Fatalf("NotifyOwner dead letters = %v, %v", letters, err)
+	}
+	raw, _ := os.ReadFile(letters[0])
+	var dl struct {
+		Queue      string `json:"queue"`
+		Subscriber string `json:"subscriber"`
+		Attempts   int    `json:"attempts"`
+		LastError  string `json:"lastError"`
+		Permanent  bool   `json:"permanent"`
+	}
+	if err := json.Unmarshal(raw, &dl); err != nil {
+		t.Fatal(err)
+	}
+	if dl.Queue != "photo-ready" || dl.Subscriber != "NotifyOwner" || dl.Attempts != 5 ||
+		dl.Permanent || dl.LastError != `notification service rejected "boom goes"` {
+		t.Fatalf("dead letter = %+v", dl)
+	}
+
+	// …and WarmFeed did not: no other letters exist anywhere.
+	others, _ := filepath.Glob(filepath.Join(dir, "deadletter", "photo-ready", "WarmFeed", "*.json"))
+	if len(others) != 0 {
+		t.Fatalf("WarmFeed dead letters = %v", others)
+	}
+	queueLetters, _ := filepath.Glob(filepath.Join(dir, "deadletter", "thumbnails", "*.json"))
+	if len(queueLetters) != 0 {
+		t.Fatalf("queue dead letters = %v", queueLetters)
 	}
 }

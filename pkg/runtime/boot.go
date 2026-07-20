@@ -46,10 +46,15 @@ func BootLocal(dir string) error {
 		return err
 	}
 	hooks.Entity = store
-	hooks.Bucket = local.NewBucketStore(dir)
+	buckets := local.NewBucketStore(dir)
+	hooks.Bucket = buckets
 	dispatcher := local.NewQueueDispatcher(dir, local.QueueOptions{})
 	attachQueueConsole(dispatcher, dir)
 	hooks.Queue = dispatcher
+	hooks.Topic = dispatcher.Topics()
+	// Every bucket write publishes on "<bucket>.Uploaded" — the local
+	// stand-in for GCS notifications.
+	local.WireBucketEvents(buckets, dispatcher)
 	bootedQueue = dispatcher
 	bootedStore = store
 	return nil

@@ -74,6 +74,8 @@ func Analyze(cfg Config) (*AppGraph, error) {
 	entities := map[string]*entityType{}    // payload type key → schema
 	entityRes := map[string]*Resource{}     // payload type key → resource entry
 	queueVars := map[types.Object]string{}  // queue var object → queue name
+	topicVars := map[types.Object]string{}  // topic var object → topic name
+	bucketVars := map[types.Object]string{} // bucket var object → bucket name
 	workersByQueue := map[string]*Handler{} // queue name → its worker
 	type varDecl struct {
 		name *ast.Ident
@@ -117,11 +119,17 @@ func Analyze(cfg Config) (*AppGraph, error) {
 			case "Bucket":
 				if r := extractBucket(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
+					bucketVars[pkg.TypesInfo.Defs[d.name]] = r.Name
 				}
 			case "Queue":
 				if r := extractQueue(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					queueVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+				}
+			case "Topic":
+				if r := extractTopic(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					topicVars[pkg.TypesInfo.Defs[d.name]] = r.Name
 				}
 			}
 		}
@@ -133,6 +141,10 @@ func Analyze(cfg Config) (*AppGraph, error) {
 				}
 			case "Worker":
 				if h := extractWorker(cfg.Dir, pkg, d.name, d.call, queueVars, workersByQueue, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+				}
+			case "Subscribe":
+				if h := extractSubscribe(cfg.Dir, pkg, d.name, d.call, topicVars, bucketVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 				}
 			}

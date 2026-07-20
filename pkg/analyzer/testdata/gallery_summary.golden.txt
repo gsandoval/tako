@@ -1,0 +1,35 @@
+gallery: 5 services
+  service gallery (package gallery, profile default)
+    POST /api/photos → Upload (app.go:36)
+    GET /api/photos/{id}/image → Image (app.go:37)
+    GET /api/photos/{id}/thumb → Thumb (app.go:38)
+    GET /api/photos → List (app.go:39)
+    GET /api/objects → Objects (app.go:40)
+    bucket photos
+    entity photos
+    queue thumbnails
+    topic photo-ready
+  service gallery-onuploaded (package gallery, profile default)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:44)
+    bucket photos
+    entity photos
+    queue thumbnails
+    topic photo-ready
+  service gallery-makethumb (package gallery, profile default)
+    worker MakeThumb ← queue thumbnails (app.go:45)
+    bucket photos
+    entity photos
+    queue thumbnails
+    topic photo-ready
+  service gallery-notifyowner (package gallery, profile default)
+    subscriber NotifyOwner ← topic photo-ready (app.go:46)
+    bucket photos
+    entity photos
+    queue thumbnails
+    topic photo-ready
+  service gallery-warmfeed (package gallery, profile default)
+    subscriber WarmFeed ← topic photo-ready (app.go:47)
+    bucket photos
+    entity photos
+    queue thumbnails
+    topic photo-ready

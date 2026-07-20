@@ -21,20 +21,36 @@ type QueueOptions struct {
 	Backoff time.Duration
 }
 
-// QueueDispatcher implements the queue contract in-process: Publish
-// dispatches to the registered consumer on a goroutine, redelivers on
-// error with a fixed backoff, and dead-letters to
-// <dir>/deadletter/<queue>/<id>.json.
+// QueueDispatcher implements the queue and topic contracts in-process:
+// Publish dispatches to the registered consumer(s) on goroutines,
+// redelivers on error with a fixed backoff, and dead-letters to
+// <dir>/deadletter/<queue>/<id>.json (queues) or
+// <dir>/deadletter/<topic>/<subscriber>/<id>.json (topics).
 type QueueDispatcher struct {
 	dir  string
 	opts QueueOptions
 
 	mu           sync.Mutex
 	consumers    map[string]func(ctx context.Context, payload []byte) error
+	subscribers  map[string][]topicSub
 	onDeadLetter []func(backends.DeadLetter)
-	onAttempt    func(queue string, attempt, max int, err error, retryIn time.Duration)
-	onAck        func(queue string, took time.Duration)
+	onAttempt    func(source, consumer string, attempt, max int, err error, retryIn time.Duration)
+	onAck        func(source, consumer string, took time.Duration)
 	inflight     sync.WaitGroup
+}
+
+// topicSub is one named subscriber of one topic.
+type topicSub struct {
+	name    string
+	deliver func(ctx context.Context, payload []byte) error
+}
+
+// delivery identifies one message's destination for narration and
+// dead-lettering.
+type delivery struct {
+	source   string // queue or topic name
+	consumer string // subscriber name; "" for queue workers
+	dlDir    string // dead-letter dir, relative to the dispatcher root
 }
 
 // NewQueueDispatcher roots a dispatcher's dead letters at dir.
@@ -45,7 +61,12 @@ func NewQueueDispatcher(dir string, opts QueueOptions) *QueueDispatcher {
 	if opts.Backoff <= 0 {
 		opts.Backoff = 200 * time.Millisecond
 	}
-	return &QueueDispatcher{dir: dir, opts: opts, consumers: map[string]func(context.Context, []byte) error{}}
+	return &QueueDispatcher{
+		dir:         dir,
+		opts:        opts,
+		consumers:   map[string]func(context.Context, []byte) error{},
+		subscribers: map[string][]topicSub{},
+	}
 }
 
 // OnDeadLetter subscribes to dead letters (the dev console printer).
@@ -56,14 +77,16 @@ func (d *QueueDispatcher) OnDeadLetter(fn func(backends.DeadLetter)) {
 }
 
 // OnAttempt subscribes to failed delivery attempts that will retry.
-func (d *QueueDispatcher) OnAttempt(fn func(queue string, attempt, max int, err error, retryIn time.Duration)) {
+// consumer is the subscriber name for topic deliveries, "" for queues.
+func (d *QueueDispatcher) OnAttempt(fn func(source, consumer string, attempt, max int, err error, retryIn time.Duration)) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.onAttempt = fn
 }
 
-// OnAck subscribes to successful deliveries.
-func (d *QueueDispatcher) OnAck(fn func(queue string, took time.Duration)) {
+// OnAck subscribes to successful deliveries. consumer is the subscriber
+// name for topic deliveries, "" for queues.
+func (d *QueueDispatcher) OnAck(fn func(source, consumer string, took time.Duration)) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.onAck = fn
@@ -88,11 +111,44 @@ func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []b
 	d.inflight.Add(1)
 	// Delivery is detached from the publishing request's context: async
 	// work outlives the request that enqueued it.
-	go d.deliverLoop(queue, deliver, payload)
+	go d.deliverLoop(delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}, deliver, payload)
 	return nil
 }
 
-func (d *QueueDispatcher) deliverLoop(queue string, deliver func(context.Context, []byte) error, payload []byte) {
+// Topics adapts the dispatcher to the topic contract: fan-out with an
+// independent delivery loop — attempts, backoff, dead letter — per
+// (topic, subscriber) pair.
+func (d *QueueDispatcher) Topics() backends.Topic { return topicView{d} }
+
+type topicView struct{ d *QueueDispatcher }
+
+func (v topicView) Subscribe(topic, subscriber string, deliver func(ctx context.Context, payload []byte) error) {
+	v.d.mu.Lock()
+	defer v.d.mu.Unlock()
+	v.d.subscribers[topic] = append(v.d.subscribers[topic], topicSub{name: subscriber, deliver: deliver})
+}
+
+func (v topicView) Publish(ctx context.Context, topic string, payload []byte) error {
+	v.d.mu.Lock()
+	subs := append([]topicSub{}, v.d.subscribers[topic]...)
+	v.d.mu.Unlock()
+	// Zero subscribers is legal: events broadcast into silence.
+	for _, sub := range subs {
+		v.d.inflight.Add(1)
+		go v.d.deliverLoop(delivery{
+			source:   topic,
+			consumer: sub.name,
+			dlDir:    filepath.Join("deadletter", topic, sub.name),
+		}, sub.deliver, payload)
+	}
+	return nil
+}
+
+// OnDeadLetter lets conformance observe topic dead letters through the
+// same interface queues use.
+func (v topicView) OnDeadLetter(fn func(backends.DeadLetter)) { v.d.OnDeadLetter(fn) }
+
+func (d *QueueDispatcher) deliverLoop(to delivery, deliver func(context.Context, []byte) error, payload []byte) {
 	defer d.inflight.Done()
 	start := time.Now()
 	var lastErr error
@@ -103,12 +159,12 @@ func (d *QueueDispatcher) deliverLoop(queue string, deliver func(context.Context
 			ack := d.onAck
 			d.mu.Unlock()
 			if ack != nil {
-				ack(queue, time.Since(start))
+				ack(to.source, to.consumer, time.Since(start))
 			}
 			return
 		}
 		if backends.IsPermanent(lastErr) {
-			d.deadLetter(queue, payload, attempt, lastErr, true)
+			d.deadLetter(to, payload, attempt, lastErr, true)
 			return
 		}
 		if attempt < d.opts.MaxAttempts {
@@ -116,23 +172,24 @@ func (d *QueueDispatcher) deliverLoop(queue string, deliver func(context.Context
 			onAttempt := d.onAttempt
 			d.mu.Unlock()
 			if onAttempt != nil {
-				onAttempt(queue, attempt, d.opts.MaxAttempts, lastErr, d.opts.Backoff)
+				onAttempt(to.source, to.consumer, attempt, d.opts.MaxAttempts, lastErr, d.opts.Backoff)
 			}
 			time.Sleep(d.opts.Backoff)
 		}
 	}
-	d.deadLetter(queue, payload, d.opts.MaxAttempts, lastErr, false)
+	d.deadLetter(to, payload, d.opts.MaxAttempts, lastErr, false)
 }
 
-func (d *QueueDispatcher) deadLetter(queue string, payload []byte, attempts int, err error, permanent bool) {
+func (d *QueueDispatcher) deadLetter(to delivery, payload []byte, attempts int, err error, permanent bool) {
 	dl := backends.DeadLetter{
-		Queue:     queue,
-		Payload:   payload,
-		Attempts:  attempts,
-		LastError: err.Error(),
-		Permanent: permanent,
+		Queue:      to.source,
+		Subscriber: to.consumer,
+		Payload:    payload,
+		Attempts:   attempts,
+		LastError:  err.Error(),
+		Permanent:  permanent,
 	}
-	dir := filepath.Join(d.dir, "deadletter", queue)
+	dir := filepath.Join(d.dir, to.dlDir)
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr == nil {
 		raw, _ := json.MarshalIndent(struct {
 			backends.DeadLetter

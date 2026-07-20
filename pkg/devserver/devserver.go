@@ -68,9 +68,15 @@ func Run(ctx context.Context, opts Options) error {
 		select {
 		case <-ctx.Done():
 			return nil
-		case _, ok := <-watcher.Events:
+		case ev, ok := <-watcher.Events:
 			if !ok {
 				return nil
+			}
+			// The loop must not retrigger itself: its own writes live
+			// under .tako, and each analyze pass READS the source files,
+			// which macOS surfaces as attribute-only (Chmod) events.
+			if hiddenPath(dir, ev.Name) || ev.Op == fsnotify.Chmod {
+				continue
 			}
 			drain(watcher, 150*time.Millisecond)
 			if err := s.cycle(false); err != nil {
@@ -107,9 +113,7 @@ func (s *session) cycle(first bool) error {
 		return err
 	}
 	if first {
-		fmt.Fprintf(s.out(), "  analyzing   %d service%s, %d endpoint%s\n",
-			len(graph.Services), plural(len(graph.Services)),
-			len(graph.Handlers), plural(len(graph.Handlers)))
+		fmt.Fprintf(s.out(), "  analyzing   %s\n", countLine(graph))
 	}
 
 	written, err := codegen.Generate(graph, s.dir)
@@ -129,17 +133,25 @@ func (s *session) cycle(first bool) error {
 
 	if first {
 		fmt.Fprintf(s.out(), "  starting    http://localhost:%s\n\n", s.opts.Port)
-		hasWorkers := false
+		workers, subs := 0, 0
 		for _, h := range graph.Handlers {
-			if h.Kind == "worker" {
-				hasWorkers = true
+			switch h.Kind {
+			case "worker":
+				workers++
+			case "subscribe":
+				subs++
 			}
 			fmt.Fprintf(s.out(), "  %s\n", analyzer.HandlerLine(h))
 		}
 		for _, r := range graph.Resources {
 			fmt.Fprintf(s.out(), "  %s\n", analyzer.ResourceLine(r))
 		}
-		if hasWorkers {
+		switch {
+		case workers > 0 && subs > 0:
+			fmt.Fprintln(s.out(), "  local: workers and subscribers run in-process (per-handler services arrive with cloud deploys)")
+		case subs > 0:
+			fmt.Fprintln(s.out(), "  local: subscribers run in-process (per-handler services arrive with cloud deploys)")
+		case workers > 0:
 			fmt.Fprintln(s.out(), "  local: workers run in-process (per-worker services arrive with cloud deploys)")
 		}
 		fmt.Fprintln(s.out())
@@ -200,6 +212,24 @@ func indent(msg string) string {
 	return strings.Join(lines, "\n")
 }
 
+// hiddenPath reports whether path sits under a hidden directory (or is a
+// hidden file) relative to dir — .tako's generated output, data files,
+// and .git internals. The watcher can still surface such events (kqueue
+// watches whole directories), so the event loop filters them; reloading
+// on the loop's own writes would spin forever.
+func hiddenPath(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return false
+	}
+	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if strings.HasPrefix(part, ".") {
+			return true
+		}
+	}
+	return false
+}
+
 // watch recursively watches dir's directories, skipping hidden ones
 // (.tako, .git).
 func watch(dir string) (*fsnotify.Watcher, error) {
@@ -255,12 +285,13 @@ func waitReady(port string, timeout time.Duration) error {
 }
 
 // appService picks the one service with synchronous handlers — the one
-// tako dev builds and runs; local mode collapses workers into it.
+// tako dev builds and runs; local mode collapses workers and subscribers
+// into it.
 func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 	var apps []analyzer.Service
 	for _, svc := range g.Services {
 		for _, h := range g.Handlers {
-			if h.Service == svc.Name && h.Kind != "worker" {
+			if h.Service == svc.Name && h.Kind != "worker" && h.Kind != "subscribe" {
 				apps = append(apps, svc)
 				break
 			}
@@ -270,6 +301,31 @@ func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 		return analyzer.Service{}, fmt.Errorf("tako dev serves exactly one app service in the walking skeleton; found %d", len(apps))
 	}
 	return apps[0], nil
+}
+
+// countLine renders the banner's analyzing summary: endpoints are the
+// sync handlers; async handlers are counted by kind.
+func countLine(g *analyzer.AppGraph) string {
+	endpoints, workers, subs := 0, 0, 0
+	for _, h := range g.Handlers {
+		switch h.Kind {
+		case "worker":
+			workers++
+		case "subscribe":
+			subs++
+		default:
+			endpoints++
+		}
+	}
+	line := fmt.Sprintf("%d service%s, %d endpoint%s",
+		len(g.Services), plural(len(g.Services)), endpoints, plural(endpoints))
+	if workers > 0 {
+		line += fmt.Sprintf(", %d worker%s", workers, plural(workers))
+	}
+	if subs > 0 {
+		line += fmt.Sprintf(", %d subscriber%s", subs, plural(subs))
+	}
+	return line
 }
 
 func plural(n int) string {

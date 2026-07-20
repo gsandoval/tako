@@ -88,6 +88,8 @@ type BucketEvent struct {
 
 func (BucketEvent) eventSource(ObjectInfo) {}
 
+func (e BucketEvent) sourceName() string { return e.bucket.name + ".Uploaded" }
+
 // bucketBackend returns the wired bucket backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.

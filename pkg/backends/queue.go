@@ -20,8 +20,11 @@ type Queue interface {
 
 // DeadLetter records a message that gave up delivery.
 type DeadLetter struct {
-	// Queue is the queue the message failed on.
+	// Queue is the queue or topic the message failed on.
 	Queue string `json:"queue"`
+	// Subscriber names the failing subscriber for topic deliveries; empty
+	// for queue deliveries (a queue has exactly one consumer).
+	Subscriber string `json:"subscriber,omitempty"`
 	// Payload is the message's raw JSON payload.
 	Payload []byte `json:"payload"`
 	// Attempts is how many deliveries were tried.

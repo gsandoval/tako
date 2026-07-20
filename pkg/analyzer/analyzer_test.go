@@ -75,6 +75,16 @@ func TestGalleryGraph(t *testing.T) {
 	compareGolden(t, "testdata/gallery_appgraph.golden.json", got)
 }
 
+// TestGallerySummary goldens the summary with worker and subscriber
+// lines — the async spine as the banner shows it.
+func TestGallerySummary(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/gallery")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/gallery): %v", err)
+	}
+	compareGolden(t, "testdata/gallery_summary.golden.txt", []byte(Summary(g)))
+}
+
 // TestErrors runs each testdata/errors/* fixture module and asserts the
 // exact analysis-error text — error messages are the product's primary UX
 // and are under test, byte for byte.

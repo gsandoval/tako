@@ -1454,3 +1454,168 @@ Signed URLs (F6 — upload stays a multipart endpoint), Cache/`GetOrFill`
 (F8 — warmFeed logs), auth/Owner in payloads (F9), `WithParallel`,
 external/cross-project topics, GCS notification plumbing (Phase F),
 dead-letter replay CLI (noted discovered work), ordering keys.
+
+---
+
+## F5 — implementation: Topic + Subscribe + bucket events (2026-07-19)
+
+DX proposal approved as written; shipped surface matches it, with one
+spelling unification: the bucket-event source is `photos.Uploaded`
+everywhere — console lines, dead-letter directory, AppGraph binding —
+matching the exact spelling users write in code (the proposal's §2 had
+shown a lowercase `.uploaded` dir; the capitalized form won).
+
+**What shipped**
+
+- **Topic contract** (`pkg/backends/topic.go`): `Publish` broadcasts to
+  every subscriber; `Subscribe(topic, subscriber, deliver)` registers a
+  named subscriber. `DeadLetter` grew `subscriber` (omitempty — queue
+  letters are byte-identical to F4's). `ObjectMeta` grew json tags: it IS
+  the bucket-event wire shape, matching `tako.ObjectInfo`.
+- **Local dispatcher generalized** (`pkg/backends/local/queue.go`): one
+  delivery loop now serves queues and topics; each (topic, subscriber)
+  pair gets its own attempts/backoff/dead-letter
+  (`deadletter/<topic>/<subscriber>/<id>.json`; queues keep their flat
+  F4 layout). `Topics()` adapts the dispatcher to the topic contract.
+  Observer callbacks gained the consumer name.
+- **Bucket events** (`pkg/backends/local/bucket.go`): `OnPut` observer on
+  the fs store; `WireBucketEvents` publishes each successful write's
+  ObjectMeta on `<bucket>.Uploaded`. Wired in `runtime.BootLocal` — the
+  local stand-in for GCS notifications (Phase F ships the same contract).
+- **SDK live** (root): `TopicHandle.Publish`, `Subscribe` (topic AND
+  bucket-event bindings, one generic body), `BucketEvent.sourceName`.
+  `EventSource[T]` gained the unexported `sourceName() string` — the SDK
+  lock flagged it and was updated deliberately: the interface remains
+  implementable only by SDK types; user-visible surface is unchanged.
+  Handler's internal field renamed queue→source.
+- **Runtime**: `RegisterSubscriber` beside `RegisterWorker`; console
+  narration carries the subscriber name per delivery; dead-letter lines
+  print the per-subscriber path.
+- **Analyzer**: `topic` resources (payload type recorded, `const-name`
+  enforced); `subscribe` handlers with `binding` + new `binding_kind`
+  ("topic"/"bucket") in the AppGraph; each subscriber partitions into its
+  own service. New rule `tako/subscribe-binding`; Subscribe joins
+  `invalid-option` (accepts WithProfile). Multi-subscriber is legal by
+  construction — the gallery golden has two subscribers on one topic and
+  zero diagnostics. Fixtures: subscribebinding, subscribeopt; the compile
+  fixture grew a Subscribe payload-mismatch case. New
+  `gallery_summary.golden.txt` covers the subscriber banner lines.
+- **Codegen**: `RegisterSubscriber` lines in the app main (local
+  collapse); subscriber-only services generate no main yet (asyncOnly,
+  formerly workerOnly).
+- **Devserver**: banner counts endpoints/workers/subscribers accurately;
+  honesty line adapts (`workers and subscribers run in-process`).
+- **Conformance grows two chapters**: Topic (6 cases — fan-out,
+  independent retry, per-subscriber dead letters, Permanent,
+  zero-subscriber publish, isolation) and BucketEvents (3 cases — Put
+  publishes meta, self-writes fire, per-bucket topics). Total
+  local suite: entity 18, bucket 7, queue 6, topic 6, bucket-events 3.
+- **Gallery** is event-driven end to end per spec Part 3's shape (minus
+  signed URLs): upload writes entity+blob only; `photos.Uploaded` →
+  `OnUploaded` (with the `_thumb` self-write filter) → `thumbs` →
+  `MakeThumb` → `ready` → `NotifyOwner` + `WarmFeed`. Caption containing
+  "boom" is the fan-out failure lever. New `TestFanOutIndependence`
+  asserts the boom letter's queue/subscriber/attempts/lastError and that
+  WarmFeed and the queue stayed clean.
+
+**Bug found & fixed during validation (in scope — the dev loop could not
+survive the validation run):** `tako dev` reloaded endlessly while idle.
+Two causes, both fixed in `pkg/devserver`: (1) macOS kqueue surfaces
+attribute-only (Chmod) events when the analyzer READS source files
+(atime), so every analyze pass triggered the next reload — chmod-only
+events are now ignored (real saves emit Write/Create); (2) events from
+hidden paths (.tako's own generated output/data) are now filtered.
+Verified: 25s idle → zero reloads; a real append to app.go still
+reloads. This also explains why the first validation curl came back
+empty (a reload killed the in-flight request). Also of note: killing
+`go run` does not kill the dev child process — orphaned instances then
+fight over port and bbolt lock; noted under discovered work as a future
+`tako dev` hardening item (own-pid lockfile).
+
+**Validation transcript (tier 2, validate/topic.md, PORT=8090)**
+
+Banner:
+
+```
+  analyzing   5 services, 5 endpoints, 1 worker, 3 subscribers
+  ...
+  subscriber OnUploaded ← bucket photos.Uploaded (app.go:44)
+  worker MakeThumb ← queue thumbnails (app.go:45)
+  subscriber NotifyOwner ← topic photo-ready (app.go:46)
+  subscriber WarmFeed ← topic photo-ready (app.go:47)
+  bucket photos
+  entity photos
+  queue thumbnails
+  topic photo-ready
+  local: workers and subscribers run in-process (per-handler services arrive with cloud deploys)
+ready in 689ms — watching (backends: local, in-process)
+```
+
+§2 clean upload (`caption=cat`) — the whole spine, no hand-published
+messages; note OnUploaded firing twice (the worker's `_thumb` write,
+acked by the filter):
+
+```
+POST /api/photos → 200 (23.7ms)
+⚙ photos.Uploaded → OnUploaded ok (0s)
+⚙ photos.Uploaded → OnUploaded ok (0s)
+⚙ thumbnails → MakeThumb ok (9ms)
+INFO owner notified subscriber=NotifyOwner photo=yxwkkk3h3pqibl4w
+⚙ photo-ready → NotifyOwner ok (0s)
+INFO feed warmed subscriber=WarmFeed photo=yxwkkk3h3pqibl4w
+⚙ photo-ready → WarmFeed ok (0s)
+```
+
+`GET /api/photos` → `"ready":true`.
+
+§3 fan-out, independent fates (`caption=boom`) — WarmFeed acks before
+NotifyOwner's first failure:
+
+```
+⚙ thumbnails → MakeThumb ok (9ms)
+INFO feed warmed subscriber=WarmFeed photo=e2f7jwanq7s3auve
+⚙ photo-ready → WarmFeed ok (0s)
+⚙ photo-ready → NotifyOwner attempt 1/5 failed: notification service rejected "boom" — retrying in 200ms
+⚙ photo-ready → NotifyOwner attempt 2/5 failed: … — retrying in 200ms
+⚙ photo-ready → NotifyOwner attempt 3/5 failed: … — retrying in 200ms
+⚙ photo-ready → NotifyOwner attempt 4/5 failed: … — retrying in 200ms
+✗ dead-letter photo-ready: NotifyOwner gave up after 5 attempts: notification service rejected "boom"
+  payload → .tako/data/deadletter/photo-ready/NotifyOwner/
+```
+
+§4 the letter (`deadletter/photo-ready/NotifyOwner/…json`):
+
+```
+{"queue": "photo-ready", "subscriber": "NotifyOwner", "attempts": 5,
+ "lastError": "notification service rejected \"boom\"", "permanent": false,
+ "payload": {"photoID": "e2f7jwanq7s3auve", "caption": "boom"}, "time": …}
+```
+
+No WarmFeed directory exists; the boom photo IS `"ready": true` (only
+the notification failed).
+
+§5 inline-constructor binding → analysis error, last good build keeps
+serving:
+
+```
+✗ analysis failed — still serving last good build
+  app.go:46:31: tako.Subscribe must bind a topic or bucket event declared as a package-level var in this module (tako/subscribe-binding)
+```
+
+§7 `notifyOwner(ctx, e string)` → Go compile error naming the inferred
+type mismatch, not a tako error. §8: conformance 40/40; `go test ./...`
+green in all four modules.
+
+**Discovered work (noted, not done)**
+
+- `tako dev` hardening: pidfile/port-guard so an orphaned instance (e.g.
+  after `go run`'s parent is killed) can't silently fight a new one over
+  the port and the bbolt lock.
+- Dead-letter replay CLI grows a per-subscriber dimension
+  (`tako replay <topic>/<subscriber>`) — already noted in F4; shape
+  updated.
+
+**GATE REQUEST — F5 (local): Topic + Subscribe + bucket events.** Please
+run `validate/topic.md` — the centerpiece is §3, one event splitting
+into two independent fates — and record the verdict in
+`docs/validation-log.md`.

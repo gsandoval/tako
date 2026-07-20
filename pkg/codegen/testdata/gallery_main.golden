@@ -18,23 +18,32 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// POST /api/photos → gallery.Upload (app.go:28)
+	// POST /api/photos → gallery.Upload (app.go:36)
 	mux.Handle("POST /api/photos", runtime.JSONHandler(gallery.Upload, decodeUpload))
 
-	// GET /api/photos/{id}/image → gallery.Image (app.go:29)
+	// GET /api/photos/{id}/image → gallery.Image (app.go:37)
 	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(gallery.Image, decodeImage))
 
-	// GET /api/photos/{id}/thumb → gallery.Thumb (app.go:30)
+	// GET /api/photos/{id}/thumb → gallery.Thumb (app.go:38)
 	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb))
 
-	// GET /api/photos → gallery.List (app.go:31)
+	// GET /api/photos → gallery.List (app.go:39)
 	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, nil))
 
-	// GET /api/objects → gallery.Objects (app.go:32)
+	// GET /api/objects → gallery.Objects (app.go:40)
 	mux.Handle("GET /api/objects", runtime.JSONHandler(gallery.Objects, nil))
 
-	// worker MakeThumb ← queue thumbnails (app.go:35) — local mode runs the worker in-process
+	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:44) — local mode runs the subscriber in-process
+	runtime.RegisterSubscriber("OnUploaded", gallery.OnUploaded)
+
+	// worker MakeThumb ← queue thumbnails (app.go:45) — local mode runs the worker in-process
 	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
+
+	// subscriber NotifyOwner ← topic photo-ready (app.go:46) — local mode runs the subscriber in-process
+	runtime.RegisterSubscriber("NotifyOwner", gallery.NotifyOwner)
+
+	// subscriber WarmFeed ← topic photo-ready (app.go:47) — local mode runs the subscriber in-process
+	runtime.RegisterSubscriber("WarmFeed", gallery.WarmFeed)
 
 	runtime.Serve(mux)
 }

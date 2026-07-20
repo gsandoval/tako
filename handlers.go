@@ -33,7 +33,7 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 // by Worker, Subscribe, JobHandler, Cron, and Singleton.
 type Handler struct {
 	kind   string
-	queue  string
+	source string
 	invoke func(Ctx, []byte) error
 }
 
@@ -59,8 +59,8 @@ func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option
 // an analysis error.
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
 	return Handler{
-		kind:  "worker",
-		queue: queue.name,
+		kind:   "worker",
+		source: queue.name,
 		invoke: func(ctx Ctx, raw []byte) error {
 			var msg T
 			if err := json.Unmarshal(raw, &msg); err != nil {
@@ -72,10 +72,22 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option)
 }
 
 // Subscribe binds fn as one subscriber of an event source — a topic or a
-// bucket event. Subscribers fan out independently: each gets every event
-// and retries on its own.
+// bucket event. Subscribers fan out independently: each gets every event,
+// retries on its own, and dead-letters on its own; one subscriber failing
+// never delays another. Like every async handler it is func(Ctx, T) error:
+// return nil to ack, an error to retry, tako.Permanent to give up.
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler {
-	return Handler{kind: "subscribe"}
+	return Handler{
+		kind:   "subscribe",
+		source: source.sourceName(),
+		invoke: func(ctx Ctx, raw []byte) error {
+			var msg T
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				return Permanent(fmt.Errorf("payload does not decode: %w", err))
+			}
+			return fn(ctx, msg)
+		},
+	}
 }
 
 // Cron declares a scheduled handler. The schedule must be a string constant

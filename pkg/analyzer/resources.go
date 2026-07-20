@@ -226,6 +226,17 @@ func tagValue(rawTag, key string) string {
 
 // extractQueue validates one tako.Queue declaration.
 func extractQueue(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	return extractCarrier("queue", "tako.Queue", dir, pkg, name, call, errs)
+}
+
+// extractTopic validates one tako.Topic declaration.
+func extractTopic(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	return extractCarrier("topic", "tako.Topic", dir, pkg, name, call, errs)
+}
+
+// extractCarrier validates one message-carrier declaration (Queue or
+// Topic — same shape: constant name, generic payload).
+func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" || len(call.Args) < 1 {
 		return nil
 	}
@@ -233,14 +244,14 @@ func extractQueue(dir string, pkg *packages.Package, name *ast.Ident, call *ast.
 	if err != nil {
 		*errs = append(*errs, &Error{
 			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg: fmt.Sprintf("tako.Queue name must be a string constant — names are read at analysis time, not run time; got %s",
-				describeExpr(call.Args[0])),
+			Msg: fmt.Sprintf("%s name must be a string constant — names are read at analysis time, not run time; got %s",
+				ctor, describeExpr(call.Args[0])),
 			Rule: "const-name",
 		})
 		return nil
 	}
 	res := &Resource{
-		Kind:    "queue",
+		Kind:    kind,
 		Name:    resName,
 		Var:     pkg.Name + "." + name.Name,
 		Package: pkg.PkgPath,

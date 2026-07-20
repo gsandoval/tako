@@ -14,10 +14,34 @@
       "profile": "default"
     },
     {
+      "name": "gallery-onuploaded",
+      "package": "gallery",
+      "handlers": [
+        "gallery.OnUploaded"
+      ],
+      "profile": "default"
+    },
+    {
       "name": "gallery-makethumb",
       "package": "gallery",
       "handlers": [
         "gallery.MakeThumb"
+      ],
+      "profile": "default"
+    },
+    {
+      "name": "gallery-notifyowner",
+      "package": "gallery",
+      "handlers": [
+        "gallery.NotifyOwner"
+      ],
+      "profile": "default"
+    },
+    {
+      "name": "gallery-warmfeed",
+      "package": "gallery",
+      "handlers": [
+        "gallery.WarmFeed"
       ],
       "profile": "default"
     }
@@ -45,6 +69,14 @@
       "package": "gallery",
       "type": "ThumbJob",
       "pos": "app.go:14:2"
+    },
+    {
+      "kind": "topic",
+      "name": "photo-ready",
+      "var": "gallery.ready",
+      "package": "gallery",
+      "type": "PhotoReady",
+      "pos": "app.go:15:2"
     }
   ],
   "handlers": [
@@ -69,7 +101,7 @@
           "type": "blob"
         }
       ],
-      "pos": "app.go:28:2"
+      "pos": "app.go:36:2"
     },
     {
       "kind": "api",
@@ -87,7 +119,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:29:2"
+      "pos": "app.go:37:2"
     },
     {
       "kind": "api",
@@ -105,7 +137,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:30:2"
+      "pos": "app.go:38:2"
     },
     {
       "kind": "api",
@@ -113,7 +145,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos",
-      "pos": "app.go:31:2"
+      "pos": "app.go:39:2"
     },
     {
       "kind": "api",
@@ -121,7 +153,16 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/objects",
-      "pos": "app.go:32:2"
+      "pos": "app.go:40:2"
+    },
+    {
+      "kind": "subscribe",
+      "var": "gallery.OnUploaded",
+      "package": "gallery",
+      "service": "gallery-onuploaded",
+      "binding": "photos.Uploaded",
+      "binding_kind": "bucket",
+      "pos": "app.go:44:2"
     },
     {
       "kind": "worker",
@@ -129,7 +170,25 @@
       "package": "gallery",
       "service": "gallery-makethumb",
       "binding": "thumbnails",
-      "pos": "app.go:35:2"
+      "pos": "app.go:45:2"
+    },
+    {
+      "kind": "subscribe",
+      "var": "gallery.NotifyOwner",
+      "package": "gallery",
+      "service": "gallery-notifyowner",
+      "binding": "photo-ready",
+      "binding_kind": "topic",
+      "pos": "app.go:46:2"
+    },
+    {
+      "kind": "subscribe",
+      "var": "gallery.WarmFeed",
+      "package": "gallery",
+      "service": "gallery-warmfeed",
+      "binding": "photo-ready",
+      "binding_kind": "topic",
+      "pos": "app.go:47:2"
     }
   ],
   "edges": []

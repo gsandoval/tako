@@ -16,3 +16,11 @@ var jobs = tako.Queue[int]("jobs")
 var W = tako.Worker(jobs, wrongPayload)
 
 func wrongPayload(ctx tako.Ctx, s string) error { return nil }
+
+// A subscriber whose fn payload doesn't match the topic's T must also
+// fail to compile.
+var events = tako.Topic[int]("events")
+
+var S = tako.Subscribe(events, wrongEvent)
+
+func wrongEvent(ctx tako.Ctx, s string) error { return nil }
