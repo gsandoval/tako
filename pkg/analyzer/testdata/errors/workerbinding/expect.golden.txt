@@ -1,0 +1,1 @@
+app.go:9:21: tako.Worker must bind a queue declared as a package-level var in this module (tako/worker-binding)

@@ -223,3 +223,37 @@ func entityQueryMethod(pkg *packages.Package, call *ast.CallExpr) (string, strin
 func tagValue(rawTag, key string) string {
 	return tagOf(rawTag).Get(key)
 }
+
+// extractQueue validates one tako.Queue declaration.
+func extractQueue(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return nil
+	}
+	resName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Queue name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	res := &Resource{
+		Kind:    "queue",
+		Name:    resName,
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+	if tv, ok := pkg.TypesInfo.Types[call]; ok {
+		if ptr, ok := tv.Type.(*types.Pointer); ok {
+			if named, ok := ptr.Elem().(*types.Named); ok && named.TypeArgs().Len() == 1 {
+				if p, ok := named.TypeArgs().At(0).(*types.Named); ok {
+					res.Type = p.Obj().Name()
+				}
+			}
+		}
+	}
+	return res
+}

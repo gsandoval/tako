@@ -4,12 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
-var bootedStore io.Closer
+var (
+	bootedStore io.Closer
+	bootedQueue *local.QueueDispatcher
+)
 
 // Boot wires the service's backends per TAKO_BACKEND (default "local":
 // in-process backends under .tako/data). Generated mains call it first.
@@ -43,6 +47,20 @@ func BootLocal(dir string) error {
 	}
 	hooks.Entity = store
 	hooks.Bucket = local.NewBucketStore(dir)
+	dispatcher := local.NewQueueDispatcher(dir, local.QueueOptions{})
+	attachQueueConsole(dispatcher, dir)
+	hooks.Queue = dispatcher
+	bootedQueue = dispatcher
 	bootedStore = store
 	return nil
+}
+
+// WaitIdle blocks until local queues drain (every published message has
+// acked or dead-lettered). Test plumbing until tako.NewTestApp's
+// DrainQueues lands in F7.
+func WaitIdle(timeout time.Duration) error {
+	if bootedQueue == nil {
+		return nil
+	}
+	return bootedQueue.WaitIdle(timeout)
 }

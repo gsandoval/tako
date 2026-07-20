@@ -11,3 +11,12 @@ var Entity backends.Entity
 
 // Bucket is the wired bucket backend; nil until boot.
 var Bucket backends.Bucket
+
+// Queue is the wired queue backend; nil until boot.
+var Queue backends.Queue
+
+// HandlerInfo is set by the SDK at init: it opens a Handler record for
+// the runtime — kind, bound queue, and the payload-decoding invoke
+// closure (typed func(tako.Ctx, []byte) error, passed as any to avoid an
+// import cycle).
+var HandlerInfo func(h any) (kind, queue string, invoke any)

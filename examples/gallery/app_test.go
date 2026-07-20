@@ -7,8 +7,11 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/pkg/runtime"
@@ -21,6 +24,7 @@ func serve(t *testing.T) *httptest.Server {
 	if err := runtime.BootLocal(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
+	registerWorkers(t)
 	mux := http.NewServeMux()
 	mux.Handle("POST /api/photos", runtime.JSONHandler(Upload, func(r *http.Request) (UploadReq, error) {
 		var req UploadReq
@@ -103,7 +107,10 @@ func TestUploadDownloadRoundtrip(t *testing.T) {
 		t.Fatalf("content length = %q", cl)
 	}
 
-	// Objects lists the stored key.
+	// Objects lists the original and (after the worker drains) its thumb.
+	if err := runtime.WaitIdle(10 * time.Second); err != nil {
+		t.Fatal(err)
+	}
 	objRes, err := srv.Client().Get(srv.URL + "/api/objects")
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +120,8 @@ func TestUploadDownloadRoundtrip(t *testing.T) {
 	if err := json.NewDecoder(objRes.Body).Decode(&objs); err != nil {
 		t.Fatal(err)
 	}
-	if len(objs) != 1 || objs[0].Key != p.ID || objs[0].Size != 9 || objs[0].ContentType != "image/jpeg" {
+	if len(objs) != 2 || objs[0].Key != p.ID || objs[1].Key != p.ID+"_thumb" ||
+		objs[0].Size != 9 || objs[0].ContentType != "image/jpeg" {
 		t.Fatalf("objects = %+v", objs)
 	}
 }
@@ -145,5 +153,122 @@ func TestMissingUploadFieldIs400(t *testing.T) {
 	body, _ := io.ReadAll(res.Body)
 	if res.StatusCode != 400 || strings.TrimSpace(string(body)) != `{"error":"form \"img\": missing file upload"}` {
 		t.Fatalf("res = %d %s", res.StatusCode, body)
+	}
+}
+
+// registerWorkers mirrors the generated main's worker wiring.
+func registerWorkers(t *testing.T) {
+	t.Helper()
+	runtime.RegisterWorker("MakeThumb", MakeThumb)
+}
+
+func TestThumbnailPipeline(t *testing.T) {
+	srv := serve(t)
+
+	body, ct := multipartBody(t, "cat", "cat.jpg", "JPEGBYTES", "image/jpeg")
+	res, err := srv.Client().Post(srv.URL+"/api/photos", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var p Photo
+	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+
+	if err := runtime.WaitIdle(10 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := runtime.NewCtx(t.Context())
+	got, err := photoStore.Get(ctx, p.ID)
+	if err != nil || !got.Ready {
+		t.Fatalf("photo after worker = %+v, %v", got, err)
+	}
+	tb, err := photos.Get(ctx, p.ID+"_thumb")
+	if err != nil {
+		t.Fatalf("thumb missing: %v", err)
+	}
+	raw, _ := io.ReadAll(tb.Reader)
+	if string(raw) != "JPEGBYTES" {
+		t.Fatalf("thumb bytes = %q", raw)
+	}
+}
+
+func TestNonImageDeadLetters(t *testing.T) {
+	dir := t.TempDir()
+	if err := runtime.BootLocal(dir); err != nil {
+		t.Fatal(err)
+	}
+	registerWorkers(t)
+	ctx := runtime.NewCtx(t.Context())
+
+	txt := tako.Blob{Reader: strings.NewReader("notes"), ContentType: "text/plain", Size: 5}
+	if err := photos.Put(ctx, "doc", txt); err != nil {
+		t.Fatal(err)
+	}
+	if err := photoStore.Put(ctx, Photo{ID: "doc"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := thumbs.Publish(ctx, ThumbJob{PhotoID: "doc"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.WaitIdle(30 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	letters, err := filepath.Glob(filepath.Join(dir, "deadletter", "thumbnails", "*.json"))
+	if err != nil || len(letters) != 1 {
+		t.Fatalf("dead letters = %v, %v", letters, err)
+	}
+	raw, _ := os.ReadFile(letters[0])
+	var dl struct {
+		Attempts  int    `json:"attempts"`
+		LastError string `json:"lastError"`
+		Permanent bool   `json:"permanent"`
+	}
+	if err := json.Unmarshal(raw, &dl); err != nil {
+		t.Fatal(err)
+	}
+	if dl.Attempts != 5 || dl.Permanent || dl.LastError != `unsupported content type "text/plain"` {
+		t.Fatalf("dead letter = %+v", dl)
+	}
+	// The photo never became ready.
+	p, _ := photoStore.Get(ctx, "doc")
+	if p.Ready {
+		t.Fatal("photo marked ready despite dead-letter")
+	}
+}
+
+func TestEmptyUploadIsPermanent(t *testing.T) {
+	dir := t.TempDir()
+	if err := runtime.BootLocal(dir); err != nil {
+		t.Fatal(err)
+	}
+	registerWorkers(t)
+	ctx := runtime.NewCtx(t.Context())
+
+	empty := tako.Blob{Reader: strings.NewReader(""), ContentType: "image/png", Size: 0}
+	if err := photos.Put(ctx, "void", empty); err != nil {
+		t.Fatal(err)
+	}
+	if err := thumbs.Publish(ctx, ThumbJob{PhotoID: "void"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.WaitIdle(10 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	letters, _ := filepath.Glob(filepath.Join(dir, "deadletter", "thumbnails", "*.json"))
+	if len(letters) != 1 {
+		t.Fatalf("dead letters = %v", letters)
+	}
+	var dl struct {
+		Attempts  int  `json:"attempts"`
+		Permanent bool `json:"permanent"`
+	}
+	raw, _ := os.ReadFile(letters[0])
+	_ = json.Unmarshal(raw, &dl)
+	if dl.Attempts != 1 || !dl.Permanent {
+		t.Fatalf("dead letter = %+v", dl)
 	}
 }

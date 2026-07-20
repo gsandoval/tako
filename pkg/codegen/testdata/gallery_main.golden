@@ -18,17 +18,23 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// POST /api/photos → gallery.Upload (app.go:16)
+	// POST /api/photos → gallery.Upload (app.go:28)
 	mux.Handle("POST /api/photos", runtime.JSONHandler(gallery.Upload, decodeUpload))
 
-	// GET /api/photos/{id}/image → gallery.Image (app.go:17)
+	// GET /api/photos/{id}/image → gallery.Image (app.go:29)
 	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(gallery.Image, decodeImage))
 
-	// GET /api/photos → gallery.List (app.go:18)
+	// GET /api/photos/{id}/thumb → gallery.Thumb (app.go:30)
+	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb))
+
+	// GET /api/photos → gallery.List (app.go:31)
 	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, nil))
 
-	// GET /api/objects → gallery.Objects (app.go:19)
+	// GET /api/objects → gallery.Objects (app.go:32)
 	mux.Handle("GET /api/objects", runtime.JSONHandler(gallery.Objects, nil))
+
+	// worker MakeThumb ← queue thumbnails (app.go:35) — local mode runs the worker in-process
+	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
 
 	runtime.Serve(mux)
 }
@@ -47,6 +53,13 @@ func decodeUpload(r *http.Request) (gallery.UploadReq, error) {
 // decodeImage binds GET /api/photos/{id}/image requests to gallery.ImageReq.
 func decodeImage(r *http.Request) (gallery.ImageReq, error) {
 	var req gallery.ImageReq
+	req.ID = runtime.PathString(r, "id")
+	return req, nil
+}
+
+// decodeThumb binds GET /api/photos/{id}/thumb requests to gallery.ThumbReq.
+func decodeThumb(r *http.Request) (gallery.ThumbReq, error) {
+	var req gallery.ThumbReq
 	req.ID = runtime.PathString(r, "id")
 	return req, nil
 }

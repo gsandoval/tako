@@ -1183,3 +1183,99 @@ the cloud phases.
 
 Topics/Subscribe/fan-out (F5), bucket events (F5), `WithDelay`/rate
 limits (F8), chaos mode (F7), Pub/Sub (Phase F), retry-policy options.
+
+---
+
+## F4 — implementation: Queue + Worker (2026-07-19)
+
+DX proposal approved as written; shipped surface matches it.
+
+**What shipped**
+
+- **Queue contract** (`pkg/backends`): Publish/Consume with at-least-once
+  delivery; `DeadLetter` record; `IsPermanent` duck-typing so backends
+  never import the SDK. Conformance grows 6 queue cases (deliver+ack,
+  redeliver-until-success, permanent one-attempt, exhaustion cap, queue
+  isolation, publish-without-worker error).
+- **Channel dispatcher** (`pkg/backends/local`): per-message goroutine
+  detached from the request context, 5 attempts × 200ms fixed backoff
+  (defaults stated, configurable for tests), dead letters written as
+  inspectable JSON to `.tako/data/deadletter/<queue>/` and surfaced to
+  observers; `WaitIdle` drains for tests.
+- **SDK live**: `Publish` (JSON payload via the boot seam), `Permanent`
+  (unwrappable, duck-marked), `Worker` records its queue + a typed
+  decode-and-invoke closure; undecodable payloads dead-letter as
+  permanent. `internal/hooks.HandlerInfo` opens Handler records to the
+  runtime without exporting internals.
+- **Runtime**: `RegisterWorker` binds workers on the wired backend with a
+  worker-scoped logger; the dev console narrates delivery (⚙ ok /
+  ⚙ attempt n/max failed … retrying / ✗ dead-letter with payload path);
+  `WaitIdle(timeout)` as interim test plumbing (F7 replaces).
+- **Analyzer**: Queue resources (join `tako/const-name`), Worker handlers
+  partitioned into their own services (`gallery-makethumb`) with
+  `tako/one-worker`, `tako/worker-binding`, and the Worker option set on
+  `tako/invalid-option`; compile fixture grows the async payload-shape
+  case. Banner counts endpoints and workers separately and prints the
+  local-collapse honesty line; `HandlerLine` renders
+  `worker MakeThumb ← queue thumbnails (app.go:35)`.
+- **Codegen**: app-service mains register the module's workers
+  (`runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)`); worker-only
+  services generate no main yet (their push-endpoint mains are Phase F).
+- **Gallery**: thumbnail pipeline per the proposal — publish on upload,
+  worker copies to `_thumb` + flips `Ready`, `GET …/thumb` streams the
+  result; failure levers: non-image → retries → dead-letter; empty
+  upload → `Permanent`. Suite covers pipeline success, both dead-letter
+  shapes (attempts/permanent/lastError asserted from the JSON file), and
+  ready-flag integrity.
+
+**Fixed during implementation:** the analyzer restructure (resources
+pass before handlers pass) initially failed to apply via a fuzzy patch
+and Queue/Worker silently didn't extract — caught by the gallery golden
+diff; re-applied with an exact edit.
+
+**Tier-2 validation — real transcript (validate/queue.md §§1–5)**
+
+```
+$ cd examples/gallery && PORT=8090 tako dev
+  analyzing   2 services, 5 endpoints, 1 worker
+  …
+  worker MakeThumb ← queue thumbnails (app.go:35)
+  queue thumbnails
+  local: workers run in-process (per-worker services arrive with cloud deploys)
+
+$ curl -F caption=cat -F 'img=@cat.jpg;type=image/jpeg' …/api/photos
+⚙ thumbnails → MakeThumb ok (9ms)
+$ curl -s …/api/photos            # "ready": true
+$ curl -s …/api/photos/<id>/thumb # FAKEJPEG (worker's output streams)
+
+$ curl -F caption=doc -F 'img=@notes.txt;type=text/plain' …/api/photos
+⚙ thumbnails → MakeThumb attempt 1/5 failed: unsupported content type "text/plain" — retrying in 200ms
+⚙ … attempt 2/5 … 3/5 … 4/5 …
+✗ dead-letter thumbnails: MakeThumb gave up after 5 attempts: unsupported content type "text/plain"
+  payload → .tako/data/deadletter/thumbnails/
+
+$ curl -F caption=void -F 'img=@empty.png;type=image/png' …/api/photos
+✗ dead-letter thumbnails: MakeThumb permanent failure: empty upload
+
+$ ls .tako/data/deadletter/thumbnails/   # two inspectable JSON files
+# Ctrl-C: 0 listeners
+```
+
+Conformance(local): entity 17 + bucket 7 + queue 6 ok. `go test ./...`
+green in all four modules.
+
+**Discovered work (not done)**
+
+- Redelivery of a Blob-consuming retry: MakeThumb re-Gets the object per
+  attempt so streams re-open correctly; a doc note for users writing
+  workers that consume readers would help (readers don't rewind).
+- Dead letters have no replay tool yet; `tako queue replay <file>` is a
+  natural CLI addition once a real workflow demands it.
+- The local dispatcher delivers immediately with fixed backoff; jittered
+  or exponential local backoff only matters once chaos mode (F7) starts
+  exercising timing.
+
+**GATE REQUEST — F4 (local): Queue + Worker.** Please run
+`validate/queue.md` — the centerpiece is §3, watching the retry
+narration end in a dead-letter — and record the verdict in
+`docs/validation-log.md`.

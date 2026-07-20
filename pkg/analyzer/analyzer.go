@@ -71,12 +71,20 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		Edges:     []Edge{},
 	}
 	var errs ErrorList
-	entities := map[string]*entityType{} // payload type key → schema
-	entityRes := map[string]*Resource{}  // payload type key → resource entry
+	entities := map[string]*entityType{}    // payload type key → schema
+	entityRes := map[string]*Resource{}     // payload type key → resource entry
+	queueVars := map[types.Object]string{}  // queue var object → queue name
+	workersByQueue := map[string]*Handler{} // queue name → its worker
+	type varDecl struct {
+		name *ast.Ident
+		call *ast.CallExpr
+		ctor string
+	}
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
 			graph.Module = pkg.Module.Path
 		}
+		var decls []varDecl
 		for _, file := range pkg.Syntax {
 			for _, decl := range file.Decls {
 				gen, ok := decl.(*ast.GenDecl)
@@ -89,27 +97,43 @@ func Analyze(cfg Config) (*AppGraph, error) {
 						if i >= len(vs.Values) {
 							continue
 						}
-						call, ok := vs.Values[i].(*ast.CallExpr)
-						if !ok {
-							continue
-						}
-						switch sdkConstructor(pkg, call) {
-						case "API":
-							if h := extractAPI(cfg.Dir, pkg, name, call, &errs); h != nil {
-								graph.Handlers = append(graph.Handlers, *h)
-							}
-						case "Entity":
-							if r, key, et := extractEntity(cfg.Dir, pkg, name, call, &errs); r != nil {
-								graph.Resources = append(graph.Resources, *r)
-								entities[key] = et
-								entityRes[key] = &graph.Resources[len(graph.Resources)-1]
-							}
-						case "Bucket":
-							if r := extractBucket(cfg.Dir, pkg, name, call, &errs); r != nil {
-								graph.Resources = append(graph.Resources, *r)
-							}
+						if call, ok := vs.Values[i].(*ast.CallExpr); ok {
+							decls = append(decls, varDecl{name: name, call: call, ctor: sdkConstructor(pkg, call)})
 						}
 					}
+				}
+			}
+		}
+		// Resources first, so handler bindings resolve regardless of
+		// declaration order within the package.
+		for _, d := range decls {
+			switch d.ctor {
+			case "Entity":
+				if r, key, et := extractEntity(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					entities[key] = et
+					entityRes[key] = &graph.Resources[len(graph.Resources)-1]
+				}
+			case "Bucket":
+				if r := extractBucket(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+				}
+			case "Queue":
+				if r := extractQueue(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					queueVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+				}
+			}
+		}
+		for _, d := range decls {
+			switch d.ctor {
+			case "API":
+				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+				}
+			case "Worker":
+				if h := extractWorker(cfg.Dir, pkg, d.name, d.call, queueVars, workersByQueue, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
 				}
 			}
 		}

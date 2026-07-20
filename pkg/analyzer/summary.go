@@ -16,7 +16,7 @@ func Summary(g *AppGraph) string {
 			if h.Service != svc.Name {
 				continue
 			}
-			fmt.Fprintf(&b, "    %s → %s (%s)\n", h.Route, ShortVar(h), ShortPos(h.Pos))
+			fmt.Fprintf(&b, "    %s\n", HandlerLine(h))
 		}
 		for _, r := range g.Resources {
 			if r.Package != svc.Package {
@@ -26,6 +26,14 @@ func Summary(g *AppGraph) string {
 		}
 	}
 	return b.String()
+}
+
+// HandlerLine renders one handler for summaries and the dev banner.
+func HandlerLine(h Handler) string {
+	if h.Kind == "worker" {
+		return fmt.Sprintf("worker %s ← queue %s (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
+	}
+	return fmt.Sprintf("%s → %s (%s)", h.Route, ShortVar(h), ShortPos(h.Pos))
 }
 
 // ResourceLine renders one resource for summaries and the dev banner,

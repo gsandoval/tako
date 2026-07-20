@@ -41,5 +41,18 @@ func IsNotFound(err error) bool {
 // Permanent marks an async handler's error as not worth retrying: the
 // message is acked and dead-lettered instead of redelivered.
 func Permanent(err error) error {
-	panic("tako: not implemented")
+	if err == nil {
+		return nil
+	}
+	return &permanentError{err}
 }
+
+type permanentError struct{ err error }
+
+func (e *permanentError) Error() string { return e.err.Error() }
+
+func (e *permanentError) Unwrap() error { return e.err }
+
+// PermanentDelivery marks the error for the queue backend (duck-typed so
+// backends never import the SDK).
+func (e *permanentError) PermanentDelivery() bool { return true }

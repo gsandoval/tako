@@ -1,5 +1,10 @@
 package tako
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // Handlers are declared exactly like resources: a package-level var, a
 // constructor, options. The var is the registration, the documentation,
 // and — for API and Page — the callable endpoint. Handler bodies are
@@ -27,7 +32,9 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 // Handler is a declared asynchronous or scheduled handler binding, returned
 // by Worker, Subscribe, JobHandler, Cron, and Singleton.
 type Handler struct {
-	kind string
+	kind   string
+	queue  string
+	invoke func(Ctx, []byte) error
 }
 
 // API declares a synchronous JSON endpoint on route (a Go 1.22+
@@ -51,7 +58,17 @@ func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option
 // tako.Permanent to give up and dead-letter. A queue with two workers is
 // an analysis error.
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
-	return Handler{kind: "worker"}
+	return Handler{
+		kind:  "worker",
+		queue: queue.name,
+		invoke: func(ctx Ctx, raw []byte) error {
+			var msg T
+			if err := json.Unmarshal(raw, &msg); err != nil {
+				return Permanent(fmt.Errorf("payload does not decode: %w", err))
+			}
+			return fn(ctx, msg)
+		},
+	}
 }
 
 // Subscribe binds fn as one subscriber of an event source — a topic or a

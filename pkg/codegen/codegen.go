@@ -17,6 +17,9 @@ import (
 func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	var written []string
 	for _, svc := range g.Services {
+		if workerOnly(g, svc) {
+			continue // per-worker service mains arrive with the cloud phases
+		}
 		src, err := serviceMain(g, svc)
 		if err != nil {
 			return nil, err
@@ -63,7 +66,7 @@ func main() {
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
-		if h.Service != svc.Name {
+		if h.Service != svc.Name || h.Kind == "worker" {
 			continue
 		}
 		decode := "nil"
@@ -78,6 +81,14 @@ func main() {
 		fmt.Fprintf(&b, "\t// %s → %s (%s)\n", h.Route, h.Var, analyzer.ShortPos(h.Pos))
 		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s))\n\n",
 			h.Route, wrapper, alias, analyzer.ShortVar(h), decode)
+	}
+
+	for _, h := range g.Handlers {
+		if h.Kind != "worker" || h.Package != svc.Package {
+			continue
+		}
+		fmt.Fprintf(&b, "\t// %s — local mode runs the worker in-process\n", analyzer.HandlerLine(h))
+		fmt.Fprintf(&b, "\truntime.RegisterWorker(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
 	}
 
 	b.WriteString("\truntime.Serve(mux)\n}\n")
@@ -143,6 +154,22 @@ func hasResources(g *analyzer.AppGraph, svc analyzer.Service) bool {
 		}
 	}
 	return false
+}
+
+// workerOnly reports whether every handler of the service is async — no
+// main is generated for it yet.
+func workerOnly(g *analyzer.AppGraph, svc analyzer.Service) bool {
+	any := false
+	for _, h := range g.Handlers {
+		if h.Service != svc.Name {
+			continue
+		}
+		any = true
+		if h.Kind != "worker" {
+			return false
+		}
+	}
+	return any
 }
 
 func needsDecode(h analyzer.Handler) bool {

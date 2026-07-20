@@ -102,10 +102,10 @@ func (s *session) cycle(first bool) error {
 	if err != nil {
 		return err
 	}
-	if len(graph.Services) != 1 {
-		return fmt.Errorf("tako dev serves exactly one service in the walking skeleton; found %d", len(graph.Services))
+	svc, err := appService(graph)
+	if err != nil {
+		return err
 	}
-	svc := graph.Services[0]
 	if first {
 		fmt.Fprintf(s.out(), "  analyzing   %d service%s, %d endpoint%s\n",
 			len(graph.Services), plural(len(graph.Services)),
@@ -129,11 +129,18 @@ func (s *session) cycle(first bool) error {
 
 	if first {
 		fmt.Fprintf(s.out(), "  starting    http://localhost:%s\n\n", s.opts.Port)
+		hasWorkers := false
 		for _, h := range graph.Handlers {
-			fmt.Fprintf(s.out(), "  %s → %s (%s)\n", h.Route, analyzer.ShortVar(h), analyzer.ShortPos(h.Pos))
+			if h.Kind == "worker" {
+				hasWorkers = true
+			}
+			fmt.Fprintf(s.out(), "  %s\n", analyzer.HandlerLine(h))
 		}
 		for _, r := range graph.Resources {
 			fmt.Fprintf(s.out(), "  %s\n", analyzer.ResourceLine(r))
+		}
+		if hasWorkers {
+			fmt.Fprintln(s.out(), "  local: workers run in-process (per-worker services arrive with cloud deploys)")
 		}
 		fmt.Fprintln(s.out())
 	}
@@ -245,6 +252,24 @@ func waitReady(port string, timeout time.Duration) error {
 		time.Sleep(10 * time.Millisecond)
 	}
 	return fmt.Errorf("service did not start listening on :%s within %s", port, timeout)
+}
+
+// appService picks the one service with synchronous handlers — the one
+// tako dev builds and runs; local mode collapses workers into it.
+func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
+	var apps []analyzer.Service
+	for _, svc := range g.Services {
+		for _, h := range g.Handlers {
+			if h.Service == svc.Name && h.Kind != "worker" {
+				apps = append(apps, svc)
+				break
+			}
+		}
+	}
+	if len(apps) != 1 {
+		return analyzer.Service{}, fmt.Errorf("tako dev serves exactly one app service in the walking skeleton; found %d", len(apps))
+	}
+	return apps[0], nil
 }
 
 func plural(n int) string {
