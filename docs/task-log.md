@@ -1619,3 +1619,128 @@ green in all four modules.
 run `validate/topic.md` — the centerpiece is §3, one event splitting
 into two independent fates — and record the verdict in
 `docs/validation-log.md`.
+
+---
+
+## F6 — DX proposal: Signed URLs, local (2026-07-20)
+
+*Status: awaiting human approval. Scope per agent plan F6: `SignedPut` /
+`SignedGet` with size/content-type constraints via local endpoints. Gate
+F6: human uploads oversized and wrong-type files, reviews rejections.*
+
+### 1. User code — gallery grows the direct-upload flow
+
+```go
+// Client asks to upload → gets a ticket with a signed URL. The bytes
+// then go straight to storage — no 32MB request cap, no proxying
+// through the service (spec Part 3's startUpload, minus auth until F9).
+type StartUploadReq struct {
+	Caption string `json:"caption"`
+}
+
+type UploadTicket struct {
+	Photo     Photo  `json:"photo"`
+	UploadURL string `json:"uploadURL"`
+}
+
+var StartUpload = tako.API("POST /api/uploads", startUpload)
+
+func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
+	p := Photo{ID: tako.NewID(), Caption: req.Caption}
+	if err := photoStore.Put(ctx, p); err != nil {
+		return UploadTicket{}, err
+	}
+	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
+		tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
+	return UploadTicket{Photo: p, UploadURL: url}, err
+}
+
+// And a signed download link on demand:
+type DownloadReq struct {
+	ID string `path:"id"`
+}
+
+var Download = tako.API("GET /api/photos/{id}/download", download)
+
+func download(ctx tako.Ctx, req DownloadReq) (string, error) {
+	return photos.SignedGet(ctx, req.ID, 15*time.Minute)
+}
+```
+
+The client's side is two curls:
+
+```
+curl -s -X POST localhost:8090/api/uploads -d '{"caption":"cat"}'
+  → {"photo":{...,"ready":false}, "uploadURL":"http://localhost:8090/_tako/signed/<token>"}
+curl -s -X PUT --data-binary @cat.jpg -H 'Content-Type: image/jpeg' '<uploadURL>'
+```
+
+…and the moment that PUT lands, the F5 event spine takes over
+unchanged: `photos.Uploaded → OnUploaded → thumbnails → MakeThumb →
+photo-ready`. Nothing else in the app changes. (The F3 multipart
+`Upload` endpoint stays; F9 decides which the finished gallery keeps.)
+
+### 2. Semantics being locked (v0 signed-URL contract)
+
+- `SignedPut(ctx, key, ttl, opts…)` returns an absolute URL accepting
+  exactly one verb: `PUT` with the raw bytes as the body and the
+  client's `Content-Type` header. `SignedGet(ctx, key, ttl)` returns a
+  URL streaming the object (content type intact, `404` JSON if absent).
+- **Constraints are enforced at upload time, not sign time**, and each
+  rejection is product UX (exact texts in §4): size cap → 413,
+  content-type mismatch → 415, expiry → 403, tampered token → 403.
+  `WithContentType("image/*")` matches on the `/`-prefix (`image/*` ⊇
+  `image/png`); a pattern without `*` must match exactly.
+- **Size is enforced twice**: a declared `Content-Length` over the cap
+  is rejected before reading the body, and the stream is hard-capped
+  while writing, so a lying client cannot exceed the limit either.
+- **A signed upload IS a Put**: it fires `bucket.Uploaded` exactly like
+  `photos.Put` (locally it goes through the same store; in the cloud
+  GCS notifies — same contract).
+- Local URLs live under the reserved path `/_tako/signed/<token>` on
+  the app's own server; the token is base64(JSON claims) + HMAC-SHA256
+  with a secret persisted at `.tako/data/signing.key` — URLs survive
+  `tako dev` reloads and restarts. `/_tako/` is documented as reserved.
+- Options are validated at call time: `SignedPut` with e.g. `WithTTL`
+  returns the error `tako.WithTTL is not a SignedPut option (SignedPut
+  accepts WithMaxSize, WithContentType)` — no analyzer rule; this is a
+  method call, not a declaration.
+- Backend seam: `backends.URLSigner` (`SignPut(bucket, key, ttl,
+  constraints)`, `SignGet(bucket, key, ttl)`); the local signer + the
+  HTTP endpoint are the v0 pair, the GCS V4 signer arrives Phase F.
+- **Conformance grows a SignedURL chapter** run over (signer, handler)
+  pairs: put-roundtrip fires the upload event, size cap (declared and
+  lying stream), content-type mismatch, expiry, tampered signature,
+  get-roundtrip + absent-key 404. Phase F runs the same chapter against
+  real GCS, where GCS itself is the enforcer.
+
+### 3. Generated code stays readable
+
+The generated main mounts the endpoint explicitly when the app declares
+a bucket — no hidden routes:
+
+```go
+	// Signed upload/download URLs land here (SignedPut/SignedGet).
+	mux.Handle("/_tako/signed/", runtime.SignedURLHandler())
+```
+
+The dev console keeps narrating: a signed upload logs the PUT and then
+the familiar ⚙ chain.
+
+### 4. Rejection texts (exact, under test)
+
+```
+413 {"error":"upload is 22020096 bytes; the signed URL allows at most 20971520"}
+415 {"error":"content type \"text/plain\" does not match required \"image/*\""}
+403 {"error":"signed URL expired"}
+403 {"error":"invalid signature"}
+404 {"error":"not found"}
+405 {"error":"signed upload URLs accept PUT only"}
+```
+
+### 5. Not in scope (F6 non-goals)
+
+GCS V4 signing and `iam.serviceAccountTokenCreator` (Phase F), browser
+CORS on the signed endpoints (F9, when the gallery grows its web UI),
+resumable/chunked uploads, one-time-use URLs, signed DELETE, per-URL
+rate limits, auth on StartUpload (F9 adds `tako.WithAuth()` per spec).
