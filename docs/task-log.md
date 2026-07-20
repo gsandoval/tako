@@ -1279,3 +1279,178 @@ green in all four modules.
 `validate/queue.md` — the centerpiece is §3, watching the retry
 narration end in a dead-letter — and record the verdict in
 `docs/validation-log.md`.
+
+---
+
+## F5 — DX proposal: Topic + Subscribe + bucket events (2026-07-19)
+
+*Status: awaiting human approval. Scope per agent plan F5: fan-out
+semantics (per-handler independence), `bucket.Uploaded`,
+duplicate-worker vs. multi-subscriber analysis rules. Gallery grows its
+event spine and moves to the spec Part 3 pipeline shape (minus signed
+URLs, which are F6).*
+
+### 1. User code — gallery grows the event spine
+
+```go
+var (
+	photos     = tako.Bucket("photos")
+	photoStore = tako.Entity[Photo]("photos")
+	thumbs     = tako.Queue[ThumbJob]("thumbnails")
+	ready      = tako.Topic[PhotoReady]("photo-ready") // fan-out: MANY subscribers
+)
+
+// Owner joins this payload when auth lands (F9 aligns fully with spec
+// Part 3); until then Caption is the human-readable bit.
+type PhotoReady struct {
+	PhotoID string `json:"photoID"`
+	Caption string `json:"caption"`
+}
+
+var (
+	// The pipeline is now event-driven end to end:
+	// upload → bucket event → queue → worker → topic → 2 subscribers.
+	OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
+	MakeThumb   = tako.Worker(thumbs, makeThumb)
+	NotifyOwner = tako.Subscribe(ready, notifyOwner)
+	WarmFeed    = tako.Subscribe(ready, warmFeed)
+)
+
+// upload no longer publishes ThumbJob — the bucket event does. It puts
+// the entity first, then the blob (the event races the entity write;
+// worker retries absorb the gap, as F4 established).
+
+// Bucket events see EVERY successful write — including the worker's own
+// `_thumb` writes. Filtering your own output is the standing idiom
+// (straight from spec Part 3):
+func onUploaded(ctx tako.Ctx, obj tako.ObjectInfo) error {
+	if strings.HasSuffix(obj.Key, "_thumb") {
+		return nil
+	}
+	return thumbs.Publish(ctx, ThumbJob{PhotoID: obj.Key})
+}
+
+// makeThumb keeps its F4 body and gains one closing line:
+//	return ready.Publish(ctx, PhotoReady{PhotoID: p.ID, Caption: p.Caption})
+
+// Two independent subscribers to one event. notifyOwner carries the
+// demo failure lever (caption containing "boom" → retries → dead-letter
+// while WarmFeed acks the same event untouched):
+func notifyOwner(ctx tako.Ctx, e PhotoReady) error {
+	if strings.Contains(e.Caption, "boom") {
+		return fmt.Errorf("notification service rejected %q", e.Caption)
+	}
+	ctx.Log("owner notified", "photo", e.PhotoID)
+	return nil
+}
+
+func warmFeed(ctx tako.Ctx, e PhotoReady) error {
+	ctx.Log("feed warmed", "photo", e.PhotoID) // real cache arrives F8
+	return nil
+}
+```
+
+(Handler signatures are compile-checked exactly like Worker:
+`tako.Subscribe(ready, fn)` requires `func(Ctx, PhotoReady) error`;
+`tako.Subscribe(photos.Uploaded, fn)` requires
+`func(Ctx, tako.ObjectInfo) error`.)
+
+### 2. Semantics being locked (v0 Topic/Subscribe/bucket-event contract)
+
+- **Fan-out with per-handler independence**: every subscriber gets every
+  event; each subscriber has its own attempt counter, its own retry
+  schedule, and its own dead-letter. One subscriber failing never delays
+  or poisons another.
+- Same async shape and retry policy as F4: `nil` ack, error → 5
+  attempts × 200ms locally, `tako.Permanent` → immediate dead-letter.
+- **Per-subscriber dead letters**:
+  `.tako/data/deadletter/<topic>/<subscriber>/<id>.json`. (Queues keep
+  their F4 layout `deadletter/<queue>/` — a queue has exactly one
+  consumer, so no subdir.)
+- A topic with zero subscribers is legal; publish is a broadcast into
+  silence (matches Pub/Sub topics without subscriptions).
+- **`bucket.Uploaded`** fires after every successful `Put` locally
+  (GCS notifications provide it in Phase F — same contract). Payload is
+  `tako.ObjectInfo`. It fires for the service's own writes too; the
+  `_thumb` filter above is the documented idiom. Dead letters for bucket
+  events land under `deadletter/<bucket>.uploaded/<subscriber>/`.
+- Delivery is at-least-once, unordered — same honesty as F4.
+- **Backend contract** grows `backends.Topic`
+  (`Publish(ctx, topic, payload)` /
+  `Subscribe(topic, subscriber, deliver)`) and the conformance suite
+  grows a Topic chapter: fan-out to N, independent retry (one fails
+  while the other acks), per-subscriber dead-letter, Permanent,
+  zero-subscriber publish, topic isolation — plus a bucket-event
+  chapter: Put → ObjectInfo delivered, self-write events fire too.
+
+### 3. Dev output
+
+Banner (gallery now partitions into 5 services):
+
+```
+analyzing … 5 services, 5 endpoints, 1 worker, 3 subscribers
+  subscriber OnUploaded ← bucket photos.Uploaded (app.go:38)
+  worker MakeThumb ← queue thumbnails (app.go:39)
+  subscriber NotifyOwner ← topic photo-ready (app.go:40)
+  subscriber WarmFeed ← topic photo-ready (app.go:41)
+  …
+  topic photo-ready
+  local: workers and subscribers run in-process (per-handler services arrive with cloud deploys)
+```
+
+One clean upload narrates the whole spine — note OnUploaded firing a
+second time for the worker's `_thumb` write and acking it (the filter
+at work):
+
+```
+⚙ photos.Uploaded → OnUploaded ok (0ms)
+⚙ thumbnails → MakeThumb ok (2ms)
+⚙ photos.Uploaded → OnUploaded ok (0ms)
+⚙ photo-ready → NotifyOwner ok (0ms)
+⚙ photo-ready → WarmFeed ok (0ms)
+```
+
+The gate's centerpiece — one event, two subscribers, independent fates
+(upload with caption "boom"):
+
+```
+⚙ photo-ready → WarmFeed ok (0ms)
+⚙ photo-ready → NotifyOwner attempt 1/5 failed: notification service rejected "boom" — retrying in 200ms
+…
+✗ dead-letter photo-ready: NotifyOwner gave up after 5 attempts: notification service rejected "boom"
+  payload → .tako/data/deadletter/photo-ready/NotifyOwner/
+```
+
+WarmFeed's ack printing before NotifyOwner even starts failing IS the
+feature.
+
+### 4. New analyzer errors (exact texts, golden-tested)
+
+```
+app.go:40:27: tako.Subscribe must bind a topic or bucket event declared
+as a package-level var in this module (tako/subscribe-binding)
+
+app.go:40:44: tako.WithTTL is not a tako.Subscribe option
+(tako.Subscribe accepts WithProfile) (tako/invalid-option)
+```
+
+Topic names join `tako/const-name`. Multi-subscriber is explicitly
+legal — the gallery golden itself has two subscribers on one topic and
+zero diagnostics (this is the "duplicate-worker vs. multi-subscriber"
+distinction from the plan: queue + second worker errors, topic + Nth
+subscriber is the point). Payload mismatches stay compile errors — the
+compile fixture grows Subscribe cases (topic and bucket-event).
+
+### 5. Service partitioning
+
+Each subscriber is its own service in the AppGraph
+(`gallery-onuploaded`, `gallery-notifyowner`, `gallery-warmfeed`), same
+as workers in F4 — independent scaling and IAM per spec §4.1. The local
+banner honesty line covers both kinds.
+
+### 6. Not in scope (F5 non-goals)
+
+Signed URLs (F6 — upload stays a multipart endpoint), Cache/`GetOrFill`
+(F8 — warmFeed logs), auth/Owner in payloads (F9), `WithParallel`,
+external/cross-project topics, GCS notification plumbing (Phase F),
+dead-letter replay CLI (noted discovered work), ordering keys.
