@@ -1841,6 +1841,13 @@ modules.
 
 - Request log prints the full signed token path — consider truncating
   `/_tako/signed/<token>` in the dev request log for readability.
+- The orphaned-dev-instance hazard (noted at F5) bit again while
+  re-verifying validate/signed.md §4: a stale instance held :8090, the
+  new app died with "address already in use", but `tako dev` still
+  printed "ready" because waitReady only dials the port — which the
+  orphan answered. The hardening should make dev fail loudly when its
+  OWN app didn't bind (own-pid lockfile / health token), not just when
+  nothing listens.
 - CORS headers on /_tako/signed for browser-direct uploads (F9's web
   UI will need them).
 
