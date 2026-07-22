@@ -42,6 +42,7 @@ func serve(t *testing.T) *httptest.Server {
 		return req, nil
 	}))
 	mux.Handle("GET /api/objects", runtime.JSONHandler(Objects, nil))
+	mux.Handle("GET /api/photos", runtime.JSONHandler(List, nil))
 	mux.Handle("POST /api/uploads", runtime.JSONHandler(StartUpload, func(r *http.Request) (StartUploadReq, error) {
 		var req StartUploadReq
 		if err := runtime.DecodeJSON(r, &req); err != nil {
@@ -232,6 +233,46 @@ func TestThumbnailPipeline(t *testing.T) {
 	raw, _ := io.ReadAll(tb.Reader)
 	if string(raw) != "JPEGBYTES" {
 		t.Fatalf("thumb bytes = %q", raw)
+	}
+}
+
+// TestFeedCacheServesReadyPhotos: list rides the feed cache — a cold
+// read fills (and caches) an empty feed, and warmFeed overwrites it the
+// moment the pipeline makes the photo ready, so readers never wait out
+// the TTL to see it.
+func TestFeedCacheServesReadyPhotos(t *testing.T) {
+	srv := serve(t)
+
+	get := func() (int, string) {
+		req, err := http.NewRequest("GET", srv.URL+"/api/photos", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return doReq(t, req)
+	}
+	if code, body := get(); code != 200 || body != "[]" {
+		t.Fatalf("cold feed = %d %s", code, body)
+	}
+
+	body, ct := multipartBody(t, "cat", "cat.jpg", "JPEGBYTES", "image/jpeg")
+	res, err := srv.Client().Post(srv.URL+"/api/photos", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if err := runtime.WaitIdle(10 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	// The cached-empty feed did NOT go stale-for-a-minute: warmFeed
+	// replaced it when PhotoReady fired.
+	code, listBody := get()
+	var photosOut []Photo
+	if err := json.Unmarshal([]byte(listBody), &photosOut); err != nil {
+		t.Fatal(err)
+	}
+	if code != 200 || len(photosOut) != 1 || !photosOut[0].Ready || photosOut[0].Caption != "cat" {
+		t.Fatalf("warmed feed = %d %s", code, listBody)
 	}
 }
 

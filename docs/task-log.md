@@ -2314,3 +2314,110 @@ func TestDigestIsDelayed(t *testing.T) {
   (cron, auth, SSR pages) stays F9.
 
 **STOP — awaiting DX approval before implementation.**
+
+## F8 — implementation: Secret, Cache, metrics, WithDelay — local (2026-07-21)
+
+Shipped as approved. All four stubs are now real; the only exported-surface
+change is the proposed pair `TestApp.Advance` / `TestApp.SetSecret`
+(`testdata/sdk_lock.golden` regenerated once, deliberately — the lock diff
+listed exactly those two symbols).
+
+**What landed**
+- `backends.Cache` + `local.MemoryCache`; `backends.Metrics` +
+  `local.MetricsLog` (structured `metric` log lines + `OnMetric` observer);
+  `backends.Queue.Publish` grew `PublishOptions{Delay}` (internal
+  signature). The local dispatcher parks delayed messages: real
+  `time.AfterFunc` in dev/generated services, a virtual clock in test apps
+  (`UseManualClock`/`Advance`) — parked messages are idle to `WaitIdle`,
+  so `DrainQueues` never waits out a delay.
+- Secrets: process-global table (`internal/secrets` — `Value()` takes no
+  Ctx, so per-app isolation is impossible by design and documented);
+  `.env` loader (`local.LoadEnvFile`: name=value, `#` comments, missing
+  file fine); `Secret()` registers its name (same rule-1 carve-out as
+  handlers) and `runtime.BootLocal` refuses to start with any declared
+  secret unset. TestApp gets `SetSecret` (cleanup-scoped) and unset reads
+  panic pointing at it.
+- SDK: Cache verbs + `GetOrFill` (fill-once-on-hit; call-time option
+  errors in the standard text family), `Publish(..., WithDelay(d))`
+  (`tako.WithTTL is not a Publish option (Publish accepts WithDelay)`),
+  Counter/Histogram via ctx-resolved sink. Topic.Publish takes no opts —
+  the proposal's "delay is a queue power" rejection turned out to be
+  compile-enforced, better than a runtime text.
+- Analyzer: Cache/Secret/Counter/Histogram are AppGraph resources
+  (shared `extractCarrier`; const-name error family; new
+  `errors/secretname` fixture). Dev banner + `gen graph` render them.
+- Dev console: `📈 uploads +1 (total 3)` / `📈 thumb_ms 8 (n=1)` and
+  `⚙ <queue>: message delayed <d>`.
+- Gallery grew its spec-Part-3 spine per the proposal: `feed` cache
+  (list via `GetOrFill`, `warmFeed` re-puts on PhotoReady), `notifier`
+  secret (used in notifyOwner), `ups`, `thumbMs`; `Ready` is now
+  indexed; committed demo `examples/gallery/.env` (with a comment that
+  real apps gitignore it) so tests/dev/validation boot out of the box.
+  New `TestFeedCacheServesReadyPhotos`.
+- Conformance: Cache chapter (7 cases) + QueueDelay chapter (3 cases,
+  fake clock) → 57 local cases total.
+
+**Bug found by this feature (pre-existing, fixed)**: the analyzer stored
+derived-index results through a `*Resource` pointing into
+`graph.Resources`; appending the four new resource kinds reallocated the
+slice, so indexes vanished from the goldens. Fixed by storing the slice
+index. The fix also restored shortlink's `entity links (indexes: Owner,
+Created)`, which the bug had been silently eating since F7 added the
+second entity — goldens now show the F2-era output again.
+
+**Tier-2 validation — validate/extras.md executed, real transcripts**
+
+§1 (gallery, product way):
+```
+$ tako test
+tako test · gallery
+  analyzing   5 services, 7 endpoints, 1 worker, 3 subscribers
+  generating  .tako/gen/gallery/main.go (regenerated: gallery was stale)
+  go test ./...
+ok  	gallery	2.134s
+```
+
+§2 (dev banner + metrics + warm feed):
+```
+  entity photos (indexes: Ready)
+  ...
+  cache feed
+  secret notifier-key
+  counter uploads
+  histogram thumb_ms
+...
+📈 uploads +1 (total 1)
+⚙ photos.Uploaded → OnUploaded ok (0s)
+📈 thumb_ms 8 (n=1)
+⚙ thumbnails → MakeThumb ok (9ms)
+⚙ photo-ready → WarmFeed ok (0s)
+$ curl -s localhost:8090/api/photos | jq -c '[.[] | {caption, ready}]'
+[{"caption":"cat","ready":true}]
+```
+
+§3 (missing secret, exact text):
+```
+$ mv .env .env.bak && rm -rf .tako && PORT=8090 tako dev
+tako: boot: secret "notifier-key" is not set — add it to .env (local) or Secret Manager (cloud)
+```
+
+§4 (fake clock + secrets, milliseconds not hours):
+```
+--- PASS: TestWithDelayRidesTheFakeClock (0.01s)
+--- PASS: TestCacheGetOrFillFillsOnceThenHits (0.01s)
+--- PASS: TestSecretResolvesViaSetSecret (0.01s)
+--- PASS: TestUnsetSecretPanicsWithGuidance (0.00s)
+```
+
+§5: conformance 57/57 local; full tree + hello/shortlink/gallery green.
+
+**Discovered work (not done)**: devserver wraps a boot failure as
+"✗ analysis failed — still serving last good build" (it is neither);
+wants a distinct boot-failure message. GetOrFill singleflight (later,
+call-site compatible). WithDelay still has no example call site — shop's
+delayed order email is the demanding example.
+
+**GATE REQUEST — F8 (local): Secret, Cache, metrics, WithDelay.** Please
+run `validate/extras.md` — the quick script pass the agent plan calls
+for; §3 (boot refusal) and §4 (a 4-hour delay tested in 10ms) are the
+judgment calls — and record the verdict in `docs/validation-log.md`.

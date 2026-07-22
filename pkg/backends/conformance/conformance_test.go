@@ -59,6 +59,35 @@ func TestQueue(t *testing.T) {
 	}
 }
 
+func TestQueueDelay(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunQueueDelay(t, func(t *testing.T) backends.Queue {
+			return local.NewQueueDispatcher(t.TempDir(), local.QueueOptions{
+				MaxAttempts: 3,
+				Backoff:     10 * time.Millisecond,
+			})
+		})
+	case "gcp":
+		t.Skip("gcp backend arrives in Phase F")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
+
+func TestCache(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunCache(t, func(t *testing.T) backends.Cache {
+			return local.NewMemoryCache()
+		})
+	case "gcp":
+		t.Skip("cloud cache is per-instance in-memory too — same backend, Phase E wires it")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
+
 func TestTopic(t *testing.T) {
 	switch *backend {
 	case "local":

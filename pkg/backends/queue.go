@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Queue is the delivery contract behind tako.Queue[T]: at-least-once
@@ -10,12 +11,20 @@ import (
 // redelivery on error and dead-lettering on permanent failure or attempt
 // exhaustion.
 type Queue interface {
-	// Publish enqueues payload for the queue's consumer.
-	Publish(ctx context.Context, queue string, payload []byte) error
+	// Publish enqueues payload for the queue's consumer. A non-zero
+	// opts.Delay holds the message: first delivery happens no sooner
+	// than the delay.
+	Publish(ctx context.Context, queue string, payload []byte, opts PublishOptions) error
 	// Consume registers the queue's single consumer. deliver returns nil
 	// to ack, an error to redeliver; a permanent error (IsPermanent)
 	// short-circuits to the dead letter.
 	Consume(queue string, deliver func(ctx context.Context, payload []byte) error)
+}
+
+// PublishOptions carry per-message publish behavior (tako.WithDelay).
+type PublishOptions struct {
+	// Delay defers the first delivery attempt; zero delivers immediately.
+	Delay time.Duration
 }
 
 // DeadLetter records a message that gave up delivery.

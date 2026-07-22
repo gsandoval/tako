@@ -2,6 +2,8 @@ package tako
 
 import (
 	"encoding/json"
+	"fmt"
+	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends"
@@ -21,15 +23,24 @@ type QueueHandle[T any] struct {
 	opts []Option
 }
 
-// Publish enqueues msg for the queue's worker. WithDelay defers delivery
-// and WithRateLimit caps it; using either selects a scheduling-capable
-// backend — same API, provisioner's choice.
+// Publish enqueues msg for the queue's worker. WithDelay defers the
+// first delivery; using it selects a scheduling-capable backend in the
+// cloud — same API, provisioner's choice.
 func (q *QueueHandle[T]) Publish(ctx Ctx, msg T, opts ...Option) error {
+	var po backends.PublishOptions
+	for _, o := range opts {
+		switch o.name {
+		case "delay":
+			po.Delay = o.args[0].(time.Duration)
+		default:
+			return fmt.Errorf("tako.%s is not a Publish option (Publish accepts WithDelay)", optionDisplayName(o.name))
+		}
+	}
 	raw, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return queueBackend(ctx).Publish(ctx, q.name, raw)
+	return queueBackend(ctx).Publish(ctx, q.name, raw, po)
 }
 
 // queueBackend returns the wired queue backend, which boot (generated

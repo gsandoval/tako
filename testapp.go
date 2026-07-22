@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
+	"github.com/gsandoval/tako/internal/secrets"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -30,6 +31,9 @@ func NewTestApp(tb testing.TB) *TestApp {
 	if err != nil {
 		tb.Fatalf("tako: NewTestApp: %v", err)
 	}
+	// Delayed publishes wait on a fake clock only Advance moves — a test
+	// never sleeps out a WithDelay.
+	app.Dispatcher.UseManualClock()
 	ta := &TestApp{tb: tb, app: app}
 	for _, h := range registeredAsync() {
 		deliver := func(invoke func(Ctx, []byte) error, name string) func(context.Context, []byte) error {
@@ -91,6 +95,23 @@ func (a *TestApp) DrainQueues() {
 	if err := a.app.Dispatcher.WaitIdle(30 * time.Second); err != nil {
 		a.tb.Fatalf("tako: DrainQueues: %v", err)
 	}
+}
+
+// Advance moves the app's fake clock forward, releasing every delayed
+// queue message (WithDelay) that has come due. It moves scheduled time
+// only — retry backoff and chaos reordering keep their real
+// (millisecond) timers — and DrainQueues treats not-yet-due messages as
+// idle rather than waiting out their delays. Cron joins this clock in F9.
+func (a *TestApp) Advance(d time.Duration) {
+	a.app.Dispatcher.Advance(d)
+}
+
+// SetSecret provides a declared secret's value, removed again when the
+// test ends. Secrets resolve without a Ctx (Value takes none), so unlike
+// every other backend they are process-wide, not per-app.
+func (a *TestApp) SetSecret(name, value string) {
+	secrets.Set(name, value)
+	a.tb.Cleanup(func() { secrets.Unset(name) })
 }
 
 // AdvanceCron runs the named cron handler once, as if its schedule fired.

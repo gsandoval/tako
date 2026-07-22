@@ -65,6 +65,22 @@ func registeredAsync() []Handler {
 	return append([]Handler{}, asyncRegistry...)
 }
 
+// Secret declarations register their names the same way, so boot can
+// refuse to start with any declared secret unset (same carve-out).
+var secretRegistry []string
+
+func registerSecret(name string) {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	secretRegistry = append(secretRegistry, name)
+}
+
+func declaredSecrets() []string {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return append([]string{}, secretRegistry...)
+}
+
 // fnName names a handler function for test wiring: the last segment of
 // its qualified name ("shortlink.countClick" → "countClick").
 func fnName(fn any) string {

@@ -21,6 +21,16 @@ var Topic backends.Topic
 // Signer is the wired URL signer; nil until boot.
 var Signer backends.URLSigner
 
+// Cache is the wired cache backend; nil until boot.
+var Cache backends.Cache
+
+// Metrics is the wired metrics sink; nil until boot.
+var Metrics backends.Metrics
+
+// DeclaredSecrets is set by the SDK at init: it lists every secret name
+// declared via tako.Secret, so boot can refuse to start with any unset.
+var DeclaredSecrets func() []string
+
 // HandlerInfo is set by the SDK at init: it opens a Handler record for
 // the runtime — kind, bound source (queue or topic name), and the
 // payload-decoding invoke closure (typed func(tako.Ctx, []byte) error,

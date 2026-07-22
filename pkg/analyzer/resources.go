@@ -234,8 +234,10 @@ func extractTopic(dir string, pkg *packages.Package, name *ast.Ident, call *ast.
 	return extractCarrier("topic", "tako.Topic", dir, pkg, name, call, errs)
 }
 
-// extractCarrier validates one message-carrier declaration (Queue or
-// Topic — same shape: constant name, generic payload).
+// extractCarrier validates one simple named-resource declaration — the
+// message carriers (Queue, Topic) and the F8 primitives (Cache, Secret,
+// Counter, Histogram). Same shape: constant name, payload type recorded
+// when the constructor is generic.
 func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" || len(call.Args) < 1 {
 		return nil

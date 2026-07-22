@@ -1,37 +1,57 @@
 gallery: 5 services
   service gallery (package gallery, profile default)
-    POST /api/photos → Upload (app.go:37)
-    POST /api/uploads → StartUpload (app.go:38)
-    GET /api/photos/{id}/download → Download (app.go:39)
-    GET /api/photos/{id}/image → Image (app.go:40)
-    GET /api/photos/{id}/thumb → Thumb (app.go:41)
-    GET /api/photos → List (app.go:42)
-    GET /api/objects → Objects (app.go:43)
+    POST /api/photos → Upload (app.go:46)
+    POST /api/uploads → StartUpload (app.go:47)
+    GET /api/photos/{id}/download → Download (app.go:48)
+    GET /api/photos/{id}/image → Image (app.go:49)
+    GET /api/photos/{id}/thumb → Thumb (app.go:50)
+    GET /api/photos → List (app.go:51)
+    GET /api/objects → Objects (app.go:52)
     bucket photos
-    entity photos
+    entity photos (indexes: Ready)
     queue thumbnails
     topic photo-ready
+    cache feed
+    secret notifier-key
+    counter uploads
+    histogram thumb_ms
   service gallery-onuploaded (package gallery, profile default)
-    subscriber OnUploaded ← bucket photos.Uploaded (app.go:47)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:56)
     bucket photos
-    entity photos
+    entity photos (indexes: Ready)
     queue thumbnails
     topic photo-ready
+    cache feed
+    secret notifier-key
+    counter uploads
+    histogram thumb_ms
   service gallery-makethumb (package gallery, profile default)
-    worker MakeThumb ← queue thumbnails (app.go:48)
+    worker MakeThumb ← queue thumbnails (app.go:57)
     bucket photos
-    entity photos
+    entity photos (indexes: Ready)
     queue thumbnails
     topic photo-ready
+    cache feed
+    secret notifier-key
+    counter uploads
+    histogram thumb_ms
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:49)
+    subscriber NotifyOwner ← topic photo-ready (app.go:58)
     bucket photos
-    entity photos
+    entity photos (indexes: Ready)
     queue thumbnails
     topic photo-ready
+    cache feed
+    secret notifier-key
+    counter uploads
+    histogram thumb_ms
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:50)
+    subscriber WarmFeed ← topic photo-ready (app.go:59)
     bucket photos
-    entity photos
+    entity photos (indexes: Ready)
     queue thumbnails
     topic photo-ready
+    cache feed
+    secret notifier-key
+    counter uploads
+    histogram thumb_ms

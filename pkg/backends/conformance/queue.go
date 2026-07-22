@@ -56,7 +56,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 			got <- payload
 			return nil
 		})
-		if err := q.Publish(ctx, "jobs", []byte(`{"n":1}`)); err != nil {
+		if err := q.Publish(ctx, "jobs", []byte(`{"n":1}`), backends.PublishOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -85,7 +85,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 			close(done)
 			return nil
 		})
-		if err := q.Publish(ctx, "jobs", []byte(`{}`)); err != nil {
+		if err := q.Publish(ctx, "jobs", []byte(`{}`), backends.PublishOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -106,7 +106,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 			attempts.Add(1)
 			return permanentErr{errors.New("bad payload")}
 		})
-		if err := q.Publish(ctx, "jobs", []byte(`{"bad":true}`)); err != nil {
+		if err := q.Publish(ctx, "jobs", []byte(`{"bad":true}`), backends.PublishOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		dl := recv(t, dls)
@@ -126,7 +126,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 			attempts.Add(1)
 			return errors.New("always failing")
 		})
-		if err := q.Publish(ctx, "jobs", []byte(`{}`)); err != nil {
+		if err := q.Publish(ctx, "jobs", []byte(`{}`), backends.PublishOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		dl := recv(t, dls)
@@ -144,7 +144,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 		b := make(chan []byte, 1)
 		q.Consume("a", func(ctx context.Context, p []byte) error { a <- p; return nil })
 		q.Consume("b", func(ctx context.Context, p []byte) error { b <- p; return nil })
-		if err := q.Publish(ctx, "a", []byte(`"for a"`)); err != nil {
+		if err := q.Publish(ctx, "a", []byte(`"for a"`), backends.PublishOptions{}); err != nil {
 			t.Fatal(err)
 		}
 		select {
@@ -161,7 +161,7 @@ func RunQueue(t *testing.T, open func(t *testing.T) backends.Queue, params Queue
 
 	t.Run("publish without a worker is an error", func(t *testing.T) {
 		q := open(t)
-		if err := q.Publish(ctx, "ghost", []byte(`{}`)); err == nil {
+		if err := q.Publish(ctx, "ghost", []byte(`{}`), backends.PublishOptions{}); err == nil {
 			t.Fatal("publish to consumerless queue succeeded")
 		}
 	})

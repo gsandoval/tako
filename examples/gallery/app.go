@@ -14,12 +14,21 @@ var (
 	photoStore = tako.Entity[Photo]("photos")
 	thumbs     = tako.Queue[ThumbJob]("thumbnails")
 	ready      = tako.Topic[PhotoReady]("photo-ready") // fan-out: MANY subscribers
+
+	// Observability & config (spec Part 3): the feed is served through a
+	// TTL cache, uploads are counted, thumbnail latency is observed, and
+	// the notifier authenticates with a startup-resolved secret (.env
+	// locally, Secret Manager in the cloud).
+	feed     = tako.Cache[[]Photo]("feed", tako.WithTTL(time.Minute))
+	notifier = tako.Secret("notifier-key")
+	ups      = tako.Counter("uploads")
+	thumbMs  = tako.Histogram("thumb_ms")
 )
 
 type Photo struct {
 	ID      string `entity:"id" json:"id"`
 	Caption string `json:"caption"`
-	Ready   bool   `json:"ready"` // flipped by the worker once the thumb exists
+	Ready   bool   `entity:"index" json:"ready"` // flipped by the worker once the thumb exists
 }
 
 type ThumbJob struct {
@@ -107,12 +116,14 @@ func onUploaded(ctx tako.Ctx, obj tako.ObjectInfo) error {
 	if strings.HasSuffix(obj.Key, "_thumb") {
 		return nil
 	}
+	ups.Add(ctx, 1)
 	return thumbs.Publish(ctx, ThumbJob{PhotoID: obj.Key})
 }
 
 // One async shape everywhere: nil → ack, error → retry,
 // tako.Permanent(err) → give up and dead-letter.
 func makeThumb(ctx tako.Ctx, job ThumbJob) error {
+	start := time.Now()
 	img, err := photos.Get(ctx, job.PhotoID)
 	if err != nil {
 		return err // transient (object may lag the message): retry
@@ -136,6 +147,7 @@ func makeThumb(ctx tako.Ctx, job ThumbJob) error {
 	if err != nil {
 		return err
 	}
+	thumbMs.Observe(ctx, float64(time.Since(start).Milliseconds()))
 	return ready.Publish(ctx, PhotoReady{PhotoID: p.ID, Caption: p.Caption})
 }
 
@@ -145,13 +157,20 @@ func notifyOwner(ctx tako.Ctx, e PhotoReady) error {
 	if strings.Contains(e.Caption, "boom") {
 		return fmt.Errorf("notification service rejected %q", e.Caption)
 	}
-	ctx.Log().Info("owner notified", "photo", e.PhotoID)
+	// Value never fails here: boot refused to start if the secret was unset.
+	key := notifier.Value()
+	ctx.Log().Info("owner notified", "photo", e.PhotoID, "notifier", key[:2]+"…")
 	return nil
 }
 
+// warmFeed repopulates the cached feed the moment a photo becomes ready,
+// so readers rarely pay the query.
 func warmFeed(ctx tako.Ctx, e PhotoReady) error {
-	ctx.Log().Info("feed warmed", "photo", e.PhotoID) // real cache arrives F8
-	return nil
+	current, err := readyPhotos(ctx)
+	if err != nil {
+		return err
+	}
+	return feed.Put(ctx, "ready", current)
 }
 
 type ImageReq struct {
@@ -171,8 +190,14 @@ func thumb(ctx tako.Ctx, req ThumbReq) (tako.Blob, error) {
 	return photos.Get(ctx, req.ID+"_thumb")
 }
 
+// list serves the ready feed through the cache: warmFeed keeps it fresh,
+// GetOrFill covers the cold start, the TTL bounds staleness.
 func list(ctx tako.Ctx, _ struct{}) ([]Photo, error) {
-	return photoStore.Query(ctx).Limit(100).All()
+	return feed.GetOrFill(ctx, "ready", readyPhotos)
+}
+
+func readyPhotos(ctx tako.Ctx) ([]Photo, error) {
+	return photoStore.Query(ctx).Where("Ready", "=", true).Limit(100).All()
 }
 
 func objects(ctx tako.Ctx, _ struct{}) ([]tako.ObjectInfo, error) {

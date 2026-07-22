@@ -27,6 +27,10 @@
       "var": "shortlink.links",
       "package": "shortlink",
       "type": "Link",
+      "indexes": [
+        "Owner",
+        "Created"
+      ],
       "pos": "app.go:11:2"
     },
     {

@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
+	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/secrets"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -46,11 +48,18 @@ func BootLocal(dir string) error {
 	if port == "" {
 		port = "8080"
 	}
-	app, err := boot.Local(boot.Options{Dir: dir, BaseURL: "http://localhost:" + port})
+	// Secrets resolve once, here: .env in the module dir locally, and any
+	// declared secret left unset stops the service before it serves.
+	app, err := boot.Local(boot.Options{Dir: dir, BaseURL: "http://localhost:" + port, EnvFile: ".env"})
 	if err != nil {
 		return err
 	}
+	if err := checkSecrets(); err != nil {
+		_ = app.Close()
+		return err
+	}
 	attachQueueConsole(app.Dispatcher, dir)
+	attachMetricsConsole(app.Metrics)
 	// TAKO_CHAOS=<seed> (tako dev --chaos) turns on delivery chaos:
 	// duplicates, redelivery after ack, reordering — seeded, so a run
 	// reproduces exactly.
@@ -64,6 +73,20 @@ func BootLocal(dir string) error {
 		fmt.Printf("☢ chaos: enabled (seed %d) — deliveries may duplicate, reorder, redeliver\n", seed)
 	}
 	booted = app
+	return nil
+}
+
+// checkSecrets refuses to boot with any declared secret unset — that is
+// the contract that lets SecretHandle.Value never fail at request time.
+func checkSecrets() error {
+	if hooks.DeclaredSecrets == nil {
+		return nil
+	}
+	for _, name := range hooks.DeclaredSecrets() {
+		if _, ok := secrets.Lookup(name); !ok {
+			return fmt.Errorf("secret %q is not set — add it to .env (local) or Secret Manager (cloud)", name)
+		}
+	}
 	return nil
 }
 

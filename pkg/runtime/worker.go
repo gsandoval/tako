@@ -86,11 +86,27 @@ func attachChaosConsole(d *local.QueueDispatcher) {
 	})
 }
 
+// attachMetricsConsole renders recordings as 📈 lines: metrics are logs
+// locally, but the dev console keeps the running totals visible.
+func attachMetricsConsole(m *local.MetricsLog) {
+	m.OnMetric(func(kind, name string, value float64, total int64) {
+		switch kind {
+		case "counter":
+			fmt.Printf("📈 %s %+d (total %d)\n", name, int64(value), total)
+		case "histogram":
+			fmt.Printf("📈 %s %g (n=%d)\n", name, value, total)
+		}
+	})
+}
+
 // attachQueueConsole narrates delivery on the dev console: ⚙ per attempt
 // and ack, ✗ per dead letter — the local async story stays visible.
 func attachQueueConsole(d *local.QueueDispatcher, dataDir string) {
 	d.OnAck(func(source, consumer string, took time.Duration) {
 		fmt.Printf("⚙ %s → %s ok (%s)\n", source, consumerName(source, consumer), took.Round(time.Millisecond))
+	})
+	d.OnDelayed(func(queue string, delay time.Duration) {
+		fmt.Printf("⚙ %s: message delayed %s\n", queue, delay)
 	})
 	d.OnAttempt(func(source, consumer string, attempt, max int, err error, retryIn time.Duration) {
 		fmt.Printf("⚙ %s → %s attempt %d/%d failed: %v — retrying in %s\n",

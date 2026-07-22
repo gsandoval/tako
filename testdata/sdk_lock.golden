@@ -35,10 +35,12 @@
     func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
     func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
+    func (*TestApp).Advance(d time.Duration)
     func (*TestApp).AdvanceCron(name string)
     func (*TestApp).Chaos()
     func (*TestApp).Ctx(as ...User) Ctx
     func (*TestApp).DrainQueues()
+    func (*TestApp).SetSecret(name string, value string)
     func (*TestApp).SignIn(name string) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
     func (Ctx).IsHTMX() bool

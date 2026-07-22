@@ -13,4 +13,5 @@ func init() {
 		}
 		return hd.kind, hd.source, hd.invoke
 	}
+	hooks.DeclaredSecrets = declaredSecrets
 }

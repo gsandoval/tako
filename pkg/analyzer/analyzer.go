@@ -72,7 +72,9 @@ func Analyze(cfg Config) (*AppGraph, error) {
 	}
 	var errs ErrorList
 	entities := map[string]*entityType{}    // payload type key → schema
-	entityRes := map[string]*Resource{}     // payload type key → resource entry
+	// payload type key → index into graph.Resources (an index, not a
+	// pointer: later appends may reallocate the slice).
+	entityRes := map[string]int{}
 	queueVars := map[types.Object]string{}  // queue var object → queue name
 	topicVars := map[types.Object]string{}  // topic var object → topic name
 	bucketVars := map[types.Object]string{} // bucket var object → bucket name
@@ -114,7 +116,7 @@ func Analyze(cfg Config) (*AppGraph, error) {
 				if r, key, et := extractEntity(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					entities[key] = et
-					entityRes[key] = &graph.Resources[len(graph.Resources)-1]
+					entityRes[key] = len(graph.Resources) - 1
 				}
 			case "Bucket":
 				if r := extractBucket(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
@@ -130,6 +132,10 @@ func Analyze(cfg Config) (*AppGraph, error) {
 				if r := extractTopic(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					topicVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+				}
+			case "Cache", "Secret", "Counter", "Histogram":
+				if r := extractCarrier(strings.ToLower(d.ctor), "tako."+d.ctor, cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
 				}
 			}
 		}
@@ -155,7 +161,7 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		scanQueries(cfg.Dir, pkg, entities, &errs)
 	}
 	for key, et := range entities {
-		res := entityRes[key]
+		res := &graph.Resources[entityRes[key]]
 		for _, f := range et.declared { // derived indexes, struct order
 			if et.used[f] {
 				res.Indexes = append(res.Indexes, f)

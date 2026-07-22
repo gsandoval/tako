@@ -37,8 +37,24 @@ type QueueDispatcher struct {
 	onAttempt    func(source, consumer string, attempt, max int, err error, retryIn time.Duration)
 	onAck        func(source, consumer string, took time.Duration)
 	onChaos      func(source, consumer, action string)
+	onDelayed    func(queue string, delay time.Duration)
 	chaos        *chaosState
 	inflight     sync.WaitGroup
+
+	// Delayed publishes. Real mode arms a timer per message; manual mode
+	// (test apps) parks messages on a virtual clock that only Advance
+	// moves — a parked message is idle, not in flight.
+	manualClock bool
+	virtualNow  time.Duration
+	parked      []parkedDelivery
+}
+
+// parkedDelivery is one delayed message waiting on the manual clock.
+type parkedDelivery struct {
+	due     time.Duration
+	to      delivery
+	deliver func(ctx context.Context, payload []byte) error
+	payload []byte
 }
 
 // topicSub is one named subscriber of one topic.
@@ -103,15 +119,72 @@ func (d *QueueDispatcher) Consume(queue string, deliver func(ctx context.Context
 	d.consumers[queue] = deliver
 }
 
-func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []byte) error {
+func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []byte, opts backends.PublishOptions) error {
 	d.mu.Lock()
 	deliver, ok := d.consumers[queue]
 	d.mu.Unlock()
 	if !ok {
 		return fmt.Errorf("queue %q has no worker registered", queue)
 	}
-	d.dispatch(delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}, deliver, payload)
+	to := delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}
+	if opts.Delay > 0 {
+		d.deferDelivery(to, deliver, payload, opts.Delay)
+		return nil
+	}
+	d.dispatch(to, deliver, payload)
 	return nil
+}
+
+// deferDelivery holds a delayed message until it comes due: a real timer in dev
+// and generated services, the manual clock in test apps.
+func (d *QueueDispatcher) deferDelivery(to delivery, deliver func(context.Context, []byte) error, payload []byte, delay time.Duration) {
+	d.mu.Lock()
+	notify := d.onDelayed
+	if d.manualClock {
+		d.parked = append(d.parked, parkedDelivery{due: d.virtualNow + delay, to: to, deliver: deliver, payload: payload})
+		d.mu.Unlock()
+	} else {
+		d.mu.Unlock()
+		time.AfterFunc(delay, func() { d.dispatch(to, deliver, payload) })
+	}
+	if notify != nil {
+		notify(to.source, delay)
+	}
+}
+
+// UseManualClock switches delayed publishes onto a virtual clock that
+// only Advance moves. Test apps call this at boot; dev uses real timers.
+func (d *QueueDispatcher) UseManualClock() {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.manualClock = true
+}
+
+// Advance moves the manual clock forward and releases every parked
+// message that has come due.
+func (d *QueueDispatcher) Advance(by time.Duration) {
+	d.mu.Lock()
+	d.virtualNow += by
+	var due, still []parkedDelivery
+	for _, p := range d.parked {
+		if p.due <= d.virtualNow {
+			due = append(due, p)
+		} else {
+			still = append(still, p)
+		}
+	}
+	d.parked = still
+	d.mu.Unlock()
+	for _, p := range due {
+		d.dispatch(p.to, p.deliver, p.payload)
+	}
+}
+
+// OnDelayed subscribes to delayed publishes (the dev console's note).
+func (d *QueueDispatcher) OnDelayed(fn func(queue string, delay time.Duration)) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.onDelayed = fn
 }
 
 // dispatch launches the delivery loop (plus a chaos duplicate when chaos
