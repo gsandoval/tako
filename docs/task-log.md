@@ -2676,3 +2676,35 @@ scheduling lands. Dead-letter replay CLI still open.
 doubles as the first whole-DX review, so notes beyond pass/fail are
 welcome — and record the verdict in `docs/validation-log.md`. F10 (API
 freeze review) follows.
+
+## F10 — API freeze review: materials prepared (2026-07-22)
+
+F10 is human-led, so there is no DX proposal cycle: the deliverable is
+`docs/api-review-1.md`, now written. It walks all 132 locked symbols
+(testdata/sdk_lock.golden) in 8 groups, each row assessed against the
+six rules with a recommendation and an empty Verdict column; §9 is the
+complete enumerated list of the seven deliberate rule deviations (each
+load-bearing, none accidental); §10 lists the non-SDK follow-ups that
+came up during gates.
+
+Items explicitly flagged for the reviewer's judgment rather than
+rubber-stamping:
+- `Ctx.IsHTMX()` on the universal Ctx (decision 13 argues keep; workers
+  answering false argues page-scoped ctx in Phase G).
+- `TestApp.Chaos()` without a seed parameter — signature is frozen
+  after this gate; env-var replay has sufficed so far.
+- `Advance` vs `AdvanceCron` — recommended keeping both (reasoning in
+  §8).
+- The Phase G/H stubs (Auth, Site, Page, Job, Lock, Singleton + their
+  options) — recommended `keep (provisional)`: freeze the intent, let
+  the implementing phase reopen with a documented reason.
+
+Nothing was renamed, added, or re-shaped — per the working rules, API
+changes only happen from the verdicts of this review.
+
+**GATE REQUEST — F10 (with F9).** Per your instruction the F9 gallery
+review and F10 run together: run `validate/gallery.md` (the whole-DX
+demo — its §2–§4 double as the API's feel test), then fill the Verdict
+columns and the approval block in `docs/api-review-1.md`. Record both
+verdicts in `docs/validation-log.md`. Any renames you request become
+the last F10 implementation task before the lock freezes.
