@@ -2421,3 +2421,161 @@ delayed order email is the demanding example.
 run `validate/extras.md` — the quick script pass the agent plan calls
 for; §3 (boot refusal) and §4 (a 4-hour delay tested in 10ms) are the
 judgment calls — and record the verdict in `docs/validation-log.md`.
+
+## F9 — DX proposal: Gallery, complete (2026-07-22)
+
+Agent-plan scope: `examples/gallery` per spec Part 3, full test suite,
+chaos coverage on `makeThumb`. Gate F9: the full demo script — signed
+upload, event → queue → worker, fan-out, queries, cron — doubling as the
+first whole-DX review.
+
+**The Part-3 boundary, drawn explicitly.** Spec Part 3's gallery also
+declares `auth`/`site`/`tmpl` and a `Page` — the implementation plan puts
+all of that web/auth surface in Phase G (journal), and the lease behind
+`WithSingleflight` in Phase H. F9 ships everything else: the async +
+storage + observability gallery, plus **cron** (the one Part-3 primitive
+still stubbed, whose own stub says "arrives with the full gallery").
+Deviations from Part 3 are §5 — each one is a Phase G/H arrival, not a
+redesign.
+
+### 1. User code — gallery, final local form
+
+```go
+var (
+    photos     = tako.Bucket("photos")
+    photoStore = tako.Entity[Photo]("photos")
+    thumbs     = tako.Queue[ThumbJob]("thumbnails")
+    ready      = tako.Topic[PhotoReady]("photo-ready")
+    feed       = tako.Cache[[]Photo]("feed", tako.WithTTL(time.Minute))
+    notifier   = tako.Secret("notifier-key")
+    ups        = tako.Counter("uploads")
+    thumbMs    = tako.Histogram("thumb_ms")
+)
+
+type Photo struct {
+    ID      string `entity:"id" json:"id"`
+    Owner   string `entity:"index" json:"owner"`
+    Caption string `json:"caption"`
+    Ready   bool   `entity:"index" json:"ready"`
+}
+type PhotoReady struct{ PhotoID, Owner, Caption string }
+
+var (
+    Upload      = tako.API("POST /api/photos", upload)
+    StartUpload = tako.API("POST /api/uploads", startUpload)
+    Download    = tako.API("GET /api/photos/{id}/download", download)
+    // ...Image, Thumb, List, Objects as today...
+
+    OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
+    MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
+    NotifyOwner = tako.Subscribe(ready, notifyOwner)
+    WarmFeed    = tako.Subscribe(ready, warmFeed)
+    Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+)
+
+// makeThumb now really resizes (x/image/draw in the EXAMPLE's go.mod —
+// app code, not framework): 256px, aspect preserved, re-encoded.
+// Undecodable image → tako.Permanent. Non-image content type keeps
+// today's retry-then-dead-letter behavior.
+
+// download returns a shaped response (was a bare JSON string — F6's
+// noted DX smell):
+type DownloadRes struct{ URL string `json:"url"` }
+
+// cleanupOrphans deletes never-completed uploads: photos still not
+// Ready when the daily run fires (a ticket was issued, bytes never
+// arrived — or the pipeline dead-lettered), entity + any object.
+func cleanupOrphans(ctx tako.Ctx) error { ... }
+```
+
+Owner flows via `ctx.MaybeUser()` (shortlink's pattern): `SignIn` gives
+tests real owners; anonymous HTTP uploads get `""` until Phase G's
+`WithAuth` makes `ctx.User()` enforceable. `list` filters Ready + (when
+signed in) Owner; the feed cache keys per owner (`"ready"` /
+`"ready:"+uid`); `warmFeed` warms the anonymous feed and the owner's.
+
+### 2. Cron — the v0 contract
+
+- Schedule syntax: **`"every <Go duration>"`** ("every 24h", "every 90s"),
+  const (analyzer-enforced). Anything else:
+  `tako.Cron schedule must be "every <duration>" for now (cron expressions arrive with cloud scheduling); got "0 3 * * *"` (tako/cron-schedule).
+- Handler shape `func(Ctx) error` — validated like every handler sig.
+  Cron handlers belong to the **app service** (spec §4.1 partitioning),
+  not their own service.
+- Local runner: one timer per cron; runs are serialized per cron — a
+  tick that lands while the previous run is still going is **skipped
+  with a narration**, which is also the honest local face of
+  `WithSingleflight` (the option parses; the cross-instance lease is
+  Phase H). Dev console: `⏰ cron cleanupOrphans: every 24h` at boot,
+  `⏰ cron cleanupOrphans ok (3ms)` per run.
+- Options: `WithSingleflight` only. Others:
+  `tako.X is not a Cron option (Cron accepts WithSingleflight)`.
+- **`AdvanceCron(name)` goes live** (same registry carve-out): runs the
+  named cron once, synchronously, on the test app's backends; unknown
+  name Fatals listing the declared crons. Name = handler function name
+  (`"cleanupOrphans"`), consistent with F7's wiring identity.
+
+### 3. The test suite — migrated user-style, honestly split
+
+`app_test.go` becomes the spec §2.10 shape: `NewTestApp` / `SignIn` /
+`Call` / `DrainQueues` for everything whose contract is app logic —
+upload pipeline, feed cache, owner filtering, fan-out, and NEW:
+
+```go
+func TestThumbPipelineSurvivesChaos(t *testing.T) {   // the Phase D exit criterion
+    app := tako.NewTestApp(t); app.Chaos()
+    u := app.SignIn("memo"); ctx := app.Ctx(u)
+    for i := range 8 { Upload.Call(ctx, UploadReq{Caption: ..., Img: pngBlob(t)}) }
+    app.DrainQueues()
+    // every photo Ready, every thumb present and well-formed, feed exact
+}
+
+func TestCronCleansNeverCompletedUploads(t *testing.T) {
+    app := tako.NewTestApp(t); ctx := app.Ctx(app.SignIn("memo"))
+    StartUpload.Call(ctx, StartUploadReq{Caption: "ghost"}) // ticket, no bytes
+    Upload.Call(ctx, UploadReq{Caption: "real", Img: pngBlob(t)})
+    app.DrainQueues()
+    app.AdvanceCron("cleanupOrphans")
+    // ghost entity gone; real photo untouched
+}
+```
+
+Two suites deliberately stay on the HTTP/disk harness (`serve()` +
+`BootLocal`): signed-URL semantics (the contract IS HTTP: statuses,
+rejection texts, CORS) and dead-letter-on-disk assertions (the contract
+IS the `.tako/data/deadletter` layout). Splitting by contract beats
+forcing one harness everywhere.
+
+### 4. Signed-URL endpoint: CORS (noted F6 follow-up)
+
+Browsers PUT to signed URLs cross-origin. `/_tako/signed/` gains:
+OPTIONS preflight (204), `Access-Control-Allow-Origin: *`,
+`-Methods: GET, PUT`, `-Headers: Content-Type` — on the endpoint, not
+per-app config (GCS behaves equivalently once bucket CORS is
+provisioned in Phase F). Conformance grows a CORS case.
+`validate/signed.md` §4 gets a fix-up for the new shaped `Download`
+response (`jq -r .url`).
+
+### 5. Deviations from spec Part 3 (all deferred arrivals, flagged)
+
+- No `auth`/`WithAuth`/`ctx.User()` enforcement, no `site`/`tmpl`, no
+  `Page` (`photoPage`) — Phase G (journal). Owner rides `MaybeUser`.
+- `WithSingleflight` parses; the real lease is Phase H. Locally:
+  serialized runs + skip narration.
+- `resize` uses `golang.org/x/image/draw` in the example's module —
+  the framework gains no dependency.
+- Spec Part 3's `Upload`-only flow also keeps our multipart `Upload`
+  AND the ticket `StartUpload` (both were validated features; Part 3
+  shows the ticket flow).
+
+### 6. Not in scope (F9 non-goals)
+
+- No `tako.Singleton`, no `Lock` (Phase H). No `Job` (Phase H).
+- No cron expressions, no timezone handling — `every <duration>` only.
+- No auth middleware — even though SignIn exists (test identity only).
+- No dev-console `AdvanceCron` analog (crons fire on their real
+  schedule in dev; tests own time).
+- No spec fix-up beyond validate/signed.md; the Part 3
+  Static/Templates→Site drift stays a Phase G task.
+
+**STOP — awaiting DX approval before implementation.**
