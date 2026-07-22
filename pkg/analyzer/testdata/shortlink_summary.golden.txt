@@ -1,6 +1,13 @@
-shortlink: 1 service
+shortlink: 2 services
   service shortlink (package shortlink, profile default)
-    POST /api/links → Create (app.go:22)
-    GET /api/links/{slug} → Resolve (app.go:23)
-    GET /api/links → List (app.go:24)
-    entity links (indexes: Owner, Created)
+    POST /api/links → Create (app.go:33)
+    GET /api/links/{slug} → Resolve (app.go:34)
+    GET /api/links → List (app.go:35)
+    entity links
+    queue clicks
+    entity clicks-seen
+  service shortlink-countclick (package shortlink, profile default)
+    worker CountClick ← queue clicks (app.go:37)
+    entity links
+    queue clicks
+    entity clicks-seen

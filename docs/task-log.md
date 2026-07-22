@@ -2051,3 +2051,107 @@ deliberately exercise the generated-mux plumbing), chaos on
 entity/bucket operations or injected handler errors (only delivery
 chaos in v0), network fault injection, `tako test` flags passthrough
 beyond the target package list.
+
+---
+
+## F7 — implementation: Testing as a feature (2026-07-21)
+
+DX proposal approved as written (registry variant); shipped surface
+matches it.
+
+**What shipped**
+
+- **`tako.NewTestApp(t)`** (testapp.go, live): boots fresh local
+  backends in `t.TempDir()` via the new `internal/boot` package (the
+  one place that knows how a local app comes up — `runtime.BootLocal`
+  now delegates to it too), auto-wires every registered worker and
+  subscriber, cleans up on test end. Test retry pacing is 5×5ms — the
+  contract, not production timing.
+- **True isolation via contexts**: resource operations now resolve
+  backends from the context first (`appFrom(ctx)`), falling through to
+  the process globals — `TestAppsAreIsolated` proves two apps share
+  nothing. This touched every `xxxBackend()` resolver (now
+  `xxxBackend(ctx)`), no exported surface change.
+- **The approved rule-1 carve-out**: `Worker`/`Subscribe` append their
+  record to an internal registry (order-independent, test-read-only);
+  test wiring identity is the handler function's name via reflection
+  (`countClick`), while generated mains keep explicit var-name lines.
+- **`SignIn`/`Ctx`/`DrainQueues`** per spec §2.10; `AdvanceCron` stays
+  a stub whose panic says cron arrives with F9.
+- **Chaos mode**, seeded and REPRODUCIBLE: duplicate delivery (25%),
+  redelivery after ack (15%), reordering delays (0–20ms) on queues and
+  topics. First implementation drew from one shared `rand` — my own
+  validation caught that goroutine interleaving made the same seed give
+  different runs (29/28/27 hits). Redesigned: each decision is a pure
+  FNV hash of (seed, destination, per-destination delivery ordinal) —
+  no draw-order dependence. Verified: fixed seed → identical failing
+  count across 4 runs; different seeds → different patterns; docs state
+  the honest boundary (reproducible when publish order is stable, which
+  sequential test bodies guarantee).
+- **`tako dev --chaos`**: passes `TAKO_CHAOS=<seed>` to the app;
+  `BootLocal` enables chaos and the console narrates — `☢ chaos:
+  enabled (seed …)` banner, `☢ chaos clicks: delivering to CountClick
+  twice` / `again after ack` lines.
+- **`tako test`**: analyze (analysis errors block) → regenerate with a
+  freshness note (`regenerated: shortlink was stale`) only when output
+  actually changed → `go test ./...` (or passed-through args) with
+  output streaming.
+- **Shortlink rewritten as the teaching example**: `resolve` publishes
+  `Click{ID: tako.NewID(), Slug}` (Hits now eventually consistent, per
+  proposal); `countClick` claims the event ID in `seen` before
+  counting — the idempotency-ledger idiom; `create` honors
+  `ctx.MaybeUser()` so `SignIn` owners are real. Suite is user-style
+  end to end: `TestClicksCountExactlyOnceUnderChaos` is the centerpiece,
+  plus isolation, 409/404/422 coverage via `Call`.
+- Analyzer/codegen goldens regenerated (shortlink gained queue
+  `clicks`, ledger entity `clicks-seen`, worker service
+  `shortlink-countclick`); fixture `go.sum`s refreshed (the SDK now
+  transitively carries bbolt because it contains the test harness).
+
+**Validation transcript (tier 2, validate/testing.md)**
+
+Seeded the bug (idempotency claim removed):
+
+```
+--- FAIL: TestClicksCountExactlyOnceUnderChaos (0.25s)
+    app_test.go:60: tako: chaos enabled (seed 1784686156364961000) — rerun with TAKO_CHAOS_SEED=1784686156364961000 to reproduce
+    app_test.go:78: hits = 29, want exactly 20
+```
+
+Reproducibility (after the determinism redesign), fixed seed 424242,
+four runs: `hits = 26` every time. Seeds 1/2/3 → 29/28/32 (patterns
+vary by seed, each reproducible). Claim restored → whole suite green.
+
+`tako test`:
+
+```
+tako test · shortlink
+  analyzing   2 services, 3 endpoints, 1 worker
+  generating  .tako/gen/shortlink/main.go (regenerated: shortlink was stale)
+  go test ./...
+ok  	shortlink	0.705s
+```
+
+(second run: no stale note — freshness check is content-based.)
+
+`tako dev --chaos` (PORT=8090): banner `☢ chaos: enabled (seed …)`;
+1 create + 8 resolves produced interleaved `☢ chaos clicks: delivering
+to CountClick twice` / `again after ack` lines — and
+`/api/links?owner=memo → hits: 8`, exact despite the chaos, because the
+ledger holds in dev too.
+
+Full sweep: conformance 47 green (chaos is off by default — the suite
+is unchanged); `go test ./...` green in all four modules.
+
+**Discovered work (noted, not done)**
+
+- Chaos probabilities/delays are fixed constants; a `ChaosOptions`
+  surface (rates, max delay) can wait until an example demands it.
+- `runtime.WaitIdle`/`runtime.NewCtx`/`runtime.BootLocal` remain only
+  for gallery's generated-mux-mirror tests; F9 decides whether those
+  migrate to NewTestApp and the plumbing shrinks.
+
+**GATE REQUEST — F7 (local): Testing as a feature.** Please run
+`validate/testing.md` — the centerpiece is §2–§3: gut the idempotency
+claim, watch chaos catch it, and verify the printed seed replays the
+failure exactly — and record the verdict in `docs/validation-log.md`.

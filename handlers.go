@@ -3,6 +3,10 @@ package tako
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
+	"sync"
 )
 
 // Handlers are declared exactly like resources: a package-level var, a
@@ -34,7 +38,42 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 type Handler struct {
 	kind   string
 	source string
+	name   string // handler function's name; NewTestApp's wiring identity
 	invoke func(Ctx, []byte) error
+}
+
+// Async handler constructors also append their record to this registry so
+// NewTestApp can wire every worker and subscriber without a handler list.
+// The append is order-independent and read only by tests — production
+// mains keep their explicit, generated Register lines (the approved
+// rule-1 carve-out; see the F7 task log).
+var (
+	registryMu    sync.Mutex
+	asyncRegistry []Handler
+)
+
+func register(h Handler) Handler {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	asyncRegistry = append(asyncRegistry, h)
+	return h
+}
+
+func registeredAsync() []Handler {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	return append([]Handler{}, asyncRegistry...)
+}
+
+// fnName names a handler function for test wiring: the last segment of
+// its qualified name ("shortlink.countClick" → "countClick").
+func fnName(fn any) string {
+	pc := reflect.ValueOf(fn).Pointer()
+	full := runtime.FuncForPC(pc).Name()
+	if i := strings.LastIndexByte(full, '.'); i >= 0 {
+		return full[i+1:]
+	}
+	return full
 }
 
 // API declares a synchronous JSON endpoint on route (a Go 1.22+
@@ -58,9 +97,10 @@ func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option
 // tako.Permanent to give up and dead-letter. A queue with two workers is
 // an analysis error.
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
-	return Handler{
+	return register(Handler{
 		kind:   "worker",
 		source: queue.name,
+		name:   fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
 			var msg T
 			if err := json.Unmarshal(raw, &msg); err != nil {
@@ -68,7 +108,7 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option)
 			}
 			return fn(ctx, msg)
 		},
-	}
+	})
 }
 
 // Subscribe binds fn as one subscriber of an event source — a topic or a
@@ -77,9 +117,10 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option)
 // never delays another. Like every async handler it is func(Ctx, T) error:
 // return nil to ack, an error to retry, tako.Permanent to give up.
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler {
-	return Handler{
+	return register(Handler{
 		kind:   "subscribe",
 		source: source.sourceName(),
+		name:   fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
 			var msg T
 			if err := json.Unmarshal(raw, &msg); err != nil {
@@ -87,7 +128,7 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Opti
 			}
 			return fn(ctx, msg)
 		},
-	}
+	})
 }
 
 // Cron declares a scheduled handler. The schedule must be a string constant

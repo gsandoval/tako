@@ -28,6 +28,10 @@ type Options struct {
 	// Out receives the dev loop's own output (not the app's); nil means
 	// os.Stdout.
 	Out io.Writer
+	// ChaosSeed, when non-zero, runs the app with delivery chaos enabled
+	// (tako dev --chaos): duplicates, redelivery after ack, reordering —
+	// seeded, so a session reproduces exactly.
+	ChaosSeed int64
 }
 
 // Run executes the dev loop: analyze → generate → build → run, then watch
@@ -113,7 +117,7 @@ func (s *session) cycle(first bool) error {
 		return err
 	}
 	if first {
-		fmt.Fprintf(s.out(), "  analyzing   %s\n", countLine(graph))
+		fmt.Fprintf(s.out(), "  analyzing   %s\n", CountLine(graph))
 	}
 
 	written, err := codegen.Generate(graph, s.dir)
@@ -178,6 +182,9 @@ func (s *session) startApp(bin string) error {
 	cmd := exec.Command(bin)
 	cmd.Dir = s.dir
 	cmd.Env = append(os.Environ(), "PORT="+s.opts.Port)
+	if s.opts.ChaosSeed != 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("TAKO_CHAOS=%d", s.opts.ChaosSeed))
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
@@ -303,9 +310,10 @@ func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 	return apps[0], nil
 }
 
-// countLine renders the banner's analyzing summary: endpoints are the
-// sync handlers; async handlers are counted by kind.
-func countLine(g *analyzer.AppGraph) string {
+// CountLine renders the banner's analyzing summary: endpoints are the
+// sync handlers; async handlers are counted by kind. tako test prints
+// the same line.
+func CountLine(g *analyzer.AppGraph) string {
 	endpoints, workers, subs := 0, 0, 0
 	for _, h := range g.Handlers {
 		switch h.Kind {

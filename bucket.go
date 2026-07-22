@@ -29,7 +29,7 @@ type BucketHandle struct {
 
 // Get returns the object stored under key. tako.IsNotFound reports absence.
 func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
-	data, err := bucketBackend().Get(ctx, b.name, key)
+	data, err := bucketBackend(ctx).Get(ctx, b.name, key)
 	if err != nil {
 		return Blob{}, mapNotFound(err)
 	}
@@ -38,7 +38,7 @@ func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
 
 // Put stores blob under key, replacing any existing object.
 func (b *BucketHandle) Put(ctx Ctx, key string, blob Blob) error {
-	return bucketBackend().Put(ctx, b.name, key, backends.BlobData{
+	return bucketBackend(ctx).Put(ctx, b.name, key, backends.BlobData{
 		Reader: blob.Reader, ContentType: blob.ContentType, Size: blob.Size,
 	})
 }
@@ -46,18 +46,18 @@ func (b *BucketHandle) Put(ctx Ctx, key string, blob Blob) error {
 // Delete removes the object stored under key; deleting an absent key is
 // not an error.
 func (b *BucketHandle) Delete(ctx Ctx, key string) error {
-	return bucketBackend().Delete(ctx, b.name, key)
+	return bucketBackend(ctx).Delete(ctx, b.name, key)
 }
 
 // Exists reports whether an object is stored under key.
 func (b *BucketHandle) Exists(ctx Ctx, key string) (bool, error) {
-	return bucketBackend().Exists(ctx, b.name, key)
+	return bucketBackend(ctx).Exists(ctx, b.name, key)
 }
 
 // List iterates the objects whose keys start with prefix, in
 // lexicographic key order.
 func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
-	metas, err := bucketBackend().List(ctx, b.name, prefix)
+	metas, err := bucketBackend(ctx).List(ctx, b.name, prefix)
 	if err != nil {
 		return Iter[ObjectInfo]{err: err}
 	}
@@ -84,13 +84,13 @@ func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, opts ..
 			return "", fmt.Errorf("tako.%s is not a SignedPut option (SignedPut accepts WithMaxSize, WithContentType)", optionDisplayName(opt.name))
 		}
 	}
-	return signerBackend().SignPut(ctx, b.name, key, ttl, c)
+	return signerBackend(ctx).SignPut(ctx, b.name, key, ttl, c)
 }
 
 // SignedGet returns a URL that lets a client download key directly for the
 // given duration.
 func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error) {
-	return signerBackend().SignGet(ctx, b.name, key, ttl)
+	return signerBackend(ctx).SignGet(ctx, b.name, key, ttl)
 }
 
 // BucketEvent is a bucket's event source, usable as a Subscribe binding.
@@ -106,21 +106,25 @@ func (e BucketEvent) sourceName() string { return e.bucket.name + ".Uploaded" }
 // signerBackend returns the wired URL signer, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.
-func signerBackend() backends.URLSigner {
-	s := hooks.Signer
-	if s == nil {
-		panic("tako: no URL signer wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+func signerBackend(ctx Ctx) backends.URLSigner {
+	if a := appFrom(ctx); a != nil {
+		return a.Signer
 	}
-	return s
+	if hooks.Signer == nil {
+		panic("tako: no URL signer wired — run via tako dev, a generated service, or tako.NewTestApp")
+	}
+	return hooks.Signer
 }
 
 // bucketBackend returns the wired bucket backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.
-func bucketBackend() backends.Bucket {
-	b := hooks.Bucket
-	if b == nil {
-		panic("tako: no bucket backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+func bucketBackend(ctx Ctx) backends.Bucket {
+	if a := appFrom(ctx); a != nil {
+		return a.Buckets
 	}
-	return b
+	if hooks.Bucket == nil {
+		panic("tako: no bucket backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+	}
+	return hooks.Bucket
 }

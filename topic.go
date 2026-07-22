@@ -27,7 +27,7 @@ func (t *TopicHandle[T]) Publish(ctx Ctx, event T) error {
 	if err != nil {
 		return err
 	}
-	return topicBackend().Publish(ctx, t.name, raw)
+	return topicBackend(ctx).Publish(ctx, t.name, raw)
 }
 
 func (t *TopicHandle[T]) eventSource(T) {}
@@ -45,10 +45,12 @@ type EventSource[T any] interface {
 // topicBackend returns the wired topic backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.
-func topicBackend() backends.Topic {
-	b := hooks.Topic
-	if b == nil {
-		panic("tako: no topic backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+func topicBackend(ctx Ctx) backends.Topic {
+	if a := appFrom(ctx); a != nil {
+		return a.Dispatcher.Topics()
 	}
-	return b
+	if hooks.Topic == nil {
+		panic("tako: no topic backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+	}
+	return hooks.Topic
 }

@@ -29,16 +29,18 @@ func (q *QueueHandle[T]) Publish(ctx Ctx, msg T, opts ...Option) error {
 	if err != nil {
 		return err
 	}
-	return queueBackend().Publish(ctx, q.name, raw)
+	return queueBackend(ctx).Publish(ctx, q.name, raw)
 }
 
 // queueBackend returns the wired queue backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.
-func queueBackend() backends.Queue {
-	b := hooks.Queue
-	if b == nil {
-		panic("tako: no queue backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+func queueBackend(ctx Ctx) backends.Queue {
+	if a := appFrom(ctx); a != nil {
+		return a.Dispatcher
 	}
-	return b
+	if hooks.Queue == nil {
+		panic("tako: no queue backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+	}
+	return hooks.Queue
 }

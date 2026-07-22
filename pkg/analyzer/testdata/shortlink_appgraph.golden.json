@@ -10,6 +10,14 @@
         "shortlink.List"
       ],
       "profile": "default"
+    },
+    {
+      "name": "shortlink-countclick",
+      "package": "shortlink",
+      "handlers": [
+        "shortlink.CountClick"
+      ],
+      "profile": "default"
     }
   ],
   "resources": [
@@ -19,11 +27,23 @@
       "var": "shortlink.links",
       "package": "shortlink",
       "type": "Link",
-      "indexes": [
-        "Owner",
-        "Created"
-      ],
-      "pos": "app.go:9:5"
+      "pos": "app.go:11:2"
+    },
+    {
+      "kind": "queue",
+      "name": "clicks",
+      "var": "shortlink.clicks",
+      "package": "shortlink",
+      "type": "Click",
+      "pos": "app.go:12:2"
+    },
+    {
+      "kind": "entity",
+      "name": "clicks-seen",
+      "var": "shortlink.seen",
+      "package": "shortlink",
+      "type": "Click",
+      "pos": "app.go:13:2"
     }
   ],
   "handlers": [
@@ -35,7 +55,7 @@
       "route": "POST /api/links",
       "req_type": "CreateReq",
       "has_body": true,
-      "pos": "app.go:22:2"
+      "pos": "app.go:33:2"
     },
     {
       "kind": "api",
@@ -52,7 +72,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:23:2"
+      "pos": "app.go:34:2"
     },
     {
       "kind": "api",
@@ -69,7 +89,15 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:24:2"
+      "pos": "app.go:35:2"
+    },
+    {
+      "kind": "worker",
+      "var": "shortlink.CountClick",
+      "package": "shortlink",
+      "service": "shortlink-countclick",
+      "binding": "clicks",
+      "pos": "app.go:37:2"
     }
   ],
   "edges": []

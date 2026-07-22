@@ -2,21 +2,16 @@ package runtime
 
 import (
 	"fmt"
-	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
-	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
-var (
-	bootedStore   io.Closer
-	bootedQueue   *local.QueueDispatcher
-	bootedBuckets *local.BucketStore
-	bootedSigner  *local.URLSigner
-)
+var booted *boot.App
 
 // Boot wires the service's backends per TAKO_BACKEND (default "local":
 // in-process backends under .tako/data). Generated mains call it first.
@@ -40,24 +35,10 @@ func Boot() {
 // directly with a temp dir until tako.NewTestApp lands (F7); calling it
 // again closes the previously booted store first.
 func BootLocal(dir string) error {
-	if bootedStore != nil {
-		_ = bootedStore.Close()
-		bootedStore = nil
+	if booted != nil {
+		_ = booted.Close()
+		booted = nil
 	}
-	store, err := local.OpenEntity(dir)
-	if err != nil {
-		return err
-	}
-	hooks.Entity = store
-	buckets := local.NewBucketStore(dir)
-	hooks.Bucket = buckets
-	dispatcher := local.NewQueueDispatcher(dir, local.QueueOptions{})
-	attachQueueConsole(dispatcher, dir)
-	hooks.Queue = dispatcher
-	hooks.Topic = dispatcher.Topics()
-	// Every bucket write publishes on "<bucket>.Uploaded" — the local
-	// stand-in for GCS notifications.
-	local.WireBucketEvents(buckets, dispatcher)
 	// Signed URLs point back at this service's own /_tako/signed/
 	// endpoint; the signing key persists under dir so URLs survive
 	// reloads.
@@ -65,34 +46,43 @@ func BootLocal(dir string) error {
 	if port == "" {
 		port = "8080"
 	}
-	signer, err := local.NewURLSigner(dir, "http://localhost:"+port)
+	app, err := boot.Local(boot.Options{Dir: dir, BaseURL: "http://localhost:" + port})
 	if err != nil {
 		return err
 	}
-	hooks.Signer = signer
-	bootedSigner = signer
-	bootedBuckets = buckets
-	bootedQueue = dispatcher
-	bootedStore = store
-	return nil
-}
-
-// SignedURLHandler serves the local signed-URL endpoint
-// (/_tako/signed/<token>) against the booted backends. Generated mains
-// mount it when the app declares a bucket.
-func SignedURLHandler() http.Handler {
-	if bootedSigner == nil || bootedBuckets == nil {
-		panic("tako: SignedURLHandler before Boot")
+	attachQueueConsole(app.Dispatcher, dir)
+	// TAKO_CHAOS=<seed> (tako dev --chaos) turns on delivery chaos:
+	// duplicates, redelivery after ack, reordering — seeded, so a run
+	// reproduces exactly.
+	if v := os.Getenv("TAKO_CHAOS"); v != "" {
+		seed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil {
+			return fmt.Errorf("TAKO_CHAOS must be a seed integer, got %q", v)
+		}
+		app.Dispatcher.EnableChaos(seed)
+		attachChaosConsole(app.Dispatcher)
+		fmt.Printf("☢ chaos: enabled (seed %d) — deliveries may duplicate, reorder, redeliver\n", seed)
 	}
-	return local.SignedURLEndpoint(bootedSigner, bootedBuckets)
+	booted = app
+	return nil
 }
 
 // WaitIdle blocks until local queues drain (every published message has
 // acked or dead-lettered). Test plumbing until tako.NewTestApp's
 // DrainQueues lands in F7.
 func WaitIdle(timeout time.Duration) error {
-	if bootedQueue == nil {
+	if booted == nil {
 		return nil
 	}
-	return bootedQueue.WaitIdle(timeout)
+	return booted.Dispatcher.WaitIdle(timeout)
+}
+
+// SignedURLHandler serves the local signed-URL endpoint
+// (/_tako/signed/<token>) against the booted backends. Generated mains
+// mount it when the app declares a bucket.
+func SignedURLHandler() http.Handler {
+	if booted == nil {
+		panic("tako: SignedURLHandler before Boot")
+	}
+	return local.SignedURLEndpoint(booted.Signer, booted.Buckets)
 }

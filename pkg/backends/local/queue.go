@@ -36,6 +36,8 @@ type QueueDispatcher struct {
 	onDeadLetter []func(backends.DeadLetter)
 	onAttempt    func(source, consumer string, attempt, max int, err error, retryIn time.Duration)
 	onAck        func(source, consumer string, took time.Duration)
+	onChaos      func(source, consumer, action string)
+	chaos        *chaosState
 	inflight     sync.WaitGroup
 }
 
@@ -108,11 +110,22 @@ func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []b
 	if !ok {
 		return fmt.Errorf("queue %q has no worker registered", queue)
 	}
-	d.inflight.Add(1)
-	// Delivery is detached from the publishing request's context: async
-	// work outlives the request that enqueued it.
-	go d.deliverLoop(delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}, deliver, payload)
+	d.dispatch(delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}, deliver, payload)
 	return nil
+}
+
+// dispatch launches the delivery loop (plus a chaos duplicate when chaos
+// says so), detached from the publishing request's context: async work
+// outlives the request that enqueued it.
+func (d *QueueDispatcher) dispatch(to delivery, deliver func(context.Context, []byte) error, payload []byte) {
+	plan := d.chaosPlanFor(to)
+	d.inflight.Add(1)
+	go d.deliverLoop(to, deliver, payload, plan)
+	if plan.duplicate {
+		d.notifyChaos(to, "duplicate")
+		d.inflight.Add(1)
+		go d.deliverLoop(to, deliver, payload, chaosPlan{delay: plan.delay * 2})
+	}
 }
 
 // Topics adapts the dispatcher to the topic contract: fan-out with an
@@ -134,8 +147,7 @@ func (v topicView) Publish(ctx context.Context, topic string, payload []byte) er
 	v.d.mu.Unlock()
 	// Zero subscribers is legal: events broadcast into silence.
 	for _, sub := range subs {
-		v.d.inflight.Add(1)
-		go v.d.deliverLoop(delivery{
+		v.d.dispatch(delivery{
 			source:   topic,
 			consumer: sub.name,
 			dlDir:    filepath.Join("deadletter", topic, sub.name),
@@ -148,8 +160,11 @@ func (v topicView) Publish(ctx context.Context, topic string, payload []byte) er
 // same interface queues use.
 func (v topicView) OnDeadLetter(fn func(backends.DeadLetter)) { v.d.OnDeadLetter(fn) }
 
-func (d *QueueDispatcher) deliverLoop(to delivery, deliver func(context.Context, []byte) error, payload []byte) {
+func (d *QueueDispatcher) deliverLoop(to delivery, deliver func(context.Context, []byte) error, payload []byte, plan chaosPlan) {
 	defer d.inflight.Done()
+	if plan.delay > 0 {
+		time.Sleep(plan.delay) // chaos: shuffle delivery order
+	}
 	start := time.Now()
 	var lastErr error
 	for attempt := 1; attempt <= d.opts.MaxAttempts; attempt++ {
@@ -160,6 +175,13 @@ func (d *QueueDispatcher) deliverLoop(to delivery, deliver func(context.Context,
 			d.mu.Unlock()
 			if ack != nil {
 				ack(to.source, to.consumer, time.Since(start))
+			}
+			// Chaos: at-least-once means even an acked message may come
+			// back. The respawn carries no plan of its own, so chains stop.
+			if plan.redeliver {
+				d.notifyChaos(to, "redeliver")
+				d.inflight.Add(1)
+				go d.deliverLoop(to, deliver, payload, chaosPlan{})
 			}
 			return
 		}

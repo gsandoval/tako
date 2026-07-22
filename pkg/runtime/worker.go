@@ -72,6 +72,20 @@ func consumerName(source, consumer string) string {
 	return "worker"
 }
 
+// attachChaosConsole narrates chaos injections: at-least-once must be
+// seen to be believed.
+func attachChaosConsole(d *local.QueueDispatcher) {
+	d.OnChaos(func(source, consumer, action string) {
+		who := consumerName(source, consumer)
+		switch action {
+		case "duplicate":
+			fmt.Printf("☢ chaos %s: delivering to %s twice\n", source, who)
+		case "redeliver":
+			fmt.Printf("☢ chaos %s: delivering to %s again after ack\n", source, who)
+		}
+	})
+}
+
 // attachQueueConsole narrates delivery on the dev console: ⚙ per attempt
 // and ack, ✗ per dead letter — the local async story stays visible.
 func attachQueueConsole(d *local.QueueDispatcher, dataDir string) {

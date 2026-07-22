@@ -42,7 +42,7 @@ type entitySchema struct {
 // Get returns the entity stored under id. tako.IsNotFound reports absence.
 func (e *EntityHandle[T]) Get(ctx Ctx, id string) (T, error) {
 	var v T
-	doc, err := entityBackend().Get(ctx, e.name, id)
+	doc, err := entityBackend(ctx).Get(ctx, e.name, id)
 	if err != nil {
 		return v, mapNotFound(err)
 	}
@@ -55,18 +55,18 @@ func (e *EntityHandle[T]) Put(ctx Ctx, entity T) error {
 	if err != nil {
 		return err
 	}
-	return entityBackend().Put(ctx, e.name, id, doc)
+	return entityBackend(ctx).Put(ctx, e.name, id, doc)
 }
 
 // Delete removes the entity stored under id; deleting an absent id is not
 // an error.
 func (e *EntityHandle[T]) Delete(ctx Ctx, id string) error {
-	return entityBackend().Delete(ctx, e.name, id)
+	return entityBackend(ctx).Delete(ctx, e.name, id)
 }
 
 // Exists reports whether an entity is stored under id.
 func (e *EntityHandle[T]) Exists(ctx Ctx, id string) (bool, error) {
-	return entityBackend().Exists(ctx, e.name, id)
+	return entityBackend(ctx).Exists(ctx, e.name, id)
 }
 
 // Query starts a query against the store. Only fields tagged
@@ -80,7 +80,7 @@ func (e *EntityHandle[T]) Query(ctx Ctx) *EntityQuery[T] {
 // Update performs a transactional read-modify-write of the entity stored
 // under id. tako.IsNotFound reports an absent id.
 func (e *EntityHandle[T]) Update(ctx Ctx, id string, mutate func(*T)) error {
-	err := entityBackend().Update(ctx, e.name, id, func(doc []byte) ([]byte, error) {
+	err := entityBackend(ctx).Update(ctx, e.name, id, func(doc []byte) ([]byte, error) {
 		var v T
 		if err := json.Unmarshal(doc, &v); err != nil {
 			return nil, err
@@ -95,7 +95,7 @@ func (e *EntityHandle[T]) Update(ctx Ctx, id string, mutate func(*T)) error {
 // error the transaction is rolled back and the error is returned
 // unchanged, so status errors (tako.Errorf) compose with transactions.
 func (e *EntityHandle[T]) Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error {
-	return entityBackend().Tx(ctx, e.name, func(ops backends.EntityTxOps) error {
+	return entityBackend(ctx).Tx(ctx, e.name, func(ops backends.EntityTxOps) error {
 		return fn(&entityTx[T]{h: e, ops: ops})
 	})
 }
@@ -224,7 +224,7 @@ func (q *EntityQuery[T]) All() ([]T, error) {
 	if q.err != nil {
 		return nil, q.err
 	}
-	docs, err := entityBackend().Query(q.ctx, q.h.name, q.q)
+	docs, err := entityBackend(q.ctx).Query(q.ctx, q.h.name, q.q)
 	if err != nil {
 		return nil, err
 	}
@@ -318,12 +318,14 @@ func (t *entityTx[T]) Delete(id string) error { return t.ops.Delete(id) }
 // entityBackend returns the wired entity backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for
 // installing.
-func entityBackend() backends.Entity {
-	b := hooks.Entity
-	if b == nil {
-		panic("tako: no entity backend wired — run via tako dev or a generated service (tests boot one with runtime.BootLocal until NewTestApp lands in F7)")
+func entityBackend(ctx Ctx) backends.Entity {
+	if a := appFrom(ctx); a != nil {
+		return a.Entity
 	}
-	return b
+	if hooks.Entity == nil {
+		panic("tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+	}
+	return hooks.Entity
 }
 
 // mapNotFound translates the backend's absence marker to the SDK's.
