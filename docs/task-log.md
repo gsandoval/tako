@@ -1855,3 +1855,199 @@ modules.
 `validate/signed.md` — the centerpiece is §3, judging whether each
 rejection body alone tells a client-side engineer what to fix — and
 record the verdict in `docs/validation-log.md`.
+
+---
+
+## F7 — DX proposal: Testing as a feature (2026-07-21)
+
+*Status: awaiting human approval. Scope per agent plan F7: `NewTestApp`,
+`SignIn`, `DrainQueues`, chaos mode (`app.Chaos()`, `tako dev --chaos`,
+seeded/reproducible); `tako test` with generation-freshness check;
+shortlink suite rewritten user-style. Gate F7: human seeds a
+deliberately non-idempotent worker, watches chaos catch it with a
+printed reproduction seed.*
+
+### 1. User code — the test story (shortlink, rewritten user-style)
+
+Shortlink first becomes honestly asynchronous: `resolve` stops
+incrementing inline and publishes a click event; a worker tallies it
+**exactly once** even under duplicate delivery:
+
+```go
+var (
+	links  = tako.Entity[Link]("links")
+	clicks = tako.Queue[Click]("clicks")
+	seen   = tako.Entity[Click]("clicks-seen") // processed-event log: the idempotency ledger
+)
+
+// Click's ID is minted at publish time — it IS the idempotency key.
+type Click struct {
+	ID   string `entity:"id" json:"id"`
+	Slug string `json:"slug"`
+}
+
+var CountClick = tako.Worker(clicks, countClick)
+
+// resolve returns the link and records the click asynchronously; Hits
+// is eventually consistent now (semantic change from F2, stated below).
+func resolve(ctx tako.Ctx, req ResolveReq) (Link, error) {
+	l, err := links.Get(ctx, req.Slug)
+	if err != nil {
+		return Link{}, err
+	}
+	return l, clicks.Publish(ctx, Click{ID: tako.NewID(), Slug: req.Slug})
+}
+
+// Delivery is at-least-once — chaos mode WILL deliver duplicates — so
+// the event ID is claimed atomically before counting. Remove this claim
+// and the chaos test below fails with a reproduction seed.
+func countClick(ctx tako.Ctx, c Click) error {
+	err := seen.Tx(ctx, func(tx tako.EntityTx[Click]) error {
+		if _, err := tx.Get(c.ID); err == nil {
+			return errAlreadyCounted
+		} else if !tako.IsNotFound(err) {
+			return err
+		}
+		return tx.Put(c)
+	})
+	if errors.Is(err, errAlreadyCounted) {
+		return nil // duplicate delivery: ack, count nothing
+	}
+	if err != nil {
+		return err
+	}
+	return links.Update(ctx, c.Slug, func(l *Link) { l.Hits++ })
+}
+```
+
+And the suite reads like the spec §2.10 promised — no runtime plumbing,
+no httptest, no `GOWORK` incantations:
+
+```go
+func TestClicksCountExactlyOnce(t *testing.T) {
+	app := tako.NewTestApp(t) // fresh in-process backends, all handlers wired
+	u := app.SignIn("alice")
+	ctx := app.Ctx(u)
+
+	if _, err := Create.Call(ctx, CreateReq{Slug: "go", URL: "https://go.dev"}); err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		if _, err := Resolve.Call(ctx, ResolveReq{Slug: "go"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.DrainQueues()
+
+	l, _ := links.Get(app.Ctx(), "go")
+	if l.Hits != 20 {
+		t.Fatalf("hits = %d, want exactly 20", l.Hits)
+	}
+}
+
+// The same assertion under chaos: duplicates, redelivery-after-ack,
+// reordering. Exactly-once tallying must hold anyway.
+func TestClicksCountExactlyOnceUnderChaos(t *testing.T) {
+	app := tako.NewTestApp(t)
+	app.Chaos() // seeded; the seed prints so any failure reproduces
+	...same body...
+}
+```
+
+`create` also starts honoring identity: `if u, ok := ctx.MaybeUser();
+ok { owner = u.ID }` — `SignIn` makes owners real in tests; the
+`CreateReq.Owner` field stays as the no-auth fallback until auth lands.
+
+### 2. Semantics being locked (v0 testing contract)
+
+- **`NewTestApp(t)`** boots fresh local backends in `t.TempDir()` — no
+  cloud, no network, no PORT — auto-wires every declared worker and
+  subscriber, and cleans up via `t.Cleanup`. Parallel tests get
+  isolated apps.
+- **`SignIn(name)`** returns a stub identity (`User{ID: name, …}`) —
+  identity injection for tests, NOT auth enforcement (WithAuth
+  middleware arrives with the auth feature).
+- **`Ctx(u ...User)`** mints a request context, authenticated when a
+  user is passed.
+- **`DrainQueues()`** blocks until every published message (including
+  chaos duplicates) acked or dead-lettered; fails the test on timeout.
+- **`Chaos()`** enables, on that app's queues AND topics: duplicate
+  delivery, redelivery-after-ack, and delivery reordering — the
+  at-least-once bug class. Deterministic per seed: the seed prints at
+  enable time (`t.Logf`), and `TAKO_CHAOS_SEED=<n>` reproduces a
+  failure exactly. Failure-free chaos runs stay quiet.
+- **`tako dev --chaos`** turns the same behaviors on in the dev loop
+  (banner prints the seed; ☢ console lines narrate each injection), so
+  a human can SEE duplicate deliveries happen.
+- **`tako test`**: analyze (analysis errors block, printed in the
+  standard format) → regenerate (stale `.tako/gen` output is refreshed
+  and reported) → `go test ./...` with output passed through.
+- **Shortlink's Hits are eventually consistent** from now on (read
+  after DrainQueues/moments later) — the honest price of the async
+  counter, stated in the example's comments.
+
+### 3. One internals decision that needs your eyes (interface rule 1)
+
+`NewTestApp(t)` takes no handler list, yet must wire `CountClick` to
+its queue. The generated mains do this with explicit `RegisterWorker`
+lines derived from analysis — unavailable inside `go test`. Proposal:
+`tako.Worker` and `tako.Subscribe` additionally append their (already
+constructed) record to an internal registry the SDK owns;
+`NewTestApp` consumes it. This is technically a constructor side
+effect — rule 1 says "side-effect-free records" — but it preserves the
+rule's actual guarantees: order-independence (append-only, no
+cross-var reads), no behavior in production (generated mains keep
+their explicit registration lines), no comment directives. Test-mode
+worker identity derives from the handler function's name
+(`countClick`), which can differ from the var name the dev console
+shows (`CountClick`) — visible only in test narration. Alternative
+rejected: `NewTestApp(t, CountClick, OnUploaded, …)` — explicit but
+exactly the boilerplate rule 1 exists to kill, and silently dropping
+one handler makes tests pass vacuously.
+
+### 4. Expected CLI transcripts
+
+`tako test` (from the module dir):
+
+```
+$ tako test
+tako test · shortlink
+  analyzing   2 services, 3 endpoints, 1 worker
+  generating  .tako/gen/shortlink/main.go (regenerated: stale)
+  go test ./...
+ok  	shortlink	0.41s
+```
+
+The gate's centerpiece — dedup claim removed, chaos catches it:
+
+```
+$ TAKO_CHAOS_SEED= go test -run Chaos ./...
+--- FAIL: TestClicksCountExactlyOnceUnderChaos (0.31s)
+    testapp.go:NN: tako: chaos enabled (seed 1721594882414）— rerun with TAKO_CHAOS_SEED=1721594882414 to reproduce
+    app_test.go:NN: hits = 27, want exactly 20
+FAIL
+```
+
+Rerunning with that env var fails identically; restoring the dedup
+claim turns both green.
+
+`tako dev --chaos` (gallery or shortlink):
+
+```
+  local: workers and subscribers run in-process (…)
+  chaos: enabled (seed 1721594882414) — deliveries may duplicate, reorder, redeliver
+⚙ clicks → CountClick ok (1ms)
+☢ chaos clicks: delivering again after ack
+⚙ clicks → CountClick ok (0s)
+```
+
+### 5. Not in scope (F7 non-goals)
+
+`AdvanceCron` stays a stub (no Cron runtime exists; it lands with F9's
+gallery `Cleanup` cron — the stub's panic message now says so), auth
+enforcement/`WithAuth` middleware (SignIn is identity injection only),
+migrating gallery's HTTP-level tests to NewTestApp (F9; they
+deliberately exercise the generated-mux plumbing), chaos on
+entity/bucket operations or injected handler errors (only delivery
+chaos in v0), network fault injection, `tako test` flags passthrough
+beyond the target package list.
