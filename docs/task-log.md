@@ -2155,3 +2155,162 @@ is unchanged); `go test ./...` green in all four modules.
 `validate/testing.md` — the centerpiece is §2–§3: gut the idempotency
 claim, watch chaos catch it, and verify the printed seed replays the
 failure exactly — and record the verdict in `docs/validation-log.md`.
+
+## F8 — DX proposal: Secret, Cache, metrics, WithDelay — local (2026-07-21)
+
+Agent-plan scope: env-file Secret; TTL Cache + `GetOrFill`; Counter/Histogram
+logged; timer delays with fake-clock tests. Gate F8: quick script pass.
+
+The entire SDK surface for this feature already exists as stubs (`secret.go`,
+`cache.go`, `metrics.go`, `WithTTL`, `WithDelay`, and `Publish` already takes
+`opts ...Option`) — F8 makes the stubs real. **One new exported symbol** is
+proposed: `TestApp.Advance` (§4). Nothing else is added, renamed, or
+re-shaped.
+
+### 1. User code — gallery grows the spec-Part-3 observability spine
+
+Gallery gains exactly the pieces spec Part 3 already shows (pulled forward
+from F9 because F8 needs a demanding example):
+
+```go
+var (
+    // ...existing gallery resources...
+    feed     = tako.Cache[[]Photo]("feed", tako.WithTTL(time.Minute))
+    notifier = tako.Secret("notifier-key")
+    ups      = tako.Counter("uploads")
+    thumbMs  = tako.Histogram("thumb_ms")
+)
+
+// onUploaded counts every original upload.
+func onUploaded(ctx tako.Ctx, obj tako.ObjectInfo) error {
+    ups.Add(ctx, 1)
+    // ...enqueue thumb work as today...
+}
+
+// list serves the ready feed through the cache; the fill runs on miss.
+func list(ctx tako.Ctx, req ListReq) ([]Photo, error) {
+    return feed.GetOrFill(ctx, "ready", func(ctx tako.Ctx) ([]Photo, error) {
+        return photoStore.Query(ctx).Where("Ready", "=", true).Limit(100).All()
+    })
+}
+
+// warmFeedCache repopulates the feed when a photo becomes ready.
+func warmFeedCache(ctx tako.Ctx, e PhotoReady) error {
+    photos, err := photoStore.Query(ctx).Where("Ready", "=", true).Limit(100).All()
+    if err != nil { return err }
+    return feed.Put(ctx, "ready", photos)
+}
+
+// notifyOwner authenticates to the (stub) notification service with a
+// secret resolved once at startup — Value() takes no ctx, cannot fail here.
+func notifyOwner(ctx tako.Ctx, e PhotoReady) error {
+    key := notifier.Value()
+    // ...
+}
+```
+
+`WithDelay` has no gallery/shortlink call site yet (shop's delayed order
+email is the demanding example, later). It ships now because the agent plan
+schedules it with the queue machinery, exercised by a user-style fake-clock
+test (§4) and conformance. Flagging this explicitly against the
+"no feature without an example" rule — your call at approval.
+
+```go
+digest.Publish(ctx, job, tako.WithDelay(4*time.Hour))  // delivers no sooner than 4h
+```
+
+### 2. Semantics being locked (v0 contract)
+
+**Secret — resolved once at startup, env-file locally.**
+- Local source: a `.env` file in the app's module dir (gitignored), literal
+  names: `notifier-key=nk_dev_123`. Format: `name=value` lines, `#` comments,
+  blank lines; no quoting rules, no interpolation.
+- Boot (dev, generated main) resolves every *declared* secret up front;
+  any missing → the service refuses to start:
+  `secret "notifier-key" is not set — add it to .env (local) or Secret Manager (cloud)`
+- `Value()` never fails at request time. Outside a booted app it panics with
+  the standard "run via tako dev, a generated service, or tako.NewTestApp".
+- Tests: `NewTestApp` starts with no secrets; `app.SetSecret(name, value)`
+  provides them per-app (ctx-carried, isolated like every other backend).
+  Reading an unset secret in a test panics with the name and a pointer to
+  SetSecret.
+
+**Cache — per-instance, in-memory, TTL from the declaration.**
+- `Get`/`Put`/`Delete`/`Exists` — the keyed-store verb vocabulary. Absent or
+  expired ⇒ `tako.IsNotFound`. No TTL declared ⇒ entries never expire
+  (documented; WithTTL is the normal case).
+- `GetOrFill(ctx, key, fill)`: hit returns cached; miss calls fill, Puts,
+  returns. Concurrent misses may fill more than once (it's a cache; a
+  singleflight upgrade is a later, call-site-compatible change). A fill
+  error is returned and nothing is cached.
+- Honest per-instance caveat stays in the docs: no cross-instance
+  invalidation; `WithShared()` is a later opt-in.
+
+**Metrics — logged, structured, visible in dev.**
+- `ups.Add(ctx, n)` / `lat.Observe(ctx, v)` emit one structured log line
+  through the app's logger (`metric` records: name, kind, value, running
+  total/count) — fire-and-forget, never an error, never blocks.
+- The dev console renders them: `📈 uploads +1 (total 3)` and
+  `📈 thumb_ms 12.4ms (n=7)`. Cloud Monitoring export is Phase E's problem;
+  the call sites don't change.
+
+**WithDelay — queue-publish option, fake clock in tests.**
+- `q.Publish(ctx, msg, tako.WithDelay(d))`: the local dispatcher holds the
+  message and first attempts delivery no sooner than d. Retry/backoff/chaos
+  semantics after first delivery are unchanged. Topics reject it:
+  `tako.WithDelay is not a Topic publish option (delay is a queue power)`.
+- Dev: real timers; console notes `⚙ clicks: 1 message delayed 5s`.
+- Non-queue/non-publish misuse of WithTTL/WithDelay keeps the existing
+  call-time option-error style (`tako.X is not a ... option (...)`).
+
+### 3. Internals (no user-visible surface)
+
+- `backends.Cache` interface + local in-memory impl; conformance chapter
+  (roundtrip, miss, delete, exists, expiry, GetOrFill fill-once-on-hit).
+- `backends.Queue.Publish` grows a delay (internal signature; local
+  dispatcher gets an injectable clock so conformance and TestApp never
+  sleep real hours).
+- `backends.Secrets` resolver (env-file impl) wired in `internal/boot`;
+  `boot.App` carries Secrets/Cache/Metrics like the rest.
+- Analyzer: Secret/Cache/Counter/Histogram become AppGraph resources
+  (const-name rule reused → same error text family), shown in `gen graph`
+  and the dev banner. Cloud-Tasks-vs-PubSub selection on WithDelay is
+  Phase E, not analyzed now.
+
+### 4. The one new exported symbol — TestApp.Advance
+
+```go
+func TestDigestIsDelayed(t *testing.T) {
+    app := tako.NewTestApp(t)
+    ctx := app.Ctx()
+    digest.Publish(ctx, Digest{...}, tako.WithDelay(4*time.Hour))
+
+    app.DrainQueues()                  // idle: nothing due yet — worker has NOT run
+    app.Advance(3 * time.Hour)         // fake clock; still not due
+    app.Advance(2 * time.Hour)         // due → delivery fires
+    app.DrainQueues()                  // worker ran exactly once
+}
+```
+
+- `Advance(d)` moves the app's fake clock forward and releases every
+  delivery that has come due; it is TestApp-only (dev uses real time).
+- `DrainQueues` treats not-yet-due deliveries as idle (it drains what can
+  run, it doesn't wait out a 4-hour timer). This is the same clock
+  `AdvanceCron` will use in F9.
+- Retry backoff in tests keeps its real (5ms) timer — Advance is for
+  *scheduled* time (delays, cron), not a general time machine. Chaos
+  reorder delays are likewise real.
+
+### 5. Not in scope (F8 non-goals)
+
+- No `WithRateLimit` (needs Cloud Tasks; Phase E).
+- No `WithShared()` cache, no Redis.
+- No Cloud Monitoring export; metrics are logs.
+- No Secret Manager backend (Phase E); no secret rotation/refresh.
+- No cron (`AdvanceCron` still panics until F9); Advance only releases
+  queue delays now.
+- No singleflight in GetOrFill (noted as later, call-site compatible).
+- Gallery changes limited to the §1 snippet; the full Part-3 gallery
+  (cron, auth, SSR pages) stays F9.
+
+**STOP — awaiting DX approval before implementation.**
