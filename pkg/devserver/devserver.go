@@ -314,13 +314,15 @@ func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 // sync handlers; async handlers are counted by kind. tako test prints
 // the same line.
 func CountLine(g *analyzer.AppGraph) string {
-	endpoints, workers, subs := 0, 0, 0
+	endpoints, workers, subs, crons := 0, 0, 0, 0
 	for _, h := range g.Handlers {
 		switch h.Kind {
 		case "worker":
 			workers++
 		case "subscribe":
 			subs++
+		case "cron":
+			crons++
 		default:
 			endpoints++
 		}
@@ -332,6 +334,9 @@ func CountLine(g *analyzer.AppGraph) string {
 	}
 	if subs > 0 {
 		line += fmt.Sprintf(", %d subscriber%s", subs, plural(subs))
+	}
+	if crons > 0 {
+		line += fmt.Sprintf(", %d cron%s", crons, plural(crons))
 	}
 	return line
 }

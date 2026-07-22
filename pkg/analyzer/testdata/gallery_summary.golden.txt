@@ -1,14 +1,15 @@
 gallery: 5 services
   service gallery (package gallery, profile default)
-    POST /api/photos → Upload (app.go:46)
-    POST /api/uploads → StartUpload (app.go:47)
-    GET /api/photos/{id}/download → Download (app.go:48)
-    GET /api/photos/{id}/image → Image (app.go:49)
-    GET /api/photos/{id}/thumb → Thumb (app.go:50)
-    GET /api/photos → List (app.go:51)
-    GET /api/objects → Objects (app.go:52)
+    POST /api/photos → Upload (app.go:54)
+    POST /api/uploads → StartUpload (app.go:55)
+    GET /api/photos/{id}/download → Download (app.go:56)
+    GET /api/photos/{id}/image → Image (app.go:57)
+    GET /api/photos/{id}/thumb → Thumb (app.go:58)
+    GET /api/photos → List (app.go:59)
+    GET /api/objects → Objects (app.go:60)
+    cron Cleanup — every 24h (app.go:68)
     bucket photos
-    entity photos (indexes: Ready)
+    entity photos (indexes: Owner, Ready)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -16,9 +17,9 @@ gallery: 5 services
     counter uploads
     histogram thumb_ms
   service gallery-onuploaded (package gallery, profile default)
-    subscriber OnUploaded ← bucket photos.Uploaded (app.go:56)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:64)
     bucket photos
-    entity photos (indexes: Ready)
+    entity photos (indexes: Owner, Ready)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -26,9 +27,9 @@ gallery: 5 services
     counter uploads
     histogram thumb_ms
   service gallery-makethumb (package gallery, profile default)
-    worker MakeThumb ← queue thumbnails (app.go:57)
+    worker MakeThumb ← queue thumbnails (app.go:65)
     bucket photos
-    entity photos (indexes: Ready)
+    entity photos (indexes: Owner, Ready)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -36,9 +37,9 @@ gallery: 5 services
     counter uploads
     histogram thumb_ms
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:58)
+    subscriber NotifyOwner ← topic photo-ready (app.go:66)
     bucket photos
-    entity photos (indexes: Ready)
+    entity photos (indexes: Owner, Ready)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -46,9 +47,9 @@ gallery: 5 services
     counter uploads
     histogram thumb_ms
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:59)
+    subscriber WarmFeed ← topic photo-ready (app.go:67)
     bucket photos
-    entity photos (indexes: Ready)
+    entity photos (indexes: Owner, Ready)
     queue thumbnails
     topic photo-ready
     cache feed

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -48,7 +49,12 @@ func NewTestApp(tb testing.TB) *TestApp {
 			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, h.name))
 		}
 	}
-	tb.Cleanup(func() { _ = app.Close() })
+	tb.Cleanup(func() {
+		// Settle in-flight deliveries first: a worker still writing to
+		// the temp dir would race the TempDir cleanup.
+		_ = app.Dispatcher.WaitIdle(30 * time.Second)
+		_ = app.Close()
+	})
 	return ta
 }
 
@@ -111,12 +117,35 @@ func (a *TestApp) Advance(d time.Duration) {
 // every other backend they are process-wide, not per-app.
 func (a *TestApp) SetSecret(name, value string) {
 	secrets.Set(name, value)
-	a.tb.Cleanup(func() { secrets.Unset(name) })
+	a.tb.Cleanup(func() {
+		// Cleanups run LIFO: this one fires before the app's own
+		// teardown, so settle in-flight deliveries first — a handler
+		// mid-delivery may still read the secret.
+		_ = a.app.Dispatcher.WaitIdle(30 * time.Second)
+		secrets.Unset(name)
+	})
 }
 
-// AdvanceCron runs the named cron handler once, as if its schedule fired.
+// AdvanceCron runs the named cron handler once, synchronously, as if its
+// schedule fired — tests own scheduled time (see Advance). name is the
+// handler function's name ("cleanupOrphans"), the same identity the
+// wiring uses.
 func (a *TestApp) AdvanceCron(name string) {
-	panic("tako: AdvanceCron is not implemented yet — cron handlers arrive with the full gallery (F9)")
+	a.tb.Helper()
+	var crons []string
+	for _, h := range registeredAsync() {
+		if h.kind != "cron" {
+			continue
+		}
+		if h.name == name {
+			if err := h.invoke(a.handlerCtx(context.Background(), name), nil); err != nil {
+				a.tb.Fatalf("tako: AdvanceCron(%q): %v", name, err)
+			}
+			return
+		}
+		crons = append(crons, h.name)
+	}
+	a.tb.Fatalf("tako: AdvanceCron(%q): no such cron — declared crons: %s", name, strings.Join(crons, ", "))
 }
 
 // Chaos enables chaos mode on the app's queues and topics: duplicate

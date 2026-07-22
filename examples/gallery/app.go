@@ -1,10 +1,17 @@
 package gallery
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif" // register decoders: uploads arrive in any common format
+	"image/jpeg"
+	"image/png"
 	"strings"
 	"time"
+
+	"golang.org/x/image/draw"
 
 	"github.com/gsandoval/tako"
 )
@@ -27,6 +34,7 @@ var (
 
 type Photo struct {
 	ID      string `entity:"id" json:"id"`
+	Owner   string `entity:"index" json:"owner"`
 	Caption string `json:"caption"`
 	Ready   bool   `entity:"index" json:"ready"` // flipped by the worker once the thumb exists
 }
@@ -35,10 +43,10 @@ type ThumbJob struct {
 	PhotoID string `json:"photoID"`
 }
 
-// PhotoReady announces a finished pipeline run. Owner joins this payload
-// when auth lands (F9 aligns fully with spec Part 3).
+// PhotoReady announces a finished pipeline run.
 type PhotoReady struct {
 	PhotoID string `json:"photoID"`
+	Owner   string `json:"owner"`
 	Caption string `json:"caption"`
 }
 
@@ -46,7 +54,7 @@ var (
 	Upload      = tako.API("POST /api/photos", upload)
 	StartUpload = tako.API("POST /api/uploads", startUpload)
 	Download    = tako.API("GET /api/photos/{id}/download", download)
-	Image       = tako.API("GET /api/photos/{id}/image", image)
+	Image       = tako.API("GET /api/photos/{id}/image", serveImage)
 	Thumb       = tako.API("GET /api/photos/{id}/thumb", thumb)
 	List        = tako.API("GET /api/photos", list)
 	Objects     = tako.API("GET /api/objects", objects)
@@ -54,9 +62,10 @@ var (
 	// The pipeline is event-driven end to end:
 	// upload → bucket event → queue → worker → topic → 2 subscribers.
 	OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
-	MakeThumb   = tako.Worker(thumbs, makeThumb)
+	MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
 	NotifyOwner = tako.Subscribe(ready, notifyOwner)
 	WarmFeed    = tako.Subscribe(ready, warmFeed)
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
 )
 
 // A tako.Blob field makes the request multipart: img streams from the
@@ -69,7 +78,7 @@ type UploadReq struct {
 // upload stores the entity, then the blob; the bucket event — not the
 // handler — enqueues the thumbnail work.
 func upload(ctx tako.Ctx, req UploadReq) (Photo, error) {
-	p := Photo{ID: tako.NewID(), Caption: req.Caption}
+	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return Photo{}, err
 	}
@@ -93,7 +102,7 @@ type UploadTicket struct {
 }
 
 func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
-	p := Photo{ID: tako.NewID(), Caption: req.Caption}
+	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return UploadTicket{}, err
 	}
@@ -106,8 +115,22 @@ type DownloadReq struct {
 	ID string `path:"id"`
 }
 
-func download(ctx tako.Ctx, req DownloadReq) (string, error) {
-	return photos.SignedGet(ctx, req.ID, 15*time.Minute)
+type DownloadRes struct {
+	URL string `json:"url"`
+}
+
+func download(ctx tako.Ctx, req DownloadReq) (DownloadRes, error) {
+	url, err := photos.SignedGet(ctx, req.ID, 15*time.Minute)
+	return DownloadRes{URL: url}, err
+}
+
+// ownerID is the signed-in user's ID, or "" — WithAuth enforcement
+// arrives with the auth feature; SignIn provides identities in tests.
+func ownerID(ctx tako.Ctx) string {
+	if u, ok := ctx.MaybeUser(); ok {
+		return u.ID
+	}
+	return ""
 }
 
 // Bucket events see EVERY successful write — including the worker's own
@@ -134,10 +157,11 @@ func makeThumb(ctx tako.Ctx, job ThumbJob) error {
 	if !strings.HasPrefix(img.ContentType, "image/") {
 		return fmt.Errorf("unsupported content type %q", img.ContentType) // retries, then dead-letters
 	}
-	// v0 "thumbnail" is a passthrough copy; real resizing is app code and
-	// arrives with the full gallery (F9).
-	thumbBlob := tako.Blob{Reader: img.Reader, ContentType: img.ContentType, Size: img.Size}
-	if err := photos.Put(ctx, job.PhotoID+"_thumb", thumbBlob); err != nil {
+	small, err := resize(img, 256)
+	if err != nil {
+		return tako.Permanent(err) // bad image bytes: don't retry
+	}
+	if err := photos.Put(ctx, job.PhotoID+"_thumb", small); err != nil {
 		return err
 	}
 	if err := photoStore.Update(ctx, job.PhotoID, func(p *Photo) { p.Ready = true }); err != nil {
@@ -148,7 +172,35 @@ func makeThumb(ctx tako.Ctx, job ThumbJob) error {
 		return err
 	}
 	thumbMs.Observe(ctx, float64(time.Since(start).Milliseconds()))
-	return ready.Publish(ctx, PhotoReady{PhotoID: p.ID, Caption: p.Caption})
+	return ready.Publish(ctx, PhotoReady{PhotoID: p.ID, Owner: p.Owner, Caption: p.Caption})
+}
+
+// resize scales a decoded image to at most width pixels wide (aspect
+// preserved) and re-encodes it — PNG stays PNG, everything else becomes
+// JPEG. App code, not framework: the SDK never sees image formats.
+func resize(b tako.Blob, width int) (tako.Blob, error) {
+	src, format, err := image.Decode(b.Reader)
+	if err != nil {
+		return tako.Blob{}, fmt.Errorf("decode image: %w", err)
+	}
+	bounds := src.Bounds()
+	w := min(width, bounds.Dx())
+	h := max(1, bounds.Dy()*w/bounds.Dx())
+	dst := image.NewRGBA(image.Rect(0, 0, w, h))
+	draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, bounds, draw.Over, nil)
+
+	var buf bytes.Buffer
+	contentType := "image/jpeg"
+	if format == "png" {
+		contentType = "image/png"
+		err = png.Encode(&buf, dst)
+	} else {
+		err = jpeg.Encode(&buf, dst, nil)
+	}
+	if err != nil {
+		return tako.Blob{}, err
+	}
+	return tako.Blob{Reader: &buf, ContentType: contentType, Size: int64(buf.Len())}, nil
 }
 
 // Two independent subscribers to one event: each gets every PhotoReady
@@ -163,14 +215,24 @@ func notifyOwner(ctx tako.Ctx, e PhotoReady) error {
 	return nil
 }
 
-// warmFeed repopulates the cached feed the moment a photo becomes ready,
-// so readers rarely pay the query.
+// warmFeed repopulates the cached feeds the moment a photo becomes
+// ready — the anonymous feed and the owner's — so readers rarely pay
+// the query.
 func warmFeed(ctx tako.Ctx, e PhotoReady) error {
-	current, err := readyPhotos(ctx)
-	if err != nil {
-		return err
+	owners := []string{""}
+	if e.Owner != "" {
+		owners = append(owners, e.Owner)
 	}
-	return feed.Put(ctx, "ready", current)
+	for _, owner := range owners {
+		current, err := readyPhotos(ctx, owner)
+		if err != nil {
+			return err
+		}
+		if err := feed.Put(ctx, feedKey(owner), current); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 type ImageReq struct {
@@ -178,7 +240,7 @@ type ImageReq struct {
 }
 
 // Returning tako.Blob streams the object: correct Content-Type, no JSON.
-func image(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
+func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 	return photos.Get(ctx, req.ID) // miss → IsNotFound → 404
 }
 
@@ -191,13 +253,49 @@ func thumb(ctx tako.Ctx, req ThumbReq) (tako.Blob, error) {
 }
 
 // list serves the ready feed through the cache: warmFeed keeps it fresh,
-// GetOrFill covers the cold start, the TTL bounds staleness.
+// GetOrFill covers the cold start, the TTL bounds staleness. Signed-in
+// users see their own feed; anonymous readers see everything ready.
 func list(ctx tako.Ctx, _ struct{}) ([]Photo, error) {
-	return feed.GetOrFill(ctx, "ready", readyPhotos)
+	owner := ownerID(ctx)
+	return feed.GetOrFill(ctx, feedKey(owner), func(ctx tako.Ctx) ([]Photo, error) {
+		return readyPhotos(ctx, owner)
+	})
 }
 
-func readyPhotos(ctx tako.Ctx) ([]Photo, error) {
-	return photoStore.Query(ctx).Where("Ready", "=", true).Limit(100).All()
+func feedKey(owner string) string {
+	if owner == "" {
+		return "ready"
+	}
+	return "ready:" + owner
+}
+
+func readyPhotos(ctx tako.Ctx, owner string) ([]Photo, error) {
+	q := photoStore.Query(ctx).Where("Ready", "=", true)
+	if owner != "" {
+		q = q.Where("Owner", "=", owner)
+	}
+	return q.Limit(100).All()
+}
+
+// cleanupOrphans deletes never-completed uploads: a ticket was issued
+// but the bytes never arrived — or the pipeline dead-lettered — and the
+// photo is still not Ready when the daily run fires. Entity and any
+// object go together.
+func cleanupOrphans(ctx tako.Ctx) error {
+	orphans, err := photoStore.Query(ctx).Where("Ready", "=", false).Limit(1000).All()
+	if err != nil {
+		return err
+	}
+	for _, p := range orphans {
+		if err := photos.Delete(ctx, p.ID); err != nil {
+			return err
+		}
+		if err := photoStore.Delete(ctx, p.ID); err != nil {
+			return err
+		}
+		ctx.Log().Info("cleaned orphan upload", "photo", p.ID)
+	}
+	return nil
 }
 
 func objects(ctx tako.Ctx, _ struct{}) ([]tako.ObjectInfo, error) {

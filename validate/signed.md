@@ -73,13 +73,12 @@ console.
 ## 4. Signed download
 
 Use the photo id from §2 (or pick one from
-`curl -s localhost:8090/api/photos`). The endpoint returns the signed
-URL as a JSON string — quoted — so unwrap it with `jq -r` (or strip the
-quotes by hand) before curling it:
+`curl -s localhost:8090/api/photos`). Since F9 the endpoint returns a
+shaped response — `{"url": "..."}` — so pull the field with `jq -r .url`:
 
 ```
 ID=$(curl -s localhost:8090/api/photos | jq -r '.[0].id')
-DL=$(curl -s localhost:8090/api/photos/$ID/download | jq -r .)
+DL=$(curl -s localhost:8090/api/photos/$ID/download | jq -r .url)
 echo "$DL"                # http://localhost:8090/_tako/signed/<token>
 curl -si "$DL" | head -4  # 200, bytes stream, correct Content-Type + Length
 curl -s -X PUT "$DL"      # → 405 {"error":"signed download URLs accept GET only"}

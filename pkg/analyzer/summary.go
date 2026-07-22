@@ -35,6 +35,8 @@ func HandlerLine(h Handler) string {
 		return fmt.Sprintf("worker %s ← queue %s (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
 	case "subscribe":
 		return fmt.Sprintf("subscriber %s ← %s %s (%s)", ShortVar(h), h.BindingKind, h.Binding, ShortPos(h.Pos))
+	case "cron":
+		return fmt.Sprintf("cron %s — %s (%s)", ShortVar(h), h.Schedule, ShortPos(h.Pos))
 	}
 	return fmt.Sprintf("%s → %s (%s)", h.Route, ShortVar(h), ShortPos(h.Pos))
 }

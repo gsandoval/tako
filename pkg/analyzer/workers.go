@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/packages"
+
+	"github.com/gsandoval/tako/internal/schedule"
 )
 
 // workerOptions is the option set tako.Worker accepts.
@@ -112,6 +114,60 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Binding:     binding,
 		BindingKind: bindKind,
 		Pos:         relPos(dir, pkg.Fset, name.Pos()),
+	}
+}
+
+// cronOptions is the option set tako.Cron accepts.
+var cronOptions = map[string]bool{"WithSingleflight": true}
+
+// extractCron validates one tako.Cron declaration. Cron handlers run in
+// the package's app service (spec §4.1 partitioning), not their own.
+func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
+	if name.Name == "_" || len(call.Args) < 2 {
+		return nil
+	}
+	bad := false
+	fail := func(e *Error) { *errs = append(*errs, e); bad = true }
+
+	sched, err := constString(pkg, call.Args[0])
+	if err != nil {
+		fail(&Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Cron schedule must be a string constant — schedules are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	if _, perr := schedule.Parse(sched); perr != nil {
+		fail(&Error{
+			Pos:  relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg:  perr.Error(),
+			Rule: "cron-schedule",
+		})
+	}
+
+	for _, opt := range call.Args[2:] {
+		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && !cronOptions[optName] {
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, opt.Pos()),
+				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight)",
+					optName),
+				Rule: "invalid-option",
+			})
+		}
+	}
+	if bad {
+		return nil
+	}
+
+	return &Handler{
+		Kind:     "cron",
+		Var:      pkg.Name + "." + name.Name,
+		Package:  pkg.PkgPath,
+		Service:  pkg.Name,
+		Schedule: sched,
+		Pos:      relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

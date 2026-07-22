@@ -70,7 +70,8 @@ func main() {
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
-		if h.Service != svc.Name || h.Kind == "worker" || h.Kind == "subscribe" {
+		// Routes only: async handlers register below, crons have no route.
+		if h.Service != svc.Name || h.Kind == "worker" || h.Kind == "subscribe" || h.Kind == "cron" {
 			continue
 		}
 		decode := "nil"
@@ -98,6 +99,9 @@ func main() {
 		case "subscribe":
 			fmt.Fprintf(&b, "\t// %s — local mode runs the subscriber in-process\n", analyzer.HandlerLine(h))
 			fmt.Fprintf(&b, "\truntime.RegisterSubscriber(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
+		case "cron":
+			fmt.Fprintf(&b, "\t// %s — runs in this service on its schedule\n", analyzer.HandlerLine(h))
+			fmt.Fprintf(&b, "\truntime.RegisterCron(%q, %s.%s)\n\n", analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
 		}
 	}
 

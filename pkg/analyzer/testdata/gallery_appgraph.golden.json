@@ -11,7 +11,8 @@
         "gallery.Image",
         "gallery.Thumb",
         "gallery.List",
-        "gallery.Objects"
+        "gallery.Objects",
+        "gallery.Cleanup"
       ],
       "profile": "default"
     },
@@ -54,7 +55,7 @@
       "name": "photos",
       "var": "gallery.photos",
       "package": "gallery",
-      "pos": "app.go:13:2"
+      "pos": "app.go:20:2"
     },
     {
       "kind": "entity",
@@ -63,9 +64,10 @@
       "package": "gallery",
       "type": "Photo",
       "indexes": [
+        "Owner",
         "Ready"
       ],
-      "pos": "app.go:14:2"
+      "pos": "app.go:21:2"
     },
     {
       "kind": "queue",
@@ -73,7 +75,7 @@
       "var": "gallery.thumbs",
       "package": "gallery",
       "type": "ThumbJob",
-      "pos": "app.go:15:2"
+      "pos": "app.go:22:2"
     },
     {
       "kind": "topic",
@@ -81,35 +83,35 @@
       "var": "gallery.ready",
       "package": "gallery",
       "type": "PhotoReady",
-      "pos": "app.go:16:2"
+      "pos": "app.go:23:2"
     },
     {
       "kind": "cache",
       "name": "feed",
       "var": "gallery.feed",
       "package": "gallery",
-      "pos": "app.go:22:2"
+      "pos": "app.go:29:2"
     },
     {
       "kind": "secret",
       "name": "notifier-key",
       "var": "gallery.notifier",
       "package": "gallery",
-      "pos": "app.go:23:2"
+      "pos": "app.go:30:2"
     },
     {
       "kind": "counter",
       "name": "uploads",
       "var": "gallery.ups",
       "package": "gallery",
-      "pos": "app.go:24:2"
+      "pos": "app.go:31:2"
     },
     {
       "kind": "histogram",
       "name": "thumb_ms",
       "var": "gallery.thumbMs",
       "package": "gallery",
-      "pos": "app.go:25:2"
+      "pos": "app.go:32:2"
     }
   ],
   "handlers": [
@@ -134,7 +136,7 @@
           "type": "blob"
         }
       ],
-      "pos": "app.go:46:2"
+      "pos": "app.go:54:2"
     },
     {
       "kind": "api",
@@ -144,7 +146,7 @@
       "route": "POST /api/uploads",
       "req_type": "StartUploadReq",
       "has_body": true,
-      "pos": "app.go:47:2"
+      "pos": "app.go:55:2"
     },
     {
       "kind": "api",
@@ -161,7 +163,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:48:2"
+      "pos": "app.go:56:2"
     },
     {
       "kind": "api",
@@ -179,7 +181,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:49:2"
+      "pos": "app.go:57:2"
     },
     {
       "kind": "api",
@@ -197,7 +199,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:50:2"
+      "pos": "app.go:58:2"
     },
     {
       "kind": "api",
@@ -205,7 +207,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos",
-      "pos": "app.go:51:2"
+      "pos": "app.go:59:2"
     },
     {
       "kind": "api",
@@ -213,7 +215,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/objects",
-      "pos": "app.go:52:2"
+      "pos": "app.go:60:2"
     },
     {
       "kind": "subscribe",
@@ -222,7 +224,7 @@
       "service": "gallery-onuploaded",
       "binding": "photos.Uploaded",
       "binding_kind": "bucket",
-      "pos": "app.go:56:2"
+      "pos": "app.go:64:2"
     },
     {
       "kind": "worker",
@@ -230,7 +232,7 @@
       "package": "gallery",
       "service": "gallery-makethumb",
       "binding": "thumbnails",
-      "pos": "app.go:57:2"
+      "pos": "app.go:65:2"
     },
     {
       "kind": "subscribe",
@@ -239,7 +241,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:58:2"
+      "pos": "app.go:66:2"
     },
     {
       "kind": "subscribe",
@@ -248,7 +250,15 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:59:2"
+      "pos": "app.go:67:2"
+    },
+    {
+      "kind": "cron",
+      "var": "gallery.Cleanup",
+      "package": "gallery",
+      "service": "gallery",
+      "schedule": "every 24h",
+      "pos": "app.go:68:2"
     }
   ],
   "edges": []

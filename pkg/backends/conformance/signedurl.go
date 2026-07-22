@@ -128,6 +128,31 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 		mustAbsent(t, env, "forged")
 	})
 
+	t.Run("cross-origin transfers are allowed", func(t *testing.T) {
+		env := open(t)
+		url, err := env.Signer.SignPut(ctx, "photos", "cors", time.Minute, backends.SignConstraints{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		pre, err := http.NewRequest(http.MethodOptions, url, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pre.Header.Set("Origin", "http://spa.example")
+		pre.Header.Set("Access-Control-Request-Method", http.MethodPut)
+		res, err := env.Client.Do(pre)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode/100 != 2 || res.Header.Get("Access-Control-Allow-Origin") == "" {
+			t.Fatalf("preflight = %d, allow-origin = %q", res.StatusCode, res.Header.Get("Access-Control-Allow-Origin"))
+		}
+		if code := put(t, env, url, "text/plain", "X", 1); code != 200 {
+			t.Fatalf("put after preflight = %d", code)
+		}
+	})
+
 	t.Run("signed get streams the object", func(t *testing.T) {
 		env := open(t)
 		if err := env.Bucket.Put(ctx, "photos", "dl",

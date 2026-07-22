@@ -147,10 +147,19 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Opti
 	})
 }
 
-// Cron declares a scheduled handler. The schedule must be a string constant
+// Cron declares a scheduled handler: func(Ctx) error, run on the given
+// schedule ("every <duration>" for now — cron expressions arrive with
+// cloud scheduling). The schedule must be a string constant
 // (analyzer-enforced); WithSingleflight collapses overlapping runs.
+// Cron handlers run inside the package's app service. In tests,
+// app.AdvanceCron(name) fires one run synchronously.
 func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler {
-	return Handler{kind: "cron"}
+	return register(Handler{
+		kind:   "cron",
+		source: schedule,
+		name:   fnName(fn),
+		invoke: func(ctx Ctx, _ []byte) error { return fn(ctx) },
+	})
 }
 
 // Singleton declares a long-running loop of which exactly one instance runs

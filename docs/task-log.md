@@ -2579,3 +2579,100 @@ response (`jq -r .url`).
   Static/Templates→Site drift stays a Phase G task.
 
 **STOP — awaiting DX approval before implementation.**
+
+## F9 — implementation: Gallery, complete (2026-07-22)
+
+Shipped as approved: Part 3 minus the Phase-G web/auth layer, cron live,
+user-style test migration with the HTTP/disk split, CORS, shaped
+DownloadRes. No exported-SDK surface changed beyond what F7 already
+locked (`Cron` and `AdvanceCron` had their signatures in the lock;
+both stubs are now real — sdk_lock.golden unchanged this time).
+
+**What landed**
+- `tako.Cron` live: registers via the F7 carve-out (kind "cron",
+  schedule as source, fn-name identity). `internal/schedule` parses
+  `"every <duration>"` — one parser shared by analyzer and runtime, so a
+  schedule that analyzes always runs. Runtime `RegisterCron`: boot line
+  `⏰ cron Cleanup: every 24h`, per-run `⏰ … ok (3ms)` / failure
+  narration, serialized runs with tick-skip narration (the honest local
+  face of WithSingleflight; the lease is Phase H). Analyzer: cron
+  handlers join the app service; `cron Cleanup — every 24h` in
+  banner/summary; `1 cron` in the analyzing count; error fixtures
+  `cronschedule` (tako/cron-schedule) + `cronopt` (invalid-option).
+- `AdvanceCron(name)` implemented: runs one cron synchronously on the
+  test app's backends; unknown name Fatals listing declared crons.
+- Gallery final local form: `Owner` (indexed, via MaybeUser — WithAuth
+  is Phase G), `PhotoReady.Owner`, per-owner feed keys with warmFeed
+  warming anonymous + owner feeds, `WithProfile(tako.Batch)` on
+  MakeThumb, `Cleanup` cron deleting never-Ready photos (entity +
+  object), shaped `DownloadRes{URL}`, and REAL image resizing
+  (x/image/draw in the example module only; PNG stays PNG, others
+  re-encode JPEG; undecodable bytes → `tako.Permanent`). The `image`
+  handler fn was renamed `serveImage` (collides with the std `image`
+  package the example now imports) — the route and `Image` var are
+  unchanged.
+- Tests split by contract: `app_test.go` is pure user code
+  (NewTestApp/SignIn/SetSecret/Call/DrainQueues/AdvanceCron) with the
+  Phase-D exit criterion `TestThumbPipelineSurvivesChaos` (8 uploads
+  under chaos → every photo ready, every thumb decodes, feed exact) and
+  `TestCronCleansNeverCompletedUploads`; `http_test.go` keeps the
+  signed-URL texts (all 8 subtests preserved + new CORS preflight),
+  dead-letter-on-disk suites (+ new `TestBadImageBytesArePermanent`),
+  and the multipart HTTP contract. Nothing dropped: two old tests were
+  superseded by stronger user-style ones, the rest moved verbatim.
+- `/_tako/signed/` speaks CORS (permissive — the token is the
+  authorization); conformance grew a cross-origin case → 58 local.
+- validate/signed.md §4 fixed for the shaped response (`jq -r .url`).
+
+**Bugs found while implementing (all fixed, all now under test)**
+1. Codegen emitted crons into the route loop (`mux.Handle("", …)`) —
+   sync-handler filter now excludes kind "cron"; gallery_main.golden
+   shows `RegisterCron` only.
+2. `NewTestApp` cleanup raced in-flight workers writing to the TempDir
+   ("directory not empty") — teardown now WaitIdles before Close.
+3. `tb.Cleanup` LIFO meant `SetSecret`'s unset ran BEFORE app teardown,
+   so an undrained subscriber could read a removed secret (panic) —
+   SetSecret's cleanup now WaitIdles before unsetting. Gallery suite
+   passes under `-race`.
+
+**Tier-2 validation — validate/gallery.md executed, real transcripts**
+
+§1: `tako test` → `analyzing 5 services, 7 endpoints, 1 worker,
+3 subscribers, 1 cron` … `ok gallery 2.392s` (chaos + cron tests in).
+
+§2 (banner + full signed flow):
+```
+  cron Cleanup — every 24h (app.go:68)
+  entity photos (indexes: Owner, Ready)
+⏰ cron Cleanup: every 24h
+{"id":"cqfsbgsf5wfko7qa","owner":"","caption":"sunset","ready":false}
+signed PUT: 200
+[{"caption":"sunset","ready":true}]
+signed GET: 200 70 bytes
+thumb: 200 image/png
+```
+
+§3 (fan-out): WarmFeed `ok (0s)` while
+`NotifyOwner attempt 1/5 … — retrying in 200ms` ×4 →
+`✗ dead-letter photo-ready: NotifyOwner gave up after 5 attempts:
+notification service rejected "boom goes"`; JSON present under
+`.tako/data/deadletter/photo-ready/NotifyOwner/`.
+
+§4 (real decoding): `✗ dead-letter thumbnails: MakeThumb permanent
+failure: decode image: image: unknown format` — one attempt, no retry.
+
+§5: `--- PASS: TestCronCleansNeverCompletedUploads (0.05s)`.
+
+§6: conformance 58/58 local; full tree + hello/shortlink/gallery green.
+
+**Discovered work (not done)**: spec Part 3 fix-ups now pending F10/
+Phase G review — `image`→`serveImage` naming, `Upload`+`StartUpload`
+dual flow, Static/Templates→Site drift. Dev has no way to fire a cron
+by hand (`tako cron run <name>`?) — worth considering when cloud
+scheduling lands. Dead-letter replay CLI still open.
+
+**GATE REQUEST — F9 (local): Gallery, complete.** Please run
+`validate/gallery.md` — the agent plan's full demo script; this gate
+doubles as the first whole-DX review, so notes beyond pass/fail are
+welcome — and record the verdict in `docs/validation-log.md`. F10 (API
+freeze review) follows.

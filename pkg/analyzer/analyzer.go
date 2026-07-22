@@ -153,6 +153,10 @@ func Analyze(cfg Config) (*AppGraph, error) {
 				if h := extractSubscribe(cfg.Dir, pkg, d.name, d.call, topicVars, bucketVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 				}
+			case "Cron":
+				if h := extractCron(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+				}
 			}
 		}
 		checkPackageLevel(cfg.Dir, pkg, &errs)

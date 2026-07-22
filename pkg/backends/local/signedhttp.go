@@ -18,6 +18,17 @@ import (
 // this role (Phase F).
 func SignedURLEndpoint(signer *URLSigner, store *BucketStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Browsers PUT signed uploads cross-origin; the token in the path
+		// is the whole authorization, so a permissive CORS policy adds no
+		// exposure. GCS behaves equivalently once bucket CORS is
+		// provisioned (Phase F).
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, PUT")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
 		token := strings.TrimPrefix(r.URL.Path, "/_tako/signed/")
 		claims, err := signer.verify(token)
 		if err != nil {
