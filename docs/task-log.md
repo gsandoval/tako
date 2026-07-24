@@ -2708,3 +2708,109 @@ demo — its §2–§4 double as the API's feel test), then fill the Verdict
 columns and the approval block in `docs/api-review-1.md`. Record both
 verdicts in `docs/validation-log.md`. Any renames you request become
 the last F10 implementation task before the lock freezes.
+
+## C1 — DX proposal: Build + push (2026-07-23)
+
+Stage 2 begins. Agent-plan scope: ko-style static binary → distroless →
+Artifact Registry by digest. Gate C1 (explicitly a partial cycle — no
+deploy): human verifies the pushed image runs locally via docker and
+inspects the digest pinning. Spec §4.5 is normative: `CGO_ENABLED=0 go
+build` per service → append binary as a layer on distroless via
+go-containerregistry → push. No Docker daemon for BUILDING (docker is
+only used by the human to verify the result).
+
+No SDK surface changes (the API is frozen). C1 is CLI + a new
+`pkg/build` package.
+
+### 1. CLI surface
+
+```
+$ cd examples/hello
+$ tako build
+tako build · hello
+  analyzing   1 service, 1 endpoint
+  generating  .tako/gen/hello/main.go
+  building    hello  linux/amd64 static (6.1 MB in 1.8s)
+  base        gcr.io/distroless/static-debian12:nonroot@sha256:6d31f9…
+  image       .tako/images/hello (OCI layout)
+✓ hello  sha256:e4b1c0…   (not pushed — use --push <repo>)
+
+$ tako build --push us-central1-docker.pkg.dev/my-proj/tako
+tako build · hello
+  analyzing   1 service, 1 endpoint
+  generating  .tako/gen/hello/main.go
+  building    hello  linux/amd64 static (6.1 MB in 1.8s)
+  base        gcr.io/distroless/static-debian12:nonroot@sha256:6d31f9…
+  pushing     us-central1-docker.pkg.dev/my-proj/tako/hello
+✓ hello  us-central1-docker.pkg.dev/my-proj/tako/hello@sha256:e4b1c0…
+```
+
+- Builds EVERY service in the graph (shortlink: app + worker service),
+  one line + digest each. C2's reconciler consumes exactly these
+  digest-pinned references — a deploy never says ":latest".
+- Without `--push`: image written to `.tako/images/<service>` as an OCI
+  layout (inspectable with crane/skopeo), digest printed. With
+  `--push <repo>`: pushed as `<repo>/<service>`, pinned line printed.
+- Registry auth: the gcloud/ADC keychain (whatever `gcloud auth` or
+  workload identity provides). No tako-specific credential config.
+
+Error texts (exact, under test where reachable):
+- no credentials → `cannot authenticate to <repo>: no Google credentials — run "gcloud auth login" (or set GOOGLE_APPLICATION_CREDENTIALS) and retry`
+- unreachable/denied repo → the registry's error, prefixed `push <service>: `
+
+### 2. Semantics being locked
+
+- **Static by construction**: `CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+  go build -trimpath -ldflags "-s -w"` of the generated service main.
+  amd64 only in v0 (Cloud Run's default); multi-arch is a later flag.
+- **Base**: `gcr.io/distroless/static-debian12:nonroot`, tag resolved
+  to a digest at build time and PRINTED — the image config pins the
+  resolved digest, never the floating tag.
+- **Deterministic images**: fixed timestamps in the appended layer and
+  image config (ko-style zero epoch), so same source → same image
+  digest. This is what makes C2's spec-hash reconcile ("did anything
+  change?") cheap and honest.
+- **Image shape**: exactly base + one layer containing `/app/<service>`;
+  entrypoint `/app/<service>`; runs as distroless `nonroot`; OCI labels
+  `tako.app` / `tako.service` (the reconciler's label vocabulary starts
+  here). No secrets, no .env, no source in the image.
+
+### 3. Internals
+
+- `pkg/build`: `Build(graph, dir) []Image` (compile + layer into OCI
+  layout) and `Push(image, repo)` via go-containerregistry; the google
+  keychain for auth. go-containerregistry becomes a framework
+  dependency (that's the point of C1).
+- Tests, no cloud needed: go-containerregistry ships an in-memory
+  registry (`pkg/registry`) — the suite builds hello, pushes to an
+  httptest registry, pulls back, and asserts: digest round-trips, one
+  appended layer, entrypoint/user/labels correct, rebuild reproduces
+  the same digest, binary in the layer is statically linked.
+- `cmd/tako`: new `build` verb wired like `test` (analyze → generate →
+  build), sharing the banner style.
+
+### 4. Gate C1 (partial cycle — needs your GCP test project + docker)
+
+`validate/build.md`: `tako build` (local, inspect OCI layout + digest
+determinism: build twice, same digest), then `tako build --push` to the
+dedicated test project's Artifact Registry, then THE point of the gate:
+
+```
+docker run --rm -e PORT=8080 -p 8080:8080 <repo>/hello@sha256:…   # by DIGEST
+curl localhost:8080/api/hello
+```
+
+— the pushed artifact, pulled by pin, serving the same app `tako dev`
+serves. Plus `docker inspect` (nonroot user, entrypoint) and a look at
+the two-line layer stack.
+
+### 5. Not in scope (C1 non-goals)
+
+- No deploy, no Cloud Run, no provisioning, no IAM (C2).
+- No `TAKO_BACKEND=gcp` wiring in the image config yet — the image
+  runs with local backends when docker-run (that IS the gate demo);
+  C2's reconciler sets the env at service-creation time.
+- No multi-arch, no build cache, no SBOM/signing (noted for later).
+- No new SDK symbols — the freeze holds.
+
+**STOP — awaiting DX approval before implementation.**
