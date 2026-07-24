@@ -3134,3 +3134,164 @@ against the <~2min target, review the §2 plan line by line, and try §4's
 drift heal and §5's lease contention. Record the verdict in
 `docs/validation-log.md`. C3 (gcp Bucket + Entity; shortlink graduates)
 follows.
+
+## C3 — DX proposal: gcp Bucket + Entity; shortlink graduates (2026-07-24)
+
+Agent-plan scope: conformance(gcp) green as the internal bar; reconciler
+grows buckets, Datastore indexes, derived IAM. Gate C3: full cycle on
+shortlink + human reviews the printed IAM summary against expectations.
+Spec §4.6 (reconcile order, IAM table) and
+docs/tako-cloud-permissions.md are normative.
+
+### 0. The headline
+
+`examples/shortlink` does not change by a single line. The same code
+that passed gate F2 deploys to GCP: `links`/`clicks-seen` become
+Datastore kinds, derived composite indexes are created from the Query
+call sites the analyzer already extracts, and every grant in the
+security summary traces to a graph edge.
+
+### 1. Scope call needing your decision (before anything else)
+
+shortlink is Entity + **Queue + Worker**. Pub/Sub push is C4's scope,
+so C3 must either:
+
+- **(a) RECOMMENDED — queue-lite in C3**: plain Pub/Sub topic + one
+  OIDC push subscription per worker, default retry policy. C4 keeps
+  dead-letter topics, backoff/retry config, per-handler topic fan-out,
+  and the kill-mid-job cloud validation. Payoff: the C3 gate demo is
+  the real app — click a link, watch Hits increment in the cloud.
+- **(b) shortlink graduates degraded**: countclick deploys but no
+  subscription exists until C4; Hits stays 0 in the cloud. The gate
+  demo would validate Entity only — weaker, and the security summary
+  would show a publisher grant into a topic nobody consumes.
+
+The proposal below assumes (a); strike the queue lines for (b).
+
+### 2. CLI surface
+
+```
+$ cd examples/shortlink
+$ tako deploy --project tako-test-01
+tako deploy · shortlink → tako-test-01 (us-central1)
+
+  analyzing    2 services, 3 endpoints, 1 worker, 2 entities, 1 queue
+  generating   .tako/gen
+  preflight    ok (run, iam, artifactregistry, storage, datastore, pubsub)
+  building     2 service image(s), digest-pinned
+  plan
+    create  service account tako-shortlink
+    create  service account tako-shortlink-countclick
+    create  datastore index links (owner asc), links (created asc)
+    create  topic clicks
+    create  bucket tako-test-01-tako (lease, exists → skip)
+    create  run service shortlink
+    create  run service shortlink-countclick
+    create  push subscription clicks → shortlink-countclick
+    create  iam grant datastore.user → tako-shortlink
+    create  iam grant datastore.user → tako-shortlink-countclick
+    create  iam grant pubsub.publisher(clicks) → tako-shortlink
+    create  iam grant run.invoker(shortlink-countclick) → pubsub push SA
+    12 creates, 0 updates, 0 skips, 0 orphans
+  lease        acquired (memo@… on tako-test-01/shortlink/prod)
+  ⛅ …          (index build waits with narration; empty DB ≈ seconds)
+
+✓ shortlink → https://shortlink-xxxxx-uc.a.run.app  (1m58s)
+
+Security summary:
+  shortlink runs as tako-shortlink@… —
+    datastore [user — project-wide: GCP has no per-kind Datastore IAM],
+    clicks [publisher]
+  shortlink-countclick runs as tako-shortlink-countclick@… —
+    datastore [user]; ingress: OIDC push from Pub/Sub SA only (run.invoker)
+  public ingress: shortlink
+```
+
+- **Demo (the gate)**: `curl -X POST …/api/links -d '{"slug":"gh",…}'`
+  → 200; duplicate slug → 409 (Datastore transaction, same text as
+  local); `curl …/api/links/gh` → 200, and a few seconds later
+  `…/api/links?owner=…` shows `hits: 1` (real push round-trip);
+  unknown slug → 404.
+- **Conformance(gcp)** — the internal bar, run against the test
+  project: `go test ./pkg/backends/conformance -backend=gcp
+  -project tako-test-01` — Entity + Bucket chapters (topics/signed/
+  events chapters remain local-only until C4/C5).
+- **`tako destroy`** now meets §4.6a for real: it lists data-bearing
+  resources separately and requires the app name typed:
+  `DATA: datastore kinds links, clicks-seen (rows are not counted —
+  deletion is total) · type the app name to confirm:`.
+- **Re-deploy unchanged** → all skips, `✓ no changes`.
+
+### 3. Semantics being locked
+
+- **Entity → Datastore** (Firestore in Datastore mode, database
+  `(default)`). Kind = declared store name. **Env isolation =
+  Datastore namespace = env** (`prod` included, no default-namespace
+  special case): disjoint envs per §4.6a, no kind-name mangling.
+- **Indexes**: derived from Query call sites (already in the
+  AppGraph), created before services (reconcile step 2), deploy waits
+  on index builds with narration. Datastore indexes carry no labels:
+  ownership = exact match against the derived set; foreign indexes are
+  warned as unmanaged, never touched.
+- **Bucket → GCS**: name `<project>-<app>-<bucket>` (global
+  uniqueness), uniform bucket-level access, no public access, labeled.
+  shortlink declares none — the Bucket backend's bar is conformance.
+- **Queue-lite (if (a))**: topic named after the queue, one push
+  subscription per worker with OIDC auth to the worker's URL, GCP
+  default retry. The generated /_tako/push contract from C1.5 is
+  unchanged.
+- **Grants are objects**: IAM bindings appear in the plan, are diffed
+  like everything else, and removing a code edge removes the grant on
+  the next deploy (grants are not data).
+- **Runtime env**: services get TAKO_BACKEND=gcp, TAKO_PROJECT,
+  TAKO_ENV; resource names resolve from declarations exactly as local.
+
+### 4. Internals
+
+- `pkg/backends/gcp`: `entity.go` (cloud.google.com/go/datastore —
+  Tx/Get/Put/Query/IsNotFound mapped to the contract), `bucket.go`
+  (GCS). Conformance runner grows `-backend=gcp -project` wiring;
+  refuses to run without explicit project (never accidental).
+- `pkg/provision`: new kinds — bucket, datastore index, topic, push
+  subscription, IAM grant — same Observe/Plan/Apply shape, fakes +
+  golden plans first, thin GCP adapters after.
+- No SDK surface changes (freeze holds).
+
+### 5. Cloud errors & permissions (per docs/tako-cloud-permissions.md)
+
+- **Preflight adds**: datastore + pubsub API probes; database
+  existence — missing →
+  `no Datastore database in tako-test-01 — create it: gcloud firestore databases create --location=us-central1 --type=datastore-mode --project tako-test-01`;
+  deployer permission probes for datastore.indexes.create,
+  pubsub.topics.create, pubsub.subscriptions.create,
+  storage.buckets.create, resourcemanager.projects.setIamPolicy — each
+  gap one line with the exact grant command, taxonomy texts pinned by
+  unit test as in C1/C2.
+- **setIamPolicy honesty**: granting runtime roles needs project
+  setIamPolicy; tako still never self-escalates — missing it prints
+  the grant command and stops before any mutation.
+- **Runtime 403 = reconciler bug**: backend code never retries or
+  escalates; the error text says
+  `shortlink lacks datastore.user — this is a tako deploy bug, re-run tako deploy; if it persists, file it`.
+- **Org-policy denials** (e.g. public ingress forbidden, uniform
+  bucket enforcement conflicts): surfaced verbatim, never worked
+  around.
+
+### 6. Not in scope (C3 non-goals)
+
+- Dead-letter topics, retry/backoff config, kill-mid-job validation,
+  per-handler topic fan-out → C4 (even under (a)).
+- GCS notifications, signBlob signed URLs, Cloud Tasks → C5.
+- Cache and metrics cloud backends (cache stays in-process per
+  instance in v0; metrics land with the observability slice).
+- `tako prune`, `--env` cloud previews beyond what C2 shipped.
+
+**Discovered work (not done)**: docs/tako-cloud-permissions.md names
+service accounts `<app>-<service>@…` but C2 shipped (and the C2-gate
+fix cemented) `tako-<env-prefixed-service>` — the doc needs a fix-up
+line; SAName truncation also means very long worker names shorten,
+which the security summary should print verbatim rather than
+re-deriving.
+
+**STOP — awaiting DX approval (and the §1 scope call) before
+implementation.**
