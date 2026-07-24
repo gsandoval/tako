@@ -25,7 +25,7 @@ With preflight green, the same `--plan` prints:
 ```
   plan
     create  artifact repo tako
-    create  service account tako-hello
+    create  service account hello-sa
     create  run service hello
     3 creates, 0 updates, 0 skips, 0 orphans
 ```

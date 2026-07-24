@@ -3156,7 +3156,7 @@ security summary traces to a graph edge.
 shortlink is Entity + **Queue + Worker**. Pub/Sub push is C4's scope,
 so C3 must either:
 
-- **(a) RECOMMENDED — queue-lite in C3**: plain Pub/Sub topic + one
+- **(a) RECOMMENDED — minimal Pub/Sub in C3**: plain Pub/Sub topic + one
   OIDC push subscription per worker, default retry policy. C4 keeps
   dead-letter topics, backoff/retry config, per-handler topic fan-out,
   and the kill-mid-job cloud validation. Payoff: the C3 gate demo is
@@ -3180,17 +3180,17 @@ tako deploy · shortlink → tako-test-01 (us-central1)
   preflight    ok (run, iam, artifactregistry, storage, datastore, pubsub)
   building     2 service image(s), digest-pinned
   plan
-    create  service account tako-shortlink
-    create  service account tako-shortlink-countclick
+    create  service account shortlink-sa
+    create  service account shortlink-countclick-sa
     create  datastore index links (owner asc), links (created asc)
     create  topic clicks
     create  bucket tako-test-01-tako (lease, exists → skip)
     create  run service shortlink
     create  run service shortlink-countclick
     create  push subscription clicks → shortlink-countclick
-    create  iam grant datastore.user → tako-shortlink
-    create  iam grant datastore.user → tako-shortlink-countclick
-    create  iam grant pubsub.publisher(clicks) → tako-shortlink
+    create  iam grant datastore.user → shortlink-sa
+    create  iam grant datastore.user → shortlink-countclick-sa
+    create  iam grant pubsub.publisher(clicks) → shortlink-sa
     create  iam grant run.invoker(shortlink-countclick) → pubsub push SA
     12 creates, 0 updates, 0 skips, 0 orphans
   lease        acquired (memo@… on tako-test-01/shortlink/prod)
@@ -3199,10 +3199,10 @@ tako deploy · shortlink → tako-test-01 (us-central1)
 ✓ shortlink → https://shortlink-xxxxx-uc.a.run.app  (1m58s)
 
 Security summary:
-  shortlink runs as tako-shortlink@… —
+  shortlink runs as shortlink-sa@… —
     datastore [user — project-wide: GCP has no per-kind Datastore IAM],
     clicks [publisher]
-  shortlink-countclick runs as tako-shortlink-countclick@… —
+  shortlink-countclick runs as shortlink-countclick-sa@… —
     datastore [user]; ingress: OIDC push from Pub/Sub SA only (run.invoker)
   public ingress: shortlink
 ```
@@ -3236,7 +3236,7 @@ Security summary:
 - **Bucket → GCS**: name `<project>-<app>-<bucket>` (global
   uniqueness), uniform bucket-level access, no public access, labeled.
   shortlink declares none — the Bucket backend's bar is conformance.
-- **Queue-lite (if (a))**: topic named after the queue, one push
+- **Minimal Pub/Sub (if (a))**: topic named after the queue, one push
   subscription per worker with OIDC auth to the worker's URL, GCP
   default retry. The generated /_tako/push contract from C1.5 is
   unchanged.
@@ -3286,12 +3286,26 @@ Security summary:
   instance in v0; metrics land with the observability slice).
 - `tako prune`, `--env` cloud previews beyond what C2 shipped.
 
-**Discovered work (not done)**: docs/tako-cloud-permissions.md names
-service accounts `<app>-<service>@…` but C2 shipped (and the C2-gate
-fix cemented) `tako-<env-prefixed-service>` — the doc needs a fix-up
-line; SAName truncation also means very long worker names shorten,
-which the security summary should print verbatim rather than
-re-deriving.
+**Discovered work (not done)**: SAName clamping means very long worker
+names shorten — the security summary should print the actual SA name
+verbatim rather than re-deriving it.
 
 **STOP — awaiting DX approval (and the §1 scope call) before
 implementation.**
+
+### Amendments (2026-07-24, per review)
+
+- **§1 scope call decided: (a)** — minimal Pub/Sub ships in C3 (topic +
+  OIDC push subscription per worker, GCP default retry); the
+  "queue-lite" label is retired — it is plain Cloud Pub/Sub with C4's
+  tako features (dead-letter, retry config, fan-out, kill-mid-job
+  validation) deferred.
+- **SA naming settled: `<service>-sa`** (env-prefixed, 6–30 clamp with
+  hash pad/truncation) — replaces both the interim `tako-` prefix and
+  the permissions doc's `<app>-<service>` pattern (doc updated; app
+  prefix was redundant under one-app-per-project and stuttered when
+  package == module). Shipped immediately in pkg/provision since it
+  amends C2 behavior: hello → `hello-sa`. The tako-test-01 project may
+  hold an orphaned `tako-hello` SA from the C2 gate — next deploy warns
+  orphaned-kept; delete it manually or via tako destroy.
+- Full DX approval for C3 remains open.

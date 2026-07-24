@@ -35,16 +35,21 @@ func (c Config) Name(base string) string {
 	return c.Env + "-" + base
 }
 
-// SAName derives the IAM accountId for a service's identity. IAM
-// requires 6–30 chars, which service names alone don't guarantee
-// ("hello" is 5): the tako- prefix secures the minimum, and names past
-// 30 are truncated with a hash suffix so they stay unique and stable.
+// SAName derives the IAM accountId for a service's identity: the
+// env-prefixed service name plus a -sa type suffix. IAM requires 6–30
+// chars, which service names alone don't guarantee ("hello" is 5): the
+// suffix carries realistic names past the minimum, a hash pad covers
+// pathological one-char ones, and names past 30 truncate to a stable
+// hash suffix so they stay unique.
 func (c Config) SAName(base string) string {
-	name := "tako-" + c.Name(base)
+	name := c.Name(base) + "-sa"
+	sum := sha256.Sum256([]byte(name))
+	if len(name) < 6 {
+		return name + "-" + hex.EncodeToString(sum[:2])
+	}
 	if len(name) <= 30 {
 		return name
 	}
-	sum := sha256.Sum256([]byte(name))
 	return strings.TrimRight(name[:23], "-") + "-" + hex.EncodeToString(sum[:3])
 }
 

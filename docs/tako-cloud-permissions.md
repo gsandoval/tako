@@ -71,7 +71,9 @@ not a requirement — predefined roles keep the setup explainable.)
 
 ## Layer 2 — the runtime (derived, minimal, per service)
 
-One service account per service: `<app>-<service>@<project>`. Grants
+One service account per service: `<service>-sa@<project>` (env-prefixed
+for non-prod envs, clamped to IAM's 6–30 chars with a stable hash
+suffix — `Config.SAName` is the source of truth). Grants
 derive from AppGraph edges only — nothing project-wide, nothing manual
 (spec §4.6's table is the source of truth):
 

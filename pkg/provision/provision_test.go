@@ -56,7 +56,7 @@ func TestFreshProjectPlansAllCreates(t *testing.T) {
 	desired := helloDesired(t)
 	plan := Compute("hello", "prod", desired, nil)
 	want := `  create  artifact repo tako
-  create  service account tako-hello
+  create  service account hello-sa
   create  run service hello
   3 creates, 0 updates, 0 skips, 0 orphans
 `
@@ -133,7 +133,7 @@ func TestRemovedServiceIsOrphanedKept(t *testing.T) {
 	// The repo alone remains desired; service + SA disappeared from code.
 	plan := Compute("hello", "prod", desired[:1], cloud.observed())
 	got := plan.Render()
-	if !strings.Contains(got, "orphaned (kept) service account tako-hello") ||
+	if !strings.Contains(got, "orphaned (kept) service account hello-sa") ||
 		!strings.Contains(got, "orphaned (kept) run service hello") {
 		t.Fatalf("orphans missing:\n%s", got)
 	}
@@ -152,7 +152,7 @@ func TestEnvPrefixesNamesAndSpecs(t *testing.T) {
 	for _, d := range desired {
 		names = append(names, d.Name)
 	}
-	want := []string{"tako", "tako-pr-42-hello", "pr-42-hello"}
+	want := []string{"tako", "pr-42-hello-sa", "pr-42-hello"}
 	for i := range want {
 		if names[i] != want[i] {
 			t.Fatalf("names = %v, want %v", names, want)
@@ -162,8 +162,12 @@ func TestEnvPrefixesNamesAndSpecs(t *testing.T) {
 
 func TestSANameSatisfiesIAMLimits(t *testing.T) {
 	prod := Config{App: "hello", Env: DefaultEnv}
-	if got := prod.SAName("hello"); got != "tako-hello" {
-		t.Fatalf("SAName(hello) = %q, want tako-hello", got)
+	if got := prod.SAName("hello"); got != "hello-sa" {
+		t.Fatalf("SAName(hello) = %q, want hello-sa", got)
+	}
+	// A one-char service still clears IAM's 6-char minimum via the pad.
+	if got := prod.SAName("a"); len(got) < 6 || !strings.HasPrefix(got, "a-sa-") {
+		t.Fatalf("SAName(a) = %q, want hash-padded a-sa-*", got)
 	}
 	// The long case truncates deterministically and stays within 6–30.
 	long := Config{App: "hello", Env: "pr-421-feature-branch"}
@@ -175,8 +179,8 @@ func TestSANameSatisfiesIAMLimits(t *testing.T) {
 	if len(a) < 6 || len(a) > 30 {
 		t.Fatalf("SAName %q length %d outside IAM's 6–30", a, len(a))
 	}
-	if !strings.HasPrefix(a, "tako-") {
-		t.Fatalf("SAName %q lost its prefix", a)
+	if !strings.HasPrefix(a, "pr-421-") {
+		t.Fatalf("SAName %q lost its env prefix", a)
 	}
 	// Distinct long names must not collide after truncation.
 	if c := long.SAName("checkout-orchestrator2"); c == a {
