@@ -107,7 +107,9 @@ func (a *TestApp) DrainQueues() {
 // queue message (WithDelay) that has come due. It moves scheduled time
 // only — retry backoff and chaos reordering keep their real
 // (millisecond) timers — and DrainQueues treats not-yet-due messages as
-// idle rather than waiting out their delays. Cron joins this clock in F9.
+// idle rather than waiting out their delays. Crons never ride this
+// clock: they fire by name via AdvanceCron, because a cron test means
+// "this cron ran once", not "time passed and whatever was due fired".
 func (a *TestApp) Advance(d time.Duration) {
 	a.app.Dispatcher.Advance(d)
 }
