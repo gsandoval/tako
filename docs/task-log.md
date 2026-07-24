@@ -2942,3 +2942,134 @@ Note C1's own gate (validate/build.md §2–§4: push to your registry +
 docker run by digest) is still open too — both can close in one sitting,
 and C2's proposal (which now must include its Cloud errors & permissions
 section) follows.
+
+## C2 — DX proposal: Minimal reconciler + hello deploys (2026-07-24)
+
+Agent-plan scope: service accounts, Cloud Run service, spec-hash
+annotations, deploy lease, `tako deploy --plan`, `logs`, `destroy`.
+Gate C2 — the first full cycle: clean project → live URL (target <~2min)
+→ destroyed project, reviewing `--plan` line by line. Spec §4.6/§4.6a
+are normative; hello (no resources) keeps the reconcile set minimal:
+service account + Artifact Registry repo + image + Cloud Run service +
+the lease/label/spec-hash machinery everything later builds on.
+
+### 1. CLI surface
+
+```
+$ cd examples/hello
+$ tako deploy --project my-tako-proj
+tako deploy · hello → my-tako-proj (us-central1)
+
+  analyzing    1 service, 3 endpoints
+  generating   .tako/gen/hello/main.go
+  preflight    ok (run, iam, artifactregistry, storage)
+  plan         create  service account hello@my-tako-proj.iam
+               create  artifact repo tako (us-central1)
+               create  run service hello
+               3 creates, 0 updates, 0 skips, 0 orphans
+  lease        acquired (memo@… on my-tako-proj/hello/prod)
+  ⛅ sa         hello@my-tako-proj.iam.gserviceaccount.com
+  ⛅ image      us-central1-docker.pkg.dev/my-tako-proj/tako/hello@sha256:e4b1…
+  ⛅ run        hello · revision hello-00001 · 100% traffic
+
+✓ hello → https://hello-xxxxx-uc.a.run.app  (1m24s)
+
+Security summary:
+  hello runs as hello@my-tako-proj.iam — no resource grants (hello
+  declares no resources); public ingress (no WithPrivate routes)
+```
+
+- **Re-deploy with nothing changed** (the spec-hash payoff):
+  `plan: 0 creates, 0 updates, 3 skips` → `✓ no changes (4s)`.
+- **`tako deploy --plan`**: prints the classified diff (create /
+  update / skip / orphaned-kept / DRIFT), applies nothing, releases no
+  lease (never takes one).
+- **Drift**: hand-edited service in the console → next deploy prints
+  `drift: run service hello was modified outside tako (spec-hash
+  mismatch) — tako-owned fields will be overwritten` before applying.
+- **`tako logs [service] [--since 15m]`**: recent structured logs for
+  the service (all services when omitted), newest last:
+  `12:01:03 hello INFO GET /api/hello → 200 (1.2ms)`.
+- **`tako destroy --project my-tako-proj`**: lists everything holding
+  the app's labels, asks `type the app name to confirm:`, deletes in
+  reverse reconcile order. Hello has no data-bearing resources; when
+  those arrive (C3), destroy inherits the §4.6a data confirmation.
+- Project resolution (friction rule): `--project` flag, else
+  `GOOGLE_CLOUD_PROJECT`, else gcloud's configured default, else:
+  `no project set — pass --project, set GOOGLE_CLOUD_PROJECT, or run "gcloud config set project <id>"`.
+  Region: `--region`, else `TAKO_REGION`, else `us-central1`.
+
+### 2. Semantics being locked
+
+- **Names & labels.** Cloud Run service/SA named after the graph
+  service (`hello`, later `gallery-makethumb`); every managed object
+  carries labels `tako-app=<app>`, `tako-env=<env>` (default env
+  `prod`; `--env pr-42` prefixes names and re-labels — disjoint
+  resource sets from the same code). Observed state = list-by-label;
+  the cloud is the state.
+- **Spec-hash diffing** (§4.6a): every object annotated
+  `tako-spec-hash: sha256(<intended spec>)`; absent→create, hash
+  differs→update, matches→skip; hand-edits detected as drift and
+  announced before overwrite.
+- **Deploy lease**: object `leases/deploy-<app>-<env>` in bucket
+  `<project>-tako` (created on first deploy, labeled), taken with a
+  generation-0 precondition, holder + timestamp in metadata; concurrent
+  deploy → `deploy in progress by <who> since <when> — waiting…`;
+  stale (>10min) leases are broken with a warning. Released on exit,
+  even on failure.
+- **The service spec**: image by digest (built + pushed as part of
+  deploy — `tako build` remains the standalone piece), env
+  `TAKO_BACKEND=gcp`, `default` profile knobs (min 0 / max 20 /
+  conc 80 / 1 CPU / 512Mi, §4.6), runs as its per-service SA, public
+  ingress in C2 (auth/private arrive with their features), revision
+  annotated with the git SHA + AppGraph hash.
+- **Deploys are additive-first** and idempotent; interrupting one and
+  re-running converges (stateless reconcile — nothing half-remembered).
+
+### 3. Internals
+
+- `pkg/provision`: the reconciler skeleton — `Observe` (list-by-label)
+  → `Plan` (classified diff vs. desired-from-AppGraph) → `Apply`
+  (ordered) — behind narrow client interfaces (serviceAccounts, repos,
+  runServices, leaseBucket) with in-memory fakes; PLAN OUTPUT IS
+  GOLDEN-TESTED against the fakes (create-all, no-op, drift, orphan
+  cases). Real GCP clients (cloud.google.com/go/{run,storage,
+  artifactregistry}, iam REST, logadmin) are thin adapters — the gate
+  exercises them.
+- `cmd/tako`: `deploy`, `logs`, `destroy` verbs.
+- No SDK surface changes (freeze holds).
+
+### 4. Cloud errors & permissions (per docs/tako-cloud-permissions.md)
+
+- **Preflight before any mutation**: `testIamPermissions` for
+  run.services.{create,update}, iam.serviceAccounts.{create,actAs},
+  artifactregistry.repositories.uploadArtifacts, storage buckets/objects
+  (lease); plus API-enabled probes. Failure = one line per gap, exact
+  taxonomy texts:
+  - not authenticated → `cannot authenticate to Google Cloud — run "gcloud auth login" (or set GOOGLE_APPLICATION_CREDENTIALS)`
+  - API disabled → `the Cloud Run API is disabled on my-tako-proj — enable it: gcloud services enable run.googleapis.com --project my-tako-proj`
+  - missing role → `you lack run.services.create on my-tako-proj — grant: gcloud projects add-iam-policy-binding my-tako-proj --member user:$(gcloud config get account) --role roles/run.admin`
+  - wrong project id → `project "my-tako-prj" not found (or you have no access) — check the id`
+- **Org-policy denials** (e.g. domain-restricted sharing blocking
+  public ingress): surfaced verbatim with
+  `your organization's policy forbids this — tako will not try to work around it; see docs/tako-cloud-permissions.md`.
+- **Runtime grants for hello**: none (no resources) — and the security
+  summary SAYS so explicitly; the derived-grant machinery ships with
+  C3's first real edges. Tako never grants the deployer anything
+  (prints commands only).
+- **Taxonomy tests**: classification unit-tested against constructed
+  API errors (like C1's `TestPushErrorTaxonomy`); live texts verified
+  at the gate.
+
+### 5. Not in scope (C2 non-goals)
+
+- No resource backends (buckets/entities/queues in GCP) — C3+; hello
+  needs none.
+- No `--canary` / `promote` / `rollback` (arrive with a later slice;
+  revisions + digest pinning already make them cheap).
+- No `tako prune` (nothing can be orphaned before C3), no `overrides:`
+  escape hatch, no custom domains.
+- No `--env` CI wiring (the flag works; PR automation is the user's).
+- No log following (`-f`) — recent-window fetch only in v0.
+
+**STOP — awaiting DX approval before implementation.**
