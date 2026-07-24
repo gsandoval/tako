@@ -29,6 +29,11 @@ func TestGalleryMain(t *testing.T) {
 	goldenService(t, "../../examples/gallery", "gallery", "testdata/gallery_main.golden")
 }
 
+// The worker service's generated main: register + push endpoint.
+func TestShortlinkWorkerMain(t *testing.T) {
+	goldenService(t, "../../examples/shortlink", "shortlink-countclick", "testdata/shortlink_worker_main.golden")
+}
+
 func goldenService(t *testing.T, appDir, service, golden string) {
 	t.Helper()
 	abs, err := filepath.Abs(appDir)
@@ -45,11 +50,22 @@ func goldenService(t *testing.T, appDir, service, golden string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(".tako", "gen", service, "main.go")
-	if len(written) != 1 || written[0] != want {
-		t.Fatalf("written = %v, want [%s]", written, want)
+	// Every service gets a main now (async ones serve the push endpoint);
+	// this golden checks the named service's output.
+	if len(written) != len(g.Services) {
+		t.Fatalf("written = %v, want one main per service (%d)", written, len(g.Services))
 	}
-	got, err := os.ReadFile(filepath.Join(outDir, written[0]))
+	want := filepath.Join(".tako", "gen", service, "main.go")
+	found := false
+	for _, rel := range written {
+		if rel == want {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("written = %v, missing %s", written, want)
+	}
+	got, err := os.ReadFile(filepath.Join(outDir, want))
 	if err != nil {
 		t.Fatal(err)
 	}

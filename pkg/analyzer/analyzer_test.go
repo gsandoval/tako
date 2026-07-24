@@ -85,6 +85,16 @@ func TestGallerySummary(t *testing.T) {
 	compareGolden(t, "testdata/gallery_summary.golden.txt", []byte(Summary(g)))
 }
 
+// TestGalleryMermaid goldens the diagram mode — layout drift is diff
+// noise for anyone embedding these in docs.
+func TestGalleryMermaid(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/gallery")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/gallery): %v", err)
+	}
+	compareGolden(t, "testdata/gallery_mermaid.golden.txt", []byte(Mermaid(g)))
+}
+
 // TestErrors runs each testdata/errors/* fixture module and asserts the
 // exact analysis-error text — error messages are the product's primary UX
 // and are under test, byte for byte.

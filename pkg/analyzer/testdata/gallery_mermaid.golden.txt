@@ -1,0 +1,35 @@
+flowchart LR
+  subgraph svc_gallery["service gallery"]
+    h_gallery_Upload["POST /api/photos → Upload"]
+    h_gallery_StartUpload["POST /api/uploads → StartUpload"]
+    h_gallery_Download["GET /api/photos/{id}/download → Download"]
+    h_gallery_Image["GET /api/photos/{id}/image → Image"]
+    h_gallery_Thumb["GET /api/photos/{id}/thumb → Thumb"]
+    h_gallery_List["GET /api/photos → List"]
+    h_gallery_Objects["GET /api/objects → Objects"]
+    h_gallery_Cleanup["cron Cleanup — every 24h"]
+  end
+  subgraph svc_gallery_onuploaded["service gallery-onuploaded"]
+    h_gallery_OnUploaded["subscriber OnUploaded"]
+  end
+  subgraph svc_gallery_makethumb["service gallery-makethumb"]
+    h_gallery_MakeThumb["worker MakeThumb"]
+  end
+  subgraph svc_gallery_notifyowner["service gallery-notifyowner"]
+    h_gallery_NotifyOwner["subscriber NotifyOwner"]
+  end
+  subgraph svc_gallery_warmfeed["service gallery-warmfeed"]
+    h_gallery_WarmFeed["subscriber WarmFeed"]
+  end
+  r_bucket_photos[("bucket photos")]
+  r_entity_photos[("entity photos")]
+  r_queue_thumbnails{{"queue thumbnails"}}
+  r_topic_photo_ready{{"topic photo-ready"}}
+  r_cache_feed[("cache feed")]
+  r_secret_notifier_key(["secret notifier-key"])
+  r_counter_uploads(["counter uploads"])
+  r_histogram_thumb_ms(["histogram thumb_ms"])
+  r_bucket_photos -. "photos.Uploaded" .-> h_gallery_OnUploaded
+  r_queue_thumbnails --> h_gallery_MakeThumb
+  r_topic_photo_ready --> h_gallery_NotifyOwner
+  r_topic_photo_ready --> h_gallery_WarmFeed

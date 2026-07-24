@@ -1,0 +1,2 @@
+app.go:5:12: tako.Site is not available yet — the web slice (sites, pages, auth) arrives with Phase G (tako/not-yet)
+app.go:7:15: tako.Job is not available yet — the multi-service slice (jobs, locks, singletons) arrives with Phase H (tako/not-yet)

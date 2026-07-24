@@ -2885,3 +2885,60 @@ network-dependent); SBOM/signing.
 the image BY DIGEST and curl it, and inspect nonroot/entrypoint/layers.
 Record the verdict in `docs/validation-log.md`. C2 (minimal reconciler +
 hello deploys) follows.
+
+## C1.5 — implementation: Stage-1 gap closure + cloud groundwork (2026-07-24)
+
+Scope approved interactively (four items, all selected) after the
+pre-C2 audit. No exported SDK surface changed — the F10 freeze holds.
+
+**1. Async service mains — the C1 deviation is closed.** Codegen now
+generates a main for every service: async services get `runtime.Boot()`,
+their `Register*` line, and `mux.Handle("POST /_tako/push",
+runtime.PushHandler(...))`. The push status contract IS Pub/Sub's ack
+contract — nil→204, error→500 (redeliver), Permanent→400 (dead-letter
+policy's job, wired in Phase F along with envelope + OIDC) — pinned by
+`TestPushHandlerContract`, including undecodable-payload→400. Live
+transcript: generated shortlink-countclick served 204 (real click
+counted against the existing ledger), 500 (unknown slug — correctly
+retriable), 400 (junk payload). `tako build` now builds shortlink's two
+and gallery's five services; the "skipping" line is gone. New golden:
+`shortlink_worker_main.golden`.
+
+**2. `tako gen graph --json | --mermaid`** (S0 follow-up, finally):
+default output is now the human summary; `--json` is clean pipeable
+JSON (`jq '.services | length'` → 5 on gallery); `--mermaid` renders
+service subgraphs, family-shaped resource nodes, and binding edges
+(dotted for bucket events). Goldened (`gallery_mermaid.golden.txt`).
+Publish/read edges join when the analyzer derives usage edges.
+
+**3. No silent ignores.** Declaring Page/Site/Auth (Phase G) or
+Job/JobHandler/Lock/Singleton (Phase H) is now an analysis error with a
+phase pointer (tako/not-yet) instead of silent nothing. Fixture:
+errors/notyet.
+
+**4. Permission model + error taxonomy.**
+- `docs/tako-cloud-permissions.md`: two-layer model — deployer gets a
+  simple one-time bundle on a dedicated project (friction minimized
+  where it's felt); runtime gets per-service SAs with grants derived
+  from AppGraph edges only (minimality where it's permanent);
+  preflight-as-UX; the 401/403/403-API-disabled/404 taxonomy; tako
+  never self-escalates (prints grant commands, never runs them).
+- C1 retrofit: push errors now distinguish unauthenticated (401 →
+  gcloud auth login) / unauthorized (403 → exact add-iam-policy-binding
+  with repo/project/location parsed from the repo path) / repo missing
+  (404 → exact repositories create). `TestPushErrorTaxonomy` pins all
+  three texts.
+- CLAUDE.md working rule added: every C-phase proposal carries a
+  "Cloud errors & permissions" section designed against the doc.
+
+**Validation:** full tree + all examples green; conformance 58 local;
+`validate/stage2-prep.md` written, §1–§3 executed with transcripts
+above (§4 is a design read — your gate judgment).
+
+**GATE REQUEST — C1.5.** Please run `validate/stage2-prep.md` — §4 (the
+permission model design review) is the real judgment call; §1's push
+contract is the fun part. Record the verdict in `docs/validation-log.md`.
+Note C1's own gate (validate/build.md §2–§4: push to your registry +
+docker run by digest) is still open too — both can close in one sitting,
+and C2's proposal (which now must include its Cloud errors & permissions
+section) follows.

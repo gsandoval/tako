@@ -29,7 +29,9 @@ Usage:
                        build every service as a digest-pinned distroless
                        image (no Docker daemon); --push uploads each to
                        <repo>/<service> on Artifact Registry
-  tako gen graph       print the app's AppGraph (JSON + summary)
+  tako gen graph [--json | --mermaid]
+                       print the app's AppGraph: human summary (default),
+                       pipeable JSON, or a mermaid diagram
 
 Commands arriving in later slices: deploy, logs, destroy, prune.
 `
@@ -65,15 +67,31 @@ func main() {
 			fmt.Fprint(os.Stderr, usage)
 			os.Exit(2)
 		}
+		mode := "summary"
+		for _, arg := range os.Args[3:] {
+			switch arg {
+			case "--json", "--mermaid":
+				mode = arg[2:]
+			default:
+				fail(fmt.Errorf("unknown flag %q (tako gen graph accepts --json or --mermaid)", arg))
+			}
+		}
 		graph, err := analyzer.Analyze(analyzer.Config{Dir: "."})
 		if err != nil {
 			fail(err)
 		}
-		out, err := json.MarshalIndent(graph, "", "  ")
-		if err != nil {
-			fail(err)
+		switch mode {
+		case "json":
+			out, err := json.MarshalIndent(graph, "", "  ")
+			if err != nil {
+				fail(err)
+			}
+			fmt.Printf("%s\n", out)
+		case "mermaid":
+			fmt.Print(analyzer.Mermaid(graph))
+		default:
+			fmt.Print(analyzer.Summary(graph))
 		}
-		fmt.Printf("%s\n\n%s", out, analyzer.Summary(graph))
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)

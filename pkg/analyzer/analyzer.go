@@ -137,6 +137,20 @@ func Analyze(cfg Config) (*AppGraph, error) {
 				if r := extractCarrier(strings.ToLower(d.ctor), "tako."+d.ctor, cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 				}
+			case "Page", "Site", "Auth":
+				// Declared surface whose behavior hasn't shipped: an
+				// explicit error beats silently ignoring the declaration.
+				errs = append(errs, &Error{
+					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
+					Msg:  fmt.Sprintf("tako.%s is not available yet — the web slice (sites, pages, auth) arrives with Phase G", d.ctor),
+					Rule: "not-yet",
+				})
+			case "Job", "JobHandler", "Lock", "Singleton":
+				errs = append(errs, &Error{
+					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
+					Msg:  fmt.Sprintf("tako.%s is not available yet — the multi-service slice (jobs, locks, singletons) arrives with Phase H", d.ctor),
+					Rule: "not-yet",
+				})
 			}
 		}
 		for _, d := range decls {

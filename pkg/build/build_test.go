@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/google/go-containerregistry/pkg/name"
@@ -17,6 +18,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
+	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/codegen"
@@ -214,6 +216,32 @@ func TestLayerCarriesStaticBinary(t *testing.T) {
 	for _, p := range f.Progs {
 		if p.Type == elf.PT_INTERP {
 			t.Fatal("binary requests an ELF interpreter — not static")
+		}
+	}
+}
+
+// TestPushErrorTaxonomy pins the three registry failures to their
+// remediation texts — 401 (unauthenticated), 403 (unauthorized), and
+// 404 (repo missing) are different problems with different fixes.
+func TestPushErrorTaxonomy(t *testing.T) {
+	const repo = "us-central1-docker.pkg.dev/my-proj/tako"
+	cases := []struct {
+		status int
+		wants  []string
+	}{
+		{401, []string{"cannot authenticate", "gcloud auth login"}},
+		{403, []string{"authenticated but lack write access", "add-iam-policy-binding tako --project my-proj --location us-central1", "roles/artifactregistry.writer"}},
+		{404, []string{"does not exist", "repositories create tako --project my-proj --location us-central1 --repository-format docker"}},
+	}
+	for _, c := range cases {
+		err := classifyPushError(&transport.Error{StatusCode: c.status}, repo, "hello")
+		if err == nil {
+			t.Fatalf("status %d: nil error", c.status)
+		}
+		for _, want := range c.wants {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("status %d error %q\n  missing %q", c.status, err, want)
+			}
 		}
 	}
 }

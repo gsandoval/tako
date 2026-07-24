@@ -73,6 +73,13 @@ symbol as a side effect of another task — API changes are their own task.
 - **Stay in scope.** Do the task in `tako-agent-plan.md`, including its
   non-goals. If you discover adjacent work, note it under "Discovered work" in
   the task log; do not do it.
+- **Cloud tasks carry their error & permission surface.** Every C-phase DX
+  proposal includes a "Cloud errors & permissions" section — failure modes
+  with exact texts (401/403/403-API-disabled/404 are different problems with
+  different remediations) and the preflight checks — designed against
+  `docs/tako-cloud-permissions.md`. Permissions are a whole-system design
+  (simple one-time deployer setup, derived least-privilege runtime), never
+  per-step patches.
 - Examples live in `examples/` and are the acceptance suite; their tests must
   pass against `local` on every commit.
 - Analyzer errors follow the format `path:line:col: message (tako/RULE-ID)`.

@@ -228,11 +228,45 @@ func push(img v1.Image, repo, service string, digest v1.Hash) (string, error) {
 		return "", fmt.Errorf("push repo %q: %w", repo, err)
 	}
 	if err := remote.Write(dst, img, remote.WithAuthFromKeychain(keychain)); err != nil {
-		var terr *transport.Error
-		if errors.As(err, &terr) && (terr.StatusCode == http.StatusUnauthorized || terr.StatusCode == http.StatusForbidden) {
-			return "", fmt.Errorf("cannot authenticate to %s: no Google credentials — run \"gcloud auth login\" (or set GOOGLE_APPLICATION_CREDENTIALS) and retry", repo)
-		}
-		return "", fmt.Errorf("push %s: %w", service, err)
+		return "", classifyPushError(err, repo, service)
 	}
 	return dst.Context().Name() + "@" + digest.String(), nil
+}
+
+// classifyPushError separates the three registry failures a user actually
+// hits — not authenticated, authenticated but not authorized, and repo
+// missing — and prints the one command that fixes each (the permission
+// model's friction rule: name the missing grant, never guess broader).
+func classifyPushError(err error, repo, service string) error {
+	var terr *transport.Error
+	if !errors.As(err, &terr) {
+		return fmt.Errorf("push %s: %w", service, err)
+	}
+	loc, project, repoName, arOK := parseARRepo(repo)
+	switch terr.StatusCode {
+	case http.StatusUnauthorized:
+		return fmt.Errorf("cannot authenticate to %s — no Google credentials; run \"gcloud auth login\" (or set GOOGLE_APPLICATION_CREDENTIALS) and retry", repo)
+	case http.StatusForbidden:
+		if arOK {
+			return fmt.Errorf("push to %s denied — you are authenticated but lack write access; grant it once:\n  gcloud artifacts repositories add-iam-policy-binding %s --project %s --location %s --member user:$(gcloud config get account) --role roles/artifactregistry.writer\n(if the Artifact Registry API is disabled, enable it first: gcloud services enable artifactregistry.googleapis.com --project %s)", repo, repoName, project, loc, project)
+		}
+		return fmt.Errorf("push to %s denied — you are authenticated but lack write access to this repository", repo)
+	case http.StatusNotFound:
+		if arOK {
+			return fmt.Errorf("repository %s does not exist — create it once:\n  gcloud artifacts repositories create %s --project %s --location %s --repository-format docker", repo, repoName, project, loc)
+		}
+		return fmt.Errorf("repository %s does not exist", repo)
+	}
+	return fmt.Errorf("push %s: %w", service, err)
+}
+
+// parseARRepo splits an Artifact Registry docker repo path
+// (<loc>-docker.pkg.dev/<project>/<repo>) so error remediations can be
+// copy-pasteable, real commands.
+func parseARRepo(repo string) (loc, project, name string, ok bool) {
+	parts := strings.Split(repo, "/")
+	if len(parts) < 3 || !strings.HasSuffix(parts[0], "-docker.pkg.dev") {
+		return "", "", "", false
+	}
+	return strings.TrimSuffix(parts[0], "-docker.pkg.dev"), parts[1], parts[2], true
 }
