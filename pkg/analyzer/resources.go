@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/types"
+	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -12,10 +13,13 @@ import (
 // fields are indexed (and may appear in Where/OrderBy) and which were
 // actually used by queries — the derived index set.
 type entityType struct {
-	display  string          // short type name, e.g. "Link"
-	declared []string        // entity:"index" fields, struct order
-	indexed  map[string]bool // membership set of declared
-	used     map[string]bool // fields seen in Where/OrderBy call sites
+	display    string            // short type name, e.g. "Link"
+	declared   []string          // entity:"index" fields, struct order
+	indexed    map[string]bool   // membership set of declared
+	wire       map[string]string // Go field → marshaled property name (json tag rule)
+	used       map[string]bool   // fields seen in Where/OrderBy call sites
+	usedFilter map[string]bool   // fields seen in Where call sites
+	usedOrder  map[string]string // OrderBy fields → "asc" | "desc"
 }
 
 // extractEntity validates one tako.Entity declaration and returns its
@@ -106,7 +110,8 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 		return nil, false
 	}
 
-	et := &entityType{display: obj.Name(), indexed: map[string]bool{}, used: map[string]bool{}}
+	et := &entityType{display: obj.Name(), indexed: map[string]bool{}, wire: map[string]string{},
+		used: map[string]bool{}, usedFilter: map[string]bool{}, usedOrder: map[string]string{}}
 	idCount := 0
 	bad := false
 	for i := range st.NumFields() {
@@ -126,6 +131,17 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 		case "index":
 			et.declared = append(et.declared, f.Name())
 			et.indexed[f.Name()] = true
+			// Datastore property names are the marshaled (json) names —
+			// the same rule the SDK's jsonName applies at runtime.
+			et.wire[f.Name()] = f.Name()
+			if tag := tagValue(st.Tag(i), "json"); tag != "" && tag != "-" {
+				if i := strings.IndexByte(tag, ','); i >= 0 {
+					tag = tag[:i]
+				}
+				if tag != "" {
+					et.wire[f.Name()] = tag
+				}
+			}
 		}
 	}
 	if idCount != 1 {
@@ -169,11 +185,12 @@ func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityT
 				})
 				return true
 			}
-			verb, suffix := "filters on", "queryable"
+			verb, suffix, direction := "filters on", "queryable", ""
 			if method == "OrderBy" {
-				verb, suffix = "orders by", "orderable"
+				verb, suffix, direction = "orders by", "orderable", "asc"
 				if len(field) > 0 && field[0] == '-' {
 					field = field[1:]
+					direction = "desc"
 				}
 			}
 			if !et.indexed[field] {
@@ -186,6 +203,11 @@ func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityT
 				return true
 			}
 			et.used[field] = true
+			if direction == "" {
+				et.usedFilter[field] = true
+			} else {
+				et.usedOrder[field] = direction
+			}
 			return true
 		})
 	}

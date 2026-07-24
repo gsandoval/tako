@@ -53,6 +53,14 @@ type Resource struct {
 	// (Where/OrderBy call sites), in struct declaration order — the
 	// derived index set.
 	Indexes []string `json:"indexes,omitempty"`
+	// Composite is the derived Datastore composite index for entities
+	// whose queries combine two or more indexed fields: filter fields
+	// first (struct order, ascending), then OrderBy fields with a "-"
+	// prefix for descending. Empty when single-property indexes suffice.
+	// v0 derives one aggregate tuple per entity — query grouping is not
+	// tracked, so this can over-index but never under-indexes the
+	// queries the analyzer accepted.
+	Composite []string `json:"composite,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
 }
@@ -115,6 +123,11 @@ type Edge struct {
 	// To is the used Resource's Name, or the callee Handler's Var for call
 	// edges.
 	To string `json:"to"`
+	// ToKind is the target Resource's Kind ("entity", "bucket", …).
+	// Resource names are only unique per kind — gallery has both a
+	// bucket and an entity named "photos" — and grant derivation needs
+	// the pair. Empty for call edges.
+	ToKind string `json:"to_kind,omitempty"`
 	// Kind is "resource" or "call".
 	Kind string `json:"kind"`
 	// Verb is the access class: "read", "write", "publish", "sign",

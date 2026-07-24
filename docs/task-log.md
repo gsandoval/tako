@@ -3309,3 +3309,80 @@ implementation.**
   hold an orphaned `tako-hello` SA from the C2 gate — next deploy warns
   orphaned-kept; delete it manually or via tako destroy.
 - Full DX approval for C3 remains open.
+
+## C3 — implementation: gcp Bucket + Entity + minimal Pub/Sub; shortlink graduates (2026-07-24)
+
+Shipped per the amended proposal (scope call (a)); shortlink's code
+unchanged. Full cycle executed live against tako-test-01, including
+destroy — transcript excerpts below.
+
+**Analyzer (prerequisite discovered during mapping):** AppGraph.Edges
+was a declared-but-unpopulated contract, and Resource.Indexes discarded
+query grouping/direction — derived IAM and composite indexes had
+nothing to read. Shipped: `edges.go` (per-handler AST reference scan,
+transitive through same-package calls, verbs from SDK method names;
+Edge gains ToKind since resource names are only unique per kind —
+gallery has bucket AND entity "photos"), and per-entity aggregate
+`Resource.Composite` (filter fields then OrderBy fields with
+direction). Composite property names are the MARSHALED (json tag)
+names, not Go field names — caught live when Datastore built an index
+on Owner/Created while the wire writes owner/created; the analyzer now
+mirrors the SDK's jsonName rule. Goldens + TestShortlinkEdges/
+TestShortlinkComposite pin all of it.
+
+**Backends (pkg/backends/gcp):** Entity on Firestore-in-Datastore-mode
+(raw doc as unindexed _doc blob + typed indexed properties per
+top-level field; namespace = env; native filters/orders with local's
+semantics — RFC3339 strings become timestamps, default id-order and
+its limit apply client-side when they can't push down); Bucket on GCS
+(physical names via shared naming.go, also used by the provisioner);
+Queue publishes to Pub/Sub (delivery is push; Consume is a documented
+no-op); Topic/Signer stubs error with C4/C5 phase pointers.
+runtime.BootGCP wires hooks from TAKO_PROJECT/APP/ENV (injected into
+every run service); PushHandler shape-detects and unwraps real Pub/Sub
+envelopes (base64 message.data) while local raw posts pass through —
+unit-tested.
+
+**Conformance(gcp)** — the internal bar, run live:
+```
+go test ./pkg/backends/conformance -backend=gcp -project tako-test-01 -run 'TestEntity|TestBucket'
+Entity 18/18, Bucket 7/7 (after index serving lag; suite refuses to run without -project)
+```
+
+**Reconciler:** five kinds — bucket, datastore index (content-addressed
+ownership, immutable, 10m build wait with narration), topic, push
+subscription (OIDC as the worker's own SA, deterministic
+https://<name>-<projectNumber>.<region>.run.app endpoint so plans
+precede the service), iam grants (one object per target owning the
+tako-managed policy slice; ManagedMember keys on the -sa suffix, which
+now survives SAName clamping; removal converges by policy rewrite —
+grants are not data). Async-only services deploy private; grants apply
+before subscriptions. Preflight grows datastore/pubsub probes gated on
+the graph (Needs), a Datastore-database existence check with the exact
+create command, and setIamPolicy perms. Destroy: §4.6a DATA section
+(buckets + datastore kinds), typed confirmation, reverse-order deletes,
+grant revocation, and a namespace purge (entity count printed).
+
+**Live cycle (tako-test-01):** plan reviewed → deploy (index build
+dominates first deploy; converged re-deploy 42s) → curl create/409/404
+→ composite-index list query → hits 1→3 via real publish → OIDC push →
+private worker → idempotency ledger → destroy purged 6 entities and
+left the project clean. IAM propagation 403'd entity ops for ~90s
+post-first-deploy — the runtime taxonomy text fired (calling it a
+deploy bug, which in that window it is not; noted below).
+
+**Discovered work (not done):** security summary should soften the
+runtime-403 "deploy bug" text for the first minutes after a grant write
+(IAM propagation window); destroy re-runs list async-deleting indexes
+and always-readable grant targets until convergence (cosmetic);
+conformance leaves conf-<hex> Datastore namespaces; per-query composite
+tuples (v0 aggregates per entity, may over-index); Edges are
+same-package transitive only; stale datastore.user lingers if an app
+drops its LAST entity (no project grants object emitted then).
+
+**GATE REQUEST — C3: full cycle on shortlink.** Run
+`validate/shortlink-cloud.md` end to end on tako-test-01 (§1
+conformance, §2 plan review + security summary judgment, §3 the app +
+async spine, §5 destroy with the DATA confirmation) and record the
+verdict in docs/validation-log.md. C4 (Pub/Sub dead-letter + retry;
+gallery async graduates) follows.

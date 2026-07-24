@@ -15,14 +15,34 @@ import (
 type Kind string
 
 const (
-	KindRepo           Kind = "artifact repo"
-	KindServiceAccount Kind = "service account"
-	KindRunService     Kind = "run service"
+	KindRepo             Kind = "artifact repo"
+	KindServiceAccount   Kind = "service account"
+	KindBucket           Kind = "bucket"
+	KindDatastoreIndex   Kind = "datastore index"
+	KindTopic            Kind = "topic"
+	KindRunService       Kind = "run service"
+	KindIamGrants        Kind = "iam grants"
+	KindPushSubscription Kind = "push subscription"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
-// before the services that use them. Destroy walks it backwards.
-var reconcileOrder = []Kind{KindRepo, KindServiceAccount, KindRunService}
+// before the services that use them; grants after services (their
+// targets must exist) and push subscriptions last (they deliver into
+// services whose IAM must already admit the push identity). Destroy
+// walks it backwards.
+var reconcileOrder = []Kind{
+	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
+	KindRunService, KindIamGrants, KindPushSubscription,
+}
+
+// DeleteOrder is reconcile order reversed — the order destroy walks.
+func DeleteOrder() []Kind {
+	out := make([]Kind, len(reconcileOrder))
+	for i, k := range reconcileOrder {
+		out[len(reconcileOrder)-1-i] = k
+	}
+	return out
+}
 
 // Object is one managed cloud object: identity, tako labels, and the
 // spec tako intends (hashed for diffing).

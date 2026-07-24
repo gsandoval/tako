@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -25,12 +27,44 @@ func Boot() {
 			os.Exit(1)
 		}
 	case "gcp":
-		fmt.Fprintln(os.Stderr, "tako: boot: the gcp backend arrives in Phase E")
-		os.Exit(1)
+		if err := BootGCP(); err != nil {
+			fmt.Fprintf(os.Stderr, "tako: boot: %v\n", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "tako: boot: unknown TAKO_BACKEND %q\n", backend)
 		os.Exit(1)
 	}
+}
+
+// BootGCP wires the cloud backends from the env the deploy injected:
+// TAKO_PROJECT (Datastore + GCS + Pub/Sub project), TAKO_APP (bucket
+// scoping), TAKO_ENV (Datastore namespace + name prefixes). Cache and
+// metrics stay in-process in v0; topics and signed URLs are C4/C5 and
+// error with phase pointers until then.
+func BootGCP() error {
+	opts := gcpb.Options{
+		Project: os.Getenv("TAKO_PROJECT"),
+		App:     os.Getenv("TAKO_APP"),
+		Env:     os.Getenv("TAKO_ENV"),
+	}
+	for name, v := range map[string]string{"TAKO_PROJECT": opts.Project, "TAKO_APP": opts.App, "TAKO_ENV": opts.Env} {
+		if v == "" {
+			return fmt.Errorf("%s is not set — tako deploy injects it, so this is a tako bug", name)
+		}
+	}
+	c, err := gcpb.New(context.Background(), opts)
+	if err != nil {
+		return err
+	}
+	hooks.Entity = gcpb.NewEntityStore(c)
+	hooks.Bucket = gcpb.NewBucketStore(c)
+	hooks.Queue = gcpb.NewQueueStore(c)
+	hooks.Topic = gcpb.TopicStore{}
+	hooks.Signer = gcpb.Signer{}
+	hooks.Cache = local.NewMemoryCache()
+	hooks.Metrics = local.NewMetricsLog()
+	return nil
 }
 
 // BootLocal wires the in-process backends rooted at dir. Tests use it

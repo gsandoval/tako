@@ -67,6 +67,10 @@
         "Owner",
         "Ready"
       ],
+      "composite": [
+        "owner",
+        "ready"
+      ],
       "pos": "app.go:21:2"
     },
     {
@@ -261,5 +265,146 @@
       "pos": "app.go:68:2"
     }
   ],
-  "edges": []
+  "edges": [
+    {
+      "from": "gallery.Upload",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.Upload",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.StartUpload",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "sign"
+    },
+    {
+      "from": "gallery.StartUpload",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.Download",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "sign"
+    },
+    {
+      "from": "gallery.Image",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Thumb",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.List",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Objects",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.OnUploaded",
+      "to": "thumbnails",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    },
+    {
+      "from": "gallery.MakeThumb",
+      "to": "photo-ready",
+      "to_kind": "topic",
+      "kind": "resource",
+      "verb": "publish"
+    },
+    {
+      "from": "gallery.MakeThumb",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.MakeThumb",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.MakeThumb",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.MakeThumb",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.NotifyOwner",
+      "to": "notifier-key",
+      "to_kind": "secret",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.WarmFeed",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Cleanup",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.Cleanup",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Cleanup",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    }
+  ]
 }

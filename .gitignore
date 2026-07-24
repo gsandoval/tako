@@ -1,2 +1,5 @@
 .DS_Store
 .tako/
+
+# built binaries
+/tako

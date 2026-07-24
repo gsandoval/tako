@@ -31,6 +31,10 @@
         "Owner",
         "Created"
       ],
+      "composite": [
+        "owner",
+        "-created"
+      ],
       "pos": "app.go:11:2"
     },
     {
@@ -104,5 +108,48 @@
       "pos": "app.go:37:2"
     }
   ],
-  "edges": []
+  "edges": [
+    {
+      "from": "shortlink.Create",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shortlink.Resolve",
+      "to": "clicks",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    },
+    {
+      "from": "shortlink.Resolve",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shortlink.List",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shortlink.CountClick",
+      "to": "clicks-seen",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shortlink.CountClick",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    }
+  ]
 }

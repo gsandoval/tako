@@ -1,0 +1,343 @@
+package gcp
+
+import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"time"
+
+	"github.com/gsandoval/tako/pkg/backends"
+)
+
+// EntityStore implements backends.Entity on Firestore in Datastore mode.
+//
+// Layout: one Datastore entity per document. The raw JSON doc rides an
+// unindexed blob property "_doc" so Get returns byte-identical content;
+// every top-level scalar JSON field is additionally stored as an indexed,
+// typed property (string / double / boolean / timestamp) so filters and
+// ordering run natively with the same semantics the local backend gives
+// them. Env isolation is the namespace (namespace = env). Strong
+// consistency comes from Datastore mode, so put-then-query reads its
+// writes like the local backend does.
+type EntityStore struct {
+	c *Client
+}
+
+func NewEntityStore(c *Client) *EntityStore { return &EntityStore{c: c} }
+
+const docProp = "_doc"
+
+func (s *EntityStore) url(verb string) string {
+	return "https://datastore.googleapis.com/v1/projects/" + s.c.Opts.Project + ":" + verb
+}
+
+func (s *EntityStore) partition() map[string]any {
+	return map[string]any{"projectId": s.c.Opts.Project, "namespaceId": s.c.Opts.Env}
+}
+
+func (s *EntityStore) key(kind, id string) map[string]any {
+	return map[string]any{
+		"partitionId": s.partition(),
+		"path":        []map[string]any{{"kind": kind, "name": id}},
+	}
+}
+
+// value maps a normalized JSON value to a typed Datastore value.
+// RFC 3339 strings become timestamps so instants order across zones —
+// the same rule the local backend's comparator applies.
+func value(v any) (map[string]any, bool) {
+	switch t := v.(type) {
+	case string:
+		if _, err := time.Parse(time.RFC3339, t); err == nil {
+			return map[string]any{"timestampValue": t}, true
+		}
+		return map[string]any{"stringValue": t}, true
+	case float64:
+		return map[string]any{"doubleValue": t}, true
+	case bool:
+		return map[string]any{"booleanValue": t}, true
+	case nil:
+		return map[string]any{"nullValue": "NULL_VALUE"}, true
+	default: // arrays and objects are not queryable in v0
+		return nil, false
+	}
+}
+
+func (s *EntityStore) entity(kind, id string, doc []byte) (map[string]any, error) {
+	props := map[string]any{
+		docProp: map[string]any{
+			"blobValue":          base64.StdEncoding.EncodeToString(doc),
+			"excludeFromIndexes": true,
+		},
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(doc, &fields); err != nil {
+		return nil, fmt.Errorf("entity doc is not a JSON object: %w", err)
+	}
+	for name, v := range fields {
+		if name == docProp {
+			continue
+		}
+		if dv, ok := value(v); ok {
+			props[name] = dv
+		}
+	}
+	return map[string]any{"key": s.key(kind, id), "properties": props}, nil
+}
+
+// docOf recovers the raw document from a lookup/query result entity.
+func docOf(entity map[string]any) ([]byte, error) {
+	props, _ := entity["properties"].(map[string]any)
+	dp, _ := props[docProp].(map[string]any)
+	b64, _ := dp["blobValue"].(string)
+	if b64 == "" {
+		return nil, fmt.Errorf("entity has no %s property — not written by tako", docProp)
+	}
+	return base64.StdEncoding.DecodeString(b64)
+}
+
+func idOf(entity map[string]any) string {
+	key, _ := entity["key"].(map[string]any)
+	path, _ := key["path"].([]any)
+	if len(path) == 0 {
+		return ""
+	}
+	last, _ := path[len(path)-1].(map[string]any)
+	name, _ := last["name"].(string)
+	return name
+}
+
+type lookupResp struct {
+	Found []struct {
+		Entity map[string]any `json:"entity"`
+	} `json:"found"`
+	Missing []any `json:"missing"`
+}
+
+func (s *EntityStore) lookup(ctx context.Context, kind, id, tx string) (map[string]any, error) {
+	body := map[string]any{"keys": []any{s.key(kind, id)}}
+	if tx != "" {
+		body["readOptions"] = map[string]any{"transaction": tx}
+	}
+	var out lookupResp
+	if err := s.c.do(ctx, "POST", s.url("lookup"), body, &out); err != nil {
+		return nil, err
+	}
+	if len(out.Found) == 0 {
+		return nil, backends.ErrNotFound
+	}
+	return out.Found[0].Entity, nil
+}
+
+func (s *EntityStore) Get(ctx context.Context, kind, id string) ([]byte, error) {
+	entity, err := s.lookup(ctx, kind, id, "")
+	if err != nil {
+		return nil, err
+	}
+	return docOf(entity)
+}
+
+func (s *EntityStore) Exists(ctx context.Context, kind, id string) (bool, error) {
+	_, err := s.lookup(ctx, kind, id, "")
+	if err == backends.ErrNotFound {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (s *EntityStore) commit(ctx context.Context, tx string, mutations []map[string]any) error {
+	body := map[string]any{"mode": "NON_TRANSACTIONAL", "mutations": mutations}
+	if tx != "" {
+		body["mode"], body["transaction"] = "TRANSACTIONAL", tx
+	}
+	return s.c.do(ctx, "POST", s.url("commit"), body, nil)
+}
+
+func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte) error {
+	entity, err := s.entity(kind, id, doc)
+	if err != nil {
+		return err
+	}
+	return s.commit(ctx, "", []map[string]any{{"upsert": entity}})
+}
+
+func (s *EntityStore) Delete(ctx context.Context, kind, id string) error {
+	return s.commit(ctx, "", []map[string]any{{"delete": s.key(kind, id)}})
+}
+
+func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(doc []byte) ([]byte, error)) error {
+	return s.Tx(ctx, kind, func(tx backends.EntityTxOps) error {
+		doc, err := tx.Get(id)
+		if err != nil {
+			return err
+		}
+		next, err := mutate(doc)
+		if err != nil {
+			return err
+		}
+		return tx.Put(id, next)
+	})
+}
+
+// entityTx buffers writes; Datastore applies them atomically at commit.
+type entityTx struct {
+	s         *EntityStore
+	ctx       context.Context
+	kind, tx  string
+	mutations []map[string]any
+}
+
+func (t *entityTx) Get(id string) ([]byte, error) {
+	entity, err := t.s.lookup(t.ctx, t.kind, id, t.tx)
+	if err != nil {
+		return nil, err
+	}
+	return docOf(entity)
+}
+
+func (t *entityTx) Put(id string, doc []byte) error {
+	entity, err := t.s.entity(t.kind, id, doc)
+	if err != nil {
+		return err
+	}
+	t.mutations = append(t.mutations, map[string]any{"upsert": entity})
+	return nil
+}
+
+func (t *entityTx) Delete(id string) error {
+	t.mutations = append(t.mutations, map[string]any{"delete": t.s.key(t.kind, id)})
+	return nil
+}
+
+func (s *EntityStore) Tx(ctx context.Context, kind string, fn func(tx backends.EntityTxOps) error) error {
+	var begin struct {
+		Transaction string `json:"transaction"`
+	}
+	if err := s.c.do(ctx, "POST", s.url("beginTransaction"), map[string]any{}, &begin); err != nil {
+		return err
+	}
+	t := &entityTx{s: s, ctx: ctx, kind: kind, tx: begin.Transaction}
+	if err := fn(t); err != nil {
+		_ = s.c.do(ctx, "POST", s.url("rollback"), map[string]any{"transaction": begin.Transaction}, nil)
+		return err
+	}
+	if len(t.mutations) == 0 {
+		_ = s.c.do(ctx, "POST", s.url("rollback"), map[string]any{"transaction": begin.Transaction}, nil)
+		return nil
+	}
+	return s.commit(ctx, begin.Transaction, t.mutations)
+}
+
+var datastoreOps = map[string]string{
+	"=": "EQUAL", "<": "LESS_THAN", "<=": "LESS_THAN_OR_EQUAL",
+	">": "GREATER_THAN", ">=": "GREATER_THAN_OR_EQUAL",
+}
+
+// normalize round-trips a filter value through JSON so it types the way
+// documents do (ints → float64, time.Time → RFC 3339 string).
+func normalize(v any) any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		return v
+	}
+	var out any
+	_ = json.Unmarshal(raw, &out)
+	return out
+}
+
+func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQuery) ([][]byte, error) {
+	query := map[string]any{"kind": []map[string]any{{"name": kind}}}
+
+	var filters []map[string]any
+	for _, f := range q.Filters {
+		op, ok := datastoreOps[f.Op]
+		if !ok {
+			return nil, fmt.Errorf("unsupported filter op %q", f.Op)
+		}
+		dv, ok := value(normalize(f.Value))
+		if !ok {
+			return nil, fmt.Errorf("unsupported filter value for %s", f.Field)
+		}
+		filters = append(filters, map[string]any{"propertyFilter": map[string]any{
+			"property": map[string]any{"name": f.Field}, "op": op, "value": dv,
+		}})
+	}
+	switch len(filters) {
+	case 0:
+	case 1:
+		query["filter"] = filters[0]
+	default:
+		query["filter"] = map[string]any{"compositeFilter": map[string]any{"op": "AND", "filters": filters}}
+	}
+
+	// An explicit order pushes down (with __key__ as the deterministic
+	// tiebreak, like local's id tiebreak). The contract's default id
+	// order can't always push down next to inequality filters, so it
+	// sorts client-side instead — as does its limit, which must apply
+	// in id order.
+	pushLimit := false
+	if q.Order != "" {
+		field, dir := q.Order, "ASCENDING"
+		if field[0] == '-' {
+			field, dir = field[1:], "DESCENDING"
+		}
+		query["order"] = []map[string]any{
+			{"property": map[string]any{"name": field}, "direction": dir},
+			{"property": map[string]any{"name": "__key__"}, "direction": "ASCENDING"},
+		}
+		if q.Limit > 0 {
+			query["limit"] = q.Limit
+			pushLimit = true
+		}
+	}
+
+	type result struct {
+		id  string
+		doc []byte
+	}
+	var results []result
+	cursor := ""
+	for {
+		if cursor != "" {
+			query["startCursor"] = cursor
+		}
+		var out struct {
+			Batch struct {
+				EntityResults []struct {
+					Entity map[string]any `json:"entity"`
+				} `json:"entityResults"`
+				MoreResults string `json:"moreResults"`
+				EndCursor   string `json:"endCursor"`
+			} `json:"batch"`
+		}
+		body := map[string]any{"partitionId": s.partition(), "query": query}
+		if err := s.c.do(ctx, "POST", s.url("runQuery"), body, &out); err != nil {
+			return nil, err
+		}
+		for _, er := range out.Batch.EntityResults {
+			doc, err := docOf(er.Entity)
+			if err != nil {
+				return nil, err
+			}
+			results = append(results, result{idOf(er.Entity), doc})
+		}
+		if out.Batch.MoreResults != "NOT_FINISHED" || out.Batch.EndCursor == cursor {
+			break
+		}
+		cursor = out.Batch.EndCursor
+	}
+
+	if q.Order == "" {
+		sort.Slice(results, func(i, j int) bool { return results[i].id < results[j].id })
+	}
+	if q.Limit > 0 && !pushLimit && len(results) > q.Limit {
+		results = results[:q.Limit]
+	}
+	docs := make([][]byte, len(results))
+	for i, r := range results {
+		docs[i] = r.doc
+	}
+	return docs, nil
+}

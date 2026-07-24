@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -10,6 +11,24 @@ import (
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends"
 )
+
+// pubsubEnvelope unwraps a Pub/Sub push envelope into the message
+// payload. Real Pub/Sub pushes wrap the payload as base64 in
+// {"message":{"data":…},"subscription":"…"}; local delivery posts the
+// raw payload. Shape-detected so the same endpoint serves both — a
+// non-envelope body passes through untouched.
+func pubsubEnvelope(body []byte) ([]byte, bool) {
+	var env struct {
+		Message struct {
+			Data []byte `json:"data"` // encoding/json base64-decodes
+		} `json:"message"`
+		Subscription string `json:"subscription"`
+	}
+	if json.Unmarshal(body, &env) != nil || env.Subscription == "" || env.Message.Data == nil {
+		return nil, false
+	}
+	return env.Message.Data, true
+}
 
 // PushHandler serves a per-service delivery endpoint: POST /_tako/push
 // with the message payload as the body invokes the service's one async
@@ -36,6 +55,9 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 		if err != nil {
 			http.Error(w, "read payload: "+err.Error(), http.StatusBadRequest)
 			return
+		}
+		if data, ok := pubsubEnvelope(payload); ok {
+			payload = data
 		}
 		pctx := &requestCtx{Context: r.Context(), log: slog.Default().With("handler", name, "source", source)}
 		switch err := fn(pctx, payload); {

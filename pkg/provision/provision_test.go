@@ -58,7 +58,9 @@ func TestFreshProjectPlansAllCreates(t *testing.T) {
 	want := `  create  artifact repo tako
   create  service account hello-sa
   create  run service hello
-  3 creates, 0 updates, 0 skips, 0 orphans
+  create  iam grants run hello
+  create  iam grants serviceAccount hello-sa@my-proj.iam.gserviceaccount.com
+  5 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
@@ -76,7 +78,7 @@ func TestSecondDeployIsAllSkips(t *testing.T) {
 	}
 	plan := Compute("hello", "prod", desired, cloud.observed())
 	c, u, s, o := plan.Counts()
-	if c != 0 || u != 0 || s != 3 || o != 0 {
+	if c != 0 || u != 0 || s != 5 || o != 0 {
 		t.Fatalf("second plan = %d/%d/%d/%d:\n%s", c, u, s, o, plan.Render())
 	}
 	if plan.Changed() {
@@ -100,7 +102,7 @@ func TestNewImageDigestPlansUpdate(t *testing.T) {
 	}
 	plan := Compute("hello", "prod", next, cloud.observed())
 	c, u, s, _ := plan.Counts()
-	if c != 0 || u != 1 || s != 2 {
+	if c != 0 || u != 1 || s != 4 {
 		t.Fatalf("plan after digest change:\n%s", plan.Render())
 	}
 }
@@ -152,7 +154,10 @@ func TestEnvPrefixesNamesAndSpecs(t *testing.T) {
 	for _, d := range desired {
 		names = append(names, d.Name)
 	}
-	want := []string{"tako", "pr-42-hello-sa", "pr-42-hello"}
+	want := []string{
+		"tako", "pr-42-hello-sa", "pr-42-hello",
+		"run pr-42-hello", "serviceAccount pr-42-hello-sa@my-proj.iam.gserviceaccount.com",
+	}
 	for i := range want {
 		if names[i] != want[i] {
 			t.Fatalf("names = %v, want %v", names, want)
@@ -165,9 +170,10 @@ func TestSANameSatisfiesIAMLimits(t *testing.T) {
 	if got := prod.SAName("hello"); got != "hello-sa" {
 		t.Fatalf("SAName(hello) = %q, want hello-sa", got)
 	}
-	// A one-char service still clears IAM's 6-char minimum via the pad.
-	if got := prod.SAName("a"); len(got) < 6 || !strings.HasPrefix(got, "a-sa-") {
-		t.Fatalf("SAName(a) = %q, want hash-padded a-sa-*", got)
+	// A one-char service still clears IAM's 6-char minimum via the pad,
+	// and every variant keeps the -sa marker ManagedMember keys on.
+	if got := prod.SAName("a"); len(got) < 6 || !strings.HasSuffix(got, "-sa") {
+		t.Fatalf("SAName(a) = %q, want hash-padded *-sa", got)
 	}
 	// The long case truncates deterministically and stays within 6–30.
 	long := Config{App: "hello", Env: "pr-421-feature-branch"}
@@ -179,8 +185,16 @@ func TestSANameSatisfiesIAMLimits(t *testing.T) {
 	if len(a) < 6 || len(a) > 30 {
 		t.Fatalf("SAName %q length %d outside IAM's 6–30", a, len(a))
 	}
-	if !strings.HasPrefix(a, "pr-421-") {
-		t.Fatalf("SAName %q lost its env prefix", a)
+	if !strings.HasPrefix(a, "pr-421-") || !strings.HasSuffix(a, "-sa") {
+		t.Fatalf("SAName %q lost its env prefix or -sa marker", a)
+	}
+	if !ManagedMember("serviceAccount:"+a+"@my-proj.iam.gserviceaccount.com", "my-proj") {
+		t.Fatalf("ManagedMember misses clamped SA %q", a)
+	}
+	if ManagedMember("serviceAccount:someone-else@my-proj.iam.gserviceaccount.com", "my-proj") ||
+		ManagedMember("allUsers", "my-proj") ||
+		ManagedMember("serviceAccount:hello-sa@other-proj.iam.gserviceaccount.com", "my-proj") {
+		t.Fatal("ManagedMember matches a foreign member")
 	}
 	// Distinct long names must not collide after truncation.
 	if c := long.SAName("checkout-orchestrator2"); c == a {

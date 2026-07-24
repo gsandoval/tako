@@ -78,6 +78,8 @@ func Analyze(cfg Config) (*AppGraph, error) {
 	queueVars := map[types.Object]string{}  // queue var object → queue name
 	topicVars := map[types.Object]string{}  // topic var object → topic name
 	bucketVars := map[types.Object]string{} // bucket var object → bucket name
+	resourceVars := map[types.Object]resRef{} // grant-relevant vars for the edge scan
+	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
 	workersByQueue := map[string]*Handler{} // queue name → its worker
 	type varDecl struct {
 		name *ast.Ident
@@ -117,25 +119,32 @@ func Analyze(cfg Config) (*AppGraph, error) {
 					graph.Resources = append(graph.Resources, *r)
 					entities[key] = et
 					entityRes[key] = len(graph.Resources) - 1
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "entity"}
 				}
 			case "Bucket":
 				if r := extractBucket(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					bucketVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "bucket"}
 				}
 			case "Queue":
 				if r := extractQueue(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					queueVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "queue"}
 				}
 			case "Topic":
 				if r := extractTopic(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					topicVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "topic"}
 				}
 			case "Cache", "Secret", "Counter", "Histogram":
 				if r := extractCarrier(strings.ToLower(d.ctor), "tako."+d.ctor, cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
+					if d.ctor == "Secret" {
+						resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "secret"}
+					}
 				}
 			case "Page", "Site", "Auth":
 				// Declared surface whose behavior hasn't shipped: an
@@ -158,18 +167,22 @@ func Analyze(cfg Config) (*AppGraph, error) {
 			case "API":
 				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
 			case "Worker":
 				if h := extractWorker(cfg.Dir, pkg, d.name, d.call, queueVars, workersByQueue, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
 			case "Subscribe":
 				if h := extractSubscribe(cfg.Dir, pkg, d.name, d.call, topicVars, bucketVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
 			case "Cron":
 				if h := extractCron(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
 			}
 		}
@@ -180,9 +193,32 @@ func Analyze(cfg Config) (*AppGraph, error) {
 	}
 	for key, et := range entities {
 		res := &graph.Resources[entityRes[key]]
+		fields := 0
 		for _, f := range et.declared { // derived indexes, struct order
 			if et.used[f] {
 				res.Indexes = append(res.Indexes, f)
+				fields++
+			}
+		}
+		// Two or more queried fields need a Datastore composite index:
+		// filters first (struct order), then OrderBy fields with their
+		// direction. One aggregate tuple per entity (v0). Property names
+		// are the MARSHALED names (json tag rule) — that is what the
+		// wire and Datastore see, not the Go field names.
+		if fields >= 2 {
+			for _, f := range et.declared {
+				if et.usedFilter[f] && et.usedOrder[f] == "" {
+					res.Composite = append(res.Composite, et.wire[f])
+				}
+			}
+			for _, f := range et.declared {
+				if dir := et.usedOrder[f]; dir != "" {
+					prop := et.wire[f]
+					if dir == "desc" {
+						prop = "-" + prop
+					}
+					res.Composite = append(res.Composite, prop)
+				}
 			}
 		}
 	}
@@ -198,6 +234,7 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		return posLess(graph.Resources[i].Pos, graph.Resources[j].Pos)
 	})
 	graph.Services = partition(graph.Handlers)
+	graph.Edges = deriveEdges(pkgs, resourceVars, handlerFuncs, graph.Handlers)
 	return graph, nil
 }
 

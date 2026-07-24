@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -24,7 +25,16 @@ func TestEntity(t *testing.T) {
 			return s
 		})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase E")
+		// Each chapter gets a throwaway Datastore namespace
+		// (conf-<hex>) in the test project. Namespaces are not deleted
+		// afterwards — they hold a handful of tiny entities in the dev
+		// sandbox project; purge them with `tako destroy` era tooling
+		// or the console if they bother you.
+		RunEntity(t, func(t *testing.T) backends.Entity {
+			c := gcpClient(t, "conf", "conf-"+randHex(t))
+			ensureAndIndex(t, c)
+			return gcpb.NewEntityStore(c)
+		})
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -37,7 +47,16 @@ func TestBucket(t *testing.T) {
 			return local.NewBucketStore(t.TempDir())
 		})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase E")
+		// Chapters use logical buckets "photos" and "thumbs"; a random
+		// app scope isolates each chapter's physical buckets, which are
+		// created here and deleted (objects first) on cleanup.
+		RunBucket(t, func(t *testing.T) backends.Bucket {
+			c := gcpClient(t, "conf"+randHex(t), "prod")
+			for _, logical := range []string{"photos", "thumbs"} {
+				makeBucket(t, c, gcpb.BucketName(*project, c.Opts.App, "prod", logical))
+			}
+			return gcpb.NewBucketStore(c)
+		})
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
