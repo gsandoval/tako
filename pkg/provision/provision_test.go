@@ -2,6 +2,7 @@ package provision
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -55,7 +56,7 @@ func TestFreshProjectPlansAllCreates(t *testing.T) {
 	desired := helloDesired(t)
 	plan := Compute("hello", "prod", desired, nil)
 	want := `  create  artifact repo tako
-  create  service account hello
+  create  service account tako-hello
   create  run service hello
   3 creates, 0 updates, 0 skips, 0 orphans
 `
@@ -132,7 +133,7 @@ func TestRemovedServiceIsOrphanedKept(t *testing.T) {
 	// The repo alone remains desired; service + SA disappeared from code.
 	plan := Compute("hello", "prod", desired[:1], cloud.observed())
 	got := plan.Render()
-	if !strings.Contains(got, "orphaned (kept) service account hello") ||
+	if !strings.Contains(got, "orphaned (kept) service account tako-hello") ||
 		!strings.Contains(got, "orphaned (kept) run service hello") {
 		t.Fatalf("orphans missing:\n%s", got)
 	}
@@ -151,11 +152,53 @@ func TestEnvPrefixesNamesAndSpecs(t *testing.T) {
 	for _, d := range desired {
 		names = append(names, d.Name)
 	}
-	want := []string{"tako", "pr-42-hello", "pr-42-hello"}
+	want := []string{"tako", "tako-pr-42-hello", "pr-42-hello"}
 	for i := range want {
 		if names[i] != want[i] {
 			t.Fatalf("names = %v, want %v", names, want)
 		}
+	}
+}
+
+func TestSANameSatisfiesIAMLimits(t *testing.T) {
+	prod := Config{App: "hello", Env: DefaultEnv}
+	if got := prod.SAName("hello"); got != "tako-hello" {
+		t.Fatalf("SAName(hello) = %q, want tako-hello", got)
+	}
+	// The long case truncates deterministically and stays within 6–30.
+	long := Config{App: "hello", Env: "pr-421-feature-branch"}
+	a := long.SAName("checkout-orchestrator")
+	b := long.SAName("checkout-orchestrator")
+	if a != b {
+		t.Fatalf("truncated SAName not stable: %q vs %q", a, b)
+	}
+	if len(a) < 6 || len(a) > 30 {
+		t.Fatalf("SAName %q length %d outside IAM's 6–30", a, len(a))
+	}
+	if !strings.HasPrefix(a, "tako-") {
+		t.Fatalf("SAName %q lost its prefix", a)
+	}
+	// Distinct long names must not collide after truncation.
+	if c := long.SAName("checkout-orchestrator2"); c == a {
+		t.Fatalf("truncation collided: %q", c)
+	}
+	// The SA the run service references is the SA that gets created.
+	cfg := Config{Project: "my-proj", Region: "us-central1", App: "hello", Env: DefaultEnv}
+	desired, err := Desired(helloGraph(), cfg, map[string]string{"hello": "img@sha256:abc"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saName, runRef string
+	for _, d := range desired {
+		switch d.Kind {
+		case KindServiceAccount:
+			saName = d.Name
+		case KindRunService:
+			runRef = fmt.Sprint(d.Spec["serviceAccount"])
+		}
+	}
+	if runRef != saName+"@my-proj.iam.gserviceaccount.com" {
+		t.Fatalf("run service references %q, SA created is %q", runRef, saName)
 	}
 }
 

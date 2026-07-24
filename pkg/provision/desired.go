@@ -1,7 +1,10 @@
 package provision
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"strings"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
@@ -30,6 +33,19 @@ func (c Config) Name(base string) string {
 		return base
 	}
 	return c.Env + "-" + base
+}
+
+// SAName derives the IAM accountId for a service's identity. IAM
+// requires 6–30 chars, which service names alone don't guarantee
+// ("hello" is 5): the tako- prefix secures the minimum, and names past
+// 30 are truncated with a hash suffix so they stay unique and stable.
+func (c Config) SAName(base string) string {
+	name := "tako-" + c.Name(base)
+	if len(name) <= 30 {
+		return name
+	}
+	sum := sha256.Sum256([]byte(name))
+	return strings.TrimRight(name[:23], "-") + "-" + hex.EncodeToString(sum[:3])
 }
 
 // Labels is the label set every managed object carries; listing these
@@ -64,10 +80,11 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			return nil, fmt.Errorf("service %s has unknown profile %q", svc.Name, svc.Profile)
 		}
 		name := cfg.Name(svc.Name)
+		sa := cfg.SAName(svc.Name)
 		objs = append(objs,
 			Object{
 				Kind: KindServiceAccount,
-				Name: name,
+				Name: sa,
 				Spec: map[string]any{
 					"displayName": fmt.Sprintf("tako: service %s of app %s (%s)", svc.Name, cfg.App, cfg.Env),
 				},
@@ -77,7 +94,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Name: name,
 				Spec: map[string]any{
 					"image":          image,
-					"serviceAccount": name + "@" + cfg.Project + ".iam.gserviceaccount.com",
+					"serviceAccount": sa + "@" + cfg.Project + ".iam.gserviceaccount.com",
 					"env":            map[string]any{"TAKO_BACKEND": "gcp"},
 					"scaling":        knobs,
 					// Public ingress until auth/private features land.

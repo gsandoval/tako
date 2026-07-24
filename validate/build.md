@@ -44,7 +44,7 @@ credentials the error tells you exactly that.)
 
 ```
 docker run --rm -e PORT=8080 -p 8080:8080 $REPO/hello@sha256:<digest-from-§2>
-curl localhost:8080/api/hello
+curl localhost:8080/hello
 ```
 
 **Judge:** the image pulled BY PIN serves the same responses `tako dev`

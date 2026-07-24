@@ -25,7 +25,7 @@ With preflight green, the same `--plan` prints:
 ```
   plan
     create  artifact repo tako
-    create  service account hello
+    create  service account tako-hello
     create  run service hello
     3 creates, 0 updates, 0 skips, 0 orphans
 ```
@@ -37,7 +37,7 @@ nothing more? `--plan` must have created NOTHING (check the console).
 
 ```
 time tako deploy --project <your-project>
-curl $(URL from the ✓ line)/api/hello
+curl $(URL from the ✓ line)/hello
 ```
 
 **Observe:** lease acquired (with your identity), ⛅ lines in reconcile
