@@ -1,0 +1,257 @@
+// Package provision is the stateless reconciler (spec §4.6/§4.6a):
+// desired state comes from the AppGraph, observed state from listing
+// GCP objects by tako labels, and the diff is spec-hash comparison —
+// absent→create, hash differs→update, matches→skip. There is no state
+// file; the cloud is the state.
+package provision
+
+import (
+	"context"
+	"fmt"
+	"sort"
+)
+
+// Kind enumerates the managed object kinds, in reconcile order.
+type Kind string
+
+const (
+	KindRepo           Kind = "artifact repo"
+	KindServiceAccount Kind = "service account"
+	KindRunService     Kind = "run service"
+)
+
+// reconcileOrder is additive-first (spec §4.6a): supporting objects
+// before the services that use them. Destroy walks it backwards.
+var reconcileOrder = []Kind{KindRepo, KindServiceAccount, KindRunService}
+
+// Object is one managed cloud object: identity, tako labels, and the
+// spec tako intends (hashed for diffing).
+type Object struct {
+	Kind Kind
+	// Name is the object's short name (repo name, SA account id, run
+	// service name).
+	Name string
+	// Spec is the canonical intended spec; its hash is the diff unit.
+	Spec map[string]any
+}
+
+// Observed is one live object as listed by label.
+type Observed struct {
+	Kind Kind
+	Name string
+	// SpecHash is the tako-spec-hash recorded on the object; empty when
+	// the object predates tako or lost its annotation.
+	SpecHash string
+	// LiveHash, when the client can compute it, is the hash of the
+	// tako-owned fields as they are NOW — differing from SpecHash means
+	// the object was edited outside tako (drift).
+	LiveHash string
+}
+
+// Action classifies one plan entry.
+type Action string
+
+const (
+	Create Action = "create"
+	Update Action = "update"
+	Skip   Action = "skip"
+	Orphan Action = "orphaned (kept)"
+)
+
+// Entry is one line of the plan.
+type Entry struct {
+	Action Action
+	Kind   Kind
+	Name   string
+	// Drift marks an object whose live state no longer matches the hash
+	// it recorded — edited outside tako; tako-owned fields will be
+	// overwritten on apply.
+	Drift bool
+}
+
+// Plan is the classified diff for one deploy.
+type Plan struct {
+	App     string
+	Env     string
+	Entries []Entry
+}
+
+// Compute diffs desired against observed. Both the entries and their
+// order are deterministic: reconcile order, then desired order.
+func Compute(app, env string, desired []Object, observed []Observed) Plan {
+	byKey := map[string]Observed{}
+	seen := map[string]bool{}
+	for _, o := range observed {
+		byKey[string(o.Kind)+"/"+o.Name] = o
+	}
+	plan := Plan{App: app, Env: env}
+	for _, kind := range reconcileOrder {
+		for _, d := range desired {
+			if d.Kind != kind {
+				continue
+			}
+			key := string(d.Kind) + "/" + d.Name
+			seen[key] = true
+			live, exists := byKey[key]
+			switch {
+			case !exists:
+				plan.Entries = append(plan.Entries, Entry{Action: Create, Kind: d.Kind, Name: d.Name})
+			case live.SpecHash != SpecHash(d.Spec):
+				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name, Drift: drifted(live)})
+			default:
+				plan.Entries = append(plan.Entries, Entry{Action: Skip, Kind: d.Kind, Name: d.Name, Drift: drifted(live)})
+			}
+		}
+	}
+	var orphans []Entry
+	for _, o := range observed {
+		if !seen[string(o.Kind)+"/"+o.Name] {
+			orphans = append(orphans, Entry{Action: Orphan, Kind: o.Kind, Name: o.Name})
+		}
+	}
+	// Deterministic plans regardless of listing order.
+	sort.Slice(orphans, func(i, j int) bool {
+		if orphans[i].Kind != orphans[j].Kind {
+			return kindRank(orphans[i].Kind) < kindRank(orphans[j].Kind)
+		}
+		return orphans[i].Name < orphans[j].Name
+	})
+	plan.Entries = append(plan.Entries, orphans...)
+	return plan
+}
+
+func kindRank(k Kind) int {
+	for i, kind := range reconcileOrder {
+		if kind == k {
+			return i
+		}
+	}
+	return len(reconcileOrder)
+}
+
+func drifted(o Observed) bool {
+	return o.LiveHash != "" && o.SpecHash != "" && o.LiveHash != o.SpecHash
+}
+
+// Counts sums the plan by action.
+func (p Plan) Counts() (creates, updates, skips, orphans int) {
+	for _, e := range p.Entries {
+		switch e.Action {
+		case Create:
+			creates++
+		case Update:
+			updates++
+		case Skip:
+			skips++
+		case Orphan:
+			orphans++
+		}
+	}
+	return
+}
+
+// Changed reports whether applying the plan would mutate anything.
+func (p Plan) Changed() bool {
+	c, u, _, _ := p.Counts()
+	return c+u > 0
+}
+
+// Render prints the plan the way the deploy banner shows it.
+func (p Plan) Render() string {
+	out := ""
+	for _, e := range p.Entries {
+		line := fmt.Sprintf("%-7s %s %s", e.Action, e.Kind, e.Name)
+		if e.Action == Orphan {
+			line = fmt.Sprintf("%s %s %s", e.Action, e.Kind, e.Name)
+		}
+		if e.Drift {
+			line += "  ← DRIFT: modified outside tako; tako-owned fields will be overwritten"
+		}
+		out += "  " + line + "\n"
+	}
+	c, u, s, o := p.Counts()
+	out += fmt.Sprintf("  %d creates, %d updates, %d skips, %d orphans\n", c, u, s, o)
+	return out
+}
+
+// Applier executes plan entries; the gcp package implements it, tests
+// use fakes.
+type Applier interface {
+	Create(ctx context.Context, obj Object) error
+	Update(ctx context.Context, obj Object) error
+}
+
+// KindApplier is an Applier that owns one object kind (the gcp package
+// provides one per kind).
+type KindApplier interface {
+	Kind() Kind
+	Create(ctx context.Context, obj Object) error
+	Update(ctx context.Context, obj Object) error
+}
+
+// Route dispatches apply calls to the applier owning each object's kind.
+func Route(appliers ...KindApplier) Applier {
+	m := map[Kind]KindApplier{}
+	for _, a := range appliers {
+		m[a.Kind()] = a
+	}
+	return routed(m)
+}
+
+type routed map[Kind]KindApplier
+
+func (r routed) Create(ctx context.Context, obj Object) error {
+	a, ok := r[obj.Kind]
+	if !ok {
+		return fmt.Errorf("no applier for kind %q", obj.Kind)
+	}
+	return a.Create(ctx, obj)
+}
+
+func (r routed) Update(ctx context.Context, obj Object) error {
+	a, ok := r[obj.Kind]
+	if !ok {
+		return fmt.Errorf("no applier for kind %q", obj.Kind)
+	}
+	return a.Update(ctx, obj)
+}
+
+// Filter keeps only the plan entries whose kind is in kinds — deploys
+// interleave non-plan work (image pushes) between kinds.
+func (p Plan) Filter(kinds ...Kind) Plan {
+	keep := map[Kind]bool{}
+	for _, k := range kinds {
+		keep[k] = true
+	}
+	out := Plan{App: p.App, Env: p.Env}
+	for _, e := range p.Entries {
+		if keep[e.Kind] {
+			out.Entries = append(out.Entries, e)
+		}
+	}
+	return out
+}
+
+// Apply walks the plan in order, creating and updating; skips and
+// orphans are untouched (orphan cleanup is tako prune's job, and data
+// destruction is never automatic).
+func Apply(ctx context.Context, plan Plan, desired []Object, a Applier) error {
+	byKey := map[string]Object{}
+	for _, d := range desired {
+		byKey[string(d.Kind)+"/"+d.Name] = d
+	}
+	for _, e := range plan.Entries {
+		obj := byKey[string(e.Kind)+"/"+e.Name]
+		switch e.Action {
+		case Create:
+			if err := a.Create(ctx, obj); err != nil {
+				return fmt.Errorf("create %s %s: %w", e.Kind, e.Name, err)
+			}
+		case Update:
+			if err := a.Update(ctx, obj); err != nil {
+				return fmt.Errorf("update %s %s: %w", e.Kind, e.Name, err)
+			}
+		}
+	}
+	return nil
+}

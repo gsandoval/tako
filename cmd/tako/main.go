@@ -29,11 +29,19 @@ Usage:
                        build every service as a digest-pinned distroless
                        image (no Docker daemon); --push uploads each to
                        <repo>/<service> on Artifact Registry
+  tako deploy [--plan] [--project <id>] [--region <r>] [--env <e>]
+                       reconcile the app onto GCP: preflight, classified
+                       plan (--plan stops there), lease, apply, live URL
+  tako logs [service] [--since 15m]
+                       recent logs for the deployed services
+  tako destroy [--project <id>] [--env <e>]
+                       delete everything labeled for this app (typed
+                       confirmation; never touches unlabeled resources)
   tako gen graph [--json | --mermaid]
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
 
-Commands arriving in later slices: deploy, logs, destroy, prune.
+Commands arriving in later slices: prune, rename, canary/promote/rollback.
 `
 
 func main() {
@@ -60,6 +68,18 @@ func main() {
 		}
 	case "build":
 		if err := runBuild(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "deploy":
+		if err := runDeploy(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "logs":
+		if err := runLogs(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "destroy":
+		if err := runDestroy(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "gen":

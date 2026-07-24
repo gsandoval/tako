@@ -3073,3 +3073,64 @@ Security summary:
 - No log following (`-f`) — recent-window fetch only in v0.
 
 **STOP — awaiting DX approval before implementation.**
+
+## C2 — implementation: Minimal reconciler + hello deploys (2026-07-24)
+
+Shipped per the approved proposal. No SDK surface changed (freeze holds).
+
+**What landed**
+- `pkg/provision`: the reconciler core, cloud-free and scenario-tested —
+  `Desired` (AppGraph → managed objects: repo, per-service SA, run
+  service with §4.6 profile knobs, env-prefixed names, tako labels),
+  `Compute` (spec-hash diff → classified plan: create/update/skip/
+  orphaned-kept, DRIFT flag, deterministic order), `Apply` (ordered,
+  routed per kind), `SpecHash` (canonical, label-safe hex — key order
+  can never flap a deploy). Scenarios pinned: fresh project = 3 creates;
+  second deploy = 3 skips; new image digest = 1 update; console edit =
+  DRIFT warning; removed service = orphaned (kept), never deleted,
+  Changed()==false; env prefixes.
+- `pkg/provision/gcp`: thin REST adapters (plain HTTP + ADC — no
+  product SDKs, so every failure is a status code the taxonomy owns):
+  Artifact Registry repos (hash in labels), service accounts (no labels
+  on SAs — markers ride the description field), Cloud Run v2 services
+  (create/patch + LRO wait + public run.invoker; LiveHash re-derived
+  from live fields with normalization for drift detection), the GCS
+  deploy lease (generation-0 precondition, holder metadata, stale>10min
+  broken with warning, waits with "deploy in progress by <who>"),
+  Cloud Logging reader.
+- `cmd/tako`: `deploy [--plan|--project|--region|--env]` (analyze →
+  generate → preflight → local digest builds → observe-by-label → plan →
+  lease → apply repos/SAs → push → apply services → URLs + security
+  summary), `logs [service] [--since]`, `destroy` (typed confirmation,
+  reverse reconcile order, framework bucket last). Project resolution:
+  flag → GOOGLE_CLOUD_PROJECT → gcloud config; region default
+  us-central1.
+
+**Cloud errors & permissions (as proposed)**
+- Preflight before any mutation: serviceusage probes for the four APIs +
+  `testIamPermissions` for seven permissions, each gap one line with its
+  exact enable/grant command (narrowest role, per the model).
+- `gcp.Classify` implements the taxonomy; `TestClassifyTaxonomy` pins
+  all five texts (unauthenticated / API-disabled / org-policy — surfaced
+  verbatim, never worked around / missing-role / bad-project) against
+  real-shaped API error bodies.
+- Live check from this credential-less machine: `tako deploy --plan
+  --project fake-proj` → `cannot authenticate to Google Cloud — run
+  "gcloud auth application-default login" …` before anything else.
+
+**Tier-2 validation** — everything cloud-free ran here: provision
+scenarios green, gcp taxonomy green, full tree + all examples green, and
+the unauthenticated CLI path above. §§1–6 of `validate/deploy.md` (the
+first full cycle: clean project → URL → destroy, drift, lease contention,
+logs) need your test project and are the gate itself, by design.
+
+**Discovered work (not done)**: `tako prune` (orphan cleanup);
+canary/promote/rollback (revisions + digests already in place);
+deploy-time build parallelism (services build serially); logs -f.
+
+**GATE REQUEST — C2: the first full cycle.** Please run
+`validate/deploy.md` end to end with your test project — time §3
+against the <~2min target, review the §2 plan line by line, and try §4's
+drift heal and §5's lease contention. Record the verdict in
+`docs/validation-log.md`. C3 (gcp Bucket + Entity; shortlink graduates)
+follows.
