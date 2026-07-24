@@ -2814,3 +2814,74 @@ the two-line layer stack.
 - No new SDK symbols — the freeze holds.
 
 **STOP — awaiting DX approval before implementation.**
+
+## C1 — implementation: Build + push (2026-07-23)
+
+Shipped per the approved proposal, with ONE deviation flagged below. No
+SDK surface changed (freeze holds; `go test .` incl. sdk_lock green).
+
+**What landed**
+- `pkg/build`: ko-style pipeline — `CGO_ENABLED=0 GOOS=linux GOARCH=amd64
+  go build -trimpath -ldflags "-s -w -buildid="` per generated service →
+  one tar layer at `/app/<service>` (fixed epoch timestamps) appended to
+  distroless via go-containerregistry → OCI layout at
+  `.tako/images/<service>` or digest-pinned push to `<repo>/<service>`.
+  Base tag resolved to a digest at build time and printed; image config:
+  entrypoint `/app/<service>`, inherits distroless `nonroot`, labels
+  `tako.app`/`tako.service` (the reconciler vocabulary's first words),
+  created = epoch. Auth = google keychain + docker fallback; 401/403 on
+  push maps to the proposal's exact no-credentials text.
+- `cmd/tako`: `tako build [--push <repo>]`, banner-style output with
+  per-service size/time, resolved base line, and `✓ <service> <ref>`
+  pinned lines. go-containerregistry v0.21.7 is now a framework dep.
+- Tests (`pkg/build`, no cloud): in-memory registry (pkg/registry) —
+  push/pull-back digest equality, exactly one appended layer, entrypoint/
+  labels/nonroot inheritance/epoch config, digest determinism across
+  rebuilds, and the layer's binary parsed as ELF x86-64 with no
+  PT_INTERP (statically linked, the property distroless/static demands).
+
+**Deviation from the approved proposal (flagged for the gate):** the
+proposal said "builds EVERY service in the graph (shortlink: app +
+worker service)". Worker/subscriber services have no generated mains yet
+— per-service async mains arrive with cloud async (Phase F), and
+generating placeholder mains now would be fake. `tako build` builds
+every service WITH a generated main and prints
+`skipping shortlink-countclick (async-only — its per-service main arrives with cloud async)`
+— never silent. If you'd rather have real async-service mains now, say
+so at the gate and it becomes the next task.
+
+**Tier-2 validation — local sections of validate/build.md, real
+transcripts** (the push + docker-run sections are yours: no docker on
+this machine and no test-project credentials I should be using):
+
+§1 determinism (real distroless base):
+```
+$ tako build
+  building    hello  linux/amd64 static (5.9 MB in 2.3s)
+  base        gcr.io/distroless/static-debian12@sha256:7a2bd171a18bd…
+  image       .tako/images/hello (OCI layout)
+✓ hello  sha256:05fa0495c708b2685616d9898cb1832e6e25b056f59fdc716df8ba6848f993a9
+$ tako build   # again
+✓ hello  sha256:05fa0495c708b2685616d9898cb1832e6e25b056f59fdc716df8ba6848f993a9   # identical
+```
+OCI layout index digest matches the printed digest (jq on index.json).
+
+§1 shortlink:
+```
+  building    shortlink  linux/amd64 static (6.4 MB in 2s)
+  skipping    shortlink-countclick (async-only — its per-service main arrives with cloud async)
+✓ shortlink  sha256:c53c64df510a…
+```
+
+§5: `go test ./pkg/build/` ok (4.7s); full tree green.
+
+**Discovered work (not done)**: per-async-service generated mains
+(Phase F, or earlier if the gate asks); `--platform` multi-arch flag;
+build cache for the base image (currently re-fetched per run; fast but
+network-dependent); SBOM/signing.
+
+**GATE REQUEST — C1: Build + push (partial cycle).** Please run
+`validate/build.md` §2–§4 with your test project: push, then docker-run
+the image BY DIGEST and curl it, and inspect nonroot/entrypoint/layers.
+Record the verdict in `docs/validation-log.md`. C2 (minimal reconciler +
+hello deploys) follows.

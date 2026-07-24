@@ -25,6 +25,10 @@ Usage:
   tako dev [--chaos]   run the app in this directory locally, with reload
                        (--chaos: seeded duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code, then go test ./...
+  tako build [--push <repo>]
+                       build every service as a digest-pinned distroless
+                       image (no Docker daemon); --push uploads each to
+                       <repo>/<service> on Artifact Registry
   tako gen graph       print the app's AppGraph (JSON + summary)
 
 Commands arriving in later slices: deploy, logs, destroy, prune.
@@ -50,6 +54,10 @@ func main() {
 		}
 	case "test":
 		if err := runTest(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "build":
+		if err := runBuild(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "gen":
