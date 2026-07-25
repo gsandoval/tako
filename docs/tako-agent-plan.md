@@ -182,22 +182,77 @@ rollback, canary/promote, `--env` previews, drift warnings. Gate C6: human
 walks the scripted lifecycle (deploy → drift-inject → warn → canary →
 promote → rollback → prune → destroy).
 
-## Stage 3 — Web, auth, services (decompose at stage start)
+## Stage 3 — Web, auth, services (decomposed 2026-07-25, Stage 2 closed)
 
-Same slice + gate pattern; features in order: Site (embedded static, caching
-headers, `WithBuild`/`WithDevProxy` with a Hugo variant) → Pages/CSRF/forms →
-Fragments + htmx integration (`site.Fragment`, `IsHTMX`, dual-mode Redirect,
-CSRF hx-headers wiring) → Markdown (goldmark + bluemonday, sanitized default,
-`{{ markdown }}` + `site.Markdown`) →
-Auth (Identity Platform, `_session`, dev users) → `examples/journal` gate
-(journal is the htmx + dynamic-markdown showcase: authored posts in Entity,
-fragment-updating UI, no SPA) →
-`tako gen client ts` → lease/`Lock`/`WithSingleflight`/`Singleton` →
-cross-service Endpoints (boot-hook transports, OIDC stubs, deadline budgets,
-analyzer warnings) → Jobs → `examples/shop` gate (includes: revoking
-`run.invoker` breaks the call; dev breakpoint across the service boundary).
-Every gate from here is full-cycle. Decompose into F/C-style tasks when the
-stage begins, using the same task shape and gate discipline.
+*Every gate is full-cycle: local suite → `tako test` → deploy to the test
+project → scripted validation → destroy. The SDK surface froze at F10 —
+Site/Auth/Job/Lock exist as phase-pointer stubs, so Stage 3 implements
+BEHIND the frozen API; new exported symbols reopen api-review-1.md as
+their own task. `examples/journal` is grown feature by feature (the way
+shortlink and gallery grew through F2–F9) and gated whole at W6;
+`examples/shop` likewise through W7–W10, gated at W11.*
+
+**W1 — Site: embedded static, caching headers, WithBuild/WithDevProxy.**
+`tako.Site` serves a directory (or a generator's output via `WithBuild`,
+re-run on change in dev; `WithDevProxy` for HMR dev servers), embedded
+into the service binary at build time. Fingerprinted assets immutable,
+HTML no-cache, ETags, security headers (CSP report-only). `SPA()`,
+`WithRedirect`. journal is born: a static shell. Gate W1: full cycle —
+the same site byte-identical local and cloud, headers judged with curl,
+plus the Hugo `WithBuild` variant demoed.
+
+**W2 — Pages, forms, CSRF.** `tako.Page` SSR handlers (`site.Render`,
+layouts), tagged-Req form binding, automatic CSRF on unsafe page routes
+(template function + meta tag), `tako.Redirect` POST-redirect-GET.
+journal gains authored-post pages. Gate W2: full cycle; CSRF rejection
+and form flows exercised by script.
+
+**W3 — Fragments + htmx.** `site.Fragment` (no layout), `ctx.IsHTMX`,
+dual-mode Redirect (302 vs HX-Redirect), CSRF wired for hx-headers.
+journal becomes fragment-updating. Gate W3: full cycle; one route serving
+both worlds, judged in the browser and with curl.
+
+**W4 — Markdown, sanitized by default.** goldmark + bluemonday strict;
+`{{ markdown }}` + `site.Markdown`; `WithTrustedHTML` the explicit
+opt-out. journal renders authored markdown from Entity. Gate W4: full
+cycle; an XSS payload in a post is inert by default and live under the
+opt-out (judged both ways).
+
+**W5 — Auth: Identity Platform, `_session`, dev users.** `tako.Auth`,
+`WithAuth` enforcement, `ctx.User`/`MaybeUser` against real identities,
+dev sign-in bar locally, session cookies. Gate W5: full cycle; sign-in
+on the deployed journal, WithAuth 401s, ownership enforced.
+
+**W6 — examples/journal, complete (gate).** The htmx + dynamic-markdown
+showcase whole: authored posts in Entity, fragment UI, auth, no SPA.
+Gate W6: the journal demo script runs local AND cloud (one script, F9
+style) — this is Stage 3's mid-point DX review.
+
+**W7 — `tako gen client ts`.** Typed TS client for api endpoints from Go
+signatures, session auth pre-wired. shop is born (frontend consumer).
+Gate W7: generated client typechecks and drives a deployed api.
+
+**W8 — Coordination: Lock, WithSingleflight, Singleton.** The §4.4 lease
+mechanism behind `tako.Lock`/`Singleton`/cron singleflight, local +
+gcp backends, conformance chapter. Gate W8: full cycle; two instances
+provably serialize.
+
+**W9 — Cross-service Endpoints.** Typed service-to-service calls
+(spec §2.12): boot-hook transports, OIDC between services, deadline
+budgets, analyzer sync-call warnings. shop splits into services. Gate
+W9: full cycle; revoking `run.invoker` breaks the call (judged), dev
+breakpoint across the boundary.
+
+**W10 — Jobs.** `tako.Job` long-running compute on the batch profile.
+Gate W10: full cycle; a job outliving a request deadline completes.
+
+**W11 — examples/shop, complete (gate).** The multi-service showcase
+whole. Gate W11: the shop demo script local and cloud — Stage 3 closes.
+
+*Standing deferrals slot when an example forces them: Cloud Tasks /
+WithDelay (shop's order flow is the likely demand), Cloud Scheduler for
+cron (journal or shop publishing schedules), the migrating `tako
+rename`, shared cache, metrics backend.*
 
 ## Stage 4 — Release
 

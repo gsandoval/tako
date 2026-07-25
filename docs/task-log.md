@@ -4257,3 +4257,135 @@ env-isolation fixes above being this slice's hardest-won lesson) and
 record the verdict in docs/validation-log.md. Stage 2 closes on a
 pass; Stage 3 (web, auth, services) begins with its decomposition
 per the agent plan.
+
+## W1 — DX proposal: Site — embedded static, caching headers, WithBuild/WithDevProxy (2026-07-25)
+
+Stage 3 opens (decomposition W1–W11 written into tako-agent-plan.md —
+review it with this proposal; C6's verdict closed Stage 2). Spec §2.11
+is normative. The API surface is FROZEN: `tako.Site`, `SPA()`,
+`WithBuild`, `WithDevProxy`, `WithRedirect` all exist as F10-locked
+symbols with phase-pointer behavior — W1 makes them true, adds none.
+
+### 0. The headline
+
+A website is one declaration:
+
+```go
+var site = tako.Site("./web")
+```
+
+`tako dev` serves it with correct headers; `tako deploy` ships it INSIDE
+the service binary — no bucket, no LB, no CDN bill, one URL. Generators
+plug in without tako knowing them: `tako.Site("./web",
+tako.WithBuild("hugo --minify", "public"))` runs the build on the
+deploying machine at deploy/dev time and serves the output;
+`tako.WithDevProxy("http://localhost:1313")` swaps in the generator's
+own dev server for HMR during tako dev. And `examples/journal` is born
+as W1's demand: a static shell that W2–W5 grow into the htmx +
+markdown + auth showcase gated at W6.
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **journal grows feature-by-feature from W1 (RECOMMENDED — as
+   decomposed).** The alternative (a scratch example per W-slice,
+   journal assembled only at W6) makes each gate cheaper but loses the
+   compounding story that made gallery's gates convincing.
+2. **WithDomain/WithCDN stay phase-pointer stubs (RECOMMENDED).**
+   Domain mapping needs DNS the test project doesn't own, and §2.11
+   frames CDN as the when-scale-justifies upgrade; neither is needed
+   for journal or shop. They become their own slice when a deployment
+   demands a custom domain. (Both symbols already exist frozen; only
+   their not-yet text changes to name the future slice.)
+
+### 2. CLI/user surface
+
+```
+$ cd examples/journal && tako dev
+tako dev · journal
+  site      ./web (12 files, 2 fingerprinted) → /
+  …
+$ curl -sI localhost:8090/            | grep -iE 'cache-control|etag'
+Cache-Control: no-cache               # HTML revalidates
+ETag: "…"
+$ curl -sI localhost:8090/assets/app.3f2a1c.css | grep -i cache-control
+Cache-Control: public, max-age=31536000, immutable   # fingerprinted
+```
+
+- **Deploy**: no new plan objects — the site rides the service image
+  (`analyzing` line gains `1 site`). Build narration:
+  `⛅ site      hugo --minify → public (37 files)` before images.
+- **WithBuild failures are build errors**: the command's stderr
+  verbatim, exit before any plan
+  (`site build failed: hugo --minify: exit 1 — <stderr tail>`).
+- **WithDevProxy**: tako dev proxies non-API paths to the URL and says
+  so (`site      proxied → http://localhost:1313 (WithDevProxy)`);
+  deploy IGNORES the proxy and requires WithBuild or a plain dir
+  (erroring with exact text if the dir is missing/empty).
+- **SPA()**: unknown non-API paths serve index.html 200. Without it,
+  404. `WithRedirect(from, to)`: 308.
+- **Routing precedence, locked**: declared API/Page routes win; the
+  site serves everything else. `/_tako/*` stays the runtime's.
+
+### 3. Semantics being locked
+
+- **Headers**: fingerprinted assets (name matches `-[0-9a-f]{6,}.` or
+  `.[0-9a-f]{8,}.`) → `public, max-age=31536000, immutable`;
+  everything else `no-cache`; strong ETags (content hash) on all;
+  304 on If-None-Match. Security headers on document responses:
+  `Content-Security-Policy-Report-Only: default-src 'self'` (report-
+  only per spec), `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`. HSTS waits for
+  custom domains (their slice).
+- **Embedding is the v0 deployment**: at build time the site (built
+  output when WithBuild) is COPIED into the generated service package
+  and served via go:embed — the binary is the site; digest changes
+  when content changes, byte-identical local/cloud, rollback rolls
+  the site back too (revisions pin it). Cloud Run's 32MB response cap
+  noted in docs; huge assets are a WithCDN-slice problem.
+- **dev = deploy semantics minus proxy**: same header code path (the
+  conformance-style bar: one handler, both modes); WithBuild re-runs
+  on watched changes in dev with narration.
+- **Analyzer**: `site` resource in the graph (dir, build cmd, proxy,
+  spa, redirects — summary line + gen graph); one Site per service
+  (two = analysis error with exact text); dir must exist at analyze
+  time unless WithBuild creates it (then checked post-build).
+- **No new plan objects, no IAM, no APIs** — the deliberate v0 shape.
+
+### 4. Internals
+
+- `pkg/analyzer`: site constructor extraction (options → Resource
+  fields), error texts under test.
+- `pkg/build` + `pkg/codegen`: run WithBuild, copy output into
+  `.tako/gen/<svc>/site/`, generated main mounts
+  `runtime.SiteHandler(embedFS, options…)`; dev server bypasses embed
+  and serves the dir/proxy directly (same handler code, fs.FS
+  parameter).
+- `pkg/runtime`: SiteHandler (fs.FS + options): ETag/immutable/
+  security headers, SPA fallback, redirects; `hooks.Site` wiring for
+  `site.Render`/`Fragment`/`Markdown` STAYS phase-pointered (W2/W4).
+- `examples/journal`: `web/` static shell + go.mod + first tests
+  (headers, SPA, redirect — httptest against the runtime handler).
+- No SDK surface changes (freeze holds; not-yet texts for
+  Render/Fragment/Markdown/domain/CDN updated to name their slices).
+
+### 5. Cloud errors & permissions
+
+None new: no APIs, no grants, no plan objects. The failure surface is
+build-time (WithBuild exit/status, missing dir, output dir empty —
+exact texts pinned) and size (image growth is visible in the ⛅ site
+line; the 32MB response cap documented).
+
+### 6. Not in scope (W1 non-goals)
+
+- Render/Fragment/Markdown (W2–W4), Auth (W5), WithDomain/WithCDN
+  (their own future slice), Brotli/gzip pre-compression (later,
+  additive), bring-your-own-runtime SSR (spec Part 5 boundary).
+
+**Validation**: `validate/site.md` — dev headers judged by curl, Hugo
+variant (`WithBuild("hugo --minify", "public")` — requires hugo on the
+validating machine, stated), WithDevProxy HMR demo, then the full
+cycle: deploy journal, identical curl judgments against the cloud URL,
+SPA + redirect + 304 behavior, destroy.
+
+**STOP — awaiting DX approval (the two §1 scope calls, and the
+Stage 3 decomposition in tako-agent-plan.md) before implementation.**
