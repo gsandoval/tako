@@ -56,6 +56,12 @@ symbol as a side effect of another task — API changes are their own task.
   vertical slices, three validation tiers (automated → scripted manual →
   human sign-off in `docs/validation-log.md`). STOP at gates — never start
   the next feature without a signed verdict for the previous one.
+  **Stage 3 amendment (user-directed, 2026-07-25): human gates are batched
+  at semantic milestones — W2 (absorbs W1), W6 (absorbs W3–W5), W11
+  (absorbs W7–W10).** Between milestones: DX proposals still stop for
+  approval per slice, and the agent still runs full scripted + live
+  validation per slice (transcripts in the task log); only the human
+  manual walk is batched.
 - **DX-first.** Before implementing a feature, write the DX proposal (user
   code snippet, CLI transcript, error texts) into the task log and stop for
   human approval. The shipped surface must match the approved proposal.

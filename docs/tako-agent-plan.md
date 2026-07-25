@@ -184,8 +184,13 @@ promote → rollback → prune → destroy).
 
 ## Stage 3 — Web, auth, services (decomposed 2026-07-25, Stage 2 closed)
 
-*Every gate is full-cycle: local suite → `tako test` → deploy to the test
-project → scripted validation → destroy. The SDK surface froze at F10 —
+*Human gates are BATCHED at semantic milestones (user decision,
+2026-07-25): W2 gates W1+W2 ("the server-rendered website"), W6 gates
+W3–W6 ("journal complete"), W11 gates W7–W11 ("shop complete"). DX
+proposals still stop per slice; agent-side scripted + live validation
+still runs per slice. Every milestone gate is full-cycle: local suite →
+`tako test` → deploy to the test project → scripted validation →
+destroy. The SDK surface froze at F10 —
 Site/Auth/Job/Lock exist as phase-pointer stubs, so Stage 3 implements
 BEHIND the frozen API; new exported symbols reopen api-review-1.md as
 their own task. `examples/journal` is grown feature by feature (the way

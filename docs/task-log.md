@@ -4460,3 +4460,135 @@ installed — including both failure texts, §3 WithDevProxy against
 hugo server, §4 the full cycle judging local/cloud byte-parity by
 ETag) and record the verdict in docs/validation-log.md. W2
 (Pages, forms, CSRF; journal gains authored-post pages) follows.
+
+## W2 — DX proposal: Pages, forms, CSRF — journal gains authored posts (2026-07-25)
+
+Gate batching is now in force (CLAUDE.md amendment): W2 is the first
+milestone gate, absorbing W1 — `validate/journal-web.md` will cover
+the whole server-rendered story. Spec §2.11 + Part 3b are normative.
+Frozen surface made true this slice: `tako.Page`, `tako.HTML`,
+`tako.Redirect`, `site.Render`. Nothing added.
+
+### 0. The headline
+
+The website gets its dynamic half, in the same declarative shape as
+everything else:
+
+```go
+var (
+    posts = tako.Entity[Post]("posts")
+    site  = tako.Site("./web", …)
+
+    Home  = tako.Page("GET /", home)
+    Read  = tako.Page("GET /p/{id}", read)
+    Write = tako.Page("GET /write", writeForm)
+    Save  = tako.Page("POST /p", save)
+)
+
+func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
+    p, err := posts.Get(ctx, req.ID)
+    if tako.IsNotFound(err) { return tako.HTML{}, tako.NotFound() }
+    return site.Render(ctx, "post.html", p)
+}
+
+func save(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {   // Title/Body via form: tags
+    p := Post{ID: tako.NewID(), Title: req.Title, Body: req.Body}
+    if err := posts.Put(ctx, p); err != nil { return tako.HTML{}, err }
+    return tako.Redirect("/p/" + p.ID)                       // POST-redirect-GET
+}
+```
+
+Templates live in `web/templates/` (never served as static files),
+render inside `layout.html`, and the sharp edge is pre-dulled: every
+unsafe-method Page route REQUIRES a CSRF token the shim minted — the
+template just says `{{ csrf }}`. journal's home becomes a rendered
+post list; /write is a browser form; about stays static. No htmx yet
+(W3), body renders escaped (markdown is W4), writes are open (auth is
+W5).
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Redirect status = 303 See Other (RECOMMENDED).** The root doc
+   comment says 302; 303 is the status MADE for POST-redirect-GET
+   (a 302 answer to POST is only get-converted by browser
+   convention). Behavior, not signature — the doc comment gets the
+   fix. Alternative: keep 302 verbatim.
+2. **Page errors render plain in W2 (RECOMMENDED).** NotFound → 404
+   text page, decode failures → 400, handler errors → 500 with the
+   request id — correct, unstyled. Styled error templates
+   (error.html) become their own small slice when journal wants
+   branded 404s. Alternative: error templates now.
+
+### 2. User surface being locked
+
+- **Routing**: Page routes register beside API routes on the same
+  mux; declared routes beat the site (more specific patterns); the
+  site keeps everything else. `GET /` as a Page shadows the static
+  index.html (journal deletes it in favor of `home.html`).
+- **Binding**: identical to API — `path:`/`query:` tags, plus `form:`
+  from urlencoded/multipart bodies on unsafe methods. Same decode
+  error UX (400 with field naming).
+- **Templates**: `site.Render(ctx, "post.html", data)` parses
+  `web/templates/layout.html` + the named file; the page fills
+  layout's `{{ block "content" . }}`. Template funcs in W2:
+  `{{ csrf }}` (hidden input; also exposed as a meta tag by layout
+  convention for fetch callers) — `{{ markdown }}` exists but errors
+  with the W4 pointer. Missing template/misuse → 500 with the
+  template error verbatim (dev iterates on these).
+- **CSRF, automatic**: the shim mints a per-browser token
+  (double-submit cookie, `__tako_csrf`, SameSite=Lax; binds to the
+  session when W5 lands) and REJECTS unsafe-method Page requests
+  lacking the matching `_csrf` field or `X-CSRF-Token` header:
+  403 `CSRF token missing or invalid — forms need {{ csrf }}`.
+  API routes are untouched (no cookies, no ambient authority).
+- **`tako.Redirect(target)`**: 303 + Location (htmx dual-mode W3).
+- **Headers**: rendered pages carry the same document headers the
+  static site does (no-cache, CSP-Report-Only, nosniff) — one
+  policy, both halves.
+
+### 3. Internals
+
+- `pkg/analyzer`: "page" handler kind extracts like API (route,
+  Req bindings, HTML result); pages join the app service; edges scan
+  covers them (posts entity → datastore grants derive unchanged).
+  Goldens: journal graph grows; error fixtures for Page misuse.
+- `pkg/codegen`: Page routes wrap in runtime.PageHandler (decode →
+  call → render HTML/redirect/error), CSRF middleware on the page
+  mux; `{{ csrf }}`/template wiring registered from the embedded
+  site FS (templates/ subtree), which SiteHandler now refuses to
+  serve statically.
+- `pkg/runtime`: PageHandler, CSRF mint/verify, template cache
+  (parse once per process; dev restarts per cycle), hooks.Site
+  implementation behind site.Render.
+- `examples/journal`: Post entity, four pages, layout + home/post/
+  write templates; tests: form round-trip, CSRF rejection (exact
+  403 text), PRG Location, 404 text, template escaping of a
+  script-tag body (the pre-W4 safety judgment).
+- No SDK surface changes (freeze holds; Render/Redirect doc
+  comments updated to shipped behavior).
+
+### 4. Cloud errors & permissions
+
+None new: pages are handlers in the existing service; grants derive
+from their entity edges exactly as API handlers' do (journal gains
+project datastore.user — its first grant). Datastore joins journal's
+preflight via the existing Needs derivation.
+
+### 5. Not in scope (W2 non-goals)
+
+- htmx/fragments/IsHTMX/HX-Redirect (W3); markdown rendering (W4);
+  auth + WithAuth enforcement on Save (W5 — writes are open until
+  then, stated in journal's README-comment); styled error pages
+  (per call 2); file-upload form fields on pages (Blob binding
+  stays API-side until an example needs a page upload).
+
+**Validation**: `validate/journal-web.md` (NEW — the W2 MILESTONE
+gate script, absorbing validate/site.md): §1 the static story
+condensed (headers, ETag parity local/cloud), §2 pages + forms
+(write → PRG → read round-trip, binding errors), §3 CSRF (curl
+without token → the 403 text; with → 303), §4 escaping (script-tag
+body inert), §5 full cycle on tako-test-01 with the same judgments
+against the cloud URL, §6 destroy.
+
+**STOP — awaiting DX approval (and the two §1 scope calls) before
+implementation.**
