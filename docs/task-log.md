@@ -3721,3 +3721,171 @@ docs/validation-log.md. The notifier-key secret exists in the project
 (create once, survives destroy — by design). C5 (GCS notifications +
 signBlob signed URLs + Cloud Tasks; gallery FULLY graduates on the F9
 demo script) follows.
+
+## C5 — DX proposal: GCS notifications + signBlob signed URLs; gallery fully graduates (2026-07-25)
+
+Agent-plan scope: GCS notifications + signBlob signed URLs + Cloud
+Tasks selection; gallery fully graduates. Gate C5: full cycle running
+the same demo script as F9 against the cloud deployment — local and
+cloud validated with one script from here on. C4's verdict is
+recorded; notifier-key exists in tako-test-01.
+
+### 0. The headline
+
+The F9 demo script — ticket → direct PUT to storage → pipeline →
+warmed feed → shaped download — runs against a cloud URL exactly as it
+ran against localhost:8090. The two missing pieces are the direct
+transfer itself (SignedPut/SignedGet mint real V4 GCS URLs via
+signBlob — no key files, the SA signs as itself) and the event that
+follows it (a signed upload bypasses the service, so the runtime can't
+emit — GCS's own notifications take over the `photos-uploaded` topic
+and C4's emission path is deleted, closing the double-fire risk).
+Gallery still changes by zero lines.
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Cloud Tasks — DEFER (RECOMMENDED).** No example uses WithDelay
+   outside tests (gallery's pipeline is delay-free; journal and shop
+   are Stage 3), and the F9 gate script never exercises it. "No
+   feature without an example demanding it" says Cloud Tasks waits for
+   the Stage 3 app that actually publishes with a delay; the C4 error
+   (`WithDelay … needs Cloud Tasks — that arrives with C5`) gets its
+   phase pointer reworded to name the future feature instead of C5.
+   Alternative: build it now against a synthetic validation — plumbing
+   without a consumer, and a second delivery path (Tasks headers, no
+   dead-letter topics — semantics would need runtime shims) to keep
+   converged for nobody.
+2. **Wildcard content-type on signed PUT — platform-honest gap
+   (RECOMMENDED: accept).** GCS V4 signed PUT enforces exactly what is
+   signed: an exact Content-Type and a size cap
+   (x-goog-content-length-range) are HARD-enforced by GCS; a wildcard
+   (`image/*`, what gallery uses) cannot be — only POST policy
+   documents can express starts-with, and they'd change the client
+   contract from `PUT bytes` (pinned by gate F9) to a multipart form.
+   Proposal: keep PUT; exact types + MaxSize enforced by GCS at upload
+   (415/400 equivalents); wildcard constraints are enforced locally
+   but in the cloud fall through to the pipeline's real safety net —
+   undecodable bytes already dead-letter permanently (F9 §4) and the
+   cron reaps the orphan. The conformance SignedURL chapter grows
+   platform params (like QueueParams) making the divergence explicit
+   and pinned, not silent. Alternative: POST policy for full fidelity,
+   breaking the F9 client contract and both local endpoint + script.
+
+### 2. CLI surface
+
+```
+$ cd examples/gallery
+$ tako deploy --project tako-test-01
+  plan
+    …everything C4 built, plus:
+    create  bucket notification tako-test-01-gallery-photos → photos-uploaded
+    update  run service ×5            (emission env retired)
+    update  iam grants topic photos-uploaded
+            (publisher: GCS service agent replaces the writers)
+    update  iam grants serviceAccount gallery-sa@…
+            (self signBlob for SignedPut/SignedGet — from the sign edges)
+
+Security summary additions:
+  gallery … roles/iam.serviceAccountTokenCreator on its OWN SA
+    [signBlob — mints signed URLs as itself]
+  photos-uploaded [publisher: GCS service agent — bucket notifications]
+```
+
+- **Demo (the gate)**: `validate/gallery.md` §§2–4 run verbatim with
+  `BASE=<cloud url>` instead of localhost — ticket, direct PUT 200
+  (straight to storage.googleapis.com), feed `ready: true`, shaped
+  download URL 200, real thumb; boom fan-out and junk-bytes Permanent
+  land in `tako dlq` instead of `.tako/data/deadletter`. §1 (tako
+  test) and §5 (AdvanceCron) stay local by nature; a §6 adds
+  deploy/destroy brackets. The script gains the BASE parameterization
+  and cloud annotations — one script, both worlds, per the agent plan.
+- **Conformance(gcp)**: SignedURL chapter joins with platform params
+  (exact-type 415-equivalent, size-cap rejection, expiry, GET
+  round-trip; wildcard-at-upload local-only). TestBucketEventEmitGCP
+  is REPLACED by a notification-config chapter: Put → GCS notification
+  → pull shows the raw GCS payload (the runtime translation is
+  unit-pinned).
+- **Destroy**: notification configs delete before their bucket
+  (reverse order); nothing else changes.
+
+### 3. Semantics being locked
+
+- **Signed URLs = V4 + signBlob, no keys anywhere**: the service's SA
+  calls iam signBlob on itself (self tokenCreator grant derived from
+  the existing `sign` edges — the C3 placeholder becomes real). PUT
+  URLs sign the exact Content-Type when the constraint is exact, and
+  x-goog-content-length-range when MaxSize is set; GET URLs are plain
+  V4. TTL is the user's ttl argument, capped at GCS's 7 days.
+- **Bucket events = GCS notifications, everywhere**: one notification
+  config per events bucket (OBJECT_FINALIZE only, JSON_API_V1,
+  tako-spec-hash in custom_attributes — content-addressed like
+  indexes), publishing to the SAME `<bucket>-uploaded` topic C4
+  created. C4's runtime emission and TAKO_BUCKET_EVENTS are DELETED —
+  one event source, no double-fire; through-service Puts now also
+  arrive via GCS (identical topic, subscribers can't tell). The push
+  runtime translates the GCS payload (name/size-string/updated) into
+  tako.ObjectInfo so subscriber code sees the exact local shape —
+  shape-detected in the envelope unwrap, unit-pinned.
+- **Notification configs are created AFTER the GCS service agent's
+  publisher grant** (GCS validates publishing at config-creation
+  time): the agent (service-<projectNumber>@gs-project-accounts…)
+  joins the managed-member set on topic targets, and the deploy's
+  grant phases gain a notifications step after pre-run grants.
+- **Own-write filtering stays app-side**: makeThumb's `_thumb` write
+  now fires a real notification too — the standing `_thumb` suffix
+  idiom (F5) already handles it, demonstrated live.
+- **Cloud Tasks deferred** (per §1 call 1): WithDelay on gcp keeps
+  erroring, with the phase pointer reworded to the delayed-delivery
+  feature rather than C5.
+
+### 4. Internals
+
+- `pkg/backends/gcp`: signed.go becomes real (V4 canonical request +
+  signBlob REST, no SDK dependency); bucket.go loses the emission
+  block; queue.go error text reworded.
+- `pkg/provision`: KindBucketNotification (desired from events
+  buckets, ordered after topics), GCS-agent grants on events topics,
+  self-tokenCreator from sign edges; goldens grow the lines
+  (gallery: +1 notification, grants deltas; shortlink unchanged — no
+  buckets).
+- `pkg/provision/gcp`: notifications applier (list by bucket,
+  custom_attributes hash), preflight unchanged (storage API already
+  probed; the GCS service agent email derives from ProjectNumber).
+- `pkg/runtime`: envelope translation for JSON_API_V1 notification
+  payloads; no other changes — PushHandler's contract holds.
+- `validate/gallery.md`: BASE parameterization + cloud annotations +
+  §6 (deploy/destroy brackets); validate/gallery-cloud.md §3 note
+  pointing at the unified script for C5+.
+- No SDK surface changes (freeze holds).
+
+### 5. Cloud errors & permissions (per docs/tako-cloud-permissions.md)
+
+- **signBlob 403 at runtime** (grant missing/propagating): surfaces
+  through the existing runtime-403 taxonomy; the boot does NOT probe
+  signBlob (first SignedPut would) — the known propagation-window
+  caveat applies and stays discovered work.
+- **Notification config creation 400/403** ("service account does not
+  have pubsub.publisher"): grant ordering above makes it unreachable;
+  if GCS lags the grant, the applier retries briefly (bounded, like
+  index waits) before failing verbatim.
+- **Deployer perms added**: storage.buckets.update (notification
+  configs ride the storage API; covered by roles/storage.admin already
+  probed) — no new preflight lines expected; verified live.
+- **Org-policy denials** (e.g. domain-restricted sharing blocking
+  allUsers, uniform-access edge cases): surfaced verbatim.
+
+### 6. Not in scope (C5 non-goals)
+
+- Cloud Tasks / WithDelay in the cloud (per §1 call 1 — waits for the
+  Stage 3 example that demands it).
+- Cloud Scheduler for cron (unchanged from C4); shared cache; metrics
+  backend; C6 lifecycle (prune, canary, rollback, --env previews).
+- POST policy uploads, resumable uploads, per-object ACLs.
+- Signed-URL revocation (TTL is the only expiry).
+
+**Validation**: the unified `validate/gallery.md` against
+tako-test-01 (§§2–4 + dlq + destroy), conformance(gcp) incl. the
+SignedURL chapter, and the full local suite unchanged.
+
+**STOP — awaiting DX approval (and the two §1 scope calls) before
+implementation.**
