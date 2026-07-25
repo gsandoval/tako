@@ -3386,3 +3386,234 @@ conformance, §2 plan review + security summary judgment, §3 the app +
 async spine, §5 destroy with the DATA confirmation) and record the
 verdict in docs/validation-log.md. C4 (Pub/Sub dead-letter + retry;
 gallery async graduates) follows.
+
+## C4 — DX proposal: Pub/Sub push + dead-letter; gallery async graduates (2026-07-25)
+
+Agent-plan scope: OIDC push verification, per-handler subscriptions,
+retry/backoff config. Gate C4: full cycle; human kills the worker
+mid-job in the cloud and observes redelivery then dead-letter. Spec
+§4.6 and docs/tako-cloud-permissions.md are normative. C3's verdict is
+recorded; the tako-test-01 Datastore database now exists.
+
+### 0. The headline
+
+`examples/gallery` does not change by a single line — and neither does
+the push model. The analyzer already gives every worker AND every
+subscriber its own service (partition rule: API/Page/Cron share the
+package's service; each async handler is alone in its own), so gallery
+deploys as five services: `gallery` (7 APIs + the cron, public) and
+four private single-handler async services. "Per-handler
+subscriptions" is therefore per-*service* subscriptions — one push
+subscription per async handler onto its source topic — and "OIDC push
+verification" stays what C3 validated: private Run services admitting
+only their own SA (plain curl → IAM 403). No in-runtime JWT parsing;
+sync and async handlers never share a service, so a push endpoint on a
+public service cannot exist. C4's real substance is what happens when
+a delivery FAILS: retry with backoff, then a dead-letter topic you can
+inspect — plus the two things gallery needs to run at all in the
+cloud (a pipeline trigger and Secret Manager).
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Pipeline trigger — bucket events lite (RECOMMENDED: include).**
+   Gallery's only entry to the async spine is `photos.Uploaded` →
+   `onUploaded`. GCS-native notifications are C5's scope (they exist
+   to cover *signed direct* uploads, which are also C5 — the Signer is
+   still a stub, so no write can bypass the service today). Without a
+   trigger, C4's "gallery async graduates" is undemonstrable. Proposal:
+   the gcp Bucket backend *emits* the uploaded event itself — after a
+   successful through-service `Put`, the runtime publishes ObjectInfo
+   to topic `<bucket>-uploaded`; subscribers bind to that topic. C5
+   replaces emission with GCS-native notifications on the SAME topic
+   (and turns emission off) when signed uploads land. Alternative:
+   defer any trigger and gate C4 on synthetic publishes — weaker demo,
+   the pipeline never runs whole.
+2. **Secrets — package-wide resolution (RECOMMENDED: (a)).** Gallery
+   declares `tako.Secret("notifier-key")` and F8's contract is that
+   boot REFUSES to start with a declared secret unset — which today
+   only local enforces; in the cloud every gallery service would crash
+   on `Value()`. C4 wires BootGCP to resolve declared secrets from
+   Secret Manager (`<env-prefixed name>/versions/latest`) before
+   serving. The call: **(a)** every service of the package resolves
+   every declared secret (upholds "Value never fails" verbatim; every
+   SA gets accessor on the app's secrets), or **(b)** edge-derived
+   per-service resolution (least-privilege: only `gallery-notifyowner`
+   can read `notifier-key`; a non-edge `Value()` would panic — a
+   contract carve-out). (a) is simpler and the secret is app-scoped
+   data anyway; (b) is purer per the permissions doc. Proposal assumes
+   (a).
+3. **`tako dlq` (RECOMMENDED: include, peek + `--ack`).** The gate
+   observes dead-letters; local parity is the on-disk dead-letter JSON
+   from F4. Minimal CLI (no SDK surface — freeze holds): `tako dlq`
+   lists dead-letter subscriptions with message counts; `tako dlq
+   <service>` peeks messages (payload, original attempt count, time)
+   without acking; `--ack` drains what it printed. Replay/redrive is a
+   non-goal. Alternative: document `gcloud pubsub subscriptions pull`
+   — honest but hostile.
+
+### 2. CLI surface
+
+```
+$ cd examples/gallery
+$ tako deploy --project tako-test-01
+tako deploy · gallery → tako-test-01 (us-central1)
+
+  analyzing    5 services, 7 endpoints, 1 worker, 3 subscribers, 1 cron,
+               1 bucket, 1 entity, 1 queue, 1 topic, 1 secret
+  preflight    ok (run, iam, artifactregistry, storage, datastore,
+               pubsub, secretmanager · secret notifier-key: exists)
+  building     5 service image(s), digest-pinned
+  plan
+    create  service account gallery-sa            (…4 more SAs)
+    create  bucket tako-test-01-gallery-photos
+    create  datastore index photos (owner, ready)
+    create  topic thumbnails                      (queue)
+    create  topic photo-ready                     (topic)
+    create  topic photos-uploaded                 (bucket events)
+    create  topic gallery-makethumb-dead          (…3 more dead topics)
+    create  run service gallery                   (…4 more, private)
+    create  iam grants …                          (per-target, see summary)
+    create  push subscription photos-uploaded → gallery-onuploaded
+    create  push subscription thumbnails → gallery-makethumb
+    create  push subscription photo-ready → gallery-notifyowner
+    create  push subscription photo-ready → gallery-warmfeed
+    create  dead-letter keep subscription gallery-makethumb-dead (…3 more)
+  ⚠ cron cleanupOrphans is not scheduled in the cloud yet (scheduler is
+    a later feature); it still runs under tako dev.
+
+✓ gallery → https://gallery-…-uc.a.run.app
+
+Security summary:
+  gallery runs as gallery-sa@… — datastore [user — project-wide: GCP
+    has no per-kind Datastore IAM], photos [objectAdmin],
+    photos-uploaded [publisher — emits bucket events],
+    notifier-key [secretAccessor]
+  gallery-makethumb runs as gallery-makethumb-sa@… — datastore [user],
+    photos [objectAdmin], photo-ready [publisher],
+    gallery-makethumb-dead [publisher — Permanent dead-letters],
+    notifier-key [secretAccessor]; ingress: OIDC push from its own SA
+    only · redelivery: 5 attempts, exponential backoff, then dead-letter
+  (… gallery-onuploaded, gallery-notifyowner, gallery-warmfeed alike)
+  public ingress: gallery
+```
+
+- **Demo (the gate)**: multipart `POST /api/photos` → bucket event →
+  queue → worker (thumb appears at `/api/photos/{id}/thumb`) → topic →
+  BOTH subscribers; `/api/photos` lists the ready photo. Caption
+  containing `boom` → NotifyOwner retries with visible backoff
+  (`attempt 3/5` in `tako logs`, from the push envelope's
+  deliveryAttempt) and dead-letters on the 5th, while WarmFeed acks
+  every attempt — independent fates, now in the cloud. A text-file
+  upload → makeThumb returns `tako.Permanent` → dead-lettered after
+  attempt 1, no retries. Kill-mid-job: while a thumb job is in flight,
+  `gcloud run services update gallery-makethumb --no-traffic`-style
+  interference (script will pin the exact method) → Pub/Sub redelivers
+  on the ack deadline; the idempotent pipeline converges.
+- **`tako dlq`**: `tako dlq` → `gallery-notifyowner  1 message`;
+  `tako dlq gallery-notifyowner` prints payload JSON + attempts +
+  published time; `--ack` drains. Empty: `no dead-lettered messages`.
+- **Conformance(gcp)** grows the Topic chapter: publish + two-pull-
+  subscription fan-out verified against real Pub/Sub via harness pull
+  subs (push delivery is infrastructure, validated by the gate).
+  BucketEvents chapter stays local-only until C5 unifies the native
+  path.
+- **Destroy** grows nothing conceptually: dead topics/keep subs delete
+  with the rest (messages in them are data → they appear in the DATA
+  section), secrets are NEVER deleted (user-created, values are data).
+
+### 3. Semantics being locked
+
+- **Retry policy is fixed, not configurable**: maxDeliveryAttempts=5
+  matching local's dispatcher, Pub/Sub exponential backoff (minimum
+  10s, maximum 300s), ackDeadline 600s as in C3. Per-queue tuning is
+  API surface → its own post-freeze task. "Retry/backoff config" from
+  the agent plan = tako CONFIGURES the subscription; the user does not.
+- **`tako.Permanent` = 1 attempt, then dead-letter — exactly local**:
+  Pub/Sub cannot express "nack without retry" (any non-2xx redelivers),
+  so on gcp the runtime publishes the payload to the service's own
+  dead topic itself and ACKS (204). Local semantics preserved; the SA
+  needs publisher on its own dead topic (in the summary).
+- **Dead-letter plumbing per async service**: dead topic
+  `<service>-dead` + a pull "keep" subscription (Pub/Sub drops
+  dead-letters with no subscription — the keep sub is retention,
+  7-day default). Pub/Sub's service agent gets publisher on each dead
+  topic and subscriber on each source subscription (required by
+  deadLetterPolicy; grants objects like everything else).
+- **Bucket events (lite)**: emission-on-Put from the runtime for
+  through-service writes; topic per bucket `<bucket>-uploaded`;
+  workers' own-write filtering stays app-side (`_thumb` suffix idiom
+  unchanged). Signed direct uploads don't exist until C5; C5 swaps in
+  GCS-native notifications on the same topic.
+- **Secrets**: physical name `Prefixed(env, name)` in Secret Manager,
+  `latest` version, resolved once at boot; tako never creates,
+  updates, or deletes secrets — preflight verifies existence and
+  prints the exact create command; grants are reconciled objects.
+- **Cache stays per-instance** (C3 non-goal, unchanged) — honest
+  consequence now visible: cloud `warmFeed` warms only its own
+  process; `list` still serves correctly via GetOrFill + TTL. The
+  fan-out demo therefore judges NotifyOwner/WarmFeed by acks and logs,
+  not by cache effects. Shared cache is a later feature.
+- **Cron is inert in the cloud** (deploy warns once, banner still
+  shows it locally). Cloud Scheduler is a later feature; noted in the
+  plan output so nobody believes cleanup runs.
+- **TAKO_SERVICE joins the injected env** (dead-topic derivation +
+  log labeling), alongside TAKO_PROJECT/APP/ENV.
+- **Shortlink converges, doesn't break**: next shortlink deploy shows
+  its countclick subscription as `update` (spec gains
+  retry/dead-letter policy) plus creates for the dead topic, keep sub,
+  and service-agent grants.
+
+### 4. Internals
+
+- `pkg/provision`: subscriptions for subscribers (topic + bucket-event
+  sources), dead topics + keep subs as desired objects, retry/DLQ
+  fields in the subscription spec, service-agent + secret grant
+  derivation, secret preflight; golden plan test grows a gallery
+  fixture (the hand-built shortlink one stays).
+- `pkg/backends/gcp`: TopicStore.Publish becomes real (C4 stub dies),
+  bucket event emission in BucketStore.Put, dead-letter publish path
+  in the push runtime, Secret Manager resolution in BootGCP.
+- `pkg/runtime`: PushHandler on gcp routes Permanent to the dead
+  topic + 204 (local keeps 400), logs deliveryAttempt as `attempt n/5`.
+- `cmd/tako`: `dlq` command; deploy banner cron warning.
+- No SDK surface changes (freeze holds).
+
+### 5. Cloud errors & permissions (per docs/tako-cloud-permissions.md)
+
+- **Preflight adds**: secretmanager API probe (only when the graph
+  declares secrets); per-secret existence —
+  `✗ secret notifier-key: not found in tako-test-01 — create it: printf '<value>' | gcloud secrets create notifier-key --data-file=- --project tako-test-01`
+  (env-prefixed name for non-prod envs); deployer perms
+  secretmanager.secrets.get + secrets.setIamPolicy,
+  pubsub.subscriptions.setIamPolicy (dead-letter service-agent
+  grants) — each gap one line with the exact grant command, texts
+  pinned by unit test.
+- **Boot missing secret (cloud)**: same text local already ships —
+  `secret "notifier-key" is not set — add it to .env (local) or Secret Manager (cloud)`
+  — the service refuses to serve; preflight makes this unreachable in
+  practice.
+- **`WithDelay` on gcp**: Publish errors
+  `tako: Publish(WithDelay): delayed delivery in the cloud arrives with Cloud Tasks (C5) (tako/not-yet)`
+  — Pub/Sub cannot delay; erroring beats silently delivering early.
+- **Runtime 403 taxonomy unchanged** — including the known C3
+  discovered-work caveat (IAM-propagation window mislabels itself a
+  deploy bug; softening that text stays discovered work, not C4).
+- **Org-policy denials** surfaced verbatim, never worked around.
+
+### 6. Not in scope (C4 non-goals)
+
+- GCS-native notifications, signBlob signed URLs, Cloud Tasks
+  (WithDelay), gallery FULLY graduating (the F9 demo needs signed
+  URLs) → C5.
+- Cloud Scheduler for cron; shared/cloud cache; metrics backend.
+- DLQ replay/redrive; per-queue retry configuration (API surface).
+- In-runtime OIDC JWT verification (unreachable by construction —
+  revisit only if a feature ever co-locates push with public ingress).
+
+**Validation**: `validate/gallery-cloud.md` (written at implementation
+time): conformance(gcp) incl. Topic chapter → plan + security-summary
+review → the pipeline demo with independent fates, Permanent, and
+kill-mid-job redelivery → `tako dlq` → idempotence → destroy.
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
