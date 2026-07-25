@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"fmt"
 	"net/http"
+	"strings"
 )
 
 // PurgeDatastore deletes every entity of the given kinds in one
@@ -50,4 +52,72 @@ func (c *Client) PurgeDatastore(ctx context.Context, namespace string, kinds []s
 		}
 	}
 	return deleted, nil
+}
+
+// KindsInNamespace lists the entity kinds present in one namespace via
+// the __kind__ pseudo-kind — how prune spots data whose declaration
+// disappeared from code.
+func (c *Client) KindsInNamespace(ctx context.Context, namespace string) ([]string, error) {
+	body := map[string]any{
+		"partitionId": map[string]any{"projectId": c.Project, "namespaceId": namespace},
+		"query":       map[string]any{"kind": []map[string]any{{"name": "__kind__"}}},
+	}
+	var out struct {
+		Batch struct {
+			EntityResults []struct {
+				Entity struct {
+					Key struct {
+						Path []struct {
+							Name string `json:"name"`
+						} `json:"path"`
+					} `json:"key"`
+				} `json:"entity"`
+			} `json:"entityResults"`
+		} `json:"batch"`
+	}
+	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runQuery", body, &out); err != nil {
+		return nil, Classify(err, c.Project, "list datastore kinds", "roles/datastore.viewer")
+	}
+	var kinds []string
+	for _, er := range out.Batch.EntityResults {
+		for _, p := range er.Entity.Key.Path {
+			if p.Name != "" && !strings.HasPrefix(p.Name, "__") {
+				kinds = append(kinds, p.Name)
+			}
+		}
+	}
+	return kinds, nil
+}
+
+// CountKind counts one kind's entities in a namespace (prune --data's
+// confirmation listing). Uses the aggregation query, capped implicitly
+// by Datastore.
+func (c *Client) CountKind(ctx context.Context, namespace, kind string) (int, error) {
+	body := map[string]any{
+		"partitionId": map[string]any{"projectId": c.Project, "namespaceId": namespace},
+		"aggregationQuery": map[string]any{
+			"nestedQuery":  map[string]any{"kind": []map[string]any{{"name": kind}}},
+			"aggregations": []map[string]any{{"count": map[string]any{}, "alias": "n"}},
+		},
+	}
+	var out struct {
+		Batch struct {
+			AggregationResults []struct {
+				AggregateProperties map[string]struct {
+					IntegerValue string `json:"integerValue"`
+				} `json:"aggregateProperties"`
+			} `json:"aggregationResults"`
+		} `json:"batch"`
+	}
+	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runAggregationQuery", body, &out); err != nil {
+		return 0, Classify(err, c.Project, "count datastore entities", "roles/datastore.viewer")
+	}
+	for _, r := range out.Batch.AggregationResults {
+		if v, ok := r.AggregateProperties["n"]; ok {
+			var n int
+			fmt.Sscanf(v.IntegerValue, "%d", &n)
+			return n, nil
+		}
+	}
+	return 0, nil
 }

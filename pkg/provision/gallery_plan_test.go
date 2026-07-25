@@ -81,59 +81,59 @@ func galleryDesired(t *testing.T) []Object {
 // target types.
 func TestGalleryPlanRender(t *testing.T) {
 	plan := Compute("gallery", "prod", galleryDesired(t), nil)
-	want := `  create  artifact repo tako
-  create  service account gallery-sa
-  create  service account gallery-onuploaded-sa
-  create  service account gallery-makethumb-sa
-  create  service account gallery-notifyowner-sa
-  create  service account gallery-warmfeed-sa
-  create  bucket my-proj-gallery-photos
-  create  datastore index photos (owner, ready)
-  create  topic thumbnails
-  create  topic photo-ready
-  create  topic photos-uploaded
-  create  topic gallery-onuploaded-dead
-  create  topic gallery-makethumb-dead
-  create  topic gallery-notifyowner-dead
-  create  topic gallery-warmfeed-dead
-  create  bucket notification my-proj-gallery-photos
-  create  pull subscription gallery-onuploaded-dead
-  create  pull subscription gallery-makethumb-dead
-  create  pull subscription gallery-notifyowner-dead
-  create  pull subscription gallery-warmfeed-dead
-  create  run service gallery
-  create  run service gallery-onuploaded
-  create  run service gallery-makethumb
-  create  run service gallery-notifyowner
-  create  run service gallery-warmfeed
-  create  iam grants bucket my-proj-gallery-photos
-  create  iam grants project
-  create  iam grants run gallery
-  create  iam grants run gallery-makethumb
-  create  iam grants run gallery-notifyowner
-  create  iam grants run gallery-onuploaded
-  create  iam grants run gallery-warmfeed
-  create  iam grants secret notifier-key
-  create  iam grants serviceAccount gallery-makethumb-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants serviceAccount gallery-notifyowner-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants serviceAccount gallery-onuploaded-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants serviceAccount gallery-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants serviceAccount gallery-warmfeed-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants subscription gallery-makethumb
-  create  iam grants subscription gallery-notifyowner
-  create  iam grants subscription gallery-onuploaded
-  create  iam grants subscription gallery-warmfeed
-  create  iam grants topic gallery-makethumb-dead
-  create  iam grants topic gallery-notifyowner-dead
-  create  iam grants topic gallery-onuploaded-dead
-  create  iam grants topic gallery-warmfeed-dead
-  create  iam grants topic photo-ready
-  create  iam grants topic photos-uploaded
-  create  iam grants topic thumbnails
-  create  push subscription gallery-onuploaded
-  create  push subscription gallery-makethumb
-  create  push subscription gallery-notifyowner
-  create  push subscription gallery-warmfeed
+	want := `  + create  artifact repo tako
+  + create  service account gallery-sa
+  + create  service account gallery-onuploaded-sa
+  + create  service account gallery-makethumb-sa
+  + create  service account gallery-notifyowner-sa
+  + create  service account gallery-warmfeed-sa
+  + create  bucket my-proj-gallery-photos
+  + create  datastore index photos (owner, ready)
+  + create  topic thumbnails
+  + create  topic photo-ready
+  + create  topic photos-uploaded
+  + create  topic gallery-onuploaded-dead
+  + create  topic gallery-makethumb-dead
+  + create  topic gallery-notifyowner-dead
+  + create  topic gallery-warmfeed-dead
+  + create  bucket notification my-proj-gallery-photos
+  + create  pull subscription gallery-onuploaded-dead
+  + create  pull subscription gallery-makethumb-dead
+  + create  pull subscription gallery-notifyowner-dead
+  + create  pull subscription gallery-warmfeed-dead
+  + create  run service gallery
+  + create  run service gallery-onuploaded
+  + create  run service gallery-makethumb
+  + create  run service gallery-notifyowner
+  + create  run service gallery-warmfeed
+  + create  iam grants bucket my-proj-gallery-photos
+  + create  iam grants project
+  + create  iam grants run gallery
+  + create  iam grants run gallery-makethumb
+  + create  iam grants run gallery-notifyowner
+  + create  iam grants run gallery-onuploaded
+  + create  iam grants run gallery-warmfeed
+  + create  iam grants secret notifier-key
+  + create  iam grants serviceAccount gallery-makethumb-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants serviceAccount gallery-notifyowner-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants serviceAccount gallery-onuploaded-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants serviceAccount gallery-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants serviceAccount gallery-warmfeed-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants subscription gallery-makethumb
+  + create  iam grants subscription gallery-notifyowner
+  + create  iam grants subscription gallery-onuploaded
+  + create  iam grants subscription gallery-warmfeed
+  + create  iam grants topic gallery-makethumb-dead
+  + create  iam grants topic gallery-notifyowner-dead
+  + create  iam grants topic gallery-onuploaded-dead
+  + create  iam grants topic gallery-warmfeed-dead
+  + create  iam grants topic photo-ready
+  + create  iam grants topic photos-uploaded
+  + create  iam grants topic thumbnails
+  + create  push subscription gallery-onuploaded
+  + create  push subscription gallery-makethumb
+  + create  push subscription gallery-notifyowner
+  + create  push subscription gallery-warmfeed
   53 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {

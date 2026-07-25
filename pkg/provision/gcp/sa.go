@@ -115,3 +115,20 @@ func (s *ServiceAccounts) Delete(ctx context.Context, name string) error {
 func (s *ServiceAccounts) Email(name string) string {
 	return name + "@" + s.C.Project + ".iam.gserviceaccount.com"
 }
+
+// ManagedEmails is the exact set of THIS app+env's service-account
+// emails (marker-matched) — what grant rewriting keys on. An email set,
+// not a name pattern: the project IAM policy is shared by every env,
+// and revoking one env's grants must never strip another's (the C6
+// lifecycle walk caught exactly that).
+func (s *ServiceAccounts) ManagedEmails(ctx context.Context) (map[string]bool, error) {
+	observed, err := s.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	emails := make(map[string]bool, len(observed))
+	for _, o := range observed {
+		emails[o.Name+"@"+s.C.Project+".iam.gserviceaccount.com"] = true
+	}
+	return emails, nil
+}

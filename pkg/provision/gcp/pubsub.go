@@ -79,6 +79,8 @@ func (t *Topics) Delete(ctx context.Context, name string) error {
 type PushSubscriptions struct {
 	C      *Client
 	Labels map[string]string
+	// Say narrates the replace path (topic changes can't patch).
+	Say func(format string, args ...any)
 }
 
 func (s *PushSubscriptions) Kind() provision.Kind { return provision.KindPushSubscription }
@@ -117,6 +119,9 @@ func listSubscriptions(ctx context.Context, c *Client, labels map[string]string,
 			Kind:     kind,
 			Name:     lastSegment(sub.Name),
 			SpecHash: sub.Labels["tako-spec-hash"],
+			// The topic is the subscription's one immutable field — the
+			// plan classifies a topic change as a REPLACE from this.
+			Detail: map[string]string{"topic": lastSegment(sub.Topic)},
 		})
 	}
 	return observed, nil
@@ -166,11 +171,22 @@ func (s *PushSubscriptions) Create(ctx context.Context, o provision.Object) erro
 }
 
 // Update patches pushConfig, retry/dead-letter policy, and labels. The
-// topic is immutable on a Pub/Sub subscription — a queue rebind would
-// need delete + create, which the plan surfaces as an update that fails
-// honestly rather than silently recreating (rebinding a live queue
-// loses in-flight work).
+// topic is immutable on a Pub/Sub subscription, so a topic change is
+// the REPLACE class: the plan announced it (and the deploy confirmed
+// it), and the apply is delete + create — in-flight messages on the
+// old subscription are lost, which is exactly what the plan said.
 func (s *PushSubscriptions) Update(ctx context.Context, o provision.Object) error {
+	var live subscriptionBody
+	if err := s.C.do(ctx, http.MethodGet, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), nil, &live); err == nil &&
+		live.Topic != "" && lastSegment(live.Topic) != fmt.Sprint(o.Spec["topic"]) {
+		if s.Say != nil {
+			s.Say("⚠ replacing subscription %s (topic %s → %s): delete + create", o.Name, lastSegment(live.Topic), o.Spec["topic"])
+		}
+		if err := s.Delete(ctx, o.Name); err != nil {
+			return err
+		}
+		return s.Create(ctx, o)
+	}
 	full := s.body(o)
 	body := map[string]any{
 		"subscription": subscriptionBody{

@@ -55,11 +55,11 @@ func (f *fakeCloud) observed() []Observed {
 func TestFreshProjectPlansAllCreates(t *testing.T) {
 	desired := helloDesired(t)
 	plan := Compute("hello", "prod", desired, nil)
-	want := `  create  artifact repo tako
-  create  service account hello-sa
-  create  run service hello
-  create  iam grants run hello
-  create  iam grants serviceAccount hello-sa@my-proj.iam.gserviceaccount.com
+	want := `  + create  artifact repo tako
+  + create  service account hello-sa
+  + create  run service hello
+  + create  iam grants run hello
+  + create  iam grants serviceAccount hello-sa@my-proj.iam.gserviceaccount.com
   5 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
@@ -228,5 +228,46 @@ func TestSpecHashIsCanonical(t *testing.T) {
 	}
 	if strings.ContainsAny(a, ":/+= ") || len(a) != 16 {
 		t.Fatalf("hash %q is not label-safe", a)
+	}
+}
+
+// TestReplaceClassAndRenameSuspects pins C6's plan intelligence: a push
+// subscription whose live topic differs is a REPLACE with the
+// consequence stated, and an orphan paired with a same-kind create is a
+// rename suspect (data does not follow) — both trip NeedsConfirm.
+func TestReplaceClassAndRenameSuspects(t *testing.T) {
+	desired := []Object{
+		{Kind: KindPushSubscription, Name: "app-worker", Spec: map[string]any{"topic": "jobs-v2"}},
+		{Kind: KindBucket, Name: "p-app-pics", Spec: map[string]any{"location": "x"}},
+	}
+	observed := []Observed{
+		{Kind: KindPushSubscription, Name: "app-worker",
+			SpecHash: "stale", Detail: map[string]string{"topic": "jobs"}},
+		{Kind: KindBucket, Name: "p-app-photos", SpecHash: "whatever"},
+	}
+	plan := Compute("app", "prod", desired, observed)
+	if !plan.NeedsConfirm() {
+		t.Fatal("replace + rename suspect must need confirmation")
+	}
+	got := plan.Render()
+	for _, want := range []string{
+		"! update  push subscription app-worker  ← REPLACE: topic is immutable (jobs → jobs-v2)",
+		"in-flight messages on the old subscription are lost",
+		"? orphaned (kept) bucket p-app-photos",
+		"↳ rename suspect: bucket p-app-pics appeared — if this is a rename, data does not follow automatically",
+		"a migrating tako rename is a planned feature",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("plan missing %q:\n%s", want, got)
+		}
+	}
+
+	// An ordinary in-place update needs no ceremony.
+	calm := Compute("app", "prod", desired[:1], []Observed{
+		{Kind: KindPushSubscription, Name: "app-worker",
+			SpecHash: "stale", Detail: map[string]string{"topic": "jobs-v2"}},
+	})
+	if calm.NeedsConfirm() {
+		t.Fatalf("in-place update must not prompt:\n%s", calm.Render())
 	}
 }

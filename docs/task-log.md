@@ -4157,3 +4157,103 @@ pr-42` preview cycle (disjoint secret demanded, deploy, curl, destroy
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+## C6 — implementation: lifecycle — change classes, canary/promote/rollback, prune, --env (2026-07-25)
+
+Proposal approved with all three §1 recommendations (rename =
+detection now + spec fix-up, async canary staged at 0%, prompt with
+--yes). Stage 2 closes with this slice.
+
+**Plan intelligence (pkg/provision):** entries carry a §4.6a class —
+creates `+` additive, updates `~` in-place, `!` REPLACE when the diff
+touches an immutable field (push-subscription topic, detected via the
+new Observed.Detail live-field channel) with the consequence spelled
+out; orphans `?` pair with same-kind creates as rename suspects (`↳
+data does not follow automatically`, buckets adding the
+copy-then-drop guidance). NeedsConfirm() drives the default deploy's
+prompt (replaces/suspects only; --yes for CI; --plan never prompts).
+Drift semantics fixed while walking the gate: a drifted hash-matching
+object used to be flagged on a SKIP, which never applies — the
+warning promised an overwrite it could not deliver; drifted objects
+now plan as in-place updates, so drift-inject → warn → overwrite →
+clean converges (pinned in TestReplaceClassAndRenameSuspects and the
+existing drift test).
+
+**Traffic operations (pkg/provision/gcp/traffic.go):** revisions
+(newest-first, ready-state, git SHA from template annotations — the
+version stamps now ride the template so every revision permanently
+names its commit), traffic read/set, and the three verbs: --canary=N
+splits public services N/(100-N) between latest and the revision
+serving now while async services stage their new revision at 0%
+(whole-app "old + a taste" per the approved call); tako promote sends
+everything to latest; tako rollback returns each service to its prior
+ready revision — instant, per-service narration with SHAs,
+single-revision services say so, infra shape stays git revert +
+deploy. v2 quirk found live: trafficStatuses carries NO revision name
+for LATEST-type entries, so the first canary silently deployed at
+100% — serving() now falls back to the newest ready revision.
+
+**Prune (cmd/tako/lifecycle.go):** stateless orphans (subscriptions,
+run services, pull subs, topics, indexes, SAs) delete in reverse
+reconcile order; converges to "no orphans — nothing to prune".
+--data walks orphaned buckets (object counts, capped 1000+) and
+undeclared datastore kinds (aggregation counts via the new
+KindsInNamespace/CountKind) behind the typed-name confirmation.
+Subscription topic changes now APPLY as announced delete+create
+(replace class) instead of failing the patch.
+
+**Two env-isolation bugs the pr-42 walk caught — the gate's whole
+point:**
+1. The shared artifact repo was env-labeled, so a preview env planned
+   a create that 409'd; making its observation env-agnostic then let
+   `destroy --env=pr-42` DELETE prod's repo — and the framework lease
+   bucket went with it. Env-scoped destroys now keep project-shared
+   machinery (repo, lease bucket) and say so.
+2. Far worse: grant revocation keyed managed members on the `-sa`
+   name pattern, which matches EVERY env's identities on the shared
+   project policy — pr-42's destroy stripped prod's datastore.user
+   and prod served 500s until re-deployed. Managed members are now
+   the exact marker-derived email set of THIS app+env
+   (ServiceAccounts.ManagedEmails; refreshed post-SA-creation), so no
+   env can revoke another's grants. ManagedMember (the naming
+   invariant) remains pinned by tests but no longer gates rewriting.
+
+**Also:** --env=/--project=/--region= equals-forms parse (the spec
+writes --env=pr-42; only the space form worked); the §4.6a rename
+paragraph now tells the truth (physical names embed logical names —
+GCS cannot relabel; a migrating tako rename is a planned feature);
+usage text covers promote/rollback/prune. An amusing determinism
+catch: the walk's scratch topic (declared, never used) was dead-code-
+eliminated by the linker — byte-identical binaries, unchanged
+digests, zero run-service updates, exactly as a content-addressed
+system should behave.
+
+**Live walk (tako-test-01, validate/lifecycle.md):** deploy (classified
+plan, no ceremony) → console memory edit → `~ update … ← DRIFT` →
+deploy overwrote → clean plan → scratch rename → `? orphaned … ↳
+rename suspect` + interactive prompt answered y → --canary=10
+(gallery 90% pinned / 10% latest; all four async services pinned 100%
+old with new staged) → promote (100% latest, sha c324fb8 printed) →
+rollback (five services pinned back instantly, SHAs shown) → prune
+(✗ topic scratch, ✗ topic scratch2 → "no orphans") → --env=pr-42
+(preflight demanded pr-42-notifier-key with the exact command; 45
+creates all prefixed; disjoint bucket/namespace/secret; feed empty
+while prod's served) → destroy --env=pr-42 (env-scoped, after the
+fixes) → prod healed post-grant-restore (~50s propagation) → destroy
+→ clean project (0 services, 0 topics). Gallery's code restored to
+byte-identical; full local suite + all examples green.
+
+**Discovered work (not done):** the migrating tako rename (per the
+approved call); canary percent surviving a same-digest re-deploy is
+undefined-but-harmless (skips don't touch traffic); C5 leftovers
+stand (security summary hides agent members, conf-signer persists).
+
+**GATE REQUEST — C6: the scripted lifecycle walk.** Run
+`validate/lifecycle.md` end to end on tako-test-01 (§§1–9: classified
+plans, drift repair, canary through the prompt, promote, rollback,
+rename suspects, both prunes, the pr-42 preview cycle — judge
+especially that pr-42's create/destroy leaves prod untouched, the two
+env-isolation fixes above being this slice's hardest-won lesson) and
+record the verdict in docs/validation-log.md. Stage 2 closes on a
+pass; Stage 3 (web, auth, services) begins with its decomposition
+per the agent plan.

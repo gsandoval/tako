@@ -14,14 +14,20 @@ import (
 // (KindIamGrants). Policies carry no labels, so observation is
 // content-addressed against the desired targets: List reads each
 // desired target's policy, extracts the bindings whose members are
-// tako identities (provision.ManagedMember, plus the Pub/Sub service
-// agent on tako SAs), and hashes them the same way Desired hashes its
-// spec — equal means converged. Apply is read-modify-write: strip
-// managed bindings, add the desired set, write back with the etag.
-// Foreign bindings (allUsers, humans, other tools) are never touched.
+// THIS app+env's identities (ManagedSA — the marker-derived email set,
+// plus the service agents on tako-managed target kinds), and hashes
+// them the same way Desired hashes its spec — equal means converged.
+// Apply is read-modify-write: strip managed bindings, add the desired
+// set, write back with the etag. Foreign bindings — allUsers, humans,
+// other tools, and crucially OTHER ENVS' service accounts on the
+// shared project policy — are never touched.
 type Grants struct {
 	C       *Client
 	Desired []provision.Object
+	// ManagedSA is the exact email set of this app+env's SAs
+	// (ServiceAccounts.ManagedEmails). A name-pattern predicate here
+	// once stripped prod's grants during a preview env's destroy.
+	ManagedSA map[string]bool
 }
 
 func (g *Grants) Kind() provision.Kind { return provision.KindIamGrants }
@@ -77,7 +83,7 @@ func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet
 // target kinds tako itself manages; everywhere else it is someone
 // else's.
 func (g *Grants) managed(typ, member string) bool {
-	if provision.ManagedMember(member, g.C.Project) {
+	if email, ok := strings.CutPrefix(member, "serviceAccount:"); ok && g.ManagedSA[email] {
 		return true
 	}
 	if !strings.HasPrefix(member, "serviceAccount:service-") {

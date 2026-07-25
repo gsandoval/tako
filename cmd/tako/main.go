@@ -29,9 +29,20 @@ Usage:
                        build every service as a digest-pinned distroless
                        image (no Docker daemon); --push uploads each to
                        <repo>/<service> on Artifact Registry
-  tako deploy [--plan] [--project <id>] [--region <r>] [--env <e>]
+  tako deploy [--plan] [--canary=<pct>] [--yes] [--project <id>]
+              [--region <r>] [--env <e>]
                        reconcile the app onto GCP: preflight, classified
-                       plan (--plan stops there), lease, apply, live URL
+                       plan (--plan stops there; replaces and rename
+                       suspects prompt unless --yes), lease, apply, live
+                       URL; --canary holds new revisions at <pct>%
+                       public traffic (async staged at 0%)
+  tako promote         send 100% of every service's traffic to latest
+  tako rollback        return traffic to the previous revision set
+                       (instant, no rebuild; infra shape rolls back via
+                       git revert + tako deploy)
+  tako prune [--data]  delete labeled orphans: stateless immediately,
+                       data (buckets, undeclared datastore kinds) only
+                       with --data behind counts + typed confirmation
   tako logs [service] [--since 15m]
                        recent logs for the deployed services
   tako dlq [service] [--ack]
@@ -44,7 +55,7 @@ Usage:
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
 
-Commands arriving in later slices: prune, rename, canary/promote/rollback.
+Commands arriving in later slices: a migrating tako rename.
 `
 
 func main() {
@@ -79,6 +90,21 @@ func main() {
 		}
 	case "dlq":
 		if err := runDLQ(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
+			os.Exit(1)
+		}
+	case "promote":
+		if err := runPromote(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
+			os.Exit(1)
+		}
+	case "rollback":
+		if err := runRollback(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
+			os.Exit(1)
+		}
+	case "prune":
+		if err := runPrune(os.Args[2:]); err != nil {
 			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
 			os.Exit(1)
 		}

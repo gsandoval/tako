@@ -55,24 +55,24 @@ func TestShortlinkPlanRender(t *testing.T) {
 		t.Fatal(err)
 	}
 	plan := Compute("shortlink", "prod", desired, nil)
-	want := `  create  artifact repo tako
-  create  service account shortlink-sa
-  create  service account shortlink-countclick-sa
-  create  datastore index links (owner, -created)
-  create  topic clicks
-  create  topic shortlink-countclick-dead
-  create  pull subscription shortlink-countclick-dead
-  create  run service shortlink
-  create  run service shortlink-countclick
-  create  iam grants project
-  create  iam grants run shortlink
-  create  iam grants run shortlink-countclick
-  create  iam grants serviceAccount shortlink-countclick-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants serviceAccount shortlink-sa@my-proj.iam.gserviceaccount.com
-  create  iam grants subscription shortlink-countclick
-  create  iam grants topic clicks
-  create  iam grants topic shortlink-countclick-dead
-  create  push subscription shortlink-countclick
+	want := `  + create  artifact repo tako
+  + create  service account shortlink-sa
+  + create  service account shortlink-countclick-sa
+  + create  datastore index links (owner, -created)
+  + create  topic clicks
+  + create  topic shortlink-countclick-dead
+  + create  pull subscription shortlink-countclick-dead
+  + create  run service shortlink
+  + create  run service shortlink-countclick
+  + create  iam grants project
+  + create  iam grants run shortlink
+  + create  iam grants run shortlink-countclick
+  + create  iam grants serviceAccount shortlink-countclick-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants serviceAccount shortlink-sa@my-proj.iam.gserviceaccount.com
+  + create  iam grants subscription shortlink-countclick
+  + create  iam grants topic clicks
+  + create  iam grants topic shortlink-countclick-dead
+  + create  push subscription shortlink-countclick
   18 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {

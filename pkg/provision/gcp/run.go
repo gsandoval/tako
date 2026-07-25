@@ -17,8 +17,15 @@ type RunServices struct {
 	C      *Client
 	Labels map[string]string
 	// Annotations are version stamps (git sha, graph hash) added to
-	// every service tako writes.
+	// every service tako writes — service-level AND template-level, so
+	// each revision permanently names the git SHA it was built from
+	// (what rollback prints).
 	Annotations map[string]string
+	// Canary, when non-zero, holds updates back: public services split
+	// Canary% to the new revision and the rest to the one serving now;
+	// async services stage the new revision at 0% (spec v0: push
+	// traffic doesn't canary) — tako promote completes either.
+	Canary int
 }
 
 func (r *RunServices) Kind() provision.Kind { return provision.KindRunService }
@@ -145,6 +152,7 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 		"labels":      r.Labels,
 		"annotations": annotations,
 		"template": map[string]any{
+			"annotations":    r.Annotations,
 			"serviceAccount": spec["serviceAccount"],
 			"scaling": map[string]any{
 				"minInstanceCount": scaling["min"],
@@ -181,10 +189,36 @@ func (r *RunServices) Create(ctx context.Context, o provision.Object) error {
 
 func (r *RunServices) Update(ctx context.Context, o provision.Object) error {
 	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s", r.parent(), o.Name)
+	body := r.body(o)
+	// Traffic is explicit on every update: the default rollout is 100%
+	// to latest (which also means a plain deploy supersedes an
+	// in-progress canary — new rollout, new default). Under --canary
+	// the new revision is held back instead: public services split,
+	// async services stage at 0% until tako promote.
+	public, _ := o.Spec["public"].(bool)
+	traffic := []TrafficTarget{{Latest: true, Percent: 100}}
+	if r.Canary > 0 {
+		prev, err := r.serving(ctx, o.Name)
+		if err != nil {
+			return err
+		}
+		switch {
+		case prev == "":
+			// Never served (first rollout): nothing to hold back.
+		case public:
+			traffic = []TrafficTarget{
+				{Revision: prev, Percent: 100 - r.Canary},
+				{Latest: true, Percent: r.Canary},
+			}
+		default:
+			traffic = []TrafficTarget{{Revision: prev, Percent: 100}}
+		}
+	}
+	body["traffic"] = trafficBody(traffic)
 	var op struct {
 		Name string `json:"name"`
 	}
-	if err := r.C.do(ctx, http.MethodPatch, url, r.body(o), &op); err != nil {
+	if err := r.C.do(ctx, http.MethodPatch, url, body, &op); err != nil {
 		return Classify(err, r.C.Project, "update the run service", "roles/run.admin")
 	}
 	if err := r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong); err != nil {

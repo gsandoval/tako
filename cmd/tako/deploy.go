@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,15 +28,38 @@ import (
 type target struct {
 	project, region, env string
 	planOnly             bool
+	yes                  bool
+	canary               int
 }
 
-func parseTarget(args []string) (target, []string, error) {
+func parseTarget(rawArgs []string) (target, []string, error) {
 	t := target{env: provision.DefaultEnv}
+	// Both --flag value and --flag=value forms are accepted (§4.6a
+	// writes --env=pr-42).
+	var args []string
+	for _, a := range rawArgs {
+		if name, value, ok := strings.Cut(a, "="); ok &&
+			(name == "--project" || name == "--region" || name == "--env") {
+			args = append(args, name, value)
+			continue
+		}
+		args = append(args, a)
+	}
 	var rest []string
 	for i := 0; i < len(args); i++ {
+		if pct, ok := strings.CutPrefix(args[i], "--canary="); ok {
+			n, err := strconv.Atoi(pct)
+			if err != nil || n < 1 || n > 99 {
+				return t, nil, fmt.Errorf("--canary wants a percent between 1 and 99, got %q", pct)
+			}
+			t.canary = n
+			continue
+		}
 		switch args[i] {
 		case "--plan":
 			t.planOnly = true
+		case "--yes":
+			t.yes = true
 		case "--project", "--region", "--env":
 			flag := args[i]
 			if i+1 >= len(args) {
@@ -83,7 +107,7 @@ func runDeploy(args []string) error {
 		return err
 	}
 	if len(rest) > 0 {
-		return fmt.Errorf("unknown argument %q (tako deploy accepts --plan, --project, --region, --env)", rest[0])
+		return fmt.Errorf("unknown argument %q (tako deploy accepts --plan, --canary=<pct>, --yes, --project, --region, --env)", rest[0])
 	}
 	ctx := context.Background()
 	start := time.Now()
@@ -142,10 +166,14 @@ func runDeploy(args []string) error {
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
-	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
+	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels(), Say: sayf}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
-	grants := &gcp.Grants{C: client, Desired: desired}
+	managedSA, err := sas.ManagedEmails(ctx)
+	if err != nil {
+		return err
+	}
+	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
 	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
 	if err != nil {
 		return err
@@ -161,6 +189,16 @@ func runDeploy(args []string) error {
 		fmt.Printf("\n✓ no changes (%s)\n", time.Since(start).Round(time.Second))
 		return nil
 	}
+	// §4.6a "plan before apply": anything beyond additive/in-place —
+	// replaces, rename suspects — waits for a human unless --yes (CI).
+	if plan.NeedsConfirm() && !t.yes {
+		fmt.Printf("  the plan contains replaces or rename suspects — continue? [y/N] ")
+		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+		if l := strings.ToLower(strings.TrimSpace(line)); l != "y" && l != "yes" {
+			return fmt.Errorf("aborted — nothing was changed (re-run with --yes to skip this prompt)")
+		}
+	}
+	runs.Canary = t.canary
 
 	lease := &gcp.Lease{C: client, App: app, Env: t.env, Labels: cfg.Labels(), Say: sayf}
 	release, err := lease.Acquire(ctx, holder())
@@ -174,6 +212,11 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription), desired, applier); err != nil {
+		return err
+	}
+	// SAs may have just been created: the grant passes below key their
+	// managed-member strip on the exact email set, so refresh it.
+	if grants.ManagedSA, err = sas.ManagedEmails(ctx); err != nil {
 		return err
 	}
 	// Grant sequencing is dictated by boot/delivery dependencies:
@@ -230,6 +273,26 @@ func runDeploy(args []string) error {
 			return err
 		}
 		fmt.Printf("✓ %s → %s\n", cfg.Name(svc.Name), url)
+	}
+	if t.canary > 0 {
+		fmt.Println()
+		for _, svc := range graph.Services {
+			name := cfg.Name(svc.Name)
+			targets, err := runs.Traffic(ctx, name)
+			if err != nil {
+				return err
+			}
+			var parts []string
+			for _, tt := range targets {
+				rev := tt.Revision
+				if rev == "" {
+					rev = "latest"
+				}
+				parts = append(parts, fmt.Sprintf("%d%% %s", tt.Percent, rev))
+			}
+			fmt.Printf("  canary  %-24s %s\n", name, strings.Join(parts, " / "))
+		}
+		fmt.Printf("  (async services stage at 0%% — tako promote completes, tako rollback abandons)\n")
 	}
 	fmt.Printf("  (%s)\n\n", time.Since(start).Round(time.Second))
 	printSecuritySummary(graph, cfg, desired)
@@ -415,10 +478,29 @@ func runDestroy(args []string) error {
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
-	grants := &gcp.Grants{C: client, Desired: desired}
+	managedSA, err := sas.ManagedEmails(ctx)
+	if err != nil {
+		return err
+	}
+	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
 	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
 	if err != nil {
 		return err
+	}
+	// A preview env's destroy is env-scoped: the artifact repo and the
+	// framework (lease) bucket are PROJECT-shared machinery — deleting
+	// them would break every other env (the C6 walk caught pr-42's
+	// destroy taking prod's repo with it).
+	envScoped := t.env != provision.DefaultEnv
+	if envScoped {
+		kept := observed[:0]
+		for _, o := range observed {
+			if o.Kind == provision.KindRepo {
+				continue
+			}
+			kept = append(kept, o)
+		}
+		observed = kept
 	}
 	if len(observed) == 0 {
 		fmt.Printf("nothing to destroy: no objects labeled tako-app=%s tako-env=%s in %s\n", app, t.env, t.project)
@@ -434,7 +516,9 @@ func runDestroy(args []string) error {
 	for _, o := range observed {
 		fmt.Printf("  %s %s\n", o.Kind, o.Name)
 	}
-	fmt.Printf("  framework bucket %s-tako\n", t.project)
+	if !envScoped {
+		fmt.Printf("  framework bucket %s-tako\n", t.project)
+	}
 	if hasData := len(dataKinds) > 0 || countKind(observed, provision.KindBucket) > 0; hasData {
 		fmt.Println("  DATA — deleted with the app, gone forever:")
 		for _, o := range observed {
@@ -488,6 +572,10 @@ func runDestroy(args []string) error {
 			return err
 		}
 		fmt.Printf("  ✗ datastore data (%d entities in namespace %s)\n", n, t.env)
+	}
+	if envScoped {
+		fmt.Printf("✓ destroyed (env %s only — shared repo and framework bucket stay)\n", t.env)
+		return nil
 	}
 	lease := &gcp.Lease{C: client, App: app, Env: t.env, Labels: cfg.Labels(), Say: sayf}
 	if err := lease.DeleteBucket(ctx); err != nil {

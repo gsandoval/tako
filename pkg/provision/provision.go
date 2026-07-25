@@ -71,6 +71,10 @@ type Observed struct {
 	// tako-owned fields as they are NOW — differing from SpecHash means
 	// the object was edited outside tako (drift).
 	LiveHash string
+	// Detail carries the few live fields change classification needs
+	// (a push subscription's topic — its immutable field). Kind-specific
+	// and optional.
+	Detail map[string]string
 }
 
 // Action classifies one plan entry.
@@ -83,11 +87,31 @@ const (
 	Orphan Action = "orphaned (kept)"
 )
 
+// Class is a change's §4.6a update class. Creates are additive and
+// updates in-place unless the diff touches an immutable field — then
+// the apply is a replace (delete + create) and the plan says so before
+// anything happens.
+type Class string
+
+const (
+	ClassAdditive Class = "additive"
+	ClassInPlace  Class = "in-place"
+	ClassReplace  Class = "replace"
+)
+
 // Entry is one line of the plan.
 type Entry struct {
 	Action Action
 	Kind   Kind
 	Name   string
+	// Class is the change's update class; Reason says why when it is
+	// ClassReplace (the consequence the user must see).
+	Class  Class
+	Reason string
+	// Suspect names a same-kind created object when this entry is an
+	// orphan — the §4.6a rename suspicion: data does not follow a
+	// rename automatically.
+	Suspect string
 	// Drift marks an object whose live state no longer matches the hash
 	// it recorded — edited outside tako; tako-owned fields will be
 	// overwritten on apply.
@@ -120,18 +144,35 @@ func Compute(app, env string, desired []Object, observed []Observed) Plan {
 			live, exists := byKey[key]
 			switch {
 			case !exists:
-				plan.Entries = append(plan.Entries, Entry{Action: Create, Kind: d.Kind, Name: d.Name})
+				plan.Entries = append(plan.Entries, Entry{Action: Create, Kind: d.Kind, Name: d.Name, Class: ClassAdditive})
 			case live.SpecHash != SpecHash(d.Spec):
-				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name, Drift: drifted(live)})
+				class, reason := classify(d, live)
+				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name,
+					Class: class, Reason: reason, Drift: drifted(live)})
+			case drifted(live):
+				// The record matches the intent but the live object does
+				// not: a console edit. The warning promises an overwrite,
+				// so the plan applies one — a skip would let drift stand.
+				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name,
+					Class: ClassInPlace, Drift: true})
 			default:
-				plan.Entries = append(plan.Entries, Entry{Action: Skip, Kind: d.Kind, Name: d.Name, Drift: drifted(live)})
+				plan.Entries = append(plan.Entries, Entry{Action: Skip, Kind: d.Kind, Name: d.Name})
 			}
+		}
+	}
+	// Rename suspicion (§4.6a): a same-kind orphan + create pair looks
+	// exactly like a rename, and data never follows one automatically.
+	createdOfKind := map[Kind]string{}
+	for _, e := range plan.Entries {
+		if e.Action == Create {
+			createdOfKind[e.Kind] = e.Name
 		}
 	}
 	var orphans []Entry
 	for _, o := range observed {
 		if !seen[string(o.Kind)+"/"+o.Name] {
-			orphans = append(orphans, Entry{Action: Orphan, Kind: o.Kind, Name: o.Name})
+			orphans = append(orphans, Entry{Action: Orphan, Kind: o.Kind, Name: o.Name,
+				Suspect: createdOfKind[o.Kind]})
 		}
 	}
 	// Deterministic plans regardless of listing order.
@@ -158,6 +199,20 @@ func drifted(o Observed) bool {
 	return o.LiveHash != "" && o.SpecHash != "" && o.LiveHash != o.SpecHash
 }
 
+// classify decides an update's §4.6a class from the one live detail
+// that matters per kind: a push subscription's topic is immutable, so
+// changing it is a replace (delete + create) with a consequence worth
+// stating; everything else tako updates is in-place.
+func classify(d Object, live Observed) (Class, string) {
+	if d.Kind == KindPushSubscription {
+		if want := fmt.Sprint(d.Spec["topic"]); live.Detail["topic"] != "" && live.Detail["topic"] != want {
+			return ClassReplace, fmt.Sprintf("topic is immutable (%s → %s) — delete+create; in-flight messages on the old subscription are lost",
+				live.Detail["topic"], want)
+		}
+	}
+	return ClassInPlace, ""
+}
+
 // Counts sums the plan by action.
 func (p Plan) Counts() (creates, updates, skips, orphans int) {
 	for _, e := range p.Entries {
@@ -181,18 +236,56 @@ func (p Plan) Changed() bool {
 	return c+u > 0
 }
 
+// NeedsConfirm reports whether the plan holds anything beyond
+// additive/in-place changes — replaces or rename suspects — which the
+// default deploy confirms interactively (§4.6a "plan before apply").
+func (p Plan) NeedsConfirm() bool {
+	for _, e := range p.Entries {
+		if e.Class == ClassReplace || (e.Action == Orphan && e.Suspect != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// marker is the plan line's change-class glyph: + additive, ~ in-place,
+// ! replace, ? orphan, space for skips.
+func marker(e Entry) string {
+	switch {
+	case e.Class == ClassReplace:
+		return "!"
+	case e.Action == Create:
+		return "+"
+	case e.Action == Update:
+		return "~"
+	case e.Action == Orphan:
+		return "?"
+	}
+	return " "
+}
+
 // Render prints the plan the way the deploy banner shows it.
 func (p Plan) Render() string {
 	out := ""
 	for _, e := range p.Entries {
-		line := fmt.Sprintf("%-7s %s %s", e.Action, e.Kind, e.Name)
+		line := fmt.Sprintf("%s %-7s %s %s", marker(e), e.Action, e.Kind, e.Name)
 		if e.Action == Orphan {
-			line = fmt.Sprintf("%s %s %s", e.Action, e.Kind, e.Name)
+			line = fmt.Sprintf("%s %s %s %s", marker(e), e.Action, e.Kind, e.Name)
+		}
+		if e.Class == ClassReplace {
+			line += "  ← REPLACE: " + e.Reason
 		}
 		if e.Drift {
 			line += "  ← DRIFT: modified outside tako; tako-owned fields will be overwritten"
 		}
 		out += "  " + line + "\n"
+		if e.Action == Orphan && e.Suspect != "" {
+			warn := fmt.Sprintf("  ↳ rename suspect: %s %s appeared — if this is a rename, data does not follow automatically", e.Kind, e.Suspect)
+			if e.Kind == KindBucket {
+				warn += "; keep both declared, copy the objects, then drop the old (a migrating tako rename is a planned feature)"
+			}
+			out += "  " + warn + "\n"
+		}
 	}
 	c, u, s, o := p.Counts()
 	out += fmt.Sprintf("  %d creates, %d updates, %d skips, %d orphans\n", c, u, s, o)

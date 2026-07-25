@@ -133,3 +133,22 @@ func (b *Buckets) Delete(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// ListObjects returns up to max object names in a bucket — prune's
+// confirmation listing (scale, not precision).
+func (c *Client) ListObjects(ctx context.Context, bucket string, max int) ([]string, error) {
+	var page struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o?fields=items(name)&maxResults=%d", bucket, max)
+	if err := c.do(ctx, http.MethodGet, u, nil, &page); err != nil {
+		return nil, Classify(err, c.Project, "list bucket objects", "roles/storage.admin")
+	}
+	names := make([]string, 0, len(page.Items))
+	for _, it := range page.Items {
+		names = append(names, it.Name)
+	}
+	return names, nil
+}

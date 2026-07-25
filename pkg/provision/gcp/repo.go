@@ -34,7 +34,11 @@ func (r *Repos) List(ctx context.Context) ([]provision.Observed, error) {
 	}
 	var observed []provision.Observed
 	for _, repo := range out.Repositories {
-		if !hasLabels(repo.Labels, r.Labels) {
+		// The repo is shared across ENVIRONMENTS by design (one repo per
+		// project, every env's images in it), so observation matches any
+		// tako-labeled repo regardless of tako-env — else a preview env
+		// plans a create that 409s against prod's repo.
+		if repo.Labels["tako-app"] == "" {
 			continue
 		}
 		observed = append(observed, provision.Observed{
