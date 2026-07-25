@@ -147,9 +147,9 @@ func TestGalleryPlanRender(t *testing.T) {
 // emit-publisher grant plus TAKO_BUCKET_EVENTS.
 func TestGalleryFanoutAndTriggers(t *testing.T) {
 	desired := galleryDesired(t)
-	subTopics := map[string]string{}     // subscription name → source topic
-	grants := map[string][]string{}      // grants object name → "role → member"
-	envs := map[string]map[string]any{}  // run service → env
+	subTopics := map[string]string{}    // subscription name → source topic
+	grants := map[string][]string{}     // grants object name → "role → member"
+	envs := map[string]map[string]any{} // run service → env
 	public := map[string]bool{}
 	for _, o := range desired {
 		switch o.Kind {

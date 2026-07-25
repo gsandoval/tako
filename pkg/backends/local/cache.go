@@ -12,9 +12,9 @@ import (
 // expire on read past their deadline. This is also v0's honest cloud
 // story — per-instance, no cross-instance invalidation.
 type MemoryCache struct {
-	mu      sync.Mutex
-	caches  map[string]map[string]cacheEntry
-	now     func() time.Time
+	mu     sync.Mutex
+	caches map[string]map[string]cacheEntry
+	now    func() time.Time
 }
 
 type cacheEntry struct {

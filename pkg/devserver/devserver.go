@@ -15,6 +15,7 @@ import (
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/build"
 	"github.com/gsandoval/tako/pkg/codegen"
 )
 
@@ -118,6 +119,15 @@ func (s *session) cycle(first bool) error {
 	}
 	if first {
 		fmt.Fprintf(s.out(), "  analyzing   %s\n", CountLine(graph))
+	}
+
+	// Frontend builds re-run on changes (§2.11) — before Generate, which
+	// stages the output for embedding. Proxied sites (WithDevProxy)
+	// declare no build or skip serving it locally anyway.
+	if err := build.Sites(s.dir, graph, func(format string, args ...any) {
+		fmt.Fprintf(s.out(), "  "+format+"\n", args...)
+	}); err != nil {
+		return err
 	}
 
 	written, err := codegen.Generate(graph, s.dir)
@@ -303,11 +313,27 @@ func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 				break
 			}
 		}
+		// A site alone is an app too (W1: service-from-site).
+		for _, r := range g.Resources {
+			if r.Kind == "site" && r.Package == svc.Package && svc.Name == filepathBase(svc.Package) {
+				if len(apps) == 0 || apps[len(apps)-1].Name != svc.Name {
+					apps = append(apps, svc)
+				}
+				break
+			}
+		}
 	}
 	if len(apps) != 1 {
 		return analyzer.Service{}, fmt.Errorf("tako dev serves exactly one app service in the walking skeleton; found %d", len(apps))
 	}
 	return apps[0], nil
+}
+
+func filepathBase(importPath string) string {
+	if i := strings.LastIndexByte(importPath, '/'); i >= 0 {
+		return importPath[i+1:]
+	}
+	return importPath
 }
 
 // CountLine renders the banner's analyzing summary: endpoints are the
@@ -337,6 +363,15 @@ func CountLine(g *analyzer.AppGraph) string {
 	}
 	if crons > 0 {
 		line += fmt.Sprintf(", %d cron%s", crons, plural(crons))
+	}
+	sites := 0
+	for _, r := range g.Resources {
+		if r.Kind == "site" {
+			sites++
+		}
+	}
+	if sites > 0 {
+		line += fmt.Sprintf(", %d site%s", sites, plural(sites))
 	}
 	return line
 }

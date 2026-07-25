@@ -4,8 +4,8 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"time"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )

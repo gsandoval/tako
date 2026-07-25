@@ -1,0 +1,3 @@
+journal: 1 service
+  service journal (package journal, profile default)
+    site ./web

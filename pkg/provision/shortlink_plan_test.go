@@ -107,15 +107,15 @@ func TestShortlinkGrantContents(t *testing.T) {
 	workerSA := "serviceAccount:shortlink-countclick-sa@my-proj.iam.gserviceaccount.com"
 	agent := "serviceAccount:service-123456@gcp-sa-pubsub.iam.gserviceaccount.com"
 	checks := map[string][]string{
-		"project":      {"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA},
-		"topic clicks": {"roles/pubsub.publisher → " + apiSA},
-		"run shortlink": {}, // public API service: no tako-member bindings
-		"run shortlink-countclick": {"roles/run.invoker → " + workerSA},
+		"project":                         {"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA},
+		"topic clicks":                    {"roles/pubsub.publisher → " + apiSA},
+		"run shortlink":                   {}, // public API service: no tako-member bindings
+		"run shortlink-countclick":        {"roles/run.invoker → " + workerSA},
 		"serviceAccount " + workerSA[15:]: {"roles/iam.serviceAccountTokenCreator → " + agent},
 		// Dead-letter plumbing: the worker Permanent-publishes into its
 		// own dead topic, the Pub/Sub agent forwards exhausted deliveries
 		// there and acks them off the source subscription.
-		"topic shortlink-countclick-dead": {"roles/pubsub.publisher → " + agent, "roles/pubsub.publisher → " + workerSA},
+		"topic shortlink-countclick-dead":   {"roles/pubsub.publisher → " + agent, "roles/pubsub.publisher → " + workerSA},
 		"subscription shortlink-countclick": {"roles/pubsub.subscriber → " + agent},
 	}
 	for name, want := range checks {

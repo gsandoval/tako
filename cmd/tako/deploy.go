@@ -123,6 +123,11 @@ func runDeploy(args []string) error {
 	app := graph.Module
 	fmt.Printf("tako deploy · %s → %s (%s)\n\n", app, t.project, t.region)
 	fmt.Printf("  analyzing    %s\n", devserver.CountLine(graph))
+	// Frontend builds run BEFORE codegen: the generated services embed
+	// the built output.
+	if err := build.Sites(dir, graph, sayf); err != nil {
+		return err
+	}
 	if _, err := codegen.Generate(graph, dir); err != nil {
 		return err
 	}
@@ -550,10 +555,10 @@ func runDestroy(args []string) error {
 		provision.KindPullSubscription:   pulls,
 		provision.KindBucketNotification: notifications,
 		provision.KindTopic:              topics,
-		provision.KindDatastoreIndex:   indexes,
-		provision.KindBucket:           buckets,
-		provision.KindServiceAccount:   sas,
-		provision.KindRepo:             repos,
+		provision.KindDatastoreIndex:     indexes,
+		provision.KindBucket:             buckets,
+		provision.KindServiceAccount:     sas,
+		provision.KindRepo:               repos,
 	}
 	for _, kind := range provision.DeleteOrder() {
 		for _, o := range observed {

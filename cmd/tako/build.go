@@ -44,6 +44,9 @@ func runBuild(args []string) error {
 		return err
 	}
 	fmt.Printf("  analyzing   %s\n", devserver.CountLine(graph))
+	if err := build.Sites(dir, graph, sayf); err != nil {
+		return err
+	}
 	written, err := codegen.Generate(graph, dir)
 	if err != nil {
 		return err

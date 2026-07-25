@@ -1,0 +1,7 @@
+:root { --ink: #1a1a1a; --paper: #faf8f5; --accent: #8b4513; }
+body { font: 18px/1.6 Georgia, serif; color: var(--ink); background: var(--paper);
+       max-width: 42rem; margin: 3rem auto; padding: 0 1rem; }
+header { border-bottom: 2px solid var(--accent); margin-bottom: 2rem; }
+h1 { margin: 0 0 .5rem; }
+nav a { color: var(--accent); text-decoration: none; margin-right: .25rem; }
+nav a:hover { text-decoration: underline; }

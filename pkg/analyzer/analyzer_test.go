@@ -163,3 +163,26 @@ func TestPayloadShapeIsCompilersJob(t *testing.T) {
 		t.Fatalf("compile error does not mention the handler:\n%v", err)
 	}
 }
+
+// TestJournalGraph goldens the AppGraph of examples/journal — W1's
+// acceptance graph: a service derived from a Site alone (no handlers).
+func TestJournalGraph(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/journal")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/journal): %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	compareGolden(t, "testdata/journal_appgraph.golden.json", got)
+}
+
+func TestJournalSummary(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/journal")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/journal): %v", err)
+	}
+	compareGolden(t, "testdata/journal_summary.golden.txt", []byte(Summary(g)))
+}

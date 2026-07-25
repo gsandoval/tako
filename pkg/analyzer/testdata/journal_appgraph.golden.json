@@ -1,0 +1,29 @@
+{
+  "module": "journal",
+  "services": [
+    {
+      "name": "journal",
+      "package": "journal",
+      "handlers": null,
+      "profile": "default"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "site",
+      "name": "./web",
+      "var": "journal.site",
+      "package": "journal",
+      "dir": "web",
+      "redirects": [
+        {
+          "from": "/about-us",
+          "to": "/about"
+        }
+      ],
+      "pos": "app.go:14:5"
+    }
+  ],
+  "handlers": [],
+  "edges": []
+}

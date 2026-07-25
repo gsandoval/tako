@@ -71,16 +71,18 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		Edges:     []Edge{},
 	}
 	var errs ErrorList
-	entities := map[string]*entityType{}    // payload type key → schema
+	entities := map[string]*entityType{} // payload type key → schema
 	// payload type key → index into graph.Resources (an index, not a
 	// pointer: later appends may reallocate the slice).
 	entityRes := map[string]int{}
-	queueVars := map[types.Object]string{}  // queue var object → queue name
-	topicVars := map[types.Object]string{}  // topic var object → topic name
-	bucketVars := map[types.Object]string{} // bucket var object → bucket name
+	queueVars := map[types.Object]string{}    // queue var object → queue name
+	topicVars := map[types.Object]string{}    // topic var object → topic name
+	bucketVars := map[types.Object]string{}   // bucket var object → bucket name
 	resourceVars := map[types.Object]resRef{} // grant-relevant vars for the edge scan
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
-	workersByQueue := map[string]*Handler{} // queue name → its worker
+	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
+	sitePackages := map[string]string{}       // package path → package name (service-from-site)
+	workersByQueue := map[string]*Handler{}   // queue name → its worker
 	type varDecl struct {
 		name *ast.Ident
 		call *ast.CallExpr
@@ -146,12 +148,26 @@ func Analyze(cfg Config) (*AppGraph, error) {
 						resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "secret"}
 					}
 				}
-			case "Page", "Site", "Auth":
+			case "Site":
+				if r := extractSite(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					if prior, exists := siteOfPackage[pkg.PkgPath]; exists {
+						errs = append(errs, &Error{
+							Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
+							Msg:  fmt.Sprintf("a package serves one site — %s is already declared; remove %s or merge the two", prior, r.Var),
+							Rule: "one-site",
+						})
+						continue
+					}
+					siteOfPackage[pkg.PkgPath] = r.Var
+					sitePackages[pkg.PkgPath] = pkg.Name
+					graph.Resources = append(graph.Resources, *r)
+				}
+			case "Page", "Auth":
 				// Declared surface whose behavior hasn't shipped: an
 				// explicit error beats silently ignoring the declaration.
 				errs = append(errs, &Error{
 					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
-					Msg:  fmt.Sprintf("tako.%s is not available yet — the web slice (sites, pages, auth) arrives with Phase G", d.ctor),
+					Msg:  fmt.Sprintf("tako.%s is not available yet — the web slice (pages: W2, auth: W5) is arriving", d.ctor),
 					Rule: "not-yet",
 				})
 			case "Job", "JobHandler", "Lock", "Singleton":
@@ -234,6 +250,19 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		return posLess(graph.Resources[i].Pos, graph.Resources[j].Pos)
 	})
 	graph.Services = partition(graph.Handlers)
+	// A package with a Site but no handlers is still an app: the pure-
+	// static site deploys as its package's service.
+	for path, name := range sitePackages {
+		found := false
+		for _, svc := range graph.Services {
+			if svc.Package == path && svc.Name == name {
+				found = true
+			}
+		}
+		if !found {
+			graph.Services = append(graph.Services, Service{Name: name, Package: path, Profile: "default"})
+		}
+	}
 	graph.Edges = deriveEdges(pkgs, resourceVars, handlerFuncs, graph.Handlers)
 	return graph, nil
 }

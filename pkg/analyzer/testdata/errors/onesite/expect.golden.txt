@@ -1,0 +1,1 @@
+app.go:6:13: a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two (tako/one-site)

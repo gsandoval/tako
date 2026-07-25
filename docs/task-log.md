@@ -4389,3 +4389,74 @@ SPA + redirect + 304 behavior, destroy.
 
 **STOP — awaiting DX approval (the two §1 scope calls, and the
 Stage 3 decomposition in tako-agent-plan.md) before implementation.**
+
+## W1 — implementation: Site — embedded static, caching headers, WithBuild/WithDevProxy (2026-07-25)
+
+Proposal approved with both §1 recommendations (journal grows from W1;
+WithDomain/WithCDN deferred with named-slice not-yet texts) and the
+Stage 3 decomposition. Stage 3's first slice.
+
+**Analyzer:** tako.Site extracts for real (the Phase-G not-yet gate
+falls; Page/Auth keep theirs, retexted to W2/W5). Resource kind
+"site" carries Dir/Build/BuildOut/DevProxy/SPA/Redirects — paths
+normalized module-relative so codegen and the build runner share one
+coordinate system. Errors under golden test: non-constant args,
+invalid options, not-yet options naming their slice
+(WithDomain/WithCDN/WithTrustedHTML), missing dir (unless WithBuild
+owns creating it), one-site-per-package. A package with a Site and NO
+handlers still yields its app service — the pure-static site is the
+minimal website (tako dev's app-service picker learned the same).
+journal's graph + summary are goldened; the analyzing line counts
+sites.
+
+**Runtime (SiteHandler):** fs.FS + options. Strong content-hash ETags
+everywhere with 304 on If-None-Match; fingerprinted names
+(hex run ≥6 before the extension) → public, max-age=31536000,
+immutable; everything else no-cache; documents (and only documents)
+get CSP-Report-Only default-src 'self', nosniff, and
+strict-origin-when-cross-origin; pretty URLs (about →
+about/index.html); SPA fallback when declared, else 404; 308
+redirects; WithDevProxy reverse-proxies in local mode only. Explicit
+content types (nosniff means they must be right). Unit-tested over
+fstest.MapFS; journal's example tests hit the same handler over
+os.DirFS — the parity bar is one code path.
+
+**Codegen/build:** the site is staged into .tako/gen/<svc>/site and
+embedded via go:embed all: — the binary IS the deployment, so digests
+move when content moves and rollback rolls the site back. Site-only
+services generate a main with no app import (nothing to reference —
+constructors are side-effect-free records). WithBuild runs BEFORE
+Generate in deploy, build, and every dev cycle (⛅ site narration;
+failure = the command's stderr tail; success with a missing/empty
+output dir = its own text); an unbuilt output at generate time stages
+a placeholder so go:embed still compiles and says why. tako test note:
+WithBuild does not run there (journal W1 has none; revisit when a
+generator-using example gates).
+
+**Live validation (validate/site.md):** dev serving judged by curl
+(all §2.11 headers, 308, 304, pretty URLs, 404-without-SPA); the REAL
+hugo variant ran (hugo installed here): `⛅ site hugo --minify -s
+hugosrc -d ../dist → dist (6 files)` staged and embedded in a
+scratch module, and both failure texts fired live (broken flag → the
+site-build-failed wrapper with hugo's stderr; `true` with an unwritten
+output dir → the empty-output text). Full cycle: journal deployed to
+tako-test-01 in 36s with the SMALLEST plan since hello (repo, SA, run
+service, grants — zero new object kinds, no IAM, no APIs; security
+summary: "no resource grants; public ingress"); the cloud answers were
+byte-identical to local — the SAME ETag ("57fe14afb42ff075") for the
+same content, identical cache-control split, 308/304/404 all matching;
+destroy left the project clean.
+
+**Discovered work (not done):** tako test should run WithBuild when a
+generator-using example needs tested builds; Boot() is emitted for
+site-only services because the site counts as a resource (harmless —
+wires backends nobody calls; drop when codegen learns resource kinds
+that need no boot); pre-compressed (brotli/gzip) asset serving is a
+later additive.
+
+**GATE REQUEST — W1: the site story.** Run `validate/site.md` on
+tako-test-01 (§1 local curl judgments, §2 WithBuild with hugo — it is
+installed — including both failure texts, §3 WithDevProxy against
+hugo server, §4 the full cycle judging local/cloud byte-parity by
+ETag) and record the verdict in docs/validation-log.md. W2
+(Pages, forms, CSRF; journal gains authored-post pages) follows.

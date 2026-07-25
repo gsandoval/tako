@@ -73,7 +73,7 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 		res  resRef
 		verb string
 	}
-	refs := map[*types.Func][]ref{}    // direct resource touches per function
+	refs := map[*types.Func][]ref{}          // direct resource touches per function
 	calls := map[*types.Func][]*types.Func{} // same-module call graph
 
 	for _, pkg := range pkgs {

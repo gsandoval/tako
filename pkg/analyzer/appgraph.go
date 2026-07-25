@@ -61,8 +61,23 @@ type Resource struct {
 	// tracked, so this can over-index but never under-indexes the
 	// queries the analyzer accepted.
 	Composite []string `json:"composite,omitempty"`
+	// Site configuration (Kind "site"): the served directory, optional
+	// frontend build (command + output dir), the dev-proxy URL, the SPA
+	// fallback, and permanent redirects.
+	Dir       string         `json:"dir,omitempty"`
+	Build     string         `json:"build,omitempty"`
+	BuildOut  string         `json:"build_out,omitempty"`
+	DevProxy  string         `json:"dev_proxy,omitempty"`
+	SPA       bool           `json:"spa,omitempty"`
+	Redirects []SiteRedirect `json:"redirects,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
+}
+
+// SiteRedirect is one permanent site redirect (WithRedirect).
+type SiteRedirect struct {
+	From string `json:"from"`
+	To   string `json:"to"`
 }
 
 // Handler is one declared handler var.
