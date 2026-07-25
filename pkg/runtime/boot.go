@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
@@ -58,12 +57,6 @@ func BootGCP() error {
 			return fmt.Errorf("%s is not set — tako deploy injects it, so this is a tako bug", name)
 		}
 	}
-	if list := os.Getenv("TAKO_BUCKET_EVENTS"); list != "" {
-		opts.BucketEvents = map[string]bool{}
-		for _, b := range strings.Split(list, ",") {
-			opts.BucketEvents[b] = true
-		}
-	}
 	c, err := gcpb.New(context.Background(), opts)
 	if err != nil {
 		return err
@@ -99,7 +92,7 @@ func BootGCP() error {
 	hooks.Bucket = gcpb.NewBucketStore(c)
 	hooks.Queue = gcpb.NewQueueStore(c)
 	hooks.Topic = gcpb.NewTopicStore(c)
-	hooks.Signer = gcpb.Signer{}
+	hooks.Signer = gcpb.NewSigner(c)
 	hooks.Cache = local.NewMemoryCache()
 	hooks.Metrics = local.NewMetricsLog()
 	// tako.Permanent short-circuits to this service's own dead topic:

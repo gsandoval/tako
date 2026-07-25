@@ -107,18 +107,27 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			case "write":
 				add(target{TargetBucket, b}, "roles/storage.objectAdmin", member)
 			case "sign":
-				// signBlob grants arrive with C5's signed URLs.
+				// Signed URLs authorize AS the signer at use time: the
+				// SA signs via its own signBlob (self tokenCreator) and
+				// needs object access for the URLs to work — admin, since
+				// SignedPut writes and SignedGet reads.
+				add(target{TargetServiceAccount, cfg.SAEmail(svc)}, "roles/iam.serviceAccountTokenCreator", member)
+				add(target{TargetBucket, b}, "roles/storage.objectAdmin", member)
 			}
 		case "queue", "topic":
 			if e.Verb == "publish" {
 				add(target{TargetTopic, cfg.Name(e.To)}, "roles/pubsub.publisher", member)
 			}
 		}
-		// A write into a bucket with Uploaded subscribers means the
-		// runtime will emit the event as this service — it publishes on
-		// the events topic (bucket events lite).
-		if e.ToKind == "bucket" && e.Verb == "write" && events[e.To] {
-			add(target{TargetTopic, gcpb.EventTopicName(cfg.Env, e.To)}, "roles/pubsub.publisher", member)
+	}
+
+	// Bucket events are GCS's own notifications (C5): the project's GCS
+	// service agent publishes into each events topic — no service
+	// publishes there itself anymore.
+	gcsAgent := "serviceAccount:service-" + cfg.ProjectNumber + "@gs-project-accounts.iam.gserviceaccount.com"
+	for _, r := range g.Resources {
+		if r.Kind == "bucket" && events[r.Name] {
+			add(target{TargetTopic, gcpb.EventTopicName(cfg.Env, r.Name)}, "roles/pubsub.publisher", gcsAgent)
 		}
 	}
 

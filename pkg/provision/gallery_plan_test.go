@@ -32,6 +32,7 @@ func galleryGraph() *analyzer.AppGraph {
 		},
 		Handlers: []analyzer.Handler{
 			{Kind: "api", Var: "gallery.Upload", Service: "gallery"},
+			{Kind: "api", Var: "gallery.StartUpload", Service: "gallery"},
 			{Kind: "api", Var: "gallery.List", Service: "gallery"},
 			{Kind: "cron", Var: "gallery.Cleanup", Service: "gallery"},
 			{Kind: "subscribe", Var: "gallery.OnUploaded", Service: "gallery-onuploaded",
@@ -45,6 +46,8 @@ func galleryGraph() *analyzer.AppGraph {
 		Edges: []analyzer.Edge{
 			{From: "gallery.Upload", To: "photos", ToKind: "entity", Kind: "resource", Verb: "write"},
 			{From: "gallery.Upload", To: "photos", ToKind: "bucket", Kind: "resource", Verb: "write"},
+			{From: "gallery.StartUpload", To: "photos", ToKind: "entity", Kind: "resource", Verb: "write"},
+			{From: "gallery.StartUpload", To: "photos", ToKind: "bucket", Kind: "resource", Verb: "sign"},
 			{From: "gallery.List", To: "photos", ToKind: "entity", Kind: "resource", Verb: "read"},
 			{From: "gallery.Cleanup", To: "photos", ToKind: "entity", Kind: "resource", Verb: "write"},
 			{From: "gallery.Cleanup", To: "photos", ToKind: "bucket", Kind: "resource", Verb: "write"},
@@ -93,6 +96,7 @@ func TestGalleryPlanRender(t *testing.T) {
   create  topic gallery-makethumb-dead
   create  topic gallery-notifyowner-dead
   create  topic gallery-warmfeed-dead
+  create  bucket notification my-proj-gallery-photos
   create  pull subscription gallery-onuploaded-dead
   create  pull subscription gallery-makethumb-dead
   create  pull subscription gallery-notifyowner-dead
@@ -130,7 +134,7 @@ func TestGalleryPlanRender(t *testing.T) {
   create  push subscription gallery-makethumb
   create  push subscription gallery-notifyowner
   create  push subscription gallery-warmfeed
-  52 creates, 0 updates, 0 skips, 0 orphans
+  53 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
@@ -174,17 +178,25 @@ func TestGalleryFanoutAndTriggers(t *testing.T) {
 		t.Errorf("worker subscription topic = %q", subTopics["gallery-makethumb"])
 	}
 
-	// Bucket writers emit events: publisher on photos-uploaded for the
-	// api service (Upload), the cron's service (Cleanup, same SA), and
-	// the worker (MakeThumb writes the _thumb object) — but NOT the
-	// non-writing subscribers.
+	// Bucket events are GCS's own notifications: ONLY the GCS service
+	// agent publishes into the events topic — no service does (C5
+	// deleted the emission path).
 	sa := func(s string) string { return "serviceAccount:" + s + "-sa@my-proj.iam.gserviceaccount.com" }
 	wantEmit := []string{
-		"roles/pubsub.publisher → " + sa("gallery-makethumb"),
-		"roles/pubsub.publisher → " + sa("gallery"),
+		"roles/pubsub.publisher → serviceAccount:service-123456@gs-project-accounts.iam.gserviceaccount.com",
 	}
 	if got := grants["topic photos-uploaded"]; strings.Join(got, ";") != strings.Join(wantEmit, ";") {
 		t.Errorf("photos-uploaded grants = %v, want %v", got, wantEmit)
+	}
+
+	// Sign edges derive self-signBlob: the api service (StartUpload/
+	// Download mint URLs) may sign as itself; no async service may.
+	selfSign := "roles/iam.serviceAccountTokenCreator → " + sa("gallery")
+	if got := strings.Join(grants["serviceAccount "+sa("gallery")[15:]], ";"); !strings.Contains(got, selfSign) {
+		t.Errorf("api SA grants = %v, want self tokenCreator", got)
+	}
+	if got := strings.Join(grants["serviceAccount "+sa("gallery-warmfeed")[15:]], ";"); strings.Contains(got, "roles/iam.serviceAccountTokenCreator → "+sa("gallery-warmfeed")) {
+		t.Errorf("non-signing SA has self signBlob: %v", got)
 	}
 
 	// Package-wide secret resolution: EVERY service SA reads the secret.
@@ -192,11 +204,7 @@ func TestGalleryFanoutAndTriggers(t *testing.T) {
 		t.Errorf("secret grants = %v, want all 5 SAs", got)
 	}
 
-	// Every service knows which buckets announce writes.
 	for svc, env := range envs {
-		if env["TAKO_BUCKET_EVENTS"] != "photos" {
-			t.Errorf("%s TAKO_BUCKET_EVENTS = %v", svc, env["TAKO_BUCKET_EVENTS"])
-		}
 		if env["TAKO_SERVICE"] == "" {
 			t.Errorf("%s missing TAKO_SERVICE", svc)
 		}

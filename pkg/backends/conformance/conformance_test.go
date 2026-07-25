@@ -72,7 +72,7 @@ func TestQueue(t *testing.T) {
 			})
 		}, QueueParams{MaxAttempts: 3})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase F")
+		t.Skip("delivery on gcp is Pub/Sub push into Cloud Run (infrastructure, validated by the gate scripts); publishing runs live in the gate cycle")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -88,7 +88,7 @@ func TestQueueDelay(t *testing.T) {
 			})
 		})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase F")
+		t.Skip("WithDelay on gcp waits for the delayed-delivery feature (Cloud Tasks); Publish errors with that pointer, pinned in the gcp package")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -117,7 +117,7 @@ func TestTopic(t *testing.T) {
 			}).Topics()
 		}, TopicParams{MaxAttempts: 3})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase F")
+		t.Skip("delivery on gcp is Pub/Sub push into Cloud Run (infrastructure, validated by the gate scripts); publishing + fan-out run in TestTopicGCP")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -146,9 +146,12 @@ func TestSignedURL(t *testing.T) {
 				t.Fatal(err)
 			}
 			return SignedURLEnv{Signer: signer, Client: srv.Client(), Bucket: store, Topic: d.Topics()}
-		})
+		}, SignedURLParams{UploadEvents: true, EnforcesMaxSize: true, WildcardAtUpload: true})
 	case "gcp":
-		t.Skip("delivery on gcp is Pub/Sub push into Cloud Run (infrastructure, validated by the gate scripts); publishing + fan-out run in TestTopicGCP")
+		// A bare GCS PUT URL enforces identity, expiry, and exact signed
+		// content types; MaxSize + wildcards fall through to the pipeline
+		// safety net (see SignedURLParams) — the platform gap, pinned.
+		RunSignedURL(t, gcpSignedEnv, SignedURLParams{})
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -168,7 +171,7 @@ func TestBucketEvents(t *testing.T) {
 			return store, d.Topics()
 		})
 	case "gcp":
-		t.Skip("delivery on gcp is push infrastructure; the emission half runs in TestBucketEventEmitGCP")
+		t.Skip("bucket events on gcp are GCS-native notifications; the config + payload path runs in TestBucketNotificationGCP")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}

@@ -2,7 +2,6 @@ package gcp
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -60,24 +59,9 @@ func (s *BucketStore) Put(ctx context.Context, bucket, key string, data backends
 	if resp.StatusCode/100 != 2 {
 		return &statusError{Code: resp.StatusCode, Body: "upload failed", URL: req.URL.Path}
 	}
-	// Bucket events lite: buckets with Uploaded subscribers announce
-	// every successful through-service write on their events topic —
-	// same ObjectMeta payload local's WireBucketEvents publishes. C5's
-	// GCS-native notifications take over this topic (and cover signed
-	// direct uploads) when those land.
-	if s.c.Opts.BucketEvents[bucket] {
-		var created objectMeta
-		if json.NewDecoder(resp.Body).Decode(&created) != nil || created.Name == "" {
-			created = objectMeta{Name: key, ContentType: data.ContentType}
-		}
-		payload, err := json.Marshal(created.toMeta())
-		if err != nil {
-			return err
-		}
-		if err := s.c.publish(ctx, EventTopicName(s.c.Opts.Env, bucket), payload, map[string]string{"tako-bucket": bucket}); err != nil {
-			return fmt.Errorf("object stored but its Uploaded event did not publish: %w", err)
-		}
-	}
+	// Bucket events are GCS's own notifications (C5): every write —
+	// through-service or signed direct — lands on the bucket's events
+	// topic without the runtime's involvement.
 	return nil
 }
 

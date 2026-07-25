@@ -23,7 +23,17 @@ type bucketBody struct {
 	Location         string            `json:"location,omitempty"`
 	Labels           map[string]string `json:"labels"`
 	IamConfiguration map[string]any    `json:"iamConfiguration,omitempty"`
+	Cors             []map[string]any  `json:"cors,omitempty"`
 }
+
+// corsForSignedTransfers lets browsers execute signed URLs directly
+// (the point of SignedPut): permissive origins, transfer verbs only.
+var corsForSignedTransfers = []map[string]any{{
+	"origin":         []string{"*"},
+	"method":         []string{"GET", "PUT", "HEAD"},
+	"responseHeader": []string{"Content-Type"},
+	"maxAgeSeconds":  3600,
+}}
 
 func (b *Buckets) List(ctx context.Context) ([]provision.Observed, error) {
 	var observed []provision.Observed
@@ -69,6 +79,9 @@ func (b *Buckets) body(o provision.Object) bucketBody {
 	if uniform, _ := o.Spec["uniform"].(bool); uniform {
 		body.IamConfiguration = map[string]any{"uniformBucketLevelAccess": map[string]any{"enabled": true}}
 	}
+	if cors, _ := o.Spec["cors"].(bool); cors {
+		body.Cors = corsForSignedTransfers
+	}
 	return body
 }
 
@@ -83,6 +96,9 @@ func (b *Buckets) Create(ctx context.Context, o provision.Object) error {
 func (b *Buckets) Update(ctx context.Context, o provision.Object) error {
 	u := "https://storage.googleapis.com/storage/v1/b/" + o.Name
 	body := map[string]any{"labels": withHash(b.Labels, provision.SpecHash(o.Spec))}
+	if cors, _ := o.Spec["cors"].(bool); cors {
+		body["cors"] = corsForSignedTransfers
+	}
 	if err := b.C.do(ctx, http.MethodPatch, u, body, nil); err != nil {
 		return Classify(err, b.C.Project, "update the bucket", "roles/storage.admin")
 	}

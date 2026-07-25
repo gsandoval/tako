@@ -17,10 +17,10 @@ type Options struct {
 	App     string // app name, scopes bucket names (TAKO_APP)
 	Env     string // environment, the Datastore namespace (TAKO_ENV)
 	Service string // this service's base name (TAKO_SERVICE) — dead-topic derivation
-	// BucketEvents names the buckets whose writes the runtime announces
-	// on their events topic (TAKO_BUCKET_EVENTS) — the buckets with
-	// Uploaded subscribers, computed at deploy time.
-	BucketEvents map[string]bool
+	// SignerEmail overrides the SA the Signer signs as; empty means
+	// this service's own identity from the metadata server (the normal
+	// Cloud Run case — conformance harnesses set it explicitly).
+	SignerEmail string
 }
 
 // Client is the shared authenticated HTTP client behind the stores.

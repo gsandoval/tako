@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"time"
 	"strings"
 
 	"github.com/gsandoval/tako/pkg/provision"
@@ -76,10 +77,20 @@ func (s *ServiceAccounts) Create(ctx context.Context, o provision.Object) error 
 			Description: s.description(o),
 		},
 	}
-	if err := s.C.do(ctx, http.MethodPost, url, body, nil); err != nil {
-		return Classify(err, s.C.Project, "create the service account", "roles/iam.serviceAccountAdmin")
+	// IAM caps SA creations per minute; a destroy → redeploy cycle of a
+	// multi-service app trips it. 429 is pacing, not failure: wait it
+	// out (bounded) instead of aborting a half-applied deploy.
+	deadline := time.Now().Add(3 * time.Minute)
+	for {
+		err := s.C.do(ctx, http.MethodPost, url, body, nil)
+		if err == nil {
+			return nil
+		}
+		if ae, ok := err.(*apiError); !ok || ae.Status != http.StatusTooManyRequests || time.Now().After(deadline) {
+			return Classify(err, s.C.Project, "create the service account", "roles/iam.serviceAccountAdmin")
+		}
+		time.Sleep(20 * time.Second)
 	}
-	return nil
 }
 
 func (s *ServiceAccounts) Update(ctx context.Context, o provision.Object) error {

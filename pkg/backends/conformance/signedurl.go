@@ -22,12 +22,32 @@ type SignedURLEnv struct {
 	Topic  backends.Topic
 }
 
+// SignedURLParams declares what a backend's signed-URL executor can
+// enforce AT TRANSFER TIME. Local's own endpoint enforces everything; a
+// bare GCS PUT URL enforces identity, expiry, and an exact signed
+// content type — MaxSize and wildcard types would need cooperating
+// clients (extra signed headers) or POST policies, so on gcp they fall
+// through to the pipeline's safety net (decode failures dead-letter,
+// the cron reaps orphans). The gap is pinned HERE, not silent.
+type SignedURLParams struct {
+	// UploadEvents: a signed upload fires the bucket's Uploaded event
+	// observably through env.Topic (local's in-process dispatcher). On
+	// gcp events are GCS notifications, validated in their own chapter.
+	UploadEvents bool
+	// EnforcesMaxSize: MaxSize rejects oversized transfers.
+	EnforcesMaxSize bool
+	// WildcardAtUpload: a wildcard ContentType ("image/*") rejects
+	// mismatches at upload time.
+	WildcardAtUpload bool
+}
+
 // RunSignedURL runs the signed-URL contract: minted URLs transfer bytes
 // directly, constraints and expiry reject at transfer time (leaving no
-// object behind), and a signed upload fires the bucket's upload event
-// like any Put. Exact rejection texts are local product UX and are
-// asserted in example tests, not here — GCS words its own refusals.
-func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
+// object behind) to the extent params declares, and a signed upload
+// fires the bucket's upload event like any Put. Exact rejection texts
+// are local product UX and are asserted in example tests, not here —
+// GCS words its own refusals.
+func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv, params SignedURLParams) {
 	ctx := context.Background()
 	const wait = 10 * time.Second
 
@@ -57,10 +77,12 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 	t.Run("signed put stores the object and fires the upload event", func(t *testing.T) {
 		env := open(t)
 		events := make(chan []byte, 1)
-		env.Topic.Subscribe("photos.Uploaded", "probe", func(ctx context.Context, p []byte) error {
-			events <- p
-			return nil
-		})
+		if params.UploadEvents {
+			env.Topic.Subscribe("photos.Uploaded", "probe", func(ctx context.Context, p []byte) error {
+				events <- p
+				return nil
+			})
+		}
 		url, err := env.Signer.SignPut(ctx, "photos", "cat", time.Minute, backends.SignConstraints{})
 		if err != nil {
 			t.Fatal(err)
@@ -76,14 +98,31 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 		if string(raw) != "JPEGBYTES" || got.ContentType != "image/jpeg" {
 			t.Fatalf("stored = %q %q", raw, got.ContentType)
 		}
-		select {
-		case <-events:
-		case <-time.After(wait):
-			t.Fatal("signed upload fired no event")
+		if params.UploadEvents {
+			select {
+			case <-events:
+			case <-time.After(wait):
+				t.Fatal("signed upload fired no event")
+			}
+		}
+	})
+
+	t.Run("exact content type is enforced at upload", func(t *testing.T) {
+		env := open(t)
+		url, _ := env.Signer.SignPut(ctx, "photos", "exact", time.Minute, backends.SignConstraints{ContentType: "image/png"})
+		if status := put(t, env, url, "text/plain", "notes", 5); status/100 == 2 {
+			t.Fatal("wrong exact content type accepted")
+		}
+		mustAbsent(t, env, "exact")
+		if status := put(t, env, url, "image/png", "PNG", 3); status/100 != 2 {
+			t.Fatalf("matching content type rejected: %d", status)
 		}
 	})
 
 	t.Run("size cap rejects declared length", func(t *testing.T) {
+		if !params.EnforcesMaxSize {
+			t.Skip("MaxSize is not upload-time-enforceable on a bare PUT URL here — the pipeline safety net owns it (see SignedURLParams)")
+		}
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "big", time.Minute, backends.SignConstraints{MaxSize: 8})
 		if status := put(t, env, url, "image/jpeg", "0123456789", 10); status/100 == 2 {
@@ -93,6 +132,9 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 	})
 
 	t.Run("size cap rejects a lying stream", func(t *testing.T) {
+		if !params.EnforcesMaxSize {
+			t.Skip("MaxSize is not upload-time-enforceable on a bare PUT URL here — the pipeline safety net owns it (see SignedURLParams)")
+		}
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "liar", time.Minute, backends.SignConstraints{MaxSize: 8})
 		if status := put(t, env, url, "image/jpeg", "0123456789", -1); status/100 == 2 {
@@ -102,6 +144,9 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 	})
 
 	t.Run("content type constraint rejects mismatches", func(t *testing.T) {
+		if !params.WildcardAtUpload {
+			t.Skip("wildcard types are not upload-time-enforceable on a bare PUT URL here — the pipeline safety net owns them (see SignedURLParams)")
+		}
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "doc", time.Minute, backends.SignConstraints{ContentType: "image/*"})
 		if status := put(t, env, url, "text/plain", "notes", 5); status/100 == 2 {
@@ -122,7 +167,16 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv) {
 	t.Run("tampered URLs reject", func(t *testing.T) {
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "forged", time.Minute, backends.SignConstraints{})
-		if status := put(t, env, url+"x", "image/jpeg", "x", 1); status/100 == 2 {
+		// Flip the final signature character rather than appending:
+		// appended garbage is not a forgery to every verifier (GCS
+		// stops parsing hex at the first invalid byte), but a changed
+		// signature must never verify anywhere.
+		flip := byte('a')
+		if url[len(url)-1] == 'a' {
+			flip = 'b'
+		}
+		tampered := url[:len(url)-1] + string(flip)
+		if status := put(t, env, tampered, "image/jpeg", "x", 1); status/100 == 2 {
 			t.Fatal("tampered URL accepted")
 		}
 		mustAbsent(t, env, "forged")

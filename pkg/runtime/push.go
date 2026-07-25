@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"time"
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
@@ -25,11 +27,14 @@ var deadLetter func(ctx context.Context, payload []byte, reason string) error
 // Pub/Sub pushes wrap the payload as base64 in
 // {"message":{"data":…},"subscription":"…","deliveryAttempt":n}; local
 // delivery posts the raw payload. Shape-detected so the same endpoint
-// serves both — a non-envelope body passes through untouched.
+// serves both — a non-envelope body passes through untouched. GCS
+// bucket notifications (C5) arrive through the same envelope and are
+// translated to the ObjectInfo wire shape subscriber code decodes.
 func pubsubEnvelope(body []byte) ([]byte, int, bool) {
 	var env struct {
 		Message struct {
-			Data []byte `json:"data"` // encoding/json base64-decodes
+			Data       []byte            `json:"data"` // encoding/json base64-decodes
+			Attributes map[string]string `json:"attributes"`
 		} `json:"message"`
 		Subscription    string `json:"subscription"`
 		DeliveryAttempt int    `json:"deliveryAttempt"`
@@ -37,7 +42,40 @@ func pubsubEnvelope(body []byte) ([]byte, int, bool) {
 	if json.Unmarshal(body, &env) != nil || env.Subscription == "" || env.Message.Data == nil {
 		return nil, 0, false
 	}
+	if payload, ok := gcsNotification(env.Message.Attributes, env.Message.Data); ok {
+		return payload, env.DeliveryAttempt, true
+	}
 	return env.Message.Data, env.DeliveryAttempt, true
+}
+
+// gcsNotification translates a GCS OBJECT_FINALIZE notification
+// (JSON_API_V1 object resource, sizes as strings) into the ObjectInfo
+// wire shape local's bucket events publish — subscriber code sees one
+// payload everywhere. Non-notification messages pass through.
+func gcsNotification(attrs map[string]string, data []byte) ([]byte, bool) {
+	if attrs["eventType"] != "OBJECT_FINALIZE" {
+		return nil, false
+	}
+	var obj struct {
+		Name        string    `json:"name"`
+		Size        string    `json:"size"`
+		ContentType string    `json:"contentType"`
+		Updated     time.Time `json:"updated"`
+	}
+	if json.Unmarshal(data, &obj) != nil || obj.Name == "" {
+		return nil, false
+	}
+	size, _ := strconv.ParseInt(obj.Size, 10, 64)
+	payload, err := json.Marshal(backends.ObjectMeta{
+		Key:         obj.Name,
+		Size:        size,
+		ContentType: obj.ContentType,
+		Updated:     obj.Updated,
+	})
+	if err != nil {
+		return nil, false
+	}
+	return payload, true
 }
 
 // PushHandler serves a per-service delivery endpoint: POST /_tako/push

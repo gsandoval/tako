@@ -41,6 +41,9 @@ type Needs struct {
 	// preflight verifies each exists and prints the exact create
 	// command when one does not.
 	Secrets []string
+	// SignBlob is set when any handler mints signed URLs (sign edges):
+	// the runtime calls the IAM Credentials API, which must be enabled.
+	SignBlob bool
 }
 
 // Preflight checks credentials, APIs, and permissions before any
@@ -66,6 +69,9 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		perms = append(perms,
 			struct{ perm, role string }{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
 			struct{ perm, role string }{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
+	}
+	if needs.SignBlob {
+		apis = append(apis, "iamcredentials.googleapis.com")
 	}
 
 	for _, api := range apis {

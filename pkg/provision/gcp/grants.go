@@ -72,17 +72,24 @@ func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet
 // managed reports whether a binding member on this target is tako's to
 // rewrite. The Pub/Sub service agent counts on SA targets (token
 // creator for push OIDC), subscription targets (dead-letter acking),
-// and topic targets (dead-letter forwarding) — the target kinds tako
-// itself manages; everywhere else it is someone else's.
+// and topic targets (dead-letter forwarding); the GCS service agent
+// counts on topic targets (bucket-notification publishing) — the
+// target kinds tako itself manages; everywhere else it is someone
+// else's.
 func (g *Grants) managed(typ, member string) bool {
 	if provision.ManagedMember(member, g.C.Project) {
 		return true
 	}
-	agent := strings.HasPrefix(member, "serviceAccount:service-") &&
-		strings.HasSuffix(member, "@gcp-sa-pubsub.iam.gserviceaccount.com")
+	if !strings.HasPrefix(member, "serviceAccount:service-") {
+		return false
+	}
+	pubsubAgent := strings.HasSuffix(member, "@gcp-sa-pubsub.iam.gserviceaccount.com")
+	gcsAgent := strings.HasSuffix(member, "@gs-project-accounts.iam.gserviceaccount.com")
 	switch typ {
-	case provision.TargetServiceAccount, provision.TargetSubscription, provision.TargetTopic:
-		return agent
+	case provision.TargetServiceAccount, provision.TargetSubscription:
+		return pubsubAgent
+	case provision.TargetTopic:
+		return pubsubAgent || gcsAgent
 	}
 	return false
 }

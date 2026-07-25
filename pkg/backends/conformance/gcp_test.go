@@ -49,7 +49,7 @@ func randHex(t *testing.T) string {
 func makeBucket(t *testing.T, c *gcpb.Client, name string) {
 	t.Helper()
 	ctx := context.Background()
-	body := strings.NewReader(fmt.Sprintf(`{"name":%q,"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}`, name))
+	body := strings.NewReader(fmt.Sprintf(`{"name":%q,"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}},"cors":[{"origin":["*"],"method":["GET","PUT","HEAD"],"responseHeader":["Content-Type"],"maxAgeSeconds":3600}]}`, name))
 	req, err := http.NewRequestWithContext(ctx, "POST",
 		"https://storage.googleapis.com/storage/v1/b?project="+*project, body)
 	if err != nil {
@@ -297,34 +297,198 @@ func TestTopicGCP(t *testing.T) {
 	}
 }
 
-func TestBucketEventEmitGCP(t *testing.T) {
+// --- C5: signed URLs + GCS notifications --------------------------------
+
+// signerSA is the conformance signing identity: the harness cannot sign
+// as a Cloud Run service (there is none), so an idempotently-created SA
+// stands in — the ADC principal signs blobs as it (project owners can;
+// otherwise the fatal prints the grant). It persists across runs, like
+// the conformance composite index.
+const signerSA = "conf-signer"
+
+var signerOnce sync.Once
+
+func ensureSignerSA(t *testing.T, c *gcpb.Client) string {
+	t.Helper()
+	email := signerSA + "@" + *project + ".iam.gserviceaccount.com"
+	signerOnce.Do(func() {
+		ctx := context.Background()
+		body := strings.NewReader(fmt.Sprintf(`{"accountId":%q,"serviceAccount":{"displayName":"tako conformance signer"}}`, signerSA))
+		req, err := http.NewRequestWithContext(ctx, "POST",
+			"https://iam.googleapis.com/v1/projects/"+*project+"/serviceAccounts", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.HC.Do(req)
+		if err != nil {
+			t.Fatalf("create signer SA: %v", err)
+		}
+		resp.Body.Close()
+		// 409 = an earlier run made it; anything else fatal.
+		if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusConflict {
+			t.Fatalf("create signer SA: HTTP %d", resp.StatusCode)
+		}
+		// A fresh SA (and the caller's signBlob on it) can lag; probe
+		// until it signs.
+		probe := strings.NewReader(`{"payload":"cHJvYmU="}`)
+		deadline := time.Now().Add(90 * time.Second)
+		for {
+			req, _ := http.NewRequestWithContext(ctx, "POST",
+				"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"+email+":signBlob",
+				probe)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := c.HC.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode/100 == 2 {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("cannot signBlob as %s (HTTP %d) — grant your account: gcloud iam service-accounts add-iam-policy-binding %s --member user:$(gcloud config get account) --role roles/iam.serviceAccountTokenCreator --project %s",
+					email, resp.StatusCode, email, *project)
+			}
+			time.Sleep(5 * time.Second)
+			probe = strings.NewReader(`{"payload":"cHJvYmU="}`)
+		}
+	})
+	return email
+}
+
+// grantBucketAccess lets the signer SA act on the conformance bucket —
+// signed URLs authorize AS the signer at use time.
+func grantBucketAccess(t *testing.T, c *gcpb.Client, bucket, email string) {
+	t.Helper()
+	ctx := context.Background()
+	base := "https://storage.googleapis.com/storage/v1/b/" + bucket + "/iam"
+	var policy map[string]any
+	resp, err := c.HC.Get(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonDecode(resp, &policy); err != nil {
+		t.Fatal(err)
+	}
+	bindings, _ := policy["bindings"].([]any)
+	bindings = append(bindings, map[string]any{
+		"role":    "roles/storage.objectAdmin",
+		"members": []string{"serviceAccount:" + email},
+	})
+	policy["bindings"] = bindings
+	raw, _ := json.Marshal(policy)
+	req, _ := http.NewRequestWithContext(ctx, "PUT", base, strings.NewReader(string(raw)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.HC.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		t.Fatalf("grant bucket access: HTTP %d", res.StatusCode)
+	}
+}
+
+// gcpSignedEnv wires the signed-URL chapter against real GCS: V4 URLs
+// minted via signBlob as the conformance signer SA.
+func gcpSignedEnv(t *testing.T) SignedURLEnv {
+	env := "conf-" + randHex(t)
+	c := gcpClient(t, "conf", env)
+	email := ensureSignerSA(t, c)
+	c.Opts.SignerEmail = email
+	physical := gcpb.BucketName(*project, "conf", env, "photos")
+	makeBucket(t, c, physical)
+	grantBucketAccess(t, c, physical, email)
+	// Bucket IAM (the SA's objectAdmin) propagates; give first use slack.
+	time.Sleep(5 * time.Second)
+	return SignedURLEnv{
+		Signer: gcpb.NewSigner(c),
+		Client: http.DefaultClient,
+		Bucket: gcpb.NewBucketStore(c),
+	}
+}
+
+// TestBucketNotificationGCP proves the C5 event path end to end minus
+// push delivery: a notification config on a real bucket announces a
+// through-service Put on the events topic (the runtime's translation of
+// the JSON_API_V1 payload is unit-pinned in pkg/runtime).
+func TestBucketNotificationGCP(t *testing.T) {
 	if *backend != "gcp" {
 		t.Skip("gcp-only chapter (-backend=gcp)")
 	}
 	env := "conf-" + randHex(t)
 	c := gcpClient(t, "conf", env)
-	c.Opts.BucketEvents = map[string]bool{"evbkt": true}
+	ctx := context.Background()
+
 	topic := gcpb.EventTopicName(env, "evbkt")
 	makeTopic(t, c, topic)
 	makePullSub(t, c, topic+"-keep", topic)
+
+	// The GCS service agent must publish into the topic — GCS validates
+	// exactly this when the config is created.
+	var agent struct {
+		Email string `json:"email_address"`
+	}
+	resp, err := c.HC.Get("https://storage.googleapis.com/storage/v1/projects/" + *project + "/serviceAccount")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jsonDecode(resp, &agent); err != nil || agent.Email == "" {
+		t.Fatalf("GCS service agent: %v %q", err, agent.Email)
+	}
+	policy := fmt.Sprintf(`{"policy":{"bindings":[{"role":"roles/pubsub.publisher","members":["serviceAccount:%s"]}]}}`, agent.Email)
+	req, _ := http.NewRequestWithContext(ctx, "POST",
+		"https://pubsub.googleapis.com/v1/projects/"+*project+"/topics/"+topic+":setIamPolicy",
+		strings.NewReader(policy))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.HC.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode/100 != 2 {
+		t.Fatalf("grant GCS agent publisher: HTTP %d", res.StatusCode)
+	}
+
 	physical := gcpb.BucketName(*project, "conf", env, "evbkt")
 	makeBucket(t, c, physical)
+	config := fmt.Sprintf(`{"topic":"//pubsub.googleapis.com/projects/%s/topics/%s","payload_format":"JSON_API_V1","event_types":["OBJECT_FINALIZE"]}`, *project, topic)
+	deadline := time.Now().Add(60 * time.Second)
+	for {
+		req, _ := http.NewRequestWithContext(ctx, "POST",
+			"https://storage.googleapis.com/storage/v1/b/"+physical+"/notificationConfigs",
+			strings.NewReader(config))
+		req.Header.Set("Content-Type", "application/json")
+		res, err := c.HC.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode/100 == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("create notification config: HTTP %d (grant propagation?)", res.StatusCode)
+		}
+		time.Sleep(5 * time.Second)
+	}
 
 	store := gcpb.NewBucketStore(c)
-	if err := store.Put(context.Background(), "evbkt", "hello.txt",
+	if err := store.Put(ctx, "evbkt", "hello.txt",
 		backends.BlobData{Reader: strings.NewReader("hi there"), ContentType: "text/plain", Size: 8}); err != nil {
 		t.Fatalf("put: %v", err)
 	}
 	got := pullPayloads(t, c, topic+"-keep", 1)
-	var meta struct {
-		Key         string `json:"key"`
-		Size        int64  `json:"size"`
+	var obj struct {
+		Name        string `json:"name"`
+		Size        string `json:"size"`
 		ContentType string `json:"contentType"`
 	}
-	if err := json.Unmarshal(got[0], &meta); err != nil {
-		t.Fatalf("event payload %q: %v", got[0], err)
+	if err := json.Unmarshal(got[0], &obj); err != nil {
+		t.Fatalf("notification payload %q: %v", got[0], err)
 	}
-	if meta.Key != "hello.txt" || meta.Size != 8 || meta.ContentType != "text/plain" {
-		t.Fatalf("event meta = %+v", meta)
+	if obj.Name != "hello.txt" || obj.Size != "8" || obj.ContentType != "text/plain" {
+		t.Fatalf("notification object = %+v", obj)
 	}
 }

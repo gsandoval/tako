@@ -144,8 +144,9 @@ func runDeploy(args []string) error {
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
+	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
 	grants := &gcp.Grants{C: client, Desired: desired}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
 	if err != nil {
 		return err
 	}
@@ -169,19 +170,22 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription), desired, applier); err != nil {
 		return err
 	}
-	// Grant sequencing is dictated by two boot/delivery dependencies:
+	// Grant sequencing is dictated by boot/delivery dependencies:
 	// services RESOLVE SECRETS AT BOOT, so secret (and every other
 	// non-run, non-subscription) grant lands before the run services
-	// start; push delivery needs the invoker binding on the target run
-	// service before the first message, so run grants land before
-	// subscriptions; and the Pub/Sub agent's dead-letter grants sit ON
-	// the subscriptions, which must exist to hold a policy.
+	// start; bucket notifications need the GCS agent's events-topic
+	// publisher grant (GCS validates it at config creation), so they
+	// follow the pre-run grants; push delivery needs the invoker
+	// binding on the target run service before the first message, so
+	// run grants land before subscriptions; and the Pub/Sub agent's
+	// dead-letter grants sit ON the subscriptions, which must exist to
+	// hold a policy.
 	grantsPlan := plan.Filter(provision.KindIamGrants)
 	var preRun, onRuns, onSubs provision.Plan
 	for _, e := range grantsPlan.Entries {
@@ -195,6 +199,9 @@ func runDeploy(args []string) error {
 		}
 	}
 	if err := provision.Apply(ctx, preRun, desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindBucketNotification), desired, applier); err != nil {
 		return err
 	}
 	for _, svc := range graph.Services {
@@ -288,6 +295,12 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 	for _, h := range graph.Handlers {
 		if h.Kind == "worker" || h.Kind == "subscribe" {
 			n.PubSub = true
+		}
+	}
+	// Sign edges mean the runtime mints signed URLs via signBlob.
+	for _, e := range graph.Edges {
+		if e.Kind == "resource" && e.Verb == "sign" {
+			n.SignBlob = true
 		}
 	}
 	return n
@@ -401,8 +414,9 @@ func runDestroy(args []string) error {
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
+	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
 	grants := &gcp.Grants{C: client, Desired: desired}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
 	if err != nil {
 		return err
 	}
@@ -446,11 +460,12 @@ func runDestroy(args []string) error {
 	deleters := map[provision.Kind]interface {
 		Delete(ctx context.Context, name string) error
 	}{
-		provision.KindPushSubscription: subs,
-		provision.KindIamGrants:        grants,
-		provision.KindRunService:       runs,
-		provision.KindPullSubscription: pulls,
-		provision.KindTopic:            topics,
+		provision.KindPushSubscription:   subs,
+		provision.KindIamGrants:          grants,
+		provision.KindRunService:         runs,
+		provision.KindPullSubscription:   pulls,
+		provision.KindBucketNotification: notifications,
+		provision.KindTopic:              topics,
 		provision.KindDatastoreIndex:   indexes,
 		provision.KindBucket:           buckets,
 		provision.KindServiceAccount:   sas,

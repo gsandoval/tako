@@ -15,15 +15,16 @@ import (
 type Kind string
 
 const (
-	KindRepo             Kind = "artifact repo"
-	KindServiceAccount   Kind = "service account"
-	KindBucket           Kind = "bucket"
-	KindDatastoreIndex   Kind = "datastore index"
-	KindTopic            Kind = "topic"
-	KindPullSubscription Kind = "pull subscription"
-	KindRunService       Kind = "run service"
-	KindIamGrants        Kind = "iam grants"
-	KindPushSubscription Kind = "push subscription"
+	KindRepo               Kind = "artifact repo"
+	KindServiceAccount     Kind = "service account"
+	KindBucket             Kind = "bucket"
+	KindDatastoreIndex     Kind = "datastore index"
+	KindTopic              Kind = "topic"
+	KindBucketNotification Kind = "bucket notification"
+	KindPullSubscription   Kind = "pull subscription"
+	KindRunService         Kind = "run service"
+	KindIamGrants          Kind = "iam grants"
+	KindPushSubscription   Kind = "push subscription"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
@@ -35,7 +36,8 @@ const (
 // identity). Destroy walks it backwards.
 var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
-	KindPullSubscription, KindRunService, KindIamGrants, KindPushSubscription,
+	KindBucketNotification, KindPullSubscription, KindRunService, KindIamGrants,
+	KindPushSubscription,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.

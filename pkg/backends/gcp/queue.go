@@ -21,7 +21,7 @@ func NewQueueStore(c *Client) *QueueStore { return &QueueStore{c: c} }
 
 func (s *QueueStore) Publish(ctx context.Context, queue string, payload []byte, opts backends.PublishOptions) error {
 	if opts.Delay > 0 {
-		return fmt.Errorf("tako.WithDelay on the gcp backend needs Cloud Tasks — that arrives with C5; remove the delay or run locally")
+		return fmt.Errorf("tako.WithDelay on the gcp backend needs Cloud Tasks — that arrives with the delayed-delivery feature (no shipped example demands it yet); remove the delay or run locally")
 	}
 	return s.c.publish(ctx, TopicName(s.c.Opts.Env, queue), payload, map[string]string{"tako-queue": queue})
 }

@@ -3889,3 +3889,105 @@ SignedURL chapter, and the full local suite unchanged.
 
 **STOP — awaiting DX approval (and the two §1 scope calls) before
 implementation.**
+
+## C5 — implementation: GCS notifications + signBlob signed URLs; gallery fully graduates (2026-07-25)
+
+Proposal approved with both §1 recommendations: Cloud Tasks deferred
+(the WithDelay error now points at the delayed-delivery feature, not a
+C-phase), and the wildcard platform gap accepted. One amendment the
+implementation forced — recorded first because it widens that gap:
+
+**AMENDMENT — MaxSize is also upload-time-unenforceable on gcp.** The
+proposal claimed GCS would hard-enforce MaxSize via
+x-goog-content-length-range; that header only binds if the CLIENT
+sends it, and a bare `PUT <url>` client (the pinned F9 contract) never
+does — signing it would 403 every legitimate upload. So on gcp the
+upload-time enforcement set is: identity, expiry, EXACT content type
+(signed into the URL; clients send Content-Type naturally). MaxSize
+and wildcards both fall through to the pipeline safety net.
+SignedURLParams pins all three axes (UploadEvents, EnforcesMaxSize,
+WildcardAtUpload — local true/true/true, gcp false/false/false with
+exact-type enforcement proven by its own subtest), and the unified
+gate script demonstrates the net live: junk bytes arrived VIA a signed
+URL, decode failed, one attempt, dead-lettered, cron reaps the orphan.
+
+**Signer (pkg/backends/gcp/signed.go):** V4 canonical
+request/string-to-sign built by hand (no SDK), signature minted by
+iamcredentials signBlob as the service's own identity (resolved once
+from the metadata server; SignerEmail override for harnesses), 7-day
+TTL clamp, path-safe key encoding. The C3 grants placeholder became
+real: sign edges derive self-tokenCreator on the service's own SA plus
+bucket objectAdmin (signed URLs authorize AS the signer at use time).
+App buckets now carry a CORS config (browsers execute these URLs — the
+point), spec-hashed so existing buckets update.
+
+**Bucket events = GCS notifications everywhere:** C4's runtime
+emission and TAKO_BUCKET_EVENTS are deleted; a KindBucketNotification
+object per events bucket (OBJECT_FINALIZE, JSON_API_V1, spec-hash in
+custom_attributes, immutable → update = delete+recreate) publishes to
+the SAME topic. The GCS service agent (gs-project-accounts, derived
+from ProjectNumber) replaces the writer SAs as the topic's publisher
+and joins the managed-member set; deploy sequences notifications after
+the pre-run grants because GCS validates the agent's publish
+permission AT CONFIG CREATION (bounded propagation retry in the
+applier). The push runtime translates the JSON_API_V1 payload
+(name/size-string/updated) into the exact ObjectInfo wire shape local
+publishes — unit-pinned; subscriber code cannot tell the backends
+apart. Through-service Puts now also arrive as real notifications.
+
+**Conformance:** TestSignedURL runs on gcp with the platform params
+(9 subtests: transfer, exact-type enforcement both ways, expiry,
+tamper, CORS preflight + PUT, GET round-trip + absent-404; MaxSize ×2
+and wildcard skip WITH the reason in the skip text);
+TestBucketNotificationGCP replaces the emission chapter (config on a
+real bucket → Put → raw GCS payload pulled). The tamper case was
+WRONG for every verifier that tolerates trailing garbage — GCS parses
+hex up to the first invalid byte, so `url+"x"` verified fine; the
+chapter now flips a signature character, which must fail everywhere
+(local included, verified). The stale "Phase F" skip texts (and one
+C4 mispaste that put TestTopic's text on TestSignedURL) are fixed.
+
+**Validate script unified:** validate/gallery.md is now the F9 AND
+C5+ script — BASE parameterization, cloud annotations per section
+(dlq/logs instead of on-disk dead letters), §7 cloud brackets. No
+cloud-specific surgery beyond BASE, as the agent plan demanded.
+
+**Live cycle (tako-test-01):** conformance(gcp) SignedURL 7 pass/2
+declared-skip + notification chapter + Entity/Bucket/TopicGCP all
+green (one setup step: signBlob is NOT in roles/owner — the harness's
+fatal prints the exact tokenCreator grant for the conf-signer SA, run
+once); deploy (index + SA-quota backoff dominated: 8m5s; converged
+re-deploy 24s); the F9 §2 flow verbatim against the cloud URL —
+ticket with a real V4 URL signed as gallery-sa → direct PUT 200
+straight to storage.googleapis.com → GCS notification → pipeline →
+564B thumb in 20s → warmed feed → signed GET download 200 from GCS;
+junk via signed URL dead-lettered with `decode image: unknown format`
+after ONE attempt (the safety net, live); through-service multipart
+upload also flowed via notifications (thumb in 5s); tako dlq --ack
+drained; destroy listed the notification config, deleted it before
+its bucket, purged 3 entities, left the project clean (0 services, 0
+topics).
+
+**Two more fixes the live cycle forced:** SA creation tripped IAM's
+per-minute quota on destroy→redeploy cycles — the SA applier now
+treats 429 as pacing (bounded 20s-step wait, 3m ceiling) instead of
+aborting a half-applied deploy; and the notification chapter's first
+run hit agent-grant propagation (its retry loop absorbed it on
+re-run).
+
+**Discovered work (not done):** the security summary lists only
+tako-SA members, so agent grants (GCS publisher, Pub/Sub dead-letter
+pair) are invisible there — they are in the plan and grant objects,
+but the summary should show them; conf-signer SA + its user
+tokenCreator grant persist in the test project (harness setup, like
+the conformance index); C4 leftovers stand (secret probe vs API
+propagation, dlq peek lease, conf-* namespaces).
+
+**GATE REQUEST — C5: the F9 demo script against the cloud.** Run
+`validate/gallery.md` with `BASE=<deployed URL>` end to end on
+tako-test-01 (§0 image, deploy + plan review, §§2–4 verbatim, §7
+brackets; conformance bar incl. TestSignedURL's declared skips — judge
+the MaxSize amendment §above as part of the verdict) and record it in
+docs/validation-log.md. C6 (lifecycle: change-class plan, prune,
+rename, rollback, canary/promote, --env previews, drift warnings)
+follows as Stage 2's closer.

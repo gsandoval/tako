@@ -118,10 +118,9 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 	}
 
-	// Buckets with Uploaded subscribers get an events topic; the runtime
-	// emits into it after every through-service Put (bucket events lite —
-	// C5's GCS-native notifications take over the same topic). Injected
-	// as TAKO_BUCKET_EVENTS so BucketStore knows which writes to announce.
+	// Buckets with Uploaded subscribers get an events topic, fed by
+	// GCS's own notifications (C5): every write — through-service or
+	// signed direct — lands there without the runtime's involvement.
 	eventBuckets := map[string]bool{}
 	for _, h := range g.Handlers {
 		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
@@ -151,9 +150,6 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			// The service's own base name: dead-topic derivation
 			// (Permanent publishes there directly) and log labeling.
 			"TAKO_SERVICE": svc.Name,
-		}
-		if len(eventList) > 0 {
-			env["TAKO_BUCKET_EVENTS"] = strings.Join(eventList, ",")
 		}
 		objs = append(objs,
 			Object{
@@ -185,7 +181,9 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			objs = append(objs, Object{
 				Kind: KindBucket,
 				Name: gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, r.Name),
-				Spec: map[string]any{"location": cfg.Region, "uniform": true},
+				// cors: browsers execute signed URLs directly against
+				// the bucket (SignedPut's whole point).
+				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": true},
 			})
 		case "entity":
 			if len(r.Composite) > 0 {
@@ -215,13 +213,29 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 	}
 
 	// Events topics for buckets with subscribers (created with the other
-	// topics so reconcile order holds).
+	// topics so reconcile order holds), and the GCS notification config
+	// feeding each — created only after the GCS service agent may
+	// publish (GCS validates that at config-creation time; the deploy
+	// sequences it).
 	for _, b := range eventList {
-		objs = append(objs, Object{
-			Kind: KindTopic,
-			Name: gcpb.EventTopicName(cfg.Env, b),
-			Spec: map[string]any{},
-		})
+		physical := gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, b)
+		objs = append(objs,
+			Object{
+				Kind: KindTopic,
+				Name: gcpb.EventTopicName(cfg.Env, b),
+				Spec: map[string]any{},
+			},
+			Object{
+				Kind: KindBucketNotification,
+				Name: physical,
+				Spec: map[string]any{
+					"bucket":        physical,
+					"topic":         gcpb.EventTopicName(cfg.Env, b),
+					"eventTypes":    []any{"OBJECT_FINALIZE"},
+					"payloadFormat": "JSON_API_V1",
+				},
+			},
+		)
 	}
 
 	// One push subscription per async handler — the partition rule makes

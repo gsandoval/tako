@@ -10,11 +10,12 @@ import (
 )
 
 // TestWithDelayErrorsOnGCP pins the not-yet text: Pub/Sub cannot delay,
-// so erroring beats silently delivering early. Cloud Tasks is C5.
+// so erroring beats silently delivering early. Cloud Tasks waits for
+// the example that demands WithDelay in deployed code (C5 scope call).
 func TestWithDelayErrorsOnGCP(t *testing.T) {
 	s := NewQueueStore(&Client{Opts: Options{Project: "p", Env: "prod"}})
 	err := s.Publish(context.Background(), "q", []byte("{}"), backends.PublishOptions{Delay: time.Hour})
-	if err == nil || !strings.Contains(err.Error(), "Cloud Tasks — that arrives with C5") {
+	if err == nil || !strings.Contains(err.Error(), "Cloud Tasks — that arrives with the delayed-delivery feature") {
 		t.Fatalf("WithDelay error = %v", err)
 	}
 }

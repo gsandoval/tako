@@ -30,3 +30,31 @@ func TestPubsubEnvelope(t *testing.T) {
 		}
 	}
 }
+
+// TestGCSNotificationTranslation pins the C5 bridge: a GCS
+// OBJECT_FINALIZE notification (JSON_API_V1, string sizes) becomes the
+// exact ObjectInfo wire shape local's bucket events publish, so
+// subscriber code cannot tell the backends apart. Everything else
+// passes through untranslated.
+func TestGCSNotificationTranslation(t *testing.T) {
+	object := `{"kind":"storage#object","name":"cat.png","bucket":"p-app-photos","size":"1234","contentType":"image/png","updated":"2026-07-25T12:00:00Z","generation":"1"}`
+	envelope := fmt.Sprintf(
+		`{"message":{"data":%q,"attributes":{"eventType":"OBJECT_FINALIZE","bucketId":"p-app-photos","objectId":"cat.png","payloadFormat":"JSON_API_V1"}},"subscription":"projects/p/subscriptions/s"}`,
+		base64.StdEncoding.EncodeToString([]byte(object)))
+	got, _, ok := pubsubEnvelope([]byte(envelope))
+	if !ok {
+		t.Fatal("notification envelope not detected")
+	}
+	want := `{"key":"cat.png","size":1234,"contentType":"image/png","updated":"2026-07-25T12:00:00Z"}`
+	if string(got) != want {
+		t.Fatalf("translated = %s, want %s", got, want)
+	}
+
+	// A tako-published message with other attributes is untouched.
+	envelope = fmt.Sprintf(
+		`{"message":{"data":%q,"attributes":{"tako-topic":"photo-ready"}},"subscription":"projects/p/subscriptions/s"}`,
+		base64.StdEncoding.EncodeToString([]byte(`{"photoID":"x"}`)))
+	if got, _, _ := pubsubEnvelope([]byte(envelope)); string(got) != `{"photoID":"x"}` {
+		t.Fatalf("tako payload mangled: %s", got)
+	}
+}
