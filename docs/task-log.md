@@ -3991,3 +3991,169 @@ the MaxSize amendment §above as part of the verdict) and record it in
 docs/validation-log.md. C6 (lifecycle: change-class plan, prune,
 rename, rollback, canary/promote, --env previews, drift warnings)
 follows as Stage 2's closer.
+
+## C6 — DX proposal: lifecycle — change classes, canary/promote/rollback, prune, rename, --env (2026-07-25)
+
+Agent-plan scope: change-class plan, prune/--data, rename, rollback,
+canary/promote, --env previews, drift warnings. Gate C6: human walks
+the scripted lifecycle (deploy → drift-inject → warn → canary →
+promote → rollback → prune → destroy). Spec §4.6a is normative — with
+one factual correction it needs (call 1). C5's verdict is recorded.
+Stage 2 closes with this slice.
+
+### 0. The headline
+
+The deploy you already trust learns the rest of its life story. Plans
+classify every entry (additive / in-place / replace / destructive-
+suspect) and the default deploy PROMPTS before anything beyond the
+first two (--yes for CI). Orphans stop being forever: `tako prune`
+deletes the stateless ones, `tako prune --data` walks the §4.6a
+confirmation for the rest. Bad rollouts get undo: `--canary=10` holds
+the new code at 10% on public services (async services wait at 0%),
+`tako promote` completes, `tako rollback` returns the whole revision
+set to the previous pinned digests — instant, no rebuild, git SHAs
+printed. And `--env=pr-42` is a whole preview app for the cost of a
+prefix.
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Rename is a data MIGRATION, not a relabel — spec fix-up + how
+   much to ship (RECOMMENDED: detection now, migration deferred).**
+   §4.6a says `tako rename photos pics` "relabels the existing
+   bucket"; that cannot be true — GCS bucket names are immutable
+   identities and tako's physical names embed the logical name
+   (`<project>-<app>-<env>-photos`), and a Datastore kind rename means
+   copying every entity. A real `tako rename` is therefore
+   object-rewrite + entity-copy + delete-old, with confirmations — a
+   substantial slice of its own, and the C6 gate walk never exercises
+   it. Proposal: C6 ships the DETECTION (deploy plan spots a
+   disappeared+appeared same-type pair and says: "resource `photos`
+   disappeared and `pics` appeared with the same type — if this is a
+   rename, your data does not follow automatically; a migrating tako
+   rename is a planned feature, and until then: keep both declared,
+   copy, then drop the old"), the spec paragraph gets the honesty
+   fix-up PR, and the migrating command becomes its own task when an
+   example forces a rename. Alternative: build the full migrating
+   rename now (roughly doubles C6).
+2. **Canary shape for async services (RECOMMENDED: wait at 0%).**
+   Spec: workers/subscribers don't canary (push targets one URL). Two
+   coherent shapes: (a) RECOMMENDED — during `--canary=10`, async
+   services get their new revision created WITH NO TRAFFIC and keep
+   serving the old one; `tako promote` shifts everything (public
+   100%, async to latest) — the whole app is either "old + 10% public
+   taste" or "new", never a mix of new workers with old APIs; or (b)
+   async services jump straight to 100% new during canary — simpler,
+   but the async spine runs code the API canary is still auditioning.
+3. **Prompt default (RECOMMENDED: prompt, --yes to skip).** The spec
+   wants the default deploy interactive when the plan holds anything
+   beyond additive/in-place. That changes CI behavior: CI must pass
+   `--yes` (or keep using --plan + a second call). Alternative: never
+   prompt, print a loud banner — weaker than the spec's word.
+
+### 2. CLI surface
+
+```
+$ tako deploy --project tako-test-01
+  plan
+    ~ update  run service gallery            [in-place: image]
+    + create  topic photo-ready              [additive]
+    ! update  push subscription gallery-makethumb
+              [REPLACE: topic is immutable — delete+create, in-flight
+               messages on the old subscription are lost]
+    ? orphaned (kept) bucket …-gallery-photos
+              [rename suspect: `pics` appeared with the same type —
+               data does not follow automatically]
+  plan contains 1 replace + 1 rename suspect — continue? [y/N]
+
+$ tako deploy --canary=10 --project …
+✓ gallery → 10% new (revision gallery-00007, sha 40b2233) / 90% prior
+  gallery-makethumb → new revision staged at 0% (async: no canary)
+$ tako promote --project …          # everything to latest, prints SHAs
+$ tako rollback --project …         # traffic to the prior revision set
+  gallery ← gallery-00006 (sha 7971f30) · gallery-makethumb ← …
+  (instant: images and revisions already exist; infra-shape rollback
+   stays `git revert` + `tako deploy`)
+
+$ tako prune --project …            # stateless orphans only
+  ✗ run service old-api · ✗ topic old-clicks · ✗ service account …
+  kept (data): bucket …-photos — run `tako prune --data`
+$ tako prune --data --project …     # §4.6a listing with object counts,
+                                    # typed app name, then deletion
+```
+
+- **--env previews**: `tako deploy --env=pr-42` — every name
+  prefixed, Datastore namespace pr-42, disjoint secrets (preflight
+  demands `pr-42-notifier-key` with the exact create command — envs
+  share NOTHING); `tako destroy --env=pr-42` removes it wholesale.
+  Nothing new is built here; C6 validates the claim end to end.
+- **Drift**: unchanged mechanics, now part of the gate (console-edit
+  a service → next plan says DRIFT and the update overwrites).
+
+### 3. Semantics being locked
+
+- **Change classes** are derived, not annotated: create=additive;
+  update=in-place except entries whose diff touches an immutable
+  field (subscription topic; index properties — which already
+  delete+create as content-addressed) → replace, called out with
+  consequences; orphans stay informational, plus the rename-suspect
+  line when a same-kind create pairs with an orphan (call 1).
+- **Canary/promote/rollback are traffic operations, never rebuilds**:
+  digests pin revisions; annotations already carry git SHA + graph
+  hash, and the commands print them. Rollback moves traffic to the
+  previous revision per service (async included — their push traffic
+  follows the split); it does NOT undo infra shape (the plan says so
+  when shape has changed since).
+- **Prune deletes only labeled orphans, stateless kinds first-class**:
+  run services, SAs, topics, subscriptions, notification configs,
+  indexes. `--data` extends to buckets (object counts printed) and
+  entity kinds (entity counts) behind the typed-name confirmation.
+  Grants never need pruning (convergent rewrite, C3).
+- **A canary deploy takes the same lease** — no concurrent promote/
+  rollback/deploy interleavings.
+
+### 4. Internals
+
+- `pkg/provision`: Entry gains Class (derived in Compute from
+  desired-vs-observed spec fields); Render shows it; rename-suspect
+  pairing in plan assembly. Goldens grow the column.
+- `pkg/provision/gcp`: run.go traffic split support (percent to
+  revision, list revisions with annotations), subscriptions replace
+  path (delete+create when topic differs, announced); prune reuses
+  the destroy deleters behind orphan filtering.
+- `cmd/tako`: `promote`, `rollback`, `prune [--data]`, `--canary`,
+  `--yes`, the prompt; usage text.
+- Spec §4.6a rename paragraph fix-up (call 1).
+- No SDK surface changes (freeze holds).
+
+### 5. Cloud errors & permissions (per docs/tako-cloud-permissions.md)
+
+- No new APIs. Traffic operations ride run.services.update (already
+  probed); prune uses the existing per-kind delete permissions —
+  preflight unchanged.
+- `tako promote`/`rollback` with no prior revision: "nothing to
+  promote/roll back to — this service has a single revision" (exact
+  text pinned).
+- `--canary` on an app with no public service: "no public service to
+  canary (async services stage at 0% and promote atomically)".
+- Concurrent lifecycle ops: the lease text, unchanged.
+
+### 6. Not in scope (C6 non-goals)
+
+- The migrating `tako rename` (per call 1 — its own future task).
+- Traffic-split canary for async services (spec v0 stance).
+- `overrides:` escape hatch (no example demands it; drift handling
+  treats every tako-owned field as tako's).
+- Autoscaling-based progressive rollouts, error-rate-gated promotion.
+- Cloud Tasks, Scheduler, shared cache, metrics (standing deferrals).
+
+**Validation**: `validate/lifecycle.md` (new): full walk on
+tako-test-01 — deploy gallery → console drift-inject → plan warns →
+`--canary=10` (public split verified by curl loop hitting both
+revisions, async staged at 0%) → promote → rollback (SHAs verified) →
+comment out a resource → deploy shows orphan + rename-suspect text →
+prune (stateless) and prune --data (counts + typed name) → `--env
+pr-42` preview cycle (disjoint secret demanded, deploy, curl, destroy
+--env) → destroy. Conformance untouched (no backend changes).
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
