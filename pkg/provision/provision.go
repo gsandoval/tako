@@ -20,19 +20,22 @@ const (
 	KindBucket           Kind = "bucket"
 	KindDatastoreIndex   Kind = "datastore index"
 	KindTopic            Kind = "topic"
+	KindPullSubscription Kind = "pull subscription"
 	KindRunService       Kind = "run service"
 	KindIamGrants        Kind = "iam grants"
 	KindPushSubscription Kind = "push subscription"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
-// before the services that use them; grants after services (their
-// targets must exist) and push subscriptions last (they deliver into
-// services whose IAM must already admit the push identity). Destroy
-// walks it backwards.
+// before the services that use them; pull (dead-letter keep)
+// subscriptions right after their topics so no dead-letter is ever
+// published into a subscriber-less topic (Pub/Sub drops those); grants
+// after services (their targets must exist) and push subscriptions last
+// (they deliver into services whose IAM must already admit the push
+// identity). Destroy walks it backwards.
 var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
-	KindRunService, KindIamGrants, KindPushSubscription,
+	KindPullSubscription, KindRunService, KindIamGrants, KindPushSubscription,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.

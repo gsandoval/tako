@@ -93,23 +93,28 @@ type subscriptionBody struct {
 	Labels             map[string]string `json:"labels"`
 	AckDeadlineSeconds int               `json:"ackDeadlineSeconds,omitempty"`
 	PushConfig         map[string]any    `json:"pushConfig,omitempty"`
+	RetryPolicy        map[string]any    `json:"retryPolicy,omitempty"`
+	DeadLetterPolicy   map[string]any    `json:"deadLetterPolicy,omitempty"`
 }
 
-func (s *PushSubscriptions) List(ctx context.Context) ([]provision.Observed, error) {
-	u := "https://pubsub.googleapis.com/v1/projects/" + s.C.Project + "/subscriptions?pageSize=1000"
+// listSubscriptions lists tako-labeled subscriptions of one delivery
+// shape: Pub/Sub keeps push and pull subscriptions in the same
+// collection, so each kind filters by pushConfig presence.
+func listSubscriptions(ctx context.Context, c *Client, labels map[string]string, kind provision.Kind, push bool) ([]provision.Observed, error) {
+	u := "https://pubsub.googleapis.com/v1/projects/" + c.Project + "/subscriptions?pageSize=1000"
 	var out struct {
 		Subscriptions []subscriptionBody `json:"subscriptions"`
 	}
-	if err := s.C.do(ctx, http.MethodGet, u, nil, &out); err != nil {
-		return nil, Classify(err, s.C.Project, "list subscriptions", "roles/pubsub.viewer")
+	if err := c.do(ctx, http.MethodGet, u, nil, &out); err != nil {
+		return nil, Classify(err, c.Project, "list subscriptions", "roles/pubsub.viewer")
 	}
 	var observed []provision.Observed
 	for _, sub := range out.Subscriptions {
-		if !hasLabels(sub.Labels, s.Labels) {
+		if !hasLabels(sub.Labels, labels) || (len(sub.PushConfig) > 0) != push {
 			continue
 		}
 		observed = append(observed, provision.Observed{
-			Kind:     provision.KindPushSubscription,
+			Kind:     kind,
 			Name:     lastSegment(sub.Name),
 			SpecHash: sub.Labels["tako-spec-hash"],
 		})
@@ -117,8 +122,12 @@ func (s *PushSubscriptions) List(ctx context.Context) ([]provision.Observed, err
 	return observed, nil
 }
 
+func (s *PushSubscriptions) List(ctx context.Context) ([]provision.Observed, error) {
+	return listSubscriptions(ctx, s.C, s.Labels, provision.KindPushSubscription, true)
+}
+
 func (s *PushSubscriptions) body(o provision.Object) subscriptionBody {
-	return subscriptionBody{
+	b := subscriptionBody{
 		Topic:  "projects/" + s.C.Project + "/topics/" + fmt.Sprint(o.Spec["topic"]),
 		Labels: withHash(s.Labels, provision.SpecHash(o.Spec)),
 		// Cloud Run request timeout is the real ceiling; 600s is
@@ -132,6 +141,21 @@ func (s *PushSubscriptions) body(o provision.Object) subscriptionBody {
 			},
 		},
 	}
+	// Local failure semantics on the broker: bounded retries with
+	// backoff, then the service's dead topic (C4).
+	if r, ok := o.Spec["retry"].(map[string]any); ok {
+		b.RetryPolicy = map[string]any{
+			"minimumBackoff": fmt.Sprint(r["minimumBackoff"]),
+			"maximumBackoff": fmt.Sprint(r["maximumBackoff"]),
+		}
+	}
+	if d, ok := o.Spec["deadLetter"].(map[string]any); ok {
+		b.DeadLetterPolicy = map[string]any{
+			"deadLetterTopic":     "projects/" + s.C.Project + "/topics/" + fmt.Sprint(d["topic"]),
+			"maxDeliveryAttempts": d["maxAttempts"],
+		}
+	}
+	return b
 }
 
 func (s *PushSubscriptions) Create(ctx context.Context, o provision.Object) error {
@@ -141,18 +165,22 @@ func (s *PushSubscriptions) Create(ctx context.Context, o provision.Object) erro
 	return nil
 }
 
-// Update patches pushConfig and labels. The topic is immutable on a
-// Pub/Sub subscription — a queue rebind would need delete + create,
-// which the plan surfaces as an update that fails honestly rather than
-// silently recreating (rebinding a live queue loses in-flight work).
+// Update patches pushConfig, retry/dead-letter policy, and labels. The
+// topic is immutable on a Pub/Sub subscription — a queue rebind would
+// need delete + create, which the plan surfaces as an update that fails
+// honestly rather than silently recreating (rebinding a live queue
+// loses in-flight work).
 func (s *PushSubscriptions) Update(ctx context.Context, o provision.Object) error {
+	full := s.body(o)
 	body := map[string]any{
 		"subscription": subscriptionBody{
-			Name:       s.name(o.Name),
-			Labels:     withHash(s.Labels, provision.SpecHash(o.Spec)),
-			PushConfig: s.body(o).PushConfig,
+			Name:             s.name(o.Name),
+			Labels:           full.Labels,
+			PushConfig:       full.PushConfig,
+			RetryPolicy:      full.RetryPolicy,
+			DeadLetterPolicy: full.DeadLetterPolicy,
 		},
-		"updateMask": "pushConfig,labels",
+		"updateMask": "pushConfig,retryPolicy,deadLetterPolicy,labels",
 	}
 	if err := s.C.do(ctx, http.MethodPatch, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
 		return Classify(err, s.C.Project, "update the push subscription", "roles/pubsub.admin")
@@ -163,6 +191,58 @@ func (s *PushSubscriptions) Update(ctx context.Context, o provision.Object) erro
 func (s *PushSubscriptions) Delete(ctx context.Context, name string) error {
 	if err := s.C.do(ctx, http.MethodDelete, "https://pubsub.googleapis.com/v1/"+s.name(name), nil, nil); err != nil {
 		return Classify(err, s.C.Project, "delete the push subscription", "roles/pubsub.admin")
+	}
+	return nil
+}
+
+// PullSubscriptions manages the dead-letter "keep" subscriptions
+// (KindPullSubscription): a dead topic with no subscription DROPS
+// forwarded messages, so each async service's dead topic carries one
+// pull subscription from birth — retention (Pub/Sub's 7-day default)
+// and what tako dlq reads.
+type PullSubscriptions struct {
+	C      *Client
+	Labels map[string]string
+}
+
+func (s *PullSubscriptions) Kind() provision.Kind { return provision.KindPullSubscription }
+
+func (s *PullSubscriptions) name(short string) string {
+	return "projects/" + s.C.Project + "/subscriptions/" + short
+}
+
+func (s *PullSubscriptions) List(ctx context.Context) ([]provision.Observed, error) {
+	return listSubscriptions(ctx, s.C, s.Labels, provision.KindPullSubscription, false)
+}
+
+func (s *PullSubscriptions) Create(ctx context.Context, o provision.Object) error {
+	body := subscriptionBody{
+		Topic:  "projects/" + s.C.Project + "/topics/" + fmt.Sprint(o.Spec["topic"]),
+		Labels: withHash(s.Labels, provision.SpecHash(o.Spec)),
+	}
+	if err := s.C.do(ctx, http.MethodPut, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
+		return Classify(err, s.C.Project, "create the dead-letter keep subscription", "roles/pubsub.admin")
+	}
+	return nil
+}
+
+func (s *PullSubscriptions) Update(ctx context.Context, o provision.Object) error {
+	body := map[string]any{
+		"subscription": subscriptionBody{
+			Name:   s.name(o.Name),
+			Labels: withHash(s.Labels, provision.SpecHash(o.Spec)),
+		},
+		"updateMask": "labels",
+	}
+	if err := s.C.do(ctx, http.MethodPatch, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
+		return Classify(err, s.C.Project, "update the dead-letter keep subscription", "roles/pubsub.admin")
+	}
+	return nil
+}
+
+func (s *PullSubscriptions) Delete(ctx context.Context, name string) error {
+	if err := s.C.do(ctx, http.MethodDelete, "https://pubsub.googleapis.com/v1/"+s.name(name), nil, nil); err != nil {
+		return Classify(err, s.C.Project, "delete the dead-letter keep subscription", "roles/pubsub.admin")
 	}
 	return nil
 }

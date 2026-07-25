@@ -12,6 +12,11 @@ import (
 	"github.com/gsandoval/tako/internal/schedule"
 )
 
+// cronInert, set by BootGCP, keeps crons from ticking in-process in
+// the cloud (per-instance tickers under autoscaling are not a
+// schedule); a scheduler feature will drive them instead.
+var cronInert bool
+
 // RegisterCron starts the named cron on its schedule. Generated mains
 // call it once per cron at startup; runs are serialized per cron — a
 // tick landing mid-run is skipped with a narration, the honest local
@@ -31,6 +36,14 @@ func RegisterCron(name string, h tako.Handler) {
 		// The analyzer rejects unparseable schedules; reaching this means
 		// the binary predates the declaration — fail loudly.
 		panic("tako: " + err.Error())
+	}
+	if cronInert {
+		// In the cloud a per-instance ticker would fire once per live
+		// instance and never when scaled to zero — worse than nothing.
+		// Cron stays inert until the scheduler feature; the deploy
+		// banner says so.
+		slog.Default().Info("cron not scheduled in the cloud yet (a scheduler feature follows)", "cron", name, "schedule", sched)
+		return
 	}
 	fmt.Printf("⏰ cron %s: %s\n", name, sched)
 	go func() {

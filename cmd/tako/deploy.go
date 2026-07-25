@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/build"
 	"github.com/gsandoval/tako/pkg/codegen"
 	"github.com/gsandoval/tako/pkg/devserver"
@@ -107,7 +108,7 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	probed, err := client.Preflight(ctx, needsOf(graph))
+	probed, err := client.Preflight(ctx, needsOf(graph, t.env))
 	if err != nil {
 		return err
 	}
@@ -142,13 +143,15 @@ func runDeploy(args []string) error {
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
+	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	grants := &gcp.Grants{C: client, Desired: desired}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
 	if err != nil {
 		return err
 	}
 	plan := provision.Compute(app, t.env, desired, observed)
 	fmt.Printf("  plan\n%s", indentPlan(plan.Render()))
+	warnInertCrons(graph)
 
 	if t.planOnly {
 		return nil
@@ -166,9 +169,32 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, runs, grants, subs)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
-		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic), desired, applier); err != nil {
+		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
+		provision.KindPullSubscription), desired, applier); err != nil {
+		return err
+	}
+	// Grant sequencing is dictated by two boot/delivery dependencies:
+	// services RESOLVE SECRETS AT BOOT, so secret (and every other
+	// non-run, non-subscription) grant lands before the run services
+	// start; push delivery needs the invoker binding on the target run
+	// service before the first message, so run grants land before
+	// subscriptions; and the Pub/Sub agent's dead-letter grants sit ON
+	// the subscriptions, which must exist to hold a policy.
+	grantsPlan := plan.Filter(provision.KindIamGrants)
+	var preRun, onRuns, onSubs provision.Plan
+	for _, e := range grantsPlan.Entries {
+		switch {
+		case strings.HasPrefix(e.Name, provision.TargetSubscription+" "):
+			onSubs.Entries = append(onSubs.Entries, e)
+		case strings.HasPrefix(e.Name, provision.TargetRunService+" "):
+			onRuns.Entries = append(onRuns.Entries, e)
+		default:
+			preRun.Entries = append(preRun.Entries, e)
+		}
+	}
+	if err := provision.Apply(ctx, preRun, desired, applier); err != nil {
 		return err
 	}
 	for _, svc := range graph.Services {
@@ -180,9 +206,13 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRunService), desired, applier); err != nil {
 		return err
 	}
-	// Grants precede subscriptions: push delivery needs the invoker
-	// binding on the worker before the first message arrives.
-	if err := provision.Apply(ctx, plan.Filter(provision.KindIamGrants, provision.KindPushSubscription), desired, applier); err != nil {
+	if err := provision.Apply(ctx, onRuns, desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindPushSubscription), desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, onSubs, desired, applier); err != nil {
 		return err
 	}
 
@@ -234,14 +264,14 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 		}
 		ingress := "public ingress"
 		if !public[cfg.Name(svc.Name)] {
-			ingress = "ingress: OIDC push from its own SA only"
+			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
 		}
 		fmt.Printf("  %s runs as %s —\n    %s; %s\n", cfg.Name(svc.Name), email, grantText, ingress)
 	}
 }
 
 // needsOf reports which optional backend surfaces the graph uses.
-func needsOf(graph *analyzer.AppGraph) gcp.Needs {
+func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 	var n gcp.Needs
 	for _, r := range graph.Resources {
 		switch r.Kind {
@@ -249,9 +279,29 @@ func needsOf(graph *analyzer.AppGraph) gcp.Needs {
 			n.Datastore = true
 		case "queue", "topic":
 			n.PubSub = true
+		case "secret":
+			n.Secrets = append(n.Secrets, gcpb.SecretName(env, r.Name))
+		}
+	}
+	// Async handlers mean dead-letter topics and subscriptions even
+	// when the only source is a bucket's events topic.
+	for _, h := range graph.Handlers {
+		if h.Kind == "worker" || h.Kind == "subscribe" {
+			n.PubSub = true
 		}
 	}
 	return n
+}
+
+// warnInertCrons tells the truth about cron in the cloud: nothing
+// schedules it yet (a scheduler feature follows C-phase), so nobody
+// should believe a daily job is running.
+func warnInertCrons(graph *analyzer.AppGraph) {
+	for _, h := range graph.Handlers {
+		if h.Kind == "cron" {
+			fmt.Printf("  ⚠ cron %s is not scheduled in the cloud yet (a scheduler feature follows); it still runs under tako dev\n", h.Var)
+		}
+	}
 }
 
 // runLogs is `tako logs [service] [--since 15m] [--project …]`.
@@ -350,8 +400,9 @@ func runDestroy(args []string) error {
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
+	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	grants := &gcp.Grants{C: client, Desired: desired}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, pulls, runs, grants, subs)
 	if err != nil {
 		return err
 	}
@@ -380,6 +431,11 @@ func runDestroy(args []string) error {
 		if len(dataKinds) > 0 {
 			fmt.Printf("    datastore kinds %s (namespace %s)\n", strings.Join(dataKinds, ", "), t.env)
 		}
+		for _, o := range observed {
+			if o.Kind == provision.KindPullSubscription {
+				fmt.Printf("    dead-letter messages retained on %s (if any)\n", o.Name)
+			}
+		}
 	}
 	fmt.Printf("type the app name to confirm: ")
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
@@ -393,6 +449,7 @@ func runDestroy(args []string) error {
 		provision.KindPushSubscription: subs,
 		provision.KindIamGrants:        grants,
 		provision.KindRunService:       runs,
+		provision.KindPullSubscription: pulls,
 		provision.KindTopic:            topics,
 		provision.KindDatastoreIndex:   indexes,
 		provision.KindBucket:           buckets,

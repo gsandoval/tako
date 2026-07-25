@@ -24,3 +24,19 @@ func BucketName(project, app, env, base string) string {
 func TopicName(env, base string) string {
 	return Prefixed(env, base)
 }
+
+// EventTopicName is the physical Pub/Sub topic a bucket's Uploaded
+// events publish on. In C4 the runtime emits these after
+// through-service writes; C5's GCS-native notifications take over the
+// SAME topic when signed direct uploads land.
+func EventTopicName(env, bucket string) string {
+	return Prefixed(env, bucket+"-uploaded")
+}
+
+// DeadTopicName is the physical dead-letter topic of one async service
+// (each worker/subscriber is its own service). Both the subscription's
+// deadLetterPolicy and the runtime's Permanent short-circuit publish
+// here.
+func DeadTopicName(env, service string) string {
+	return Prefixed(env, service+"-dead")
+}

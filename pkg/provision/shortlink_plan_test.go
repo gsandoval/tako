@@ -41,9 +41,10 @@ func shortlinkGraph() *analyzer.AppGraph {
 	}
 }
 
-// TestShortlinkPlanRender goldens the whole C3 surface in one plan:
-// SAs, composite index, topic, run services (worker private), push
-// subscription, and per-target grants.
+// TestShortlinkPlanRender goldens the C3+C4 surface in one plan: SAs,
+// composite index, topic, dead-letter topic + keep subscription, run
+// services (worker private), push subscription, and per-target grants
+// (including the worker's subscription + dead topic).
 func TestShortlinkPlanRender(t *testing.T) {
 	cfg := Config{Project: "my-proj", ProjectNumber: "123456", Region: "us-central1", App: "shortlink", Env: DefaultEnv}
 	desired, err := Desired(shortlinkGraph(), cfg, map[string]string{
@@ -59,6 +60,8 @@ func TestShortlinkPlanRender(t *testing.T) {
   create  service account shortlink-countclick-sa
   create  datastore index links (owner, -created)
   create  topic clicks
+  create  topic shortlink-countclick-dead
+  create  pull subscription shortlink-countclick-dead
   create  run service shortlink
   create  run service shortlink-countclick
   create  iam grants project
@@ -66,9 +69,11 @@ func TestShortlinkPlanRender(t *testing.T) {
   create  iam grants run shortlink-countclick
   create  iam grants serviceAccount shortlink-countclick-sa@my-proj.iam.gserviceaccount.com
   create  iam grants serviceAccount shortlink-sa@my-proj.iam.gserviceaccount.com
+  create  iam grants subscription shortlink-countclick
   create  iam grants topic clicks
+  create  iam grants topic shortlink-countclick-dead
   create  push subscription shortlink-countclick
-  14 creates, 0 updates, 0 skips, 0 orphans
+  18 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
@@ -100,15 +105,19 @@ func TestShortlinkGrantContents(t *testing.T) {
 	}
 	apiSA := "serviceAccount:shortlink-sa@my-proj.iam.gserviceaccount.com"
 	workerSA := "serviceAccount:shortlink-countclick-sa@my-proj.iam.gserviceaccount.com"
+	agent := "serviceAccount:service-123456@gcp-sa-pubsub.iam.gserviceaccount.com"
 	checks := map[string][]string{
-		"project":                        {"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA},
-		"topic clicks":                   {"roles/pubsub.publisher → " + apiSA},
-		"run service grants for worker":  nil, // checked below by name
-		"run shortlink":                  {},  // public API service: no tako-member bindings
-		"run shortlink-countclick":       {"roles/run.invoker → " + workerSA},
-		"serviceAccount " + workerSA[15:]: {"roles/iam.serviceAccountTokenCreator → serviceAccount:service-123456@gcp-sa-pubsub.iam.gserviceaccount.com"},
+		"project":      {"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA},
+		"topic clicks": {"roles/pubsub.publisher → " + apiSA},
+		"run shortlink": {}, // public API service: no tako-member bindings
+		"run shortlink-countclick": {"roles/run.invoker → " + workerSA},
+		"serviceAccount " + workerSA[15:]: {"roles/iam.serviceAccountTokenCreator → " + agent},
+		// Dead-letter plumbing: the worker Permanent-publishes into its
+		// own dead topic, the Pub/Sub agent forwards exhausted deliveries
+		// there and acks them off the source subscription.
+		"topic shortlink-countclick-dead": {"roles/pubsub.publisher → " + agent, "roles/pubsub.publisher → " + workerSA},
+		"subscription shortlink-countclick": {"roles/pubsub.subscriber → " + agent},
 	}
-	delete(checks, "run service grants for worker")
 	for name, want := range checks {
 		got := grants[name]
 		if len(got) != len(want) {
@@ -125,6 +134,13 @@ func TestShortlinkGrantContents(t *testing.T) {
 		subSpec["endpoint"] != "https://shortlink-countclick-123456.us-central1.run.app/_tako/push" ||
 		subSpec["serviceAccount"] != workerSA[15:] {
 		t.Errorf("push subscription spec = %v", subSpec)
+	}
+	// Local failure semantics on the wire: 5 attempts, backoff, DLQ.
+	if dl := subSpec["deadLetter"].(map[string]any); dl["topic"] != "shortlink-countclick-dead" || dl["maxAttempts"] != 5 {
+		t.Errorf("deadLetter = %v", dl)
+	}
+	if rp := subSpec["retry"].(map[string]any); rp["minimumBackoff"] != "10s" || rp["maximumBackoff"] != "300s" {
+		t.Errorf("retry = %v", rp)
 	}
 	// The worker's Run service must be private; the API's public.
 	for _, o := range desired {

@@ -34,6 +34,9 @@ Usage:
                        plan (--plan stops there), lease, apply, live URL
   tako logs [service] [--since 15m]
                        recent logs for the deployed services
+  tako dlq [service] [--ack]
+                       dead-lettered messages per async service (peek);
+                       --ack drains the printed messages for good
   tako destroy [--project <id>] [--env <e>]
                        delete everything labeled for this app (typed
                        confirmation; never touches unlabeled resources)
@@ -73,6 +76,11 @@ func main() {
 	case "deploy":
 		if err := runDeploy(os.Args[2:]); err != nil {
 			fail(err)
+		}
+	case "dlq":
+		if err := runDLQ(os.Args[2:]); err != nil {
+			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
+			os.Exit(1)
 		}
 	case "logs":
 		if err := runLogs(os.Args[2:]); err != nil {

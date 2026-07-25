@@ -59,20 +59,32 @@ func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet
 	case provision.TargetServiceAccount:
 		base := "https://iam.googleapis.com/v1/projects/" + g.C.Project + "/serviceAccounts/" + id
 		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
+	case provision.TargetSubscription:
+		base := "https://pubsub.googleapis.com/v1/projects/" + g.C.Project + "/subscriptions/" + id
+		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
+	case provision.TargetSecret:
+		base := "https://secretmanager.googleapis.com/v1/projects/" + g.C.Project + "/secrets/" + id
+		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	}
 	return "", "", "", false, fmt.Errorf("unknown grant target type %q", typ)
 }
 
 // managed reports whether a binding member on this target is tako's to
-// rewrite. The Pub/Sub service agent counts only on SA targets (token
-// creator for push OIDC) — everywhere else it is someone else's.
+// rewrite. The Pub/Sub service agent counts on SA targets (token
+// creator for push OIDC), subscription targets (dead-letter acking),
+// and topic targets (dead-letter forwarding) — the target kinds tako
+// itself manages; everywhere else it is someone else's.
 func (g *Grants) managed(typ, member string) bool {
 	if provision.ManagedMember(member, g.C.Project) {
 		return true
 	}
-	return typ == provision.TargetServiceAccount &&
-		strings.HasPrefix(member, "serviceAccount:service-") &&
+	agent := strings.HasPrefix(member, "serviceAccount:service-") &&
 		strings.HasSuffix(member, "@gcp-sa-pubsub.iam.gserviceaccount.com")
+	switch typ {
+	case provision.TargetServiceAccount, provision.TargetSubscription, provision.TargetTopic:
+		return agent
+	}
+	return false
 }
 
 // observedSpec rebuilds a grants object spec from a live policy — the
@@ -146,9 +158,16 @@ func (g *Grants) apply(ctx context.Context, o provision.Object) error {
 	if err != nil {
 		return err
 	}
-	p, _, err := g.read(ctx, typ, id)
+	p, ok, err := g.read(ctx, typ, id)
 	if err != nil {
 		return err
+	}
+	if !ok {
+		// The target does not exist (yet, or anymore): nothing holds
+		// bindings to rewrite. Deploy sequences subscription-target
+		// grants after their subscriptions exist; destroy hits this
+		// after the target's own deletion — both converge.
+		return nil
 	}
 	// Strip every managed member, then re-add the desired set.
 	next := map[string][]string{} // role → members

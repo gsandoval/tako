@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
@@ -39,31 +40,75 @@ func Boot() {
 
 // BootGCP wires the cloud backends from the env the deploy injected:
 // TAKO_PROJECT (Datastore + GCS + Pub/Sub project), TAKO_APP (bucket
-// scoping), TAKO_ENV (Datastore namespace + name prefixes). Cache and
-// metrics stay in-process in v0; topics and signed URLs are C4/C5 and
-// error with phase pointers until then.
+// scoping), TAKO_ENV (Datastore namespace + name prefixes),
+// TAKO_SERVICE (dead-topic derivation), TAKO_BUCKET_EVENTS (buckets
+// whose writes the runtime announces). Declared secrets resolve from
+// Secret Manager here, once — a missing one refuses boot, exactly like
+// local's .env. Cache and metrics stay in-process in v0; signed URLs
+// are C5 and error with a phase pointer until then.
 func BootGCP() error {
 	opts := gcpb.Options{
 		Project: os.Getenv("TAKO_PROJECT"),
 		App:     os.Getenv("TAKO_APP"),
 		Env:     os.Getenv("TAKO_ENV"),
+		Service: os.Getenv("TAKO_SERVICE"),
 	}
 	for name, v := range map[string]string{"TAKO_PROJECT": opts.Project, "TAKO_APP": opts.App, "TAKO_ENV": opts.Env} {
 		if v == "" {
 			return fmt.Errorf("%s is not set — tako deploy injects it, so this is a tako bug", name)
 		}
 	}
+	if list := os.Getenv("TAKO_BUCKET_EVENTS"); list != "" {
+		opts.BucketEvents = map[string]bool{}
+		for _, b := range strings.Split(list, ",") {
+			opts.BucketEvents[b] = true
+		}
+	}
 	c, err := gcpb.New(context.Background(), opts)
 	if err != nil {
+		return err
+	}
+	// Package-wide secret resolution (C4 call (a)): every service of
+	// the app resolves every declared secret, so SecretHandle.Value
+	// never fails at request time in any of them. Freshly deployed
+	// grants can lag (IAM propagation), so a first boot retries briefly
+	// before failing with the readable text.
+	if hooks.DeclaredSecrets != nil {
+		for _, name := range hooks.DeclaredSecrets() {
+			var value string
+			var err error
+			deadline := time.Now().Add(90 * time.Second)
+			for {
+				value, err = c.AccessSecret(context.Background(), name)
+				if err == nil || time.Now().After(deadline) {
+					break
+				}
+				fmt.Fprintf(os.Stderr, "tako: boot: secret %q not readable yet (IAM propagation?), retrying: %v\n", name, err)
+				time.Sleep(5 * time.Second)
+			}
+			if err != nil {
+				return fmt.Errorf("secret %q is not readable — add it to Secret Manager (preflight prints the exact command) and re-run tako deploy: %v", name, err)
+			}
+			secrets.Set(name, value)
+		}
+	}
+	if err := checkSecrets(); err != nil {
 		return err
 	}
 	hooks.Entity = gcpb.NewEntityStore(c)
 	hooks.Bucket = gcpb.NewBucketStore(c)
 	hooks.Queue = gcpb.NewQueueStore(c)
-	hooks.Topic = gcpb.TopicStore{}
+	hooks.Topic = gcpb.NewTopicStore(c)
 	hooks.Signer = gcpb.Signer{}
 	hooks.Cache = local.NewMemoryCache()
 	hooks.Metrics = local.NewMetricsLog()
+	// tako.Permanent short-circuits to this service's own dead topic:
+	// Pub/Sub cannot express "nack without retry", so PushHandler
+	// publishes and acks — one attempt, then dead-letter, like local.
+	deadLetter = c.DeadLetter
+	// Per-instance cron tickers under autoscaling are not a schedule —
+	// crons stay inert in the cloud until the scheduler feature.
+	cronInert = true
 	return nil
 }
 
@@ -136,10 +181,15 @@ func WaitIdle(timeout time.Duration) error {
 
 // SignedURLHandler serves the local signed-URL endpoint
 // (/_tako/signed/<token>) against the booted backends. Generated mains
-// mount it when the app declares a bucket.
+// mount it when the app declares a bucket — on every backend, so on
+// gcp (no local boot) it serves the C5 phase pointer instead of
+// panicking: signBlob-backed signed URLs are C5's slice, and the
+// Signer constructors error the same way.
 func SignedURLHandler() http.Handler {
 	if booted == nil {
-		panic("tako: SignedURLHandler before Boot")
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "tako: signed URLs on the gcp backend arrive with C5 — SignedPut/SignedGet error until then", http.StatusNotImplemented)
+		})
 	}
 	return local.SignedURLEndpoint(booted.Signer, booted.Buckets)
 }

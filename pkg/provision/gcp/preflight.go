@@ -35,7 +35,12 @@ var preflightPerms = []struct{ perm, role string }{
 // preflight only probes what the deploy will touch.
 type Needs struct {
 	Datastore bool // any entity declared
-	PubSub    bool // any queue or topic declared
+	PubSub    bool // any queue, topic, or async handler declared
+	// Secrets are the declared secrets' PHYSICAL (env-prefixed) names.
+	// tako never creates secrets (values are data the user owns):
+	// preflight verifies each exists and prints the exact create
+	// command when one does not.
+	Secrets []string
 }
 
 // Preflight checks credentials, APIs, and permissions before any
@@ -55,6 +60,12 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		perms = append(perms,
 			struct{ perm, role string }{"pubsub.topics.create", "roles/pubsub.admin"},
 			struct{ perm, role string }{"pubsub.subscriptions.create", "roles/pubsub.admin"})
+	}
+	if len(needs.Secrets) > 0 {
+		apis = append(apis, "secretmanager.googleapis.com")
+		perms = append(perms,
+			struct{ perm, role string }{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
+			struct{ perm, role string }{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
 	}
 
 	for _, api := range apis {
@@ -90,6 +101,17 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	for _, p := range perms {
 		if !have[p.perm] {
 			gaps = append(gaps, fmt.Sprintf("you lack %s — grant: gcloud projects add-iam-policy-binding %s --member user:$(gcloud config get account) --role %s", p.perm, c.Project, p.role))
+		}
+	}
+
+	// Declared secrets must exist before their services boot (boot
+	// refuses to serve with one unset — the same contract as local's
+	// .env). Missing is a distinct, fixable state with its own command.
+	for _, physical := range needs.Secrets {
+		u := "https://secretmanager.googleapis.com/v1/projects/" + c.Project + "/secrets/" + physical
+		err := c.do(ctx, http.MethodGet, u, nil, nil)
+		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+			gaps = append(gaps, fmt.Sprintf("secret %s does not exist in %s — create it: printf '<value>' | gcloud secrets create %s --data-file=- --project %s", physical, c.Project, physical, c.Project))
 		}
 	}
 

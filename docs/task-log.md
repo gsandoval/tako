@@ -3617,3 +3617,107 @@ kill-mid-job redelivery → `tako dlq` → idempotence → destroy.
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+## C4 — implementation: Pub/Sub push + dead-letter; gallery async graduates (2026-07-25)
+
+Proposal approved with all three §1 recommendations: bucket events
+lite, package-wide secret resolution (a), and tako dlq (peek + --ack).
+Shipped as proposed; amendments below are what the live cycle forced.
+
+**Provision:** subscriptions now cover subscribers (topic and
+bucket-event sources; sourceTopic maps `photos.Uploaded` → the
+`photos-uploaded` events topic, created only for buckets that have
+subscribers); every async service gets a dead topic + a pull "keep"
+subscription (new KindPullSubscription, reconciled right after topics
+so no dead-letter ever lands in a subscriber-less topic); push
+subscription specs carry retryPolicy (10s–300s exponential) and
+deadLetterPolicy (maxDeliveryAttempts 5, matching local's dispatcher).
+Grants grow subscription + secret target types: SA publisher on its
+own dead topic (the Permanent path), the Pub/Sub service agent's
+dead-letter pair (publisher on dead topics, subscriber on source
+subscriptions — agent counts as managed on topic/subscription/SA
+targets), secretAccessor for every app SA on every declared secret,
+and events-topic publisher for exactly the bucket-writing services.
+TAKO_SERVICE + TAKO_BUCKET_EVENTS join the injected env.
+TestGalleryPlanRender pins the whole 52-object plan;
+TestGalleryFanoutAndTriggers pins routing, emission grants, and
+public/private; the shortlink goldens grew the convergence
+(dead topic + keep sub + two grant targets).
+
+**Backends/runtime:** TopicStore.Publish is real (C4 stub dies);
+BucketStore.Put decodes the upload response and announces ObjectMeta
+on the events topic (same payload as local's WireBucketEvents; a
+publish failure reports "object stored but its Uploaded event did not
+publish"); BootGCP resolves declared secrets from Secret Manager
+versions/latest before serving (missing → boot refuses, same contract
+as .env) and wires the dead-letter hook; PushHandler unwraps
+deliveryAttempt, narrates `attempt n/5` and "delivery failed — nacked
+for retry" (the cloud face of local's retry lines), and on
+tako.Permanent publishes to the service's own dead topic and ACKS —
+one attempt then dead-letter, because Pub/Sub cannot express "nack
+without retry" (hook failure nacks so nothing is lost; all pinned in
+push_test.go). Crons no longer tick in the cloud (a per-instance
+ticker under autoscaling is not a schedule): boot marks them inert,
+deploy prints the ⚠, dev unchanged.
+
+**CLI:** grant application is now three-phase — non-run/non-
+subscription targets BEFORE run services (services resolve secrets at
+boot), run targets after services, subscription targets after their
+subscriptions. tako dlq lists per-service dead-letter state, peeks
+messages (payload + reason + time), --ack drains. Destroy's DATA
+section adds the keep subscriptions.
+
+**Conformance(gcp)** grows TestTopicGCP (publish fan-out through two
+pull subscriptions, real Pub/Sub) and TestBucketEventEmitGCP (Put →
+ObjectMeta on the events topic); stale "Phase F" skip texts replaced
+with the honest push-is-infrastructure story.
+
+**Live cycle (tako-test-01, validate/gallery-cloud.md):** conformance
+Entity 18/18 + Bucket 7/7 + both new chapters; preflight caught the
+disabled Secret Manager API, then the missing secret with the exact
+create command (via direct probe — see discovered work); 52-object
+plan matched the golden; deploy 1m45s once converged; the whole spine
+ran with zero gallery changes — upload → emitted bucket event →
+onUploaded → queue → makeThumb (real 564B resized thumb in 21s) →
+photo-ready → both subscribers; `boom` caption: NotifyOwner narrated
+attempt=1/5…5/5 with visible backoff then dead-lettered ("delivery
+attempts exhausted") while WarmFeed acked every delivery of the same
+events and the feed stayed correct — independent fates in the cloud;
+empty upload: Permanent dead-lettered in seconds with reason "empty
+upload", no retries; plain curl on a worker push endpoint → 403 (IAM);
+re-deploy → all skips 34s; dlq --ack drained both queues to empty;
+destroy listed bucket + datastore kind + keep subs under DATA, deleted
+in reverse order, purged 4 entities, left the project clean.
+
+**Three bugs the live cycle caught (all fixed and pinned):**
+1. Boot-time secret resolution vs grant order: services booted before
+   their secretAccessor existed and Run marked the revision dead —
+   grant application became three-phase, and boot retries secret reads
+   for 90s (IAM propagation) before failing with the readable text.
+2. The generated main panicked on gcp ("SignedURLHandler before
+   Boot"): any app with a bucket mounts /_tako/signed, which only had
+   a local implementation — it now serves the C5 phase pointer (501)
+   when no local boot exists.
+3. Permanent false DRIFT on private services: liveHash hardcoded
+   `public: true` (a C2 constant), so every async service hashed as
+   drifted forever — the live ingress is now read from the service's
+   own IAM policy (allUsers invoker present = public).
+
+**Discovered work (not done):** preflight's secret probe treats only
+404 as missing, so a just-enabled Secret Manager API (403 during
+propagation) slips through to a boot-time failure; tako dlq's peek
+holds the pull lease ~10s, so back-to-back peeks alternate messages
+(should modifyAckDeadline to 0 on peek); C3 leftovers stand (runtime
+403 text during propagation, conformance conf-* namespaces, shared
+composite indexes surviving destroy).
+
+**GATE REQUEST — C4: full cycle on gallery.** Run
+`validate/gallery-cloud.md` end to end on tako-test-01 (§1
+conformance incl. the two Pub/Sub chapters, §2 plan + security
+summary judged grant by grant, §3 the pipeline + boom retries +
+Permanent + the IAM-gated push endpoint, §4 idempotence + dlq drain,
+§5 destroy with keep subs under DATA) and record the verdict in
+docs/validation-log.md. The notifier-key secret exists in the project
+(create once, survives destroy — by design). C5 (GCS notifications +
+signBlob signed URLs + Cloud Tasks; gallery FULLY graduates on the F9
+demo script) follows.

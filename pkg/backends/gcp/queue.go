@@ -23,26 +23,55 @@ func (s *QueueStore) Publish(ctx context.Context, queue string, payload []byte, 
 	if opts.Delay > 0 {
 		return fmt.Errorf("tako.WithDelay on the gcp backend needs Cloud Tasks — that arrives with C5; remove the delay or run locally")
 	}
-	topic := TopicName(s.c.Opts.Env, queue)
-	u := "https://pubsub.googleapis.com/v1/projects/" + s.c.Opts.Project + "/topics/" + topic + ":publish"
-	body := map[string]any{"messages": []map[string]any{{
-		"data":       base64.StdEncoding.EncodeToString(payload),
-		"attributes": map[string]string{"tako-queue": queue},
-	}}}
-	return s.c.do(ctx, "POST", u, body, nil)
+	return s.c.publish(ctx, TopicName(s.c.Opts.Env, queue), payload, map[string]string{"tako-queue": queue})
 }
 
 // Consume is a no-op on gcp: delivery arrives over HTTP push, not an
 // in-process loop. Registration still matters locally and for tests.
 func (s *QueueStore) Consume(queue string, deliver func(ctx context.Context, payload []byte) error) {}
 
-// TopicStore is the not-yet stub for tako.Topic on gcp: per-handler
-// fan-out subscriptions and dead-letter wiring arrive with C4.
-type TopicStore struct{}
-
-func (TopicStore) Publish(ctx context.Context, topic string, payload []byte) error {
-	return fmt.Errorf("tako.Topic on the gcp backend arrives with C4 — topics deploy but publishes fail until then")
+// publish sends one message to a physical Pub/Sub topic — the shared
+// path under queues, topics, bucket-event emission, and the Permanent
+// dead-letter short-circuit.
+func (c *Client) publish(ctx context.Context, topic string, payload []byte, attrs map[string]string) error {
+	u := "https://pubsub.googleapis.com/v1/projects/" + c.Opts.Project + "/topics/" + topic + ":publish"
+	msg := map[string]any{"data": base64.StdEncoding.EncodeToString(payload)}
+	if len(attrs) > 0 {
+		msg["attributes"] = attrs
+	}
+	return c.do(ctx, "POST", u, map[string]any{"messages": []map[string]any{msg}}, nil)
 }
 
-func (TopicStore) Subscribe(topic, subscriber string, deliver func(ctx context.Context, payload []byte) error) {
+// TopicStore implements the publish half of backends.Topic on Pub/Sub.
+// Fan-out is the provisioner's: one push subscription per subscriber
+// service, each with its own retries and dead letter — publishing here
+// reaches all of them.
+type TopicStore struct {
+	c *Client
+}
+
+func NewTopicStore(c *Client) *TopicStore { return &TopicStore{c: c} }
+
+func (s *TopicStore) Publish(ctx context.Context, topic string, payload []byte) error {
+	return s.c.publish(ctx, TopicName(s.c.Opts.Env, topic), payload, map[string]string{"tako-topic": topic})
+}
+
+// Subscribe is a no-op on gcp, like Consume: delivery arrives over
+// HTTP push into each subscriber's own service.
+func (s *TopicStore) Subscribe(topic, subscriber string, deliver func(ctx context.Context, payload []byte) error) {
+}
+
+// DeadLetter publishes one exhausted payload onto this service's own
+// dead-letter topic — the runtime's tako.Permanent short-circuit
+// (Pub/Sub cannot express "nack without retry", so the runtime routes
+// the message itself and acks). Attributes carry what local's
+// dead-letter JSON records.
+func (c *Client) DeadLetter(ctx context.Context, payload []byte, reason string) error {
+	if c.Opts.Service == "" {
+		return fmt.Errorf("dead-letter publish without TAKO_SERVICE — tako deploy injects it, so this is a tako bug")
+	}
+	return c.publish(ctx, DeadTopicName(c.Opts.Env, c.Opts.Service), payload, map[string]string{
+		"tako-dead-reason": reason,
+		"tako-service":     c.Opts.Service,
+	})
 }

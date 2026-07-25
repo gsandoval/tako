@@ -148,7 +148,7 @@ func TestSignedURL(t *testing.T) {
 			return SignedURLEnv{Signer: signer, Client: srv.Client(), Bucket: store, Topic: d.Topics()}
 		})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase F")
+		t.Skip("delivery on gcp is Pub/Sub push into Cloud Run (infrastructure, validated by the gate scripts); publishing + fan-out run in TestTopicGCP")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}
@@ -168,7 +168,7 @@ func TestBucketEvents(t *testing.T) {
 			return store, d.Topics()
 		})
 	case "gcp":
-		t.Skip("gcp backend arrives in Phase F")
+		t.Skip("delivery on gcp is push infrastructure; the emission half runs in TestBucketEventEmitGCP")
 	default:
 		t.Fatalf("unknown -backend %q", *backend)
 	}

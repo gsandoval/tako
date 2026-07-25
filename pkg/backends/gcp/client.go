@@ -16,6 +16,11 @@ type Options struct {
 	Project string // GCP project id (TAKO_PROJECT)
 	App     string // app name, scopes bucket names (TAKO_APP)
 	Env     string // environment, the Datastore namespace (TAKO_ENV)
+	Service string // this service's base name (TAKO_SERVICE) — dead-topic derivation
+	// BucketEvents names the buckets whose writes the runtime announces
+	// on their events topic (TAKO_BUCKET_EVENTS) — the buckets with
+	// Uploaded subscribers, computed at deploy time.
+	BucketEvents map[string]bool
 }
 
 // Client is the shared authenticated HTTP client behind the stores.

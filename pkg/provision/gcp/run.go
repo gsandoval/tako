@@ -69,18 +69,43 @@ func (r *RunServices) List(ctx context.Context) ([]provision.Observed, error) {
 			Kind:     provision.KindRunService,
 			Name:     lastSegment(svc.Name),
 			SpecHash: svc.Annotations["tako-spec-hash"],
-			LiveHash: liveHash(svc),
+			LiveHash: liveHash(svc, r.isPublic(ctx, lastSegment(svc.Name))),
 		})
 	}
 	return observed, nil
 }
 
+// isPublic reads the live ingress stance: public IS the allUsers
+// invoker binding, so drift detection reads the policy rather than
+// assuming (a service flipped public/private in the console must hash
+// differently).
+func (r *RunServices) isPublic(ctx context.Context, name string) bool {
+	var p struct {
+		Bindings []struct {
+			Role    string   `json:"role"`
+			Members []string `json:"members"`
+		} `json:"bindings"`
+	}
+	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s:getIamPolicy", r.parent(), name)
+	if err := r.C.do(ctx, http.MethodGet, url, nil, &p); err != nil {
+		return false
+	}
+	for _, b := range p.Bindings {
+		if b.Role == "roles/run.invoker" {
+			for _, m := range b.Members {
+				if m == "allUsers" {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 // liveHash re-derives the intended-spec map from the live service so a
 // console edit of any tako-owned field hashes differently. Values GCP
-// normalizes are un-normalized (cpu "1000m" → "1"). Ingress is assumed
-// public (the C2 constant) — IAM drift detection joins with the derived
-// grants in C3.
-func liveHash(svc runService) string {
+// normalizes are un-normalized (cpu "1000m" → "1").
+func liveHash(svc runService, public bool) string {
 	if len(svc.Template.Containers) != 1 {
 		return "live-shape-unexpected"
 	}
@@ -101,7 +126,7 @@ func liveHash(svc runService) string {
 			"cpu":         cpu,
 			"memory":      c.Resources.Limits["memory"],
 		},
-		"public": true,
+		"public": public,
 	})
 }
 

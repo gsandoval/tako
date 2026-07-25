@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
@@ -117,6 +118,22 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 	}
 
+	// Buckets with Uploaded subscribers get an events topic; the runtime
+	// emits into it after every through-service Put (bucket events lite —
+	// C5's GCS-native notifications take over the same topic). Injected
+	// as TAKO_BUCKET_EVENTS so BucketStore knows which writes to announce.
+	eventBuckets := map[string]bool{}
+	for _, h := range g.Handlers {
+		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
+			eventBuckets[strings.TrimSuffix(h.Binding, ".Uploaded")] = true
+		}
+	}
+	var eventList []string
+	for b := range eventBuckets {
+		eventList = append(eventList, b)
+	}
+	sort.Strings(eventList)
+
 	for _, svc := range g.Services {
 		image, ok := images[svc.Name]
 		if !ok {
@@ -125,6 +142,18 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		knobs := profileKnobs[svc.Profile]
 		if knobs == nil {
 			return nil, fmt.Errorf("service %s has unknown profile %q", svc.Name, svc.Profile)
+		}
+		env := map[string]any{
+			"TAKO_BACKEND": "gcp",
+			"TAKO_PROJECT": cfg.Project,
+			"TAKO_APP":     cfg.App,
+			"TAKO_ENV":     cfg.Env,
+			// The service's own base name: dead-topic derivation
+			// (Permanent publishes there directly) and log labeling.
+			"TAKO_SERVICE": svc.Name,
+		}
+		if len(eventList) > 0 {
+			env["TAKO_BUCKET_EVENTS"] = strings.Join(eventList, ",")
 		}
 		objs = append(objs,
 			Object{
@@ -140,13 +169,8 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Spec: map[string]any{
 					"image":          image,
 					"serviceAccount": cfg.SAEmail(svc.Name),
-					"env": map[string]any{
-						"TAKO_BACKEND": "gcp",
-						"TAKO_PROJECT": cfg.Project,
-						"TAKO_APP":     cfg.App,
-						"TAKO_ENV":     cfg.Env,
-					},
-					"scaling": knobs,
+					"env":            env,
+					"scaling":        knobs,
 					// Async services admit only the OIDC push identity;
 					// everything else stays public until auth lands.
 					"public": !async[svc.Name],
@@ -190,26 +214,64 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 	}
 
-	// One push subscription per worker: Pub/Sub authenticates as the
-	// worker's own SA, and the worker's Run IAM admits exactly that
-	// (grants below). Subscribers join in C4 with per-handler fan-out.
+	// Events topics for buckets with subscribers (created with the other
+	// topics so reconcile order holds).
+	for _, b := range eventList {
+		objs = append(objs, Object{
+			Kind: KindTopic,
+			Name: gcpb.EventTopicName(cfg.Env, b),
+			Spec: map[string]any{},
+		})
+	}
+
+	// One push subscription per async handler — the partition rule makes
+	// that per async SERVICE (each worker and subscriber is alone in its
+	// own). Pub/Sub authenticates as the service's own SA and the
+	// service's Run IAM admits exactly that (grants below). Every
+	// subscription carries local's failure semantics: 5 delivery
+	// attempts with exponential backoff, then the service's dead-letter
+	// topic. The dead topic needs a subscription BEFORE messages route
+	// to it (Pub/Sub drops dead-letters otherwise): the pull "keep"
+	// subscription is that retention, and what tako dlq reads.
 	for _, h := range g.Handlers {
-		if h.Kind != "worker" {
+		if h.Kind != "worker" && h.Kind != "subscribe" {
 			continue
 		}
+		dead := gcpb.DeadTopicName(cfg.Env, h.Service)
 		url := cfg.RunURL(h.Service)
-		objs = append(objs, Object{
-			Kind: KindPushSubscription,
-			Name: cfg.Name(h.Service),
-			Spec: map[string]any{
-				"topic":          cfg.Name(h.Binding),
-				"endpoint":       url + "/_tako/push",
-				"serviceAccount": cfg.SAEmail(h.Service),
-				"audience":       url,
+		objs = append(objs,
+			Object{Kind: KindTopic, Name: dead, Spec: map[string]any{}},
+			Object{
+				Kind: KindPullSubscription,
+				Name: dead,
+				Spec: map[string]any{"topic": dead},
 			},
-		})
+			Object{
+				Kind: KindPushSubscription,
+				Name: cfg.Name(h.Service),
+				Spec: map[string]any{
+					"topic":          sourceTopic(cfg, h),
+					"endpoint":       url + "/_tako/push",
+					"serviceAccount": cfg.SAEmail(h.Service),
+					"audience":       url,
+					"retry":          map[string]any{"minimumBackoff": "10s", "maximumBackoff": "300s"},
+					"deadLetter":     map[string]any{"topic": dead, "maxAttempts": 5},
+				},
+			},
+		)
 	}
 
 	objs = append(objs, deriveGrants(g, cfg)...)
 	return objs, nil
+}
+
+// sourceTopic is the physical topic one async handler's subscription
+// consumes: the queue's topic for a worker, the declared topic for a
+// topic subscriber, and the bucket's events topic for an Uploaded
+// subscriber.
+func sourceTopic(cfg Config, h analyzer.Handler) string {
+	if h.Kind == "subscribe" && h.BindingKind == "bucket" {
+		return gcpb.EventTopicName(cfg.Env, strings.TrimSuffix(h.Binding, ".Uploaded"))
+	}
+	return cfg.Name(h.Binding)
 }
