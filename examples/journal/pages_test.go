@@ -27,6 +27,7 @@ func servePages(t *testing.T) *httptest.Server {
 	}
 	runtime.RegisterSiteTemplates(os.DirFS("web"), runtime.SiteOptions{})
 	mux := http.NewServeMux()
+	mux.Handle("/api/_session", runtime.SessionHandler())
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
 	mux.Handle("GET /p/{id}", runtime.PageHandler(Read, func(r *http.Request) (ReadReq, error) {
 		return ReadReq{ID: runtime.PathString(r, "id")}, nil
@@ -37,10 +38,10 @@ func servePages(t *testing.T) *httptest.Server {
 			Title: runtime.FormString(r, "title"),
 			Body:  runtime.FormString(r, "body"),
 		}, nil
-	}))
+	}, runtime.RequireAuth()))
 	mux.Handle("POST /p/{id}/publish", runtime.PageHandler(Publish, func(r *http.Request) (PublishReq, error) {
 		return PublishReq{ID: runtime.PathString(r, "id")}, nil
-	}))
+	}, runtime.RequireAuth()))
 	// Harness-only: a route that ALWAYS redirects, pinning the
 	// dual-mode contract (200 + HX-Redirect under htmx).
 	alwaysRedirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
@@ -71,6 +72,21 @@ func client(t *testing.T, srv *httptest.Server) *http.Client {
 
 var tokenRe = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 
+// signIn mints a dev session (the dev bar's path — local backend) and
+// returns the SESSION-bound CSRF token from /write.
+func signIn(t *testing.T, c *http.Client, base, name string) string {
+	t.Helper()
+	res, err := c.PostForm(base+"/api/_session", url.Values{"dev_user": {name}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 303 && res.StatusCode != 200 {
+		t.Fatalf("dev sign-in = %d", res.StatusCode)
+	}
+	return writeFlow(t, c, base)
+}
+
 // writeFlow GETs /write and returns the CSRF token the form carries.
 func writeFlow(t *testing.T, c *http.Client, base string) string {
 	t.Helper()
@@ -90,7 +106,7 @@ func writeFlow(t *testing.T, c *http.Client, base string) string {
 func TestWritePublishReadRoundTrip(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	token := writeFlow(t, c, srv.URL)
+	token := signIn(t, c, srv.URL, "alice")
 
 	form := url.Values{"title": {"First post"}, "body": {"Hello, journal."}, "_csrf": {token}}
 	res, err := c.PostForm(srv.URL+"/p", form)
@@ -130,38 +146,81 @@ func TestWritePublishReadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestCSRFRejectionText(t *testing.T) {
+func TestAuthAndCSRFGates(t *testing.T) {
 	srv := servePages(t)
-	c := client(t, srv)
-	writeFlow(t, c, srv.URL) // mint the cookie, then post WITHOUT the token
 
-	res, err := c.PostForm(srv.URL+"/p", url.Values{"title": {"x"}, "body": {"y"}})
+	// Anonymous write → 401 with the exact text (WithAuth's gate).
+	anon := client(t, srv)
+	res, err := anon.PostForm(srv.URL+"/p", url.Values{"title": {"x"}, "body": {"y"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer res.Body.Close()
 	body, _ := io.ReadAll(res.Body)
-	if res.StatusCode != 403 || !strings.Contains(string(body), "CSRF token missing or invalid — forms need {{ csrf }}") {
-		t.Fatalf("tokenless post = %d %q", res.StatusCode, body)
+	res.Body.Close()
+	if res.StatusCode != 401 || !strings.Contains(string(body), "sign in to continue") {
+		t.Fatalf("anonymous write = %d %q, want 401", res.StatusCode, body)
 	}
 
-	// First-contact unsafe request (no cookie at all) also rejects.
-	fresh := srv.Client()
-	fresh.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	res2, err := fresh.PostForm(srv.URL+"/p", url.Values{"title": {"x"}})
+	// Signed in but tokenless → the CSRF 403 (session-bound token now).
+	c := client(t, srv)
+	signIn(t, c, srv.URL, "alice")
+	res2, err := c.PostForm(srv.URL+"/p", url.Values{"title": {"x"}, "body": {"y"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	body2, _ := io.ReadAll(res2.Body)
 	res2.Body.Close()
-	if res2.StatusCode != 403 {
-		t.Fatalf("first-contact post = %d, want 403", res2.StatusCode)
+	if res2.StatusCode != 403 || !strings.Contains(string(body2), "CSRF token missing or invalid — forms need {{ csrf }}") {
+		t.Fatalf("tokenless signed-in post = %d %q", res2.StatusCode, body2)
+	}
+}
+
+func TestOwnershipAndRevocation(t *testing.T) {
+	srv := servePages(t)
+
+	alice := client(t, srv)
+	tokenA := signIn(t, alice, srv.URL, "alice")
+	res, err := alice.PostForm(srv.URL+"/p", url.Values{"title": {"Alice's"}, "body": {"b"}, "_csrf": {tokenA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	loc := res.Header.Get("Location")
+
+	// bob may not toggle alice's post: 403 with the handler's own rule.
+	bob := client(t, srv)
+	tokenB := signIn(t, bob, srv.URL, "bob")
+	res2, err := bob.PostForm(srv.URL+loc+"/publish", url.Values{"_csrf": {tokenB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body2, _ := io.ReadAll(res2.Body)
+	res2.Body.Close()
+	if res2.StatusCode != 403 || !strings.Contains(string(body2), "only the author can publish") {
+		t.Fatalf("bob toggling alice's post = %d %q", res2.StatusCode, body2)
+	}
+
+	// Revocation is REAL: sign out (deletes the record), the old cookie dies.
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/_session", nil)
+	res3, err := alice.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res3.Body.Close()
+	res4, err := alice.PostForm(srv.URL+"/p", url.Values{"title": {"ghost"}, "body": {"b"}, "_csrf": {tokenA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res4.Body.Close()
+	if res4.StatusCode != 401 {
+		t.Fatalf("post after sign-out = %d, want 401 (session record deleted)", res4.StatusCode)
 	}
 }
 
 func TestMarkdownRendersSanitized(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	token := writeFlow(t, c, srv.URL)
+	token := signIn(t, c, srv.URL, "alice")
 
 	// The W6 gate's §4 judgment: an XSS payload in a post body VANISHES
 	// (stripped by bluemonday) — stronger than W2's escape-to-text floor.
@@ -256,7 +315,7 @@ func htmxPost(t *testing.T, c *http.Client, u string, form url.Values, token str
 func TestSaveServesBothWorlds(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	token := writeFlow(t, c, srv.URL)
+	token := signIn(t, c, srv.URL, "alice")
 
 	// htmx: a layoutless post-card fragment, no redirect, no doc CSP.
 	res := htmxPost(t, c, srv.URL+"/p", url.Values{"title": {"Card post"}, "body": {"b"}}, token)
@@ -286,7 +345,7 @@ func TestSaveServesBothWorlds(t *testing.T) {
 func TestRedirectIsDualMode(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	token := writeFlow(t, c, srv.URL)
+	token := signIn(t, c, srv.URL, "alice")
 	loc := ""
 	{ // create a post to toggle
 		res, err := c.PostForm(srv.URL+"/p", url.Values{"title": {"T"}, "body": {"b"}, "_csrf": {token}})
@@ -324,6 +383,7 @@ func TestRedirectIsDualMode(t *testing.T) {
 }
 
 func TestHTMXRedirectHeader(t *testing.T) {
+	// (harness route below has no auth requirement)
 	// A handler that redirects under htmx must emit HX-Redirect + 200
 	// (htmx cannot follow a 303 into a swap). read's NotFound path is
 	// no use here; save without IsHTMX... so probe via a direct htmx
@@ -346,7 +406,7 @@ func TestHTMXRedirectHeader(t *testing.T) {
 func TestFragmentEscapesLikePages(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	token := writeFlow(t, c, srv.URL)
+	token := signIn(t, c, srv.URL, "alice")
 	res := htmxPost(t, c, srv.URL+"/p", url.Values{"title": {`<script>alert(1)</script>`}, "body": {"b"}}, token)
 	defer res.Body.Close()
 	frag, _ := io.ReadAll(res.Body)

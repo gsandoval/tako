@@ -44,6 +44,10 @@ type Needs struct {
 	// SignBlob is set when any handler mints signed URLs (sign edges):
 	// the runtime calls the IAM Credentials API, which must be enabled.
 	SignBlob bool
+	// IdentityPlatform is set when the app declares tako.Auth: token
+	// verification and sign-in ride the Identity Toolkit API, and the
+	// provider setup is a one-time console step preflight narrates.
+	IdentityPlatform bool
 }
 
 // Preflight checks credentials, APIs, and permissions before any
@@ -72,6 +76,9 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	}
 	if needs.SignBlob {
 		apis = append(apis, "iamcredentials.googleapis.com")
+	}
+	if needs.IdentityPlatform {
+		apis = append(apis, "identitytoolkit.googleapis.com")
 	}
 
 	for _, api := range apis {

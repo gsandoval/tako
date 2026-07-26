@@ -18,14 +18,26 @@ const maxMultipartMemory = 32 << 20
 // BlobHandler adapts a blob-returning endpoint to net/http: the result
 // streams with its own Content-Type instead of being JSON-encoded.
 // Errors surface exactly like JSONHandler's.
-func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Request) (Req, error)) http.Handler {
+func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Request) (Req, error), opts ...HandlerOption) http.Handler {
+	var conf handlerConf
+	for _, o := range opts {
+		o(&conf)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := newRequestID()
+		session := loadSession(r)
+		if conf.requireAuth && session == nil {
+			http.Error(w, authRequired, http.StatusUnauthorized)
+			return
+		}
 		ctx := &requestCtx{
 			Context: r.Context(),
 			log:     slog.Default().With("req", reqID),
 		}
 
+		if session != nil {
+			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
+		}
 		var req Req
 		if decode != nil {
 			var err error

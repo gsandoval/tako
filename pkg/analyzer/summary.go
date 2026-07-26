@@ -30,6 +30,10 @@ func Summary(g *AppGraph) string {
 
 // HandlerLine renders one handler for summaries and the dev banner.
 func HandlerLine(h Handler) string {
+	lock := ""
+	if h.RequiresAuth {
+		lock = " 🔒"
+	}
 	switch h.Kind {
 	case "worker":
 		return fmt.Sprintf("worker %s ← queue %s (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
@@ -38,7 +42,7 @@ func HandlerLine(h Handler) string {
 	case "cron":
 		return fmt.Sprintf("cron %s — %s (%s)", ShortVar(h), h.Schedule, ShortPos(h.Pos))
 	}
-	return fmt.Sprintf("%s → %s (%s)", h.Route, ShortVar(h), ShortPos(h.Pos))
+	return fmt.Sprintf("%s → %s%s (%s)", h.Route, ShortVar(h), lock, ShortPos(h.Pos))
 }
 
 // ResourceLine renders one resource for summaries and the dev banner,
@@ -47,6 +51,9 @@ func ResourceLine(r Resource) string {
 	line := r.Kind + " " + r.Name
 	if len(r.Indexes) > 0 {
 		line += " (indexes: " + strings.Join(r.Indexes, ", ") + ")"
+	}
+	if r.Kind == "auth" {
+		return "auth (" + strings.Join(r.Providers, ", ") + ")"
 	}
 	if r.TrustedHTML {
 		// The markdown opt-out is a security posture — visible wherever

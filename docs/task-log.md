@@ -5111,3 +5111,74 @@ not in a signed cookie. The revised design:
   auth alone demands it.
 - Call 3 (Identity Platform via preflight guidance) stands as
   recommended.
+
+## W5 — implementation: Auth — Identity Platform, Datastore sessions, dev users (2026-07-26)
+
+Approved as amended (sessions Datastore-backed; calls 2 absorbed, 3 as
+recommended). The last pre-milestone slice.
+
+**Sessions (pkg/runtime/session.go):** the cookie is an opaque random
+id; the record is a `_tako_session` entity through hooks.Entity —
+bbolt locally, Datastore in the cloud, one code path — holding
+uid/email/name/csrf/expiry. Revocation is REAL and was proven live:
+the record was visible in the Datastore console (namespace prod),
+sign-out deleted it, the still-held cookie died with a 401, zero
+records remained. Expired records read as absent and lazily delete.
+ID-token verification is pure stdlib: RS256 against securetoken
+x509 certs (cached per Cache-Control), iss/aud/exp checked against
+TAKO_PROJECT. /api/_session: POST {idToken} → session; POST
+dev_user=… → session on the LOCAL backend only (cloud answers 400);
+DELETE → sign-out. The dev bar injects into HTML documents locally
+only (buffering middleware; generated main identical across
+backends) with alice/bob buttons and sign-out.
+
+**WithAuth + CSRF binding:** RequireAuth() HandlerOption on
+Page/JSON/Blob handlers — no session → 401 `sign in to continue`
+(exact text pinned); past it ctx.User() is guaranteed (requestCtx
+carries the user; MaybeUser works everywhere). Signed-in CSRF truth
+is the SESSION's stored token (a stolen anonymous token cannot ride
+an authenticated session); anonymous browsers keep W2's double-submit
+cookie. Templates gain {{ user }}/{{ signedIn }}.
+
+**Toolchain:** Auth extracts (providers recorded; `auth (google)` in
+summaries; missing provider = tako/auth-provider); WithAuth sets
+Handler.RequiresAuth (🔒 in every listing; codegen passes
+runtime.RequireAuth()); codegen mounts /api/_session + the dev-bar
+wrap when Auth is declared. Grants: Auth alone now derives project
+datastore.user for every route-serving service (sessions are entity
+records) and Needs.Datastore + the identitytoolkit API probe.
+Destroy purges _tako_session with the namespace but does NOT list it
+as DATA (revocable credentials, not content — proven: destroy warned
+only about posts); prune ignores _-prefixed kinds. The security
+summary now warns `⚠ N mutating route(s) without WithAuth` on public
+services — journal triggers none (its writes closed).
+
+**journal:** Auth(WithGoogle); Save/Publish carry WithAuth; Post
+gains Owner; publish enforces `only the author can publish` (403);
+layout shows the user (name, else email) or "not signed in". Tests:
+anonymous 401, signed-in-but-tokenless CSRF 403, ownership 403
+(bob vs alice's post), REVOCATION (sign-out then the old session's
+write 401s), plus every W2–W4 test reworked through dev sign-in.
+
+**Live cycle (tako-test-01) — Identity Platform enablement friction,
+recorded for the preflight text:** `gcloud services enable
+identitytoolkit.googleapis.com` + one REST call
+(identityPlatform:initializeAuth, which requires the
+`x-goog-user-project` quota-project header on ADC user credentials —
+THE gotcha) fully initialized auth with NO console visit. The Google
+provider's OAuth consent screen remains the one genuinely manual
+step (the W6 browser walk needs it). Agent-side cloud validation
+used the email provider (enabled via the admin API) + an API-key
+signInWithPassword to mint a REAL ID token: anonymous write 401,
+garbage token 401, dev_user rejected in the cloud, the real token
+minted a session, the signed-in write PRG'd, the session record
+appeared in Datastore and died on sign-out. Deploy's probed list
+grew identitytoolkit; destroy clean; test API key deleted after.
+
+**Discovered work (not done):** bulk expired-session cleanup (cron
+era); the consent-screen/Google-provider preflight text can only say
+"console → Identity Platform → Providers → add Google" (verified
+wording lands after the W6 walk); dev-bar Content-Length rewrite
+buffers whole documents (fine for dev).
+
+W5 complete agent-side. W6 (the milestone assembly) next.

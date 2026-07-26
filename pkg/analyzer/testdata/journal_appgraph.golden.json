@@ -44,6 +44,16 @@
         }
       ],
       "pos": "app.go:19:2"
+    },
+    {
+      "kind": "auth",
+      "name": "auth",
+      "var": "journal.auth",
+      "package": "journal",
+      "providers": [
+        "google"
+      ],
+      "pos": "app.go:24:2"
     }
   ],
   "handlers": [
@@ -53,7 +63,7 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /",
-      "pos": "app.go:31:2"
+      "pos": "app.go:37:2"
     },
     {
       "kind": "page",
@@ -70,7 +80,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:32:2"
+      "pos": "app.go:38:2"
     },
     {
       "kind": "page",
@@ -78,7 +88,7 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /write",
-      "pos": "app.go:33:2"
+      "pos": "app.go:39:2"
     },
     {
       "kind": "page",
@@ -86,6 +96,7 @@
       "package": "journal",
       "service": "journal",
       "route": "POST /p",
+      "requires_auth": true,
       "req_type": "SaveReq",
       "bindings": [
         {
@@ -101,7 +112,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:34:2"
+      "pos": "app.go:40:2"
     },
     {
       "kind": "page",
@@ -109,6 +120,7 @@
       "package": "journal",
       "service": "journal",
       "route": "POST /p/{id}/publish",
+      "requires_auth": true,
       "req_type": "PublishReq",
       "bindings": [
         {
@@ -118,7 +130,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:35:2"
+      "pos": "app.go:41:2"
     }
   ],
   "edges": [
@@ -142,6 +154,13 @@
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"
+    },
+    {
+      "from": "journal.Publish",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
     },
     {
       "from": "journal.Publish",

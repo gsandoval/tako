@@ -160,3 +160,47 @@ func dirExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && info.IsDir()
 }
+
+// authProviders maps Auth options to provider names.
+var authProviders = map[string]string{"WithGoogle": "google", "WithEmail": "email"}
+
+// extractAuth validates one tako.Auth declaration.
+func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" {
+		return nil
+	}
+	r := &Resource{
+		Kind:    "auth",
+		Name:    "auth",
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+	bad := false
+	for _, opt := range call.Args {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		provider, known := authProviders[optName]
+		if !isOpt || !known {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+				Msg:  fmt.Sprintf("tako.Auth accepts WithGoogle, WithEmail; got %s", describeExpr(opt)),
+				Rule: "invalid-option",
+			})
+			bad = true
+			continue
+		}
+		r.Providers = append(r.Providers, provider)
+	}
+	if len(r.Providers) == 0 && !bad {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, call.Pos()),
+			Msg:  "tako.Auth needs at least one provider (WithGoogle, WithEmail)",
+			Rule: "auth-provider",
+		})
+		bad = true
+	}
+	if bad {
+		return nil
+	}
+	return r
+}

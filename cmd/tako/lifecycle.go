@@ -210,7 +210,9 @@ func runPrune(args []string) error {
 			return err
 		}
 		for _, k := range kinds {
-			if !declared[k] {
+			// _-prefixed kinds are framework-internal (sessions) — never
+			// user data to prune.
+			if !declared[k] && !strings.HasPrefix(k, "_") {
 				dataKinds = append(dataKinds, k)
 			}
 		}

@@ -72,6 +72,9 @@ type Resource struct {
 	// TrustedHTML is the markdown posture opt-out (WithTrustedHTML):
 	// raw HTML in markdown passes through unsanitized.
 	TrustedHTML bool `json:"trusted_html,omitempty"`
+	// Providers are the sign-in providers of an auth declaration
+	// ("google", "email").
+	Providers []string `json:"providers,omitempty"`
 	Redirects []SiteRedirect `json:"redirects,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
@@ -102,6 +105,9 @@ type Handler struct {
 	// handlers: the queue or topic name, or "<bucket>.Uploaded" for
 	// bucket-event subscribers.
 	Binding string `json:"binding,omitempty"`
+	// RequiresAuth marks a route declared with tako.WithAuth: the shim
+	// guarantees ctx.User past a 401 gate.
+	RequiresAuth bool `json:"requires_auth,omitempty"`
 	// BindingKind distinguishes a Subscribe handler's source: "topic" or
 	// "bucket". Empty for workers (always a queue) and sync handlers.
 	BindingKind string `json:"binding_kind,omitempty"`

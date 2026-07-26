@@ -62,8 +62,14 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 	method, params := parseRoute(route)
 
+	requiresAuth := false
 	for _, opt := range call.Args[2:] {
-		if optName, ok := sdkOptionCall(pkg, opt); ok && !apiOptions[optName] {
+		optName, ok := sdkOptionCall(pkg, opt)
+		if ok && optName == "WithAuth" {
+			requiresAuth = true
+			continue
+		}
+		if ok && !apiOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
 				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate, WithProfile)",
@@ -183,16 +189,17 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		kind = "page"
 	}
 	return &Handler{
-		Kind:     kind,
-		Var:      pkg.Name + "." + name.Name,
-		Package:  pkg.PkgPath,
-		Service:  pkg.Name,
-		Route:    route,
-		ReqType:  req.ref,
-		Bindings: bindings,
-		HasBody:  hasBody,
-		ResBlob:  resIsBlob(pkg, call.Args[1]),
-		Pos:      relPos(dir, pkg.Fset, name.Pos()),
+		Kind:         kind,
+		Var:          pkg.Name + "." + name.Name,
+		Package:      pkg.PkgPath,
+		Service:      pkg.Name,
+		Route:        route,
+		ReqType:      req.ref,
+		Bindings:     bindings,
+		HasBody:      hasBody,
+		ResBlob:      resIsBlob(pkg, call.Args[1]),
+		RequiresAuth: requiresAuth,
+		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
-	"crypto/subtle"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -21,6 +20,20 @@ import (
 
 // csrfTokenKey carries the request's CSRF token to the template funcs.
 type csrfTokenKey struct{}
+
+// sessionUserKey carries the signed-in user to the template funcs.
+type sessionUserKey struct{}
+
+// HandlerOption tunes a generated handler wrapper.
+type HandlerOption func(*handlerConf)
+
+type handlerConf struct{ requireAuth bool }
+
+// RequireAuth enforces tako.WithAuth: no valid session → 401 before
+// the handler runs; past it, ctx.User() is guaranteed.
+func RequireAuth() HandlerOption {
+	return func(c *handlerConf) { c.requireAuth = true }
+}
 
 // csrfCookie is the double-submit cookie; when auth lands (W5) the
 // token binds to the session instead.
@@ -158,7 +171,9 @@ func siteFuncs() template.FuncMap {
 	return template.FuncMap{
 		"csrf":      func() template.HTML { return "" },
 		"csrfToken": func() string { return "" },
-		"markdown": renderMarkdownFunc,
+		"markdown":  renderMarkdownFunc,
+		"user":      func() tako.User { return tako.User{} },
+		"signedIn":  func() bool { return false },
 	}
 }
 
@@ -176,11 +191,19 @@ func renderMarkdownFunc(v any) (template.HTML, error) {
 
 func requestFuncs(ctx context.Context) template.FuncMap {
 	token, _ := ctx.Value(csrfTokenKey{}).(string)
+	u, _ := ctx.Value(sessionUserKey{}).(*tako.User)
 	return template.FuncMap{
 		"csrf": func() template.HTML {
 			return template.HTML(`<input type="hidden" name="_csrf" value="` + template.HTMLEscapeString(token) + `">`)
 		},
 		"csrfToken": func() string { return token },
+		"user": func() tako.User {
+			if u == nil {
+				return tako.User{}
+			}
+			return *u
+		},
+		"signedIn": func() bool { return u != nil },
 	}
 }
 
@@ -190,14 +213,37 @@ func requestFuncs(ctx context.Context) template.FuncMap {
 // 303 See Other (the POST-redirect-GET status). Errors render plain
 // (styled error pages are a later slice): explicit statuses as-is,
 // everything else an opaque 500 with the request id logged.
-func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Request) (Req, error)) http.Handler {
+func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Request) (Req, error), opts ...HandlerOption) http.Handler {
+	var conf handlerConf
+	for _, o := range opts {
+		o(&conf)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := newRequestID()
-		token, minted := csrfEnsure(w, r)
-		if unsafeMethod(r.Method) {
-			if minted || !csrfValid(r, token) {
+		// The session (when present) carries the user AND the CSRF
+		// truth: a stolen anonymous token cannot ride a signed-in
+		// session (W5). Anonymous browsers keep the double-submit
+		// cookie from W2.
+		session := loadSession(r)
+		if conf.requireAuth && session == nil {
+			http.Error(w, authRequired, http.StatusUnauthorized)
+			return
+		}
+		token := ""
+		if session != nil {
+			token = session.CSRF
+			if unsafeMethod(r.Method) && !csrfValidAgainst(r, token) {
 				http.Error(w, csrfRejection, http.StatusForbidden)
 				return
+			}
+		} else {
+			var minted bool
+			token, minted = csrfEnsure(w, r)
+			if unsafeMethod(r.Method) {
+				if minted || !csrfValidAgainst(r, token) {
+					http.Error(w, csrfRejection, http.StatusForbidden)
+					return
+				}
 			}
 		}
 		rctx := context.WithValue(r.Context(), csrfTokenKey{}, token)
@@ -206,6 +252,11 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// it by itself; handlers do).
 		ctx := &requestCtx{Context: rctx, log: slog.Default().With("req", reqID),
 			isHTMX: r.Header.Get("HX-Request") == "true"}
+		if session != nil {
+			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
+			rctx = context.WithValue(rctx, sessionUserKey{}, ctx.user)
+			ctx.Context = rctx
+		}
 
 		var req Req
 		if decode != nil {
@@ -271,12 +322,12 @@ func csrfEnsure(w http.ResponseWriter, r *http.Request) (string, bool) {
 	return token, true
 }
 
-func csrfValid(r *http.Request, token string) bool {
+func csrfValidAgainst(r *http.Request, token string) bool {
 	sent := r.Header.Get("X-CSRF-Token")
 	if sent == "" {
 		sent = r.PostFormValue("_csrf")
 	}
-	return sent != "" && subtle.ConstantTimeCompare([]byte(sent), []byte(token)) == 1
+	return csrfMatches(sent, token)
 }
 
 // pageError renders errors as plain text pages: explicit statuses

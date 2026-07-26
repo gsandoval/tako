@@ -50,6 +50,16 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	return written, nil
 }
 
+// hasAuth reports whether the app declares tako.Auth.
+func hasAuth(g *analyzer.AppGraph) bool {
+	for _, r := range g.Resources {
+		if r.Kind == "auth" {
+			return true
+		}
+	}
+	return false
+}
+
 // siteOf finds the site the service serves: the package's app service
 // (never a single-handler async service) mounts it.
 func siteOf(g *analyzer.AppGraph, svc analyzer.Service) *analyzer.Resource {
@@ -179,6 +189,11 @@ import (
 		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
 	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
+	if hasAuth(g) {
+		b.WriteString("\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")
+		b.WriteString("\tmux.Handle(\"/api/_session\", runtime.SessionHandler())\n")
+		b.WriteString("\tmux.Handle(\"POST /api/_session/signout\", runtime.SignOutHandler())\n\n")
+	}
 	if site != nil {
 		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers. Its templates/ back\n\t// site.Render and are never served statically.\n", site.Name)
 		b.WriteString("\tsiteRoot, err := fs.Sub(siteFS, \"site\")\n\tif err != nil {\n\t\tpanic(err)\n\t}\n")
@@ -208,9 +223,13 @@ import (
 		if h.Kind == "page" {
 			wrapper = "PageHandler"
 		}
-		fmt.Fprintf(&b, "\t// %s → %s (%s)\n", h.Route, h.Var, analyzer.ShortPos(h.Pos))
-		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s))\n\n",
-			muxPattern(h.Route), wrapper, alias, analyzer.ShortVar(h), decode)
+		auth := ""
+		if h.RequiresAuth {
+			auth = ", runtime.RequireAuth()"
+		}
+		fmt.Fprintf(&b, "\t// %s\n", analyzer.HandlerLine(h))
+		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s%s))\n\n",
+			muxPattern(h.Route), wrapper, alias, analyzer.ShortVar(h), decode, auth)
 	}
 
 	for _, h := range g.Handlers {
@@ -230,7 +249,11 @@ import (
 		}
 	}
 
-	b.WriteString("\truntime.Serve(mux)\n}\n")
+	if hasAuth(g) {
+		b.WriteString("\truntime.Serve(runtime.WithDevBar(mux)) // the dev bar injects locally only\n}\n")
+	} else {
+		b.WriteString("\truntime.Serve(mux)\n}\n")
+	}
 
 	for _, h := range decoders {
 		writeDecoder(&b, alias, h)

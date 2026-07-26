@@ -18,13 +18,13 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// POST /api/links → shortlink.Create (app.go:33)
+	// POST /api/links → Create (app.go:33)
 	mux.Handle("POST /api/links", runtime.JSONHandler(shortlink.Create, decodeCreate))
 
-	// GET /api/links/{slug} → shortlink.Resolve (app.go:34)
+	// GET /api/links/{slug} → Resolve (app.go:34)
 	mux.Handle("GET /api/links/{slug}", runtime.JSONHandler(shortlink.Resolve, decodeResolve))
 
-	// GET /api/links → shortlink.List (app.go:35)
+	// GET /api/links → List (app.go:35)
 	mux.Handle("GET /api/links", runtime.JSONHandler(shortlink.List, decodeList))
 
 	// worker CountClick ← queue clicks (app.go:37) — local mode runs the worker in-process

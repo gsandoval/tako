@@ -1,8 +1,8 @@
 // Package journal is the website-with-an-API showcase (spec Part 3b),
 // grown feature by feature through Stage 3: W1 the static shell, W2
-// pages and forms, W3 htmx fragments (this slice), W4 authored
-// markdown, W5 auth — gated whole at W6. Writes are OPEN until W5
-// brings auth; bodies render escaped until W4 brings markdown.
+// pages and forms, W3 htmx fragments, W4 authored markdown, W5 auth
+// (this slice) — gated whole at W6. Reads are public; writes require a
+// signed-in user, and only the author may toggle publication.
 package journal
 
 import (
@@ -17,10 +17,16 @@ var (
 	// site serves ./web embedded in the service binary; its templates/
 	// subtree backs site.Render and is never served statically.
 	site = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
+
+	// auth injects /api/_session (Identity Platform's Google flow in the
+	// cloud; the dev bar's test users locally). Sessions are revocable
+	// records in the entity store.
+	auth = tako.Auth(tako.WithGoogle())
 )
 
 type Post struct {
 	ID        string    `entity:"id" json:"id"`
+	Owner     string    `json:"owner"` // the author's uid; only they may toggle publication
 	Title     string    `json:"title"`
 	Body      string    `json:"body"` // author-supplied markdown; rendered escaped until W4
 	Published bool      `entity:"index" json:"published"`
@@ -31,8 +37,8 @@ var (
 	Home    = tako.Page("GET /", home)
 	Read    = tako.Page("GET /p/{id}", read)
 	Write   = tako.Page("GET /write", writeForm)
-	Save    = tako.Page("POST /p", save)
-	Publish = tako.Page("POST /p/{id}/publish", publish)
+	Save    = tako.Page("POST /p", save, tako.WithAuth())
+	Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
 )
 
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
@@ -73,7 +79,7 @@ type SaveReq struct {
 // under htmx the new post-card swaps into the home list without a
 // navigation; without JS the same form lands on the post via a 303.
 func save(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {
-	p := Post{ID: tako.NewID(), Title: req.Title, Body: req.Body, Published: true, Created: time.Now()}
+	p := Post{ID: tako.NewID(), Owner: ctx.User().ID, Title: req.Title, Body: req.Body, Published: true, Created: time.Now()}
 	if err := posts.Put(ctx, p); err != nil {
 		return tako.HTML{}, err
 	}
@@ -88,15 +94,21 @@ type PublishReq struct {
 }
 
 // publish toggles visibility and swaps JUST the button under htmx;
-// the no-JS path returns to the post page. Open until W5's auth, like
-// every write.
+// the no-JS path returns to the post page. WithAuth guarantees a user;
+// ownership is the handler's own rule.
 func publish(ctx tako.Ctx, req PublishReq) (tako.HTML, error) {
-	var out Post
-	err := posts.Update(ctx, req.ID, func(p *Post) { p.Published = !p.Published; out = *p })
+	current, err := posts.Get(ctx, req.ID)
 	if tako.IsNotFound(err) {
 		return tako.HTML{}, tako.NotFound()
 	}
 	if err != nil {
+		return tako.HTML{}, err
+	}
+	if current.Owner != ctx.User().ID {
+		return tako.HTML{}, tako.Errorf(403, "only the author can publish")
+	}
+	var out Post
+	if err := posts.Update(ctx, req.ID, func(p *Post) { p.Published = !p.Published; out = *p }); err != nil {
 		return tako.HTML{}, err
 	}
 	if ctx.IsHTMX() {

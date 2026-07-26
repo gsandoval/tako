@@ -1,9 +1,10 @@
 journal: 1 service
   service journal (package journal, profile default)
-    GET / → Home (app.go:31)
-    GET /p/{id} → Read (app.go:32)
-    GET /write → Write (app.go:33)
-    POST /p → Save (app.go:34)
-    POST /p/{id}/publish → Publish (app.go:35)
+    GET / → Home (app.go:37)
+    GET /p/{id} → Read (app.go:38)
+    GET /write → Write (app.go:39)
+    POST /p → Save 🔒 (app.go:40)
+    POST /p/{id}/publish → Publish 🔒 (app.go:41)
     entity posts (indexes: Published, Created)
     site ./web
+    auth (google)

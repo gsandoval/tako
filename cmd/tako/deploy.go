@@ -342,6 +342,22 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
 		}
 		fmt.Printf("  %s runs as %s —\n    %s; %s\n", cfg.Name(svc.Name), email, grantText, ingress)
+		if public[cfg.Name(svc.Name)] {
+			var open []string
+			for _, h := range graph.Handlers {
+				if h.Service != svc.Name || (h.Kind != "api" && h.Kind != "page") || h.RequiresAuth {
+					continue
+				}
+				method, _, _ := strings.Cut(h.Route, " ")
+				if method != "GET" && method != "HEAD" {
+					open = append(open, h.Route)
+				}
+			}
+			if len(open) > 0 {
+				fmt.Printf("    ⚠ %d mutating route(s) without WithAuth: %s — anyone on the internet can call these\n",
+					len(open), strings.Join(open, ", "))
+			}
+		}
 	}
 }
 
@@ -352,6 +368,11 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 		switch r.Kind {
 		case "entity":
 			n.Datastore = true
+		case "auth":
+			// Sessions are entity records: auth alone needs Datastore,
+			// plus the Identity Platform API for token verification.
+			n.Datastore = true
+			n.IdentityPlatform = true
 		case "queue", "topic":
 			n.PubSub = true
 		case "secret":
@@ -512,9 +533,16 @@ func runDestroy(args []string) error {
 		return nil
 	}
 	var dataKinds []string
+	purgeKinds := []string{}
 	for _, r := range graph.Resources {
 		if r.Kind == "entity" {
 			dataKinds = append(dataKinds, r.Name)
+			purgeKinds = append(purgeKinds, r.Name)
+		}
+		if r.Kind == "auth" {
+			// Session records purge with the namespace but are not DATA
+			// to warn about (they are revocable credentials, not content).
+			purgeKinds = append(purgeKinds, "_tako_session")
 		}
 	}
 	fmt.Printf("tako destroy · %s (%s) in %s — this deletes:\n", app, t.env, t.project)

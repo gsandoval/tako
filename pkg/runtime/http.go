@@ -19,12 +19,24 @@ import (
 // JSON. A nil decode means the endpoint takes an empty Req. Binding code
 // is generated statically — decode is plain function calls, never
 // reflection.
-func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Request) (Req, error)) http.Handler {
+func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Request) (Req, error), opts ...HandlerOption) http.Handler {
+	var conf handlerConf
+	for _, o := range opts {
+		o(&conf)
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := newRequestID()
+		session := loadSession(r)
+		if conf.requireAuth && session == nil {
+			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": authRequired})
+			return
+		}
 		ctx := &requestCtx{
 			Context: r.Context(),
 			log:     slog.Default().With("req", reqID),
+		}
+		if session != nil {
+			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
 		}
 
 		var req Req

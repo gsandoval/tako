@@ -163,13 +163,9 @@ func Analyze(cfg Config) (*AppGraph, error) {
 					graph.Resources = append(graph.Resources, *r)
 				}
 			case "Auth":
-				// Declared surface whose behavior hasn't shipped: an
-				// explicit error beats silently ignoring the declaration.
-				errs = append(errs, &Error{
-					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
-					Msg:  "tako.Auth is not available yet — auth arrives with W5",
-					Rule: "not-yet",
-				})
+				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+				}
 			case "Job", "JobHandler", "Lock", "Singleton":
 				errs = append(errs, &Error{
 					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),

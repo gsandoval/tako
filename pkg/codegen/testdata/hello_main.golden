@@ -16,13 +16,13 @@ import (
 func main() {
 	mux := http.NewServeMux()
 
-	// GET /hello → hello.Hello (hello.go:9)
+	// GET /hello → Hello (hello.go:9)
 	mux.Handle("GET /hello", runtime.JSONHandler(hello.Hello, nil))
 
-	// GET /greet/{name} → hello.Greet (hello.go:10)
+	// GET /greet/{name} → Greet (hello.go:10)
 	mux.Handle("GET /greet/{name}", runtime.JSONHandler(hello.Greet, decodeGreet))
 
-	// POST /echo → hello.Echo (hello.go:11)
+	// POST /echo → Echo (hello.go:11)
 	mux.Handle("POST /echo", runtime.JSONHandler(hello.Echo, decodeEcho))
 
 	runtime.Serve(mux)

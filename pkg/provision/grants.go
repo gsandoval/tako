@@ -44,6 +44,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// Every managed resource that can hold tako bindings is a target
 	// even when nothing is desired on it.
 	hasEntity := false
+	hasAuth := false
 	events := map[string]bool{} // buckets with Uploaded subscribers
 	for _, h := range g.Handlers {
 		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
@@ -61,6 +62,8 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			ensure(target{TargetTopic, cfg.Name(r.Name)})
 		case "entity":
 			hasEntity = true
+		case "auth":
+			hasAuth = true
 		case "secret":
 			// Package-wide resolution (approved C4 call (a)): boot
 			// resolves every declared secret in every service, so every
@@ -72,8 +75,22 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			}
 		}
 	}
-	if hasEntity {
+	if hasEntity || hasAuth {
 		ensure(target{TargetProject, cfg.Project})
+	}
+	// Sessions are entity records (W5): every service that serves
+	// routes reads/writes them, so Auth alone grants datastore.user to
+	// those services' identities.
+	if hasAuth {
+		routeServices := map[string]bool{}
+		for _, h := range g.Handlers {
+			if h.Kind == "api" || h.Kind == "page" {
+				routeServices[h.Service] = true
+			}
+		}
+		for svc := range routeServices {
+			add(target{TargetProject, cfg.Project}, "roles/datastore.user", "serviceAccount:"+cfg.SAEmail(svc))
+		}
 	}
 	for _, svc := range g.Services {
 		ensure(target{TargetRunService, cfg.Name(svc.Name)})
