@@ -76,14 +76,16 @@ revocation/fragment/markdown contracts as user-style tests.
 
 ## 6. Cloud — the same app, real Google sign-in
 
-One-time (the single manual step of the whole feature): console →
-Identity Platform → Providers → **add Google** (accept the OAuth
-consent defaults). Everything else is done: the API is enabled and
-auth initialized (W5 did it by REST).
-
 ```
 go run ../../cmd/tako deploy --project <test-project>
 ```
+
+**Preflight will stop you** with the one genuinely manual step of the
+whole feature — `the Google sign-in provider is not configured …
+console → Identity Platform → Providers → add Google` — judge that
+text, do the click (accept the OAuth consent defaults), and re-run.
+(Everything else is automatic: the API and initialization were REST'd
+in W5; a fresh project gets those as preflight lines too.)
 
 **Judge the plan + summary:** `posts (published, -created)` composite;
 `datastore [user]` covering entities AND sessions; identitytoolkit in

@@ -5203,3 +5203,27 @@ Run `validate/journal.md` §§1–6 (the Google provider console step in
 docs/validation-log.md. This is Stage 3's mid-point DX review —
 notes beyond pass/fail are welcome; W7 (`tako gen client ts`, shop
 is born) follows on a pass.
+
+## W5 follow-up: auth preflight completes its promise (2026-07-26)
+
+The user's cloud deploy surfaced a gap: no instruction anywhere in
+the deploy flow about the Google-provider console step — it lived
+only in validate/journal.md. Two causes, both confirmed: the test
+project was pre-initialized by W5's live validation (API enabled,
+auth initialized, email provider on), AND the shipped preflight only
+probed the API — less than the approved proposal's "prints the exact
+console steps when absent". Closed: Needs.AuthProviders (the declared
+providers) replaces the bool; preflight now checks Identity Platform
+initialization (`/config`) and each declared provider
+(defaultSupportedIdpConfigs for google, signIn.email for email) via
+the quota-project-header-aware admin calls, and a missing one is a
+BLOCKING gap with the console steps — proven live: journal's plan on
+tako-test-01 now stops with "the Google sign-in provider is not
+configured … console → Identity Platform → Providers → add Google …
+a one-time interactive step tako cannot do for you" (exactly the
+user's situation). docs/tako-cloud-permissions.md gains the Identity
+Platform section as the durable documentation home, with an explicit
+marker that the FINAL user-facing developer documentation must carry
+it (that documentation is its own future deliverable — noted, per
+user direction, as a standing requirement). validate/journal.md §6
+now lets preflight narrate the step instead of front-loading it.

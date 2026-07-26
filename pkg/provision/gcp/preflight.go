@@ -2,7 +2,9 @@ package gcp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 )
@@ -44,10 +46,12 @@ type Needs struct {
 	// SignBlob is set when any handler mints signed URLs (sign edges):
 	// the runtime calls the IAM Credentials API, which must be enabled.
 	SignBlob bool
-	// IdentityPlatform is set when the app declares tako.Auth: token
-	// verification and sign-in ride the Identity Toolkit API, and the
-	// provider setup is a one-time console step preflight narrates.
-	IdentityPlatform bool
+	// AuthProviders are the sign-in providers the app declares
+	// (tako.Auth options): preflight verifies Identity Platform is
+	// initialized and each declared provider configured, printing the
+	// exact console steps when not — tako never mutates auth config
+	// (the OAuth consent screen is genuinely interactive).
+	AuthProviders []string
 }
 
 // Preflight checks credentials, APIs, and permissions before any
@@ -77,7 +81,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	if needs.SignBlob {
 		apis = append(apis, "iamcredentials.googleapis.com")
 	}
-	if needs.IdentityPlatform {
+	if len(needs.AuthProviders) > 0 {
 		apis = append(apis, "identitytoolkit.googleapis.com")
 	}
 
@@ -128,6 +132,15 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		}
 	}
 
+	// Auth needs Identity Platform INITIALIZED and each declared
+	// provider CONFIGURED — one-time console steps a deploy cannot do
+	// for you (the OAuth consent screen is interactive). Without them
+	// the app deploys but sign-in fails in the browser with no hint,
+	// so absence is a preflight gap with the exact steps.
+	if len(needs.AuthProviders) > 0 {
+		gaps = append(gaps, c.authGaps(ctx, needs.AuthProviders)...)
+	}
+
 	// APIs and roles can be right while the Datastore database simply
 	// doesn't exist — a distinct, fixable state with its own command.
 	if needs.Datastore {
@@ -161,4 +174,74 @@ func (c *Client) ProjectNumber(ctx context.Context) (string, error) {
 		return "", Classify(err, c.Project, "resolve the project number", "roles/viewer")
 	}
 	return out.ProjectNumber, nil
+}
+
+// doIdentity runs one Identity Platform admin call. These endpoints
+// demand a quota project on user ADC credentials (the
+// x-goog-user-project header) — the recorded W5 gotcha.
+func (c *Client) doIdentity(ctx context.Context, url string, out any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("x-goog-user-project", c.Project)
+	res, err := c.HC.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	if res.StatusCode/100 != 2 {
+		return parseAPIError(res.StatusCode, url, raw)
+	}
+	return json.Unmarshal(raw, out)
+}
+
+// authGaps checks Identity Platform initialization and each declared
+// provider, one actionable line per gap.
+func (c *Client) authGaps(ctx context.Context, providers []string) []string {
+	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
+	var config struct {
+		SignIn struct {
+			Email struct {
+				Enabled bool `json:"enabled"`
+			} `json:"email"`
+		} `json:"signIn"`
+	}
+	if err := c.doIdentity(ctx, base+"/config", &config); err != nil {
+		if ae, ok := err.(*apiError); ok && (ae.Status == http.StatusNotFound || ae.Status == http.StatusForbidden) {
+			return []string{fmt.Sprintf("Identity Platform is not set up in %s — console → Identity Platform → \"Get started\" (one click initializes it), then Providers → add each declared provider (%s)", c.Project, strings.Join(providers, ", "))}
+		}
+		return []string{fmt.Sprintf("cannot check Identity Platform config: %v", err)}
+	}
+	var gaps []string
+	for _, p := range providers {
+		switch p {
+		case "google":
+			var idps struct {
+				Configs []struct {
+					Name    string `json:"name"`
+					Enabled bool   `json:"enabled"`
+				} `json:"defaultSupportedIdpConfigs"`
+			}
+			if err := c.doIdentity(ctx, base+"/defaultSupportedIdpConfigs", &idps); err != nil {
+				gaps = append(gaps, fmt.Sprintf("cannot check sign-in providers: %v", err))
+				continue
+			}
+			enabled := false
+			for _, cfg := range idps.Configs {
+				if strings.HasSuffix(cfg.Name, "google.com") && cfg.Enabled {
+					enabled = true
+				}
+			}
+			if !enabled {
+				gaps = append(gaps, fmt.Sprintf("the Google sign-in provider is not configured in %s — console → Identity Platform → Providers → add Google (accept the OAuth consent defaults); a one-time interactive step tako cannot do for you", c.Project))
+			}
+		case "email":
+			if !config.SignIn.Email.Enabled {
+				gaps = append(gaps, fmt.Sprintf("the email sign-in provider is not enabled in %s — console → Identity Platform → Providers → add Email/Password", c.Project))
+			}
+		}
+	}
+	return gaps
 }

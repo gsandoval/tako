@@ -370,9 +370,10 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 			n.Datastore = true
 		case "auth":
 			// Sessions are entity records: auth alone needs Datastore,
-			// plus the Identity Platform API for token verification.
+			// plus Identity Platform initialized with the declared
+			// providers (preflight prints the console steps if not).
 			n.Datastore = true
-			n.IdentityPlatform = true
+			n.AuthProviders = r.Providers
 		case "queue", "topic":
 			n.PubSub = true
 		case "secret":

@@ -103,6 +103,32 @@ never-auto-delete rule protects data, not IAM).
   verification failure texts distinguish "no token" (misconfigured
   subscription) from "wrong audience" (stale URL).
 
+## Identity Platform (tako.Auth) — the one-time interactive setup
+
+Declaring `tako.Auth(...)` makes sign-in part of the app, and most of
+its cloud surface is automatic: the deploy enables the Identity
+Toolkit API, sessions are entity records under the runtime's existing
+`datastore.user` grant, and token verification needs no credentials at
+all (public certs). Two things are one-time PROJECT setup that tako
+never does for you — preflight checks both and prints these exact
+steps when absent (a deploy without them would produce an app whose
+sign-in fails silently in the browser):
+
+1. **Initialize Identity Platform**: console → Identity Platform →
+   "Get started" (one click). By API it is
+   `identityPlatform:initializeAuth` — note that Identity Toolkit
+   admin calls on user ADC credentials require the
+   `x-goog-user-project` quota-project header.
+2. **Configure each declared provider**: console → Identity Platform →
+   Providers → add Google (the OAuth consent screen makes this
+   genuinely interactive; accept the defaults) and/or Email/Password.
+
+tako reads this configuration (preflight) but never writes it: auth
+providers are a trust decision the project owner clicks, exactly like
+secret values. **The user-facing developer documentation must carry
+this section** — until that documentation exists as its own
+deliverable, this file and the preflight text are its homes.
+
 ## Non-goals
 
 - No VPC/org-policy management (out of scope by doctrine).
