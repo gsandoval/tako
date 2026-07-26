@@ -64,17 +64,17 @@ type Resource struct {
 	// Site configuration (Kind "site"): the served directory, optional
 	// frontend build (command + output dir), the dev-proxy URL, the SPA
 	// fallback, and permanent redirects.
-	Dir       string         `json:"dir,omitempty"`
-	Build     string         `json:"build,omitempty"`
-	BuildOut  string         `json:"build_out,omitempty"`
-	DevProxy  string         `json:"dev_proxy,omitempty"`
-	SPA       bool           `json:"spa,omitempty"`
+	Dir      string `json:"dir,omitempty"`
+	Build    string `json:"build,omitempty"`
+	BuildOut string `json:"build_out,omitempty"`
+	DevProxy string `json:"dev_proxy,omitempty"`
+	SPA      bool   `json:"spa,omitempty"`
 	// TrustedHTML is the markdown posture opt-out (WithTrustedHTML):
 	// raw HTML in markdown passes through unsanitized.
 	TrustedHTML bool `json:"trusted_html,omitempty"`
 	// Providers are the sign-in providers of an auth declaration
 	// ("google", "email").
-	Providers []string `json:"providers,omitempty"`
+	Providers []string       `json:"providers,omitempty"`
 	Redirects []SiteRedirect `json:"redirects,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`

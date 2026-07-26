@@ -123,9 +123,15 @@ sign-in fails silently in the browser):
    Providers → add Google (the OAuth consent screen makes this
    genuinely interactive; accept the defaults) and/or Email/Password.
 
-tako reads this configuration (preflight) but never writes it: auth
-providers are a trust decision the project owner clicks, exactly like
-secret values. **The user-facing developer documentation must carry
+tako reads the trust configuration (preflight) but never writes it:
+providers and consent are decisions the project owner clicks, exactly
+like secret values. Two MECHANICAL pieces the deploy does own: it
+reads the browser client config (the public API key + auth domain —
+injected as env so the framework's /api/_session/signin page can run
+the flow), and it registers the app's own deployed URLs as authorized
+sign-in domains (narrated as `auth <host> authorized for sign-in` —
+the popup refuses unregistered origins, and tako's own URLs are not a
+trust question). **The user-facing developer documentation must carry
 this section** — until that documentation exists as its own
 deliverable, this file and the preflight text are its homes.
 

@@ -50,6 +50,20 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	return written, nil
 }
 
+// providerArgs renders the declared providers as SignInPage arguments.
+func providerArgs(g *analyzer.AppGraph) string {
+	for _, r := range g.Resources {
+		if r.Kind == "auth" {
+			quoted := make([]string, len(r.Providers))
+			for i, p := range r.Providers {
+				quoted[i] = fmt.Sprintf("%q", p)
+			}
+			return strings.Join(quoted, ", ")
+		}
+	}
+	return ""
+}
+
 // hasAuth reports whether the app declares tako.Auth.
 func hasAuth(g *analyzer.AppGraph) bool {
 	for _, r := range g.Resources {
@@ -192,7 +206,8 @@ import (
 	if hasAuth(g) {
 		b.WriteString("\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")
 		b.WriteString("\tmux.Handle(\"/api/_session\", runtime.SessionHandler())\n")
-		b.WriteString("\tmux.Handle(\"POST /api/_session/signout\", runtime.SignOutHandler())\n\n")
+		b.WriteString("\tmux.Handle(\"POST /api/_session/signout\", runtime.SignOutHandler())\n")
+		fmt.Fprintf(&b, "\tmux.Handle(\"GET /api/_session/signin\", runtime.SignInPage(%s))\n\n", providerArgs(g))
 	}
 	if site != nil {
 		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers. Its templates/ back\n\t// site.Render and are never served statically.\n", site.Name)

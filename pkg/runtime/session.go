@@ -146,9 +146,17 @@ func SessionHandler() http.Handler {
 				return
 			}
 			setSessionCookie(w, r, rec.ID, rec.Expires)
-			// The dev bar posts a plain form: bounce back to the page.
+			// The dev bar (and dev sign-in page) post plain forms:
+			// bounce to next, else back to the page.
 			if r.PostFormValue("dev_user") != "" {
-				http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
+				to := r.PostFormValue("next")
+				if to == "" || !strings.HasPrefix(to, "/") {
+					to = r.Referer()
+				}
+				if to == "" {
+					to = "/"
+				}
+				http.Redirect(w, r, to, http.StatusSeeOther)
 				return
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"uid": u.ID})
@@ -379,3 +387,85 @@ func SignOutHandler() http.Handler {
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
+
+// SignInPage serves GET /api/_session/signin — the framework-owned
+// sign-in UI ("auth is one declaration": the app links here, tako owns
+// the flow). Locally it lists dev users (no GCP anywhere near tako
+// dev); in the cloud it runs Identity Platform's browser flow with the
+// client config the deploy injected, POSTs the resulting ID token to
+// /api/_session, and returns to ?next= (default /).
+func SignInPage(providers ...string) http.Handler {
+	prov := map[string]bool{}
+	for _, p := range providers {
+		prov[p] = true
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next := r.URL.Query().Get("next")
+		if next == "" || !strings.HasPrefix(next, "/") {
+			next = "/"
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		if isLocalBackend() {
+			fmt.Fprintf(w, signInDevPage, next)
+			return
+		}
+		apiKey, authDomain, project := os.Getenv("TAKO_AUTH_APIKEY"), os.Getenv("TAKO_AUTH_DOMAIN"), os.Getenv("TAKO_PROJECT")
+		if apiKey == "" {
+			http.Error(w, "sign-in is not configured — tako deploy injects the auth client config, so this is a tako bug; re-run tako deploy", http.StatusInternalServerError)
+			return
+		}
+		google, email := "", ""
+		if prov["google"] {
+			google = `<button id="g" style="font:16px sans-serif;padding:10px 18px">Sign in with Google</button>`
+		}
+		if prov["email"] {
+			email = `<form id="e" style="display:flex;flex-direction:column;gap:8px;max-width:280px;margin-top:16px">
+  <input name="email" type="email" placeholder="email" required>
+  <input name="password" type="password" placeholder="password" required>
+  <button>Sign in with email</button></form>`
+		}
+		fmt.Fprintf(w, signInCloudPage, google, email, apiKey, authDomain, project, next)
+	})
+}
+
+const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · tako dev</title>
+<body style="font:16px sans-serif;max-width:32rem;margin:4rem auto">
+<h1>Sign in (dev)</h1>
+<p>Local sessions are dev-minted — no GCP involved. Pick a user:</p>
+<form method="post" action="/api/_session"><input type="hidden" name="next" value="%s">
+<button name="dev_user" value="alice">alice</button>
+<button name="dev_user" value="bob">bob</button>
+</form></body>`
+
+// The cloud page runs the standard Identity Platform browser flow via
+// the Firebase Auth compat SDK (gstatic). One POST of the resulting ID
+// token establishes the server session; the SDK's client state is not
+// used afterwards.
+const signInCloudPage = `<!doctype html><meta charset="utf-8"><title>sign in</title>
+<body style="font:16px sans-serif;max-width:32rem;margin:4rem auto">
+<h1>Sign in</h1>
+%s%s
+<p id="err" style="color:#b00"></p>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script>
+firebase.initializeApp({apiKey: %q, authDomain: %q, projectId: %q});
+const next = %q;
+async function establish(cred) {
+  const idToken = await cred.user.getIdToken();
+  const res = await fetch("/api/_session", {method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({idToken})});
+  if (!res.ok) throw new Error("session exchange failed: " + await res.text());
+  location.assign(next);
+}
+const g = document.getElementById("g");
+if (g) g.onclick = () =>
+  firebase.auth().signInWithPopup(new firebase.auth.GoogleAuthProvider())
+    .then(establish).catch(e => err.textContent = e.message);
+const e = document.getElementById("e");
+if (e) e.onsubmit = ev => { ev.preventDefault();
+  firebase.auth().signInWithEmailAndPassword(e.email.value, e.password.value)
+    .then(establish).catch(x => err.textContent = x.message); };
+</script></body>`

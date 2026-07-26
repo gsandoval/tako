@@ -150,6 +150,22 @@ func runDeploy(args []string) error {
 	// Build first: digests are part of the spec, so plans see image
 	// changes. Nothing is pushed until the plan says something changed.
 	cfg := provision.Config{Project: t.project, ProjectNumber: projectNumber, Region: t.region, App: app, Env: t.env}
+	// Auth apps get the browser client config injected, and their public
+	// services' hosts registered as authorized sign-in domains (the
+	// popup refuses unregistered origins). Deterministic URLs make the
+	// hosts known before anything deploys.
+	if len(needsOf(graph, t.env).AuthProviders) > 0 {
+		var hosts []string
+		for _, svc := range graph.Services {
+			u := cfg.RunURL(svc.Name)
+			hosts = append(hosts, strings.TrimPrefix(u, "https://"))
+		}
+		authClient, err := client.EnsureAuthClient(ctx, hosts, sayf)
+		if err != nil {
+			return err
+		}
+		cfg.AuthAPIKey, cfg.AuthDomain = authClient.APIKey, authClient.AuthDomain
+	}
 	repoHost := t.region + "-docker.pkg.dev/" + t.project + "/" + provision.RepoName
 	images := map[string]string{}
 	for _, svc := range graph.Services {

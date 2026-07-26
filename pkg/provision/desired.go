@@ -25,6 +25,12 @@ type Config struct {
 	// anything else prefixes every resource name (spec §4.6a:
 	// environments are disjoint resource sets from the same code).
 	Env string
+	// AuthAPIKey/AuthDomain are Identity Platform's browser client
+	// config (discovered at deploy time when the app declares Auth) —
+	// injected so the framework's sign-in page can run the flow. The
+	// key is a public browser key, not a secret.
+	AuthAPIKey string
+	AuthDomain string
 }
 
 // SAEmail is the full address of a service's identity.
@@ -150,6 +156,10 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			// The service's own base name: dead-topic derivation
 			// (Permanent publishes there directly) and log labeling.
 			"TAKO_SERVICE": svc.Name,
+		}
+		if cfg.AuthAPIKey != "" {
+			env["TAKO_AUTH_APIKEY"] = cfg.AuthAPIKey
+			env["TAKO_AUTH_DOMAIN"] = cfg.AuthDomain
 		}
 		objs = append(objs,
 			Object{

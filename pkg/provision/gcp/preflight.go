@@ -1,6 +1,7 @@
 package gcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -244,4 +245,76 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 		}
 	}
 	return gaps
+}
+
+// AuthClient is Identity Platform's browser client configuration plus
+// the domain registrations sign-in popups require.
+type AuthClient struct {
+	APIKey     string
+	AuthDomain string
+}
+
+// EnsureAuthClient reads the client config and registers the given
+// service hosts as authorized sign-in domains (mechanical registration
+// of tako's OWN deployed URLs — the trust decisions, providers and
+// consent, stay manual; see docs/tako-cloud-permissions.md). say
+// narrates each domain added.
+func (c *Client) EnsureAuthClient(ctx context.Context, hosts []string, say func(format string, args ...any)) (AuthClient, error) {
+	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
+	var config struct {
+		Client struct {
+			APIKey            string `json:"apiKey"`
+			FirebaseSubdomain string `json:"firebaseSubdomain"`
+		} `json:"client"`
+		AuthorizedDomains []string `json:"authorizedDomains"`
+	}
+	if err := c.doIdentity(ctx, base+"/config", &config); err != nil {
+		return AuthClient{}, fmt.Errorf("reading the Identity Platform client config: %w", err)
+	}
+	if config.Client.APIKey == "" {
+		return AuthClient{}, fmt.Errorf("Identity Platform has no browser API key in %s — initialization normally provisions one (console → Identity Platform → Application setup details)", c.Project)
+	}
+	have := map[string]bool{}
+	for _, d := range config.AuthorizedDomains {
+		have[d] = true
+	}
+	missing := []string{}
+	for _, h := range hosts {
+		if !have[h] {
+			missing = append(missing, h)
+		}
+	}
+	if len(missing) > 0 {
+		domains := append(append([]string{}, config.AuthorizedDomains...), missing...)
+		body, err := json.Marshal(map[string]any{"authorizedDomains": domains})
+		if err != nil {
+			return AuthClient{}, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
+			base+"/config?updateMask=authorizedDomains", bytes.NewReader(body))
+		if err != nil {
+			return AuthClient{}, err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("x-goog-user-project", c.Project)
+		res, err := c.HC.Do(req)
+		if err != nil {
+			return AuthClient{}, err
+		}
+		raw, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode/100 != 2 {
+			return AuthClient{}, parseAPIError(res.StatusCode, base+"/config", raw)
+		}
+		for _, d := range missing {
+			if say != nil {
+				say("auth         %s authorized for sign-in", d)
+			}
+		}
+	}
+	sub := config.Client.FirebaseSubdomain
+	if sub == "" {
+		sub = c.Project
+	}
+	return AuthClient{APIKey: config.Client.APIKey, AuthDomain: sub + ".firebaseapp.com"}, nil
 }

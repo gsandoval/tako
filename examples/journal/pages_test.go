@@ -28,6 +28,8 @@ func servePages(t *testing.T) *httptest.Server {
 	runtime.RegisterSiteTemplates(os.DirFS("web"), runtime.SiteOptions{})
 	mux := http.NewServeMux()
 	mux.Handle("/api/_session", runtime.SessionHandler())
+	mux.Handle("GET /api/_session/signin", runtime.SignInPage("google"))
+	mux.Handle("POST /api/_session/signout", runtime.SignOutHandler())
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
 	mux.Handle("GET /p/{id}", runtime.PageHandler(Read, func(r *http.Request) (ReadReq, error) {
 		return ReadReq{ID: runtime.PathString(r, "id")}, nil
@@ -272,6 +274,29 @@ func TestTrustedHTMLOptOut(t *testing.T) {
 	}
 	if !strings.Contains(string(trusted), "<script>alert(1)</script>") {
 		t.Fatalf("trusted posture stripped raw HTML: %s", trusted)
+	}
+}
+
+func TestSignInPageDevFlow(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	res, err := c.Get(srv.URL + "/api/_session/signin?next=/write")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	page, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 || !strings.Contains(string(page), `name="dev_user" value="alice"`) {
+		t.Fatalf("dev sign-in page = %d %q", res.StatusCode, page)
+	}
+	// The dev form lands on next after minting the session.
+	res2, err := c.PostForm(srv.URL+"/api/_session", url.Values{"dev_user": {"alice"}, "next": {"/write"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2.Body.Close()
+	if res2.StatusCode != 303 || res2.Header.Get("Location") != "/write" {
+		t.Fatalf("dev sign-in = %d → %q, want 303 → /write", res2.StatusCode, res2.Header.Get("Location"))
 	}
 }
 

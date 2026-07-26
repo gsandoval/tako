@@ -5227,3 +5227,35 @@ marker that the FINAL user-facing developer documentation must carry
 it (that documentation is its own future deliverable — noted, per
 user direction, as a standing requirement). validate/journal.md §6
 now lets preflight narrate the step instead of front-loading it.
+
+## W6 fix: the browser half of sign-in existed nowhere (2026-07-26)
+
+The user's gate walk found it immediately: the deployed journal had
+no way to sign in — W5 shipped and proved the SERVER half (verify,
+sessions, revocation) with a hand-minted token, but no sign-in UI,
+no client config, and the run.app origin wasn't an authorized
+sign-in domain (the popup would have refused it even with a UI).
+"Auth is one declaration" means the framework owes the flow; shipped:
+
+- **GET /api/_session/signin** (framework-owned, mounted by codegen
+  with the DECLARED providers): locally a dev-user page; in the cloud
+  the standard Identity Platform browser flow (Firebase Auth compat
+  from gstatic — Google popup, and an email/password form when
+  declared), one POST of the ID token to /api/_session, then ?next=.
+- **Deploy discovers the client config** (initialization auto-
+  provisions the public browser API key; firebaseSubdomain → auth
+  domain) and injects TAKO_AUTH_APIKEY/TAKO_AUTH_DOMAIN; it also
+  REGISTERS the app's own service hosts as authorized sign-in
+  domains, narrated (`auth journal-….run.app authorized for
+  sign-in`) — the permissions doc now draws the line explicitly:
+  trust config (providers, consent) is manual; mechanical own-URL
+  registration and client-config reads are the deploy's.
+- **journal's layout** links "sign in" → the page and shows a
+  sign-out form when signed in; the dev sign-in page honors next.
+
+Verified live on tako-test-01: the deploy narrated the domain
+registration; the signin page serves with the Google button, the SDK,
+and the baked config; the Google provider is enabled (the user's
+console click, per preflight's instruction, had landed); layout links
+resolve. The interactive Google popup itself remains the user's W6
+§6 judgment — everything up to the click is now machine-verified.
