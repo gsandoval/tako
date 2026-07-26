@@ -180,8 +180,9 @@ import (
 	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
 	if site != nil {
-		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers.\n", site.Name)
+		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers. Its templates/ back\n\t// site.Render and are never served statically.\n", site.Name)
 		b.WriteString("\tsiteRoot, err := fs.Sub(siteFS, \"site\")\n\tif err != nil {\n\t\tpanic(err)\n\t}\n")
+		b.WriteString("\truntime.RegisterSiteTemplates(siteRoot)\n")
 		fmt.Fprintf(&b, "\tmux.Handle(\"/\", runtime.SiteHandler(siteRoot, runtime.SiteOptions{%s}))\n\n", siteOptionsLiteral(site))
 	}
 	if hasBucket(g, svc) {
@@ -204,9 +205,12 @@ import (
 		if h.ResBlob {
 			wrapper = "BlobHandler"
 		}
+		if h.Kind == "page" {
+			wrapper = "PageHandler"
+		}
 		fmt.Fprintf(&b, "\t// %s → %s (%s)\n", h.Route, h.Var, analyzer.ShortPos(h.Pos))
 		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s))\n\n",
-			h.Route, wrapper, alias, analyzer.ShortVar(h), decode)
+			muxPattern(h.Route), wrapper, alias, analyzer.ShortVar(h), decode)
 	}
 
 	for _, h := range g.Handlers {
@@ -300,6 +304,17 @@ func hasResources(g *analyzer.AppGraph, svc analyzer.Service) bool {
 		}
 	}
 	return false
+}
+
+// muxPattern maps a declared route to its ServeMux pattern. A declared
+// "GET /" means THE home page, but to the mux "GET /" is the method
+// catch-all — it would swallow every GET (assets, templates/) away
+// from the site. "{$}" is the mux's exact-root marker.
+func muxPattern(route string) string {
+	if strings.HasSuffix(route, " /") {
+		return route + "{$}"
+	}
+	return route
 }
 
 // siteOptionsLiteral renders the SiteOptions struct fields for the

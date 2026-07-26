@@ -81,6 +81,11 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, to, http.StatusPermanentRedirect)
 		return
 	}
+	// templates/ is site.Render's input, never a static asset.
+	if p == "templates" || strings.HasPrefix(p, "templates/") {
+		http.NotFound(w, r)
+		return
+	}
 	if p == "." || p == "/" {
 		p = "index.html"
 	}

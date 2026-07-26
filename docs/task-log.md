@@ -4592,3 +4592,77 @@ against the cloud URL, §6 destroy.
 
 **STOP — awaiting DX approval (and the two §1 scope calls) before
 implementation.**
+
+## W2 — implementation: Pages, forms, CSRF — journal has authored posts (2026-07-25)
+
+Proposal approved with both §1 recommendations (Redirect = 303 See
+Other with the doc-comment fix; plain error pages). This completes the
+W2 MILESTONE scope — the gate request below covers W1 + W2.
+
+**SDK made true (frozen surface, no additions):** `tako.Page` extracts
+and serves; `tako.HTML` carries markup-or-redirect (opened for the
+runtime via a hooks bridge, nothing exported); `tako.Redirect` returns
+303 intent; `site.Render` renders through hooks. Fragment/Markdown
+now return their W3/W4 pointers as errors instead of panicking.
+
+**Analyzer:** extractAPI generalized into extractRoute — Page shares
+API's whole route/tagged-Req machinery plus one page rule: untagged
+non-form fields error ("pages receive browser forms, not JSON
+bodies", tako/page-binding). Pages join the app service and the edge
+scan (journal's posts entity derives its grant like any API's). The
+Page/Auth not-yet gate is now Auth-only.
+
+**Runtime:** RegisterSiteTemplates parses web/templates once per
+process (layout.html the shell, pages fill its "content" block; parse
+errors surface at render naming the template); render clones per
+request (Funcs mutate — requests race otherwise); funcs: {{ csrf }}
+(hidden input), {{ csrfToken }} (the layout's meta tag),
+{{ markdown }} erroring with the W4 pointer. PageHandler: decode →
+CSRF (double-submit __tako_csrf cookie, SameSite=Lax; unsafe methods
+require the _csrf field or X-CSRF-Token header; constant-time
+compare; exact 403 text pinned) → invoke → 303 on redirect, else the
+document with the SAME header policy as the static half. Errors
+plain: explicit statuses as-is, else opaque 500 with the request id.
+SiteHandler refuses templates/ (render input, never an asset).
+
+**Two routing/harness bugs caught by the smoke, fixed:** a declared
+"GET /" is THE home page, but to ServeMux it is the GET catch-all —
+it swallowed every asset and template request away from the site;
+codegen now emits the exact-root pattern "GET /{$}" for
+root-path routes. (And a zombie dev process from the W1 smoke had
+been answering the port — the 405s that first looked like a routing
+bug were a stale binary; killed by port, everything held.)
+
+**journal:** Post entity (Created index), Home/Read/Write/Save pages,
+layout + home/post/write templates, static index retired (home is
+rendered; about stays static). Example tests pin: the write → 303 →
+read → home-lists round-trip, the exact CSRF 403 (tokenless AND
+cookie-less first contact), script-tag bodies rendering as text
+(&lt;script&gt; — the pre-W4 floor), unknown post 404, and the W1
+static-half headers on /about.
+
+**Live cycle (tako-test-01):** deploy 32s — journal's FIRST grant
+appeared exactly as derived (`~ update iam grants project`:
+datastore.user for journal-sa from the posts edges; preflight grew
+datastore; security summary one honest line). After the known ~70s
+IAM window: CSRF-less POST 403'd, the tokened write PRG'd 303 to
+/p/yco2…, the post rendered inside the layout, home listed it, the
+XSS body arrived escaped, the static half served with strong ETags.
+Destroy listed `datastore kinds posts` under DATA and purged 2
+entities; clean project; full local sweep green.
+
+**Discovered work (not done):** W1 leftovers stand (tako test skips
+WithBuild; Boot for site-only services); {{ csrf }} token pair should
+bind to the session at W5; TestApp.Call has no Page ergonomics yet
+(the example harness mirrors the generated main instead — fine until
+journal's app_test wants user-style page tests).
+
+**GATE REQUEST — W2 MILESTONE: the server-rendered website (closes
+W1 + W2).** Run `validate/journal-web.md` end to end on tako-test-01:
+§1 the static half (headers/ETag/304/308, templates/ blocked), §2
+pages + forms in the browser (PRG — refresh must not resubmit), §3
+both CSRF rejections with the exact text, §4 the script-tag body
+inert, §5 the full cycle with the first-grant judgment and ETag
+parity, §6 destroy naming the posts kind. Record ONE verdict in
+docs/validation-log.md for the milestone (W1's deferred row points at
+it). W3 (fragments + htmx — journal goes interactive) follows.

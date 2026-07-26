@@ -2,9 +2,7 @@ package notyet
 
 import "github.com/gsandoval/tako"
 
-var Home = tako.Page("GET /", home)
-
-func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) { return tako.HTML{}, nil }
+var auth = tako.Auth()
 
 var reindex = tako.Job[Params]("reindex")
 

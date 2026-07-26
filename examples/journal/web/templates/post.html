@@ -1,0 +1,8 @@
+{{ define "title" }}{{ .Title }} · journal{{ end }}
+{{ define "content" }}
+<article>
+  <h2>{{ .Title }}</h2>
+  <time>{{ .Created.Format "January 2, 2006" }}</time>
+  <pre class="body">{{ .Body }}</pre> <!-- escaped; {{ "{{ markdown }}" }} arrives in W4 -->
+</article>
+{{ end }}

@@ -4,11 +4,27 @@
     {
       "name": "journal",
       "package": "journal",
-      "handlers": null,
+      "handlers": [
+        "journal.Home",
+        "journal.Read",
+        "journal.Write",
+        "journal.Save"
+      ],
       "profile": "default"
     }
   ],
   "resources": [
+    {
+      "kind": "entity",
+      "name": "posts",
+      "var": "journal.posts",
+      "package": "journal",
+      "type": "Post",
+      "indexes": [
+        "Created"
+      ],
+      "pos": "app.go:15:2"
+    },
     {
       "kind": "site",
       "name": "./web",
@@ -21,9 +37,88 @@
           "to": "/about"
         }
       ],
-      "pos": "app.go:14:5"
+      "pos": "app.go:19:2"
     }
   ],
-  "handlers": [],
-  "edges": []
+  "handlers": [
+    {
+      "kind": "page",
+      "var": "journal.Home",
+      "package": "journal",
+      "service": "journal",
+      "route": "GET /",
+      "pos": "app.go:30:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Read",
+      "package": "journal",
+      "service": "journal",
+      "route": "GET /p/{id}",
+      "req_type": "ReadReq",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:31:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Write",
+      "package": "journal",
+      "service": "journal",
+      "route": "GET /write",
+      "pos": "app.go:32:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Save",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /p",
+      "req_type": "SaveReq",
+      "bindings": [
+        {
+          "field": "Title",
+          "kind": "form",
+          "name": "title",
+          "type": "string"
+        },
+        {
+          "field": "Body",
+          "kind": "form",
+          "name": "body",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:33:2"
+    }
+  ],
+  "edges": [
+    {
+      "from": "journal.Home",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Read",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Save",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    }
+  ]
 }

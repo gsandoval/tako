@@ -1,0 +1,9 @@
+{{ define "title" }}write · journal{{ end }}
+{{ define "content" }}
+<form method="post" action="/p">
+  {{ csrf }}
+  <p><input name="title" placeholder="Title" required></p>
+  <p><textarea name="body" rows="12" placeholder="Write in markdown…"></textarea></p>
+  <p><button>Publish</button></p>
+</form>
+{{ end }}

@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrfToken }}">
+  <title>{{ block "title" . }}journal{{ end }}</title>
+  <link rel="stylesheet" href="/assets/site.9f86d081.css">
+</head>
+<body>
+  <header><h1><a href="/">journal</a></h1>
+    <nav><a href="/write">write</a> · <a href="/about">about</a></nav></header>
+  <main>{{ block "content" . }}{{ end }}</main>
+</body>
+</html>

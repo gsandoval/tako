@@ -1,0 +1,6 @@
+{{ define "content" }}
+{{ if not . }}<p>Nothing here yet — <a href="/write">write the first post</a>.</p>{{ end }}
+<ul class="posts">
+{{ range . }}  <li><a href="/p/{{ .ID }}">{{ .Title }}</a> <time>{{ .Created.Format "2006-01-02" }}</time></li>
+{{ end }}</ul>
+{{ end }}

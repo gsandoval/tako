@@ -1,14 +1,76 @@
 // Package journal is the website-with-an-API showcase (spec Part 3b),
 // grown feature by feature through Stage 3: W1 the static shell, W2
-// pages and forms, W3 htmx fragments, W4 authored markdown, W5 auth —
-// gated whole at W6. Right now it is the smallest possible tako
-// website: one declaration, zero handlers.
+// pages and forms (this slice), W3 htmx fragments, W4 authored
+// markdown, W5 auth — gated whole at W6. Writes are OPEN until W5
+// brings auth; bodies render escaped until W4 brings markdown.
 package journal
 
-import "github.com/gsandoval/tako"
+import (
+	"time"
 
-// site serves ./web embedded in the service binary: correct caching
-// (fingerprinted assets immutable, HTML no-cache, ETags), conservative
-// security headers, and a redirect from the old address of the about
-// page. Templates and pages join in W2.
-var site = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
+	"github.com/gsandoval/tako"
+)
+
+var (
+	posts = tako.Entity[Post]("posts")
+
+	// site serves ./web embedded in the service binary; its templates/
+	// subtree backs site.Render and is never served statically.
+	site = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
+)
+
+type Post struct {
+	ID      string    `entity:"id" json:"id"`
+	Title   string    `json:"title"`
+	Body    string    `json:"body"` // author-supplied markdown; rendered escaped until W4
+	Created time.Time `entity:"index" json:"created"`
+}
+
+var (
+	Home  = tako.Page("GET /", home)
+	Read  = tako.Page("GET /p/{id}", read)
+	Write = tako.Page("GET /write", writeForm)
+	Save  = tako.Page("POST /p", save)
+)
+
+func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+	list, err := posts.Query(ctx).OrderBy("-Created").Limit(50).All()
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	return site.Render(ctx, "home.html", list)
+}
+
+type ReadReq struct {
+	ID string `path:"id"`
+}
+
+func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
+	p, err := posts.Get(ctx, req.ID)
+	if tako.IsNotFound(err) {
+		return tako.HTML{}, tako.NotFound()
+	}
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	return site.Render(ctx, "post.html", p)
+}
+
+func writeForm(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+	return site.Render(ctx, "write.html", nil)
+}
+
+// SaveReq binds the browser form — the CSRF token is the shim's
+// problem, not this struct's.
+type SaveReq struct {
+	Title string `form:"title"`
+	Body  string `form:"body"`
+}
+
+func save(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {
+	p := Post{ID: tako.NewID(), Title: req.Title, Body: req.Body, Created: time.Now()}
+	if err := posts.Put(ctx, p); err != nil {
+		return tako.HTML{}, err
+	}
+	return tako.Redirect("/p/" + p.ID) // POST-redirect-GET (303)
+}

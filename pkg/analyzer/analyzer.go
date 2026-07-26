@@ -162,12 +162,12 @@ func Analyze(cfg Config) (*AppGraph, error) {
 					sitePackages[pkg.PkgPath] = pkg.Name
 					graph.Resources = append(graph.Resources, *r)
 				}
-			case "Page", "Auth":
+			case "Auth":
 				// Declared surface whose behavior hasn't shipped: an
 				// explicit error beats silently ignoring the declaration.
 				errs = append(errs, &Error{
 					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
-					Msg:  fmt.Sprintf("tako.%s is not available yet — the web slice (pages: W2, auth: W5) is arriving", d.ctor),
+					Msg:  "tako.Auth is not available yet — auth arrives with W5",
 					Rule: "not-yet",
 				})
 			case "Job", "JobHandler", "Lock", "Singleton":
@@ -182,6 +182,11 @@ func Analyze(cfg Config) (*AppGraph, error) {
 			switch d.ctor {
 			case "API":
 				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+				}
+			case "Page":
+				if h := extractPage(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}

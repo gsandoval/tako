@@ -4,7 +4,11 @@
 // backends directly.
 package hooks
 
-import "github.com/gsandoval/tako/pkg/backends"
+import (
+	"context"
+
+	"github.com/gsandoval/tako/pkg/backends"
+)
 
 // Entity is the wired entity backend; nil until boot.
 var Entity backends.Entity
@@ -36,3 +40,12 @@ var DeclaredSecrets func() []string
 // payload-decoding invoke closure (typed func(tako.Ctx, []byte) error,
 // passed as any to avoid an import cycle).
 var HandlerInfo func(h any) (kind, source string, invoke any)
+
+// RenderSite renders a site template inside the layout — pkg/runtime
+// sets it (RegisterSiteTemplates); site.Render calls through. The ctx
+// is the request's context.Context (carries the CSRF token).
+var RenderSite func(ctx context.Context, name string, data any) ([]byte, error)
+
+// HTMLParts opens a tako.HTML for the runtime's page handler — the SDK
+// sets it at init (typed as any to avoid the import cycle).
+var HTMLParts func(h any) (markup []byte, redirect string)

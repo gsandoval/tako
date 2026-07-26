@@ -33,6 +33,17 @@ var bindableTypes = map[string]string{
 // entry. It appends every rule violation it finds to errs and returns nil
 // when any occurred.
 func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
+	return extractRoute("API", dir, pkg, name, call, errs)
+}
+
+// extractPage validates one tako.Page declaration — the same route +
+// tagged-Req shape as API, except pages receive browser forms, never
+// JSON bodies, and render HTML (the signature enforces the result).
+func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
+	return extractRoute("Page", dir, pkg, name, call, errs)
+}
+
+func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
 	if name.Name == "_" || len(call.Args) < 2 {
 		return nil
 	}
@@ -43,8 +54,8 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 	if err != nil {
 		fail(&Error{
 			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg: fmt.Sprintf("tako.API route must be a string constant — routes are read at analysis time, not run time; got %s",
-				describeExpr(call.Args[0])),
+			Msg: fmt.Sprintf("tako.%s route must be a string constant — routes are read at analysis time, not run time; got %s",
+				ctor, describeExpr(call.Args[0])),
 			Rule: "const-route",
 		})
 		return nil
@@ -55,8 +66,8 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 		if optName, ok := sdkOptionCall(pkg, opt); ok && !apiOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.API option (tako.API accepts WithAuth, WithPrivate, WithProfile)",
-					optName),
+				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate, WithProfile)",
+					optName, ctor, ctor),
 				Rule: "invalid-option",
 			})
 		}
@@ -140,6 +151,16 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 				})
 				continue
 			}
+			if ctor == "Page" {
+				// Pages receive browser forms, never JSON bodies.
+				fail(&Error{
+					Pos: relPos(dir, pkg.Fset, f.pos),
+					Msg: fmt.Sprintf("%s field %s has no path:/query:/form: tag — pages receive browser forms, not JSON bodies",
+						req.name, f.name),
+					Rule: "page-binding",
+				})
+				continue
+			}
 			hasBody = true
 		}
 	}
@@ -157,8 +178,12 @@ func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.Ca
 		return nil
 	}
 
+	kind := "api"
+	if ctor == "Page" {
+		kind = "page"
+	}
 	return &Handler{
-		Kind:     "api",
+		Kind:     kind,
 		Var:      pkg.Name + "." + name.Name,
 		Package:  pkg.PkgPath,
 		Service:  pkg.Name,

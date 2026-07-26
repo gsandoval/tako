@@ -14,4 +14,11 @@ func init() {
 		return hd.kind, hd.source, hd.invoke
 	}
 	hooks.DeclaredSecrets = declaredSecrets
+	hooks.HTMLParts = func(h any) ([]byte, string) {
+		html, ok := h.(HTML)
+		if !ok {
+			return nil, ""
+		}
+		return html.markup, html.redirect
+	}
 }

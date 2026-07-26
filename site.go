@@ -1,5 +1,11 @@
 package tako
 
+import (
+	"errors"
+
+	"github.com/gsandoval/tako/internal/hooks"
+)
+
 // Site declares the app's web-serving story rooted at dir: static assets,
 // templates (in dir/templates), frontend builds (WithBuild, WithDevProxy),
 // caching and security headers, domains, and redirects. v0 embeds the site
@@ -15,22 +21,30 @@ type SiteHandle struct {
 	opts []Option
 }
 
-// Render renders the named template with data inside the site's layout.
+// Render renders the named template with data inside the site's layout
+// (web/templates/layout.html; the page fills its "content" block).
 func (s *SiteHandle) Render(ctx Ctx, template string, data any) (HTML, error) {
-	panic("tako: not implemented")
+	if hooks.RenderSite == nil {
+		return HTML{}, errors.New("tako: site templates are not wired — Render works in generated services (tako dev / deploy), not bare tests")
+	}
+	markup, err := hooks.RenderSite(ctx, template, data)
+	if err != nil {
+		return HTML{}, err
+	}
+	return HTML{markup: markup}, nil
 }
 
 // Fragment renders the named template with data without the layout, for
 // htmx-style partial updates.
 func (s *SiteHandle) Fragment(ctx Ctx, template string, data any) (HTML, error) {
-	panic("tako: not implemented")
+	return HTML{}, errors.New("tako: Fragment arrives with W3 (fragments + htmx) — Render serves whole pages until then")
 }
 
 // Markdown renders markdown source to HTML. Output is sanitized by default
 // because user-supplied markdown is an XSS vector; WithTrustedHTML on the
 // site is the explicit opt-out.
 func (s *SiteHandle) Markdown(ctx Ctx, src string) (HTML, error) {
-	panic("tako: not implemented")
+	return HTML{}, errors.New("tako: Markdown arrives with W4 — render bodies escaped until then")
 }
 
 // HTML is the rendered result of a Page handler: markup, or a redirect
@@ -40,9 +54,10 @@ type HTML struct {
 	redirect string
 }
 
-// Redirect makes a Page handler respond with a redirect to target — a 302
-// for plain requests, an HX-Redirect for htmx requests — covering the
-// POST-redirect-GET pattern with one return.
+// Redirect makes a Page handler respond with a redirect to target — a
+// 303 See Other for plain requests (the POST-redirect-GET status), an
+// HX-Redirect for htmx requests (W3) — covering the pattern with one
+// return.
 func Redirect(target string) (HTML, error) {
-	panic("tako: not implemented")
+	return HTML{redirect: target}, nil
 }

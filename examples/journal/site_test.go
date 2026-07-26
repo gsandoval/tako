@@ -19,19 +19,20 @@ func siteHandler() *httptest.Server {
 	}))
 }
 
-func TestHomeServesWithRevalidationHeaders(t *testing.T) {
+func TestStaticPageServesWithRevalidationHeaders(t *testing.T) {
+	// W2 made / a rendered page; /about remains the static half.
 	srv := siteHandler()
 	defer srv.Close()
-	res, err := srv.Client().Get(srv.URL + "/")
+	res, err := srv.Client().Get(srv.URL + "/about")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != 200 || res.Header.Get("Cache-Control") != "no-cache" {
-		t.Fatalf("home = %d, cache-control %q", res.StatusCode, res.Header.Get("Cache-Control"))
+		t.Fatalf("about = %d, cache-control %q", res.StatusCode, res.Header.Get("Cache-Control"))
 	}
 	if res.Header.Get("ETag") == "" || res.Header.Get("Content-Security-Policy-Report-Only") == "" {
-		t.Fatal("home missing ETag or CSP-Report-Only")
+		t.Fatal("about missing ETag or CSP-Report-Only")
 	}
 }
 
