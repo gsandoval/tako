@@ -13,9 +13,8 @@ import (
 // siteOptions is the option set tako.Site accepts in W1; the rest of
 // §2.11's surface names its future slice instead of failing blind.
 var siteNotYet = map[string]string{
-	"WithDomain":      "custom domains (mapping + TLS + HSTS) are their own slice",
-	"WithCDN":         "bucket + Cloud CDN serving is its own when-scale-justifies slice",
-	"WithTrustedHTML": "markdown arrives with W4",
+	"WithDomain": "custom domains (mapping + TLS + HSTS) are their own slice",
+	"WithCDN":    "bucket + Cloud CDN serving is its own when-scale-justifies slice",
 }
 
 // extractSite validates one tako.Site declaration: the served directory
@@ -56,7 +55,7 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		if !isOpt || optCall == nil {
 			fail(&Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect; got %s", describeExpr(opt)),
+				Msg:  fmt.Sprintf("tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML; got %s", describeExpr(opt)),
 				Rule: "invalid-option",
 			})
 			continue
@@ -88,6 +87,10 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		switch optName {
 		case "SPA":
 			r.SPA = true
+		case "WithTrustedHTML":
+			// The markdown opt-out: raw HTML passes through. Recorded on
+			// the graph so the posture is visible in review.
+			r.TrustedHTML = true
 		case "WithBuild":
 			cmd, ok1 := constArg(0)
 			out, ok2 := constArg(1)
@@ -107,7 +110,7 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		default:
 			fail(&Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect)", optName),
+				Msg:  fmt.Sprintf("tako.%s is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML)", optName),
 				Rule: "invalid-option",
 			})
 		}

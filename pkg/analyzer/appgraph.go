@@ -69,6 +69,9 @@ type Resource struct {
 	BuildOut  string         `json:"build_out,omitempty"`
 	DevProxy  string         `json:"dev_proxy,omitempty"`
 	SPA       bool           `json:"spa,omitempty"`
+	// TrustedHTML is the markdown posture opt-out (WithTrustedHTML):
+	// raw HTML in markdown passes through unsanitized.
+	TrustedHTML bool `json:"trusted_html,omitempty"`
 	Redirects []SiteRedirect `json:"redirects,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`

@@ -182,7 +182,7 @@ import (
 	if site != nil {
 		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers. Its templates/ back\n\t// site.Render and are never served statically.\n", site.Name)
 		b.WriteString("\tsiteRoot, err := fs.Sub(siteFS, \"site\")\n\tif err != nil {\n\t\tpanic(err)\n\t}\n")
-		b.WriteString("\truntime.RegisterSiteTemplates(siteRoot)\n")
+		fmt.Fprintf(&b, "\truntime.RegisterSiteTemplates(siteRoot, runtime.SiteOptions{%s})\n", siteOptionsLiteral(site))
 		fmt.Fprintf(&b, "\tmux.Handle(\"/\", runtime.SiteHandler(siteRoot, runtime.SiteOptions{%s}))\n\n", siteOptionsLiteral(site))
 	}
 	if hasBucket(g, svc) {
@@ -333,6 +333,9 @@ func siteOptionsLiteral(site *analyzer.Resource) string {
 			pairs = append(pairs, fmt.Sprintf("%q: %q", r.From, r.To))
 		}
 		parts = append(parts, "Redirects: map[string]string{"+strings.Join(pairs, ", ")+"}")
+	}
+	if site.TrustedHTML {
+		parts = append(parts, "TrustedHTML: true")
 	}
 	return strings.Join(parts, ", ")
 }

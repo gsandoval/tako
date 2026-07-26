@@ -21,6 +21,9 @@ type SiteOptions struct {
 	// SPA serves index.html for unknown paths (single-page apps own
 	// their routing). Without it, unknown paths 404.
 	SPA bool
+	// TrustedHTML is the markdown posture (WithTrustedHTML): raw HTML
+	// in markdown passes through unsanitized. Never the default.
+	TrustedHTML bool
 	// Redirects are permanent (308) path redirects.
 	Redirects map[string]string
 	// DevProxy, when non-empty AND the backend is local, forwards every

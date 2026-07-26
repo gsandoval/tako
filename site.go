@@ -49,9 +49,17 @@ func (s *SiteHandle) Fragment(ctx Ctx, template string, data any) (HTML, error) 
 
 // Markdown renders markdown source to HTML. Output is sanitized by default
 // because user-supplied markdown is an XSS vector; WithTrustedHTML on the
-// site is the explicit opt-out.
+// site is the explicit opt-out. The result serves as a fragment (htmx
+// preview endpoints render it directly).
 func (s *SiteHandle) Markdown(ctx Ctx, src string) (HTML, error) {
-	return HTML{}, errors.New("tako: Markdown arrives with W4 — render bodies escaped until then")
+	if hooks.RenderMarkdown == nil {
+		return HTML{}, errors.New("tako: site templates are not wired — Markdown works in generated services (tako dev / deploy), not bare tests")
+	}
+	markup, err := hooks.RenderMarkdown(src)
+	if err != nil {
+		return HTML{}, err
+	}
+	return HTML{markup: markup, fragment: true}, nil
 }
 
 // HTML is the rendered result of a Page handler: markup (a document, or

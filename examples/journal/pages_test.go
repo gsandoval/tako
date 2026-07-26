@@ -25,7 +25,7 @@ func servePages(t *testing.T) *httptest.Server {
 	if err := runtime.BootLocal(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	runtime.RegisterSiteTemplates(os.DirFS("web"))
+	runtime.RegisterSiteTemplates(os.DirFS("web"), runtime.SiteOptions{})
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
 	mux.Handle("GET /p/{id}", runtime.PageHandler(Read, func(r *http.Request) (ReadReq, error) {
@@ -158,13 +158,16 @@ func TestCSRFRejectionText(t *testing.T) {
 	}
 }
 
-func TestBodyEscapedUntilMarkdown(t *testing.T) {
+func TestMarkdownRendersSanitized(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
 	token := writeFlow(t, c, srv.URL)
 
-	payload := `<script>alert("xss")</script>`
-	res, err := c.PostForm(srv.URL+"/p", url.Values{"title": {"evil"}, "body": {payload}, "_csrf": {token}})
+	// The W6 gate's §4 judgment: an XSS payload in a post body VANISHES
+	// (stripped by bluemonday) — stronger than W2's escape-to-text floor.
+	body := "# Heading\n\nSome *emphasis*, a [link](https://example.com), and:\n\n" +
+		"```go\nfmt.Println(1)\n```\n\n<script>alert(\"xss\")</script>\n<p onclick=\"evil()\">click</p>"
+	res, err := c.PostForm(srv.URL+"/p", url.Values{"title": {"md"}, "body": {body}, "_csrf": {token}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,11 +178,41 @@ func TestBodyEscapedUntilMarkdown(t *testing.T) {
 	}
 	defer read.Body.Close()
 	page, _ := io.ReadAll(read.Body)
-	if strings.Contains(string(page), payload) {
-		t.Fatal("script tag rendered raw — bodies must escape until W4's sanitized markdown")
+	html := string(page)
+
+	for _, want := range []string{
+		"<h1", "<em>emphasis</em>", `rel="nofollow"`, "<pre><code", "language-go",
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("markdown output missing %q", want)
+		}
 	}
-	if !strings.Contains(string(page), "&lt;script&gt;") {
-		t.Fatal("escaped body content missing")
+	// (the layout's own <script src=htmx…> is fine — the ban is the
+	// PAYLOAD: inline script content and handlers.)
+	for _, banned := range []string{"alert(", "onclick", "&lt;script&gt;"} {
+		if strings.Contains(html, banned) {
+			t.Errorf("sanitizer let %q through (or fell back to escaping):\n%s", banned, html)
+		}
+	}
+}
+
+func TestTrustedHTMLOptOut(t *testing.T) {
+	// journal never takes WithTrustedHTML; the opt-out is pinned at the
+	// runtime level — raw HTML survives ONLY under the explicit posture.
+	raw := `safe <script>alert(1)</script>`
+	def, err := runtime.RenderMarkdown(raw, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(def), "<script") {
+		t.Fatalf("default posture kept a script tag: %s", def)
+	}
+	trusted, err := runtime.RenderMarkdown(raw, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(trusted), "<script>alert(1)</script>") {
+		t.Fatalf("trusted posture stripped raw HTML: %s", trusted)
 	}
 }
 

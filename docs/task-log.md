@@ -4927,3 +4927,43 @@ script's §4 judgment) + full cycle on tako-test-01.
 
 **STOP — awaiting DX approval (and the two §1 scope calls) before
 implementation.**
+
+## W4 — implementation: Markdown, sanitized by default (2026-07-26)
+
+Proposal approved with both §1 recommendations (UGCPolicy; opt-out
+validated outside journal). Agent-validated; gates at W6.
+
+**Pipeline (pkg/runtime/markdown.go):** goldmark (CommonMark + GFM
+tables/strikethrough/autolinks, WithUnsafe so raw HTML reaches the
+sanitizer) → bluemonday UGCPolicy (+ class on <code> for fence
+languages), built once. RenderMarkdown(src, trusted): the trusted
+posture skips bluemonday — raw HTML passes. Deps: goldmark v1.8.4,
+bluemonday v1.0.27 (pure Go, the spec's named pair).
+
+**Posture threading:** RegisterSiteTemplates takes SiteOptions;
+TrustedHTML flows analyzer → graph (visible in summary as
+`(trusted-html: markdown renders raw)` — a security posture belongs
+in review output, not buried in JSON) → codegen literal → runtime.
+{{ markdown .Body }} is real (returns template.HTML — safe by
+construction, the sanitizer IS the guarantee); site.Markdown renders
+through hooks as a fragment (htmx preview endpoints). WithTrustedHTML
+leaves siteNotYet; journal deliberately never takes it.
+
+**journal:** post.html's <pre> became {{ markdown .Body }} — the one-
+line change the proposal promised. The W2 escaping test flipped
+meaning as planned: the script-tag body must now VANISH (bluemonday),
+not entity-escape; the test also pins h1/em/nofollow/pre-code-
+language rendering and bans the payload (scoped to inline content —
+the layout's own htmx <script src> tripped a blanket ban on the first
+run, honest catch). TestTrustedHTMLOptOut pins both postures at the
+runtime level.
+
+**Live cycle (tako-test-01):** deploy, then a markdown post with an
+embedded <script>alert("xss")</script>: the page rendered h1/em/
+nofollow-link, and the payload count was ZERO in both forms (no
+alert(, no &lt;script fallback) — stripped, not escaped, from the
+cloud. Destroy clean; full sweep green (examples' go.mod files picked
+up the new indirect deps via tidy).
+
+W4 complete agent-side. W5 (auth) proposal next — the last slice
+before the W6 milestone gate.

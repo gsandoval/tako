@@ -39,9 +39,13 @@ var siteTemplates map[string]*template.Template
 // block. Generated mains call this with the embedded site FS. Parse
 // errors are recorded per template and surface at render time with the
 // template named — the dev loop iterates on exactly that text.
-func RegisterSiteTemplates(fsys fs.FS) {
+func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 	hooks.RenderSite = renderSite
 	hooks.RenderFragment = renderFragment
+	siteTrustedHTML = opts.TrustedHTML
+	hooks.RenderMarkdown = func(src string) ([]byte, error) {
+		return RenderMarkdown(src, siteTrustedHTML)
+	}
 	siteTemplates = map[string]*template.Template{}
 	siteParseErrors = map[string]error{}
 
@@ -108,6 +112,9 @@ func definesContent(src string) bool { return definesContentRe.MatchString(src) 
 var (
 	siteParseErrors = map[string]error{}
 	siteSetupError  error
+	// siteTrustedHTML is the site's declared markdown posture
+	// (WithTrustedHTML): sanitized by default, raw when opted out.
+	siteTrustedHTML bool
 )
 
 func renderSite(ctx context.Context, name string, data any) ([]byte, error) {
@@ -151,10 +158,20 @@ func siteFuncs() template.FuncMap {
 	return template.FuncMap{
 		"csrf":      func() template.HTML { return "" },
 		"csrfToken": func() string { return "" },
-		"markdown": func(any) (template.HTML, error) {
-			return "", errors.New("{{ markdown }} arrives with W4 — render bodies escaped until then")
-		},
+		"markdown": renderMarkdownFunc,
 	}
+}
+
+// renderMarkdownFunc backs {{ markdown .Body }}: sanitized (or trusted)
+// HTML by construction — template.HTML is safe to return because the
+// pipeline IS the guarantee.
+func renderMarkdownFunc(v any) (template.HTML, error) {
+	src, _ := v.(string)
+	out, err := RenderMarkdown(src, siteTrustedHTML)
+	if err != nil {
+		return "", err
+	}
+	return template.HTML(out), nil
 }
 
 func requestFuncs(ctx context.Context) template.FuncMap {

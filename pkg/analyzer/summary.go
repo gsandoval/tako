@@ -48,6 +48,11 @@ func ResourceLine(r Resource) string {
 	if len(r.Indexes) > 0 {
 		line += " (indexes: " + strings.Join(r.Indexes, ", ") + ")"
 	}
+	if r.TrustedHTML {
+		// The markdown opt-out is a security posture — visible wherever
+		// the site is described, never buried in the graph JSON.
+		line += " (trusted-html: markdown renders raw)"
+	}
 	return line
 }
 

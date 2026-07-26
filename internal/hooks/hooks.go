@@ -54,3 +54,7 @@ var RenderFragment func(ctx context.Context, name string, data any) ([]byte, err
 // sets it at init (typed as any to avoid the import cycle). fragment
 // marks layoutless partials (they skip the document-only headers).
 var HTMLParts func(h any) (markup []byte, redirect string, fragment bool)
+
+// RenderMarkdown renders markdown under the site's declared posture
+// (sanitized unless WithTrustedHTML) — site.Markdown calls through.
+var RenderMarkdown func(src string) ([]byte, error)
