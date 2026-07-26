@@ -221,22 +221,29 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 		case "google":
 			var idps struct {
 				Configs []struct {
-					Name    string `json:"name"`
-					Enabled bool   `json:"enabled"`
+					Name     string `json:"name"`
+					Enabled  bool   `json:"enabled"`
+					ClientID string `json:"clientId"`
 				} `json:"defaultSupportedIdpConfigs"`
 			}
 			if err := c.doIdentity(ctx, base+"/defaultSupportedIdpConfigs", &idps); err != nil {
 				gaps = append(gaps, fmt.Sprintf("cannot check sign-in providers: %v", err))
 				continue
 			}
-			enabled := false
+			enabled, clientID := false, ""
 			for _, cfg := range idps.Configs {
 				if strings.HasSuffix(cfg.Name, "google.com") && cfg.Enabled {
-					enabled = true
+					enabled, clientID = true, cfg.ClientID
 				}
 			}
-			if !enabled {
-				gaps = append(gaps, fmt.Sprintf("the Google sign-in provider is not configured in %s — console → Identity Platform → Providers → add Google (accept the OAuth consent defaults); a one-time interactive step tako cannot do for you", c.Project))
+			switch {
+			case !enabled:
+				gaps = append(gaps, fmt.Sprintf("the Google sign-in provider is not configured in %s — %s", c.Project, googleProviderSteps))
+			case !strings.HasSuffix(clientID, ".apps.googleusercontent.com"):
+				// The console accepts anything in the client fields;
+				// Google's OAuth endpoint then answers invalid_client at
+				// the first popup. Catch the placeholder here instead.
+				gaps = append(gaps, fmt.Sprintf("the Google provider in %s has client id %q, which is not a real OAuth web client (they end in .apps.googleusercontent.com) — sign-in will fail with invalid_client; %s", c.Project, clientID, googleProviderSteps))
 			}
 		case "email":
 			if !config.SignIn.Email.Enabled {
@@ -246,6 +253,11 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 	}
 	return gaps
 }
+
+// googleProviderSteps is the full, verified recipe (the W6 gate walk
+// tripped over every shortcut in the earlier wording): a REAL OAuth
+// web client, its redirect URI, then the paste.
+const googleProviderSteps = "the one-time interactive setup: (1) console → APIs & Services → OAuth consent screen — configure it (External, app name, support email); (2) APIs & Services → Credentials → Create credentials → OAuth client ID → Web application, with authorized redirect URI https://<project>.firebaseapp.com/__/auth/handler; (3) Identity Platform → Providers → Google → paste that client id and secret"
 
 // AuthClient is Identity Platform's browser client configuration plus
 // the domain registrations sign-in popups require.

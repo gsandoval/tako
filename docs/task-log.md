@@ -5259,3 +5259,19 @@ and the baked config; the Google provider is enabled (the user's
 console click, per preflight's instruction, had landed); layout links
 resolve. The interactive Google popup itself remains the user's W6
 §6 judgment — everything up to the click is now machine-verified.
+
+## W6 fix 3: placeholder OAuth clients caught at preflight (2026-07-26)
+
+The walk's next find: the Google popup answered `Error 401:
+invalid_client` — the Identity Platform provider form had accepted
+placeholder text as the OAuth client (clientId "tako-test-01"), and
+nothing validates it until Google's endpoint refuses the first
+sign-in. Real web client ids end in .apps.googleusercontent.com, so
+preflight now rejects placeholders with the full verified recipe
+(consent screen → OAuth web client with the
+<project>.firebaseapp.com/__/auth/handler redirect URI → paste into
+the provider) — proven live: journal's plan on tako-test-01 now
+stops on exactly the user's state. The permissions doc and gate
+script carry the corrected wording (the earlier "accept the consent
+defaults" was a shortcut this walk falsified — the "verified wording
+lands after the W6 walk" note, cashed in).

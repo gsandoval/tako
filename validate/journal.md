@@ -80,12 +80,13 @@ revocation/fragment/markdown contracts as user-style tests.
 go run ../../cmd/tako deploy --project <test-project>
 ```
 
-**Preflight will stop you** with the one genuinely manual step of the
-whole feature — `the Google sign-in provider is not configured …
-console → Identity Platform → Providers → add Google` — judge that
-text, do the click (accept the OAuth consent defaults), and re-run.
-(Everything else is automatic: the API and initialization were REST'd
-in W5; a fresh project gets those as preflight lines too.)
+**Preflight will stop you** with the one genuinely manual setup of
+the whole feature — the Google provider needs a REAL OAuth web
+client. Judge the printed steps (consent screen → web-client
+credentials with the firebaseapp.com redirect URI → paste into the
+provider), do them once, re-run. Preflight also catches placeholder
+client ids (the console accepts anything; Google then answers
+invalid_client at the first popup — found the hard way on this walk).
 
 **Judge the plan + summary:** `posts (published, -created)` composite;
 `datastore [user]` covering entities AND sessions; identitytoolkit in

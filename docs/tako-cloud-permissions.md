@@ -119,9 +119,16 @@ sign-in fails silently in the browser):
    `identityPlatform:initializeAuth` — note that Identity Toolkit
    admin calls on user ADC credentials require the
    `x-goog-user-project` quota-project header.
-2. **Configure each declared provider**: console → Identity Platform →
-   Providers → add Google (the OAuth consent screen makes this
-   genuinely interactive; accept the defaults) and/or Email/Password.
+2. **Configure each declared provider.** For Google this takes a REAL
+   OAuth web client — the provider form accepts placeholder text and
+   sign-in then fails at the first popup with `invalid_client`
+   (preflight now rejects non-`.apps.googleusercontent.com` ids):
+   (1) APIs & Services → OAuth consent screen — configure (External,
+   app name, support email); (2) APIs & Services → Credentials →
+   Create credentials → OAuth client ID → Web application, authorized
+   redirect URI `https://<project>.firebaseapp.com/__/auth/handler`;
+   (3) Identity Platform → Providers → Google → paste that client id
+   and secret. Email/Password is a single toggle.
 
 tako reads the trust configuration (preflight) but never writes it:
 providers and consent are decisions the project owner clicks, exactly
