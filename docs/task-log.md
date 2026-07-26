@@ -4837,3 +4837,93 @@ site, an explicit partials/ subdirectory convention is the fix.
 
 W3 complete agent-side. W4 (markdown, sanitized by default) proposal
 next; human gate at W6.
+
+## W4 — DX proposal: Markdown, sanitized by default (2026-07-26)
+
+Spec §2.11's markdown paragraph + settled decision #13 are normative
+(goldmark + bluemonday, sanitized default, WithTrustedHTML the
+explicit opt-out — the libraries and posture are settled, not scope
+calls). Frozen surface made true: `site.Markdown`, `{{ markdown }}`,
+`tako.WithTrustedHTML`. Gates at W6.
+
+### 0. The headline
+
+journal's post page changes one template line:
+
+```html
+<article class="body">{{ markdown .Body }}</article>
+```
+
+and author-supplied markdown renders as real HTML — headings, links,
+code blocks — with the XSS door closed by default: goldmark renders,
+bluemonday sanitizes, and a `<script>` or `onclick` in a post body
+simply vanishes from the output. `site.Markdown(ctx, src)` is the
+same pipeline for handler code. Trusted content is an explicit,
+site-level opt-out — `tako.Site(dir, tako.WithTrustedHTML())` — that
+journal deliberately does NOT take (its authors are W5-authenticated
+strangers until proven otherwise).
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Sanitizer = bluemonday UGCPolicy (RECOMMENDED).** "Strict
+   policy" in spirit: UGCPolicy is bluemonday's
+   user-generated-content profile — it allows exactly the elements
+   markdown produces (p/em/strong/a/code/pre/lists/headings/img),
+   forces rel="nofollow" on links, and strips everything else
+   (scripts, handlers, styles, iframes). The literal StrictPolicy()
+   strips ALL tags, which would make markdown rendering pointless.
+   Alternative: hand-rolled allowlist — more work, same result,
+   drift risk.
+2. **The opt-out validates OUTSIDE journal (RECOMMENDED).**
+   WithTrustedHTML skips sanitization (goldmark with raw-HTML
+   passthrough) — for admin-authored content the app owner trusts.
+   journal never takes it, so the opt-out is pinned by unit tests +
+   an analyzer fixture (option accepted on Site, recorded in the
+   graph), not by the example. The W6 gate judges journal's DEFAULT:
+   a script-tag post renders inert. Alternative: a second demo app or
+   a journal flag — scope creep for one boolean.
+
+### 2. Semantics being locked
+
+- **Pipeline**: goldmark (CommonMark + GFM tables/strikethrough/
+  autolinks, hard line breaks off) → bluemonday UGCPolicy. With
+  WithTrustedHTML: goldmark with unsafe raw HTML passed through,
+  no bluemonday. Fenced code renders as <pre><code class="language-…">
+  (classes allowed for future highlighting).
+- **`{{ markdown .Body }}`**: template func, sanitized per the SITE's
+  declared posture; returns template.HTML (already-safe by
+  construction — the sanitizer is the guarantee).
+- **`site.Markdown(ctx, src)`**: same pipeline, returns tako.HTML
+  usable as a fragment (htmx preview endpoints).
+- **Analyzer**: WithTrustedHTML accepted on Site, recorded on the
+  resource (graph + summary show `trusted-html` so the posture is
+  visible in review); the not-yet text dies.
+- **Determinism**: pure-Go, no I/O — renders are pure functions.
+
+### 3. Internals
+
+- deps: github.com/yuin/goldmark + github.com/microcosm-cc/bluemonday
+  (both pure Go, the spec's named pair).
+- `pkg/runtime`: markdown.go (render + sanitize, policy built once);
+  RegisterSiteTemplates wires the real {{ markdown }} (site posture
+  threaded from codegen); hooks.RenderMarkdown for site.Markdown.
+- `examples/journal`: post.html's <pre> becomes {{ markdown .Body }};
+  the escaping test flips meaning — the script-tag body must now be
+  ABSENT (stripped), not entity-escaped; new tests: headings/links/
+  code render, nofollow on links, onclick stripped.
+- Analyzer fixture: site with WithTrustedHTML → graph records it;
+  runtime unit test: trusted mode passes raw HTML.
+- No cloud surface changes.
+
+### 4. Not in scope (W4 non-goals)
+
+- Syntax highlighting, footnotes, KaTeX (later, additive);
+  per-render trust overrides (the posture is per-site, deliberately);
+  markdown in fragments beyond what {{ markdown }} already gives.
+
+**Validation** (agent-side; human gate at W6): journal tests + a
+scripted walk (markdown post renders; XSS post inert — the W6
+script's §4 judgment) + full cycle on tako-test-01.
+
+**STOP — awaiting DX approval (and the two §1 scope calls) before
+implementation.**
