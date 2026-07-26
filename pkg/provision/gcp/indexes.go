@@ -83,7 +83,7 @@ func (d *DatastoreIndexes) List(ctx context.Context) ([]provision.Observed, erro
 	var observed []provision.Observed
 	for _, o := range d.Desired {
 		for _, li := range live {
-			if sameIndex(o, li) && li.State != "ERROR" {
+			if sameIndex(o, li) && li.State != "ERROR" && li.State != "DELETING" {  // a dying index is absent
 				observed = append(observed, provision.Observed{
 					Kind:     provision.KindDatastoreIndex,
 					Name:     o.Name,

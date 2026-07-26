@@ -352,3 +352,45 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string
 	}
 	return AuthClient{APIKey: config.Client.APIKey, AuthDomain: sub + ".firebaseapp.com"}, nil
 }
+
+// RemoveAuthorizedDomains unregisters hosts from sign-in — destroy's
+// counterpart to the deploy's registration. Only ever called with
+// tako-derived hosts; foreign domains are never touched.
+func (c *Client) RemoveAuthorizedDomains(ctx context.Context, hosts []string, say func(format string, args ...any)) error {
+	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
+	var config struct {
+		AuthorizedDomains []string `json:"authorizedDomains"`
+	}
+	if err := c.doIdentity(ctx, http.MethodGet, base+"/config", nil, &config); err != nil {
+		if isNotFoundOrDenied(err) {
+			return nil // no auth config: nothing registered
+		}
+		return err
+	}
+	drop := map[string]bool{}
+	for _, h := range hosts {
+		drop[h] = true
+	}
+	var keep []string
+	removed := []string{}
+	for _, d := range config.AuthorizedDomains {
+		if drop[d] {
+			removed = append(removed, d)
+			continue
+		}
+		keep = append(keep, d)
+	}
+	if len(removed) == 0 {
+		return nil
+	}
+	body := map[string]any{"authorizedDomains": keep}
+	if err := c.doIdentity(ctx, http.MethodPatch, base+"/config?updateMask=authorizedDomains", body, nil); err != nil {
+		return err
+	}
+	for _, d := range removed {
+		if say != nil {
+			say("✗ sign-in domain %s", d)
+		}
+	}
+	return nil
+}

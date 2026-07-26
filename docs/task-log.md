@@ -5298,3 +5298,35 @@ the plan runs clean. The answer to "documented in a way that blocks
 setup or honestly automated": both — everything mechanical is
 automated, and the one manual step is enforced by a deploy-blocking
 error that carries its own instructions.
+
+## W6 fix 5: destroy answers "everything" honestly (2026-07-26)
+
+The user asked whether destroy takes care of everything set up — the
+audit found four gaps, three of them env-isolation class, and (a
+process lesson) two earlier patches that had silently no-op'd via
+unasserted replaces:
+
+1. **Env-scoped destroys deleted the SHARED composite index** —
+   indexes serve every namespace, and pr-99's teardown put prod's
+   `posts (published, -created)` into DELETING twice during the fix
+   cycle (restored each time). Shared kinds (repo, indexes) now
+   survive env-scoped destroys; the closing line names them.
+2. **A DELETING index observed as present** — plans skipped while it
+   died. DELETING now reads as absent.
+3. **Grant convergence on dead targets** — deleted SAs/services
+   answer 200-tombstones on policy reads but 404/403 on writes;
+   partial destroys wedged forever. Non-project targets now converge
+   past 400/403/404 on both paths.
+4. **Sign-in domains and session purge actually wired** — destroy now
+   REMOVES the domains tako registered (`✗ sign-in domain …`, before
+   the env-scoped return so previews clean up too) and purges
+   _tako_session (both had been lost to failed patches). W5's
+   leftover test user deleted from Identity Platform.
+
+Verified by a full pr-99 cycle: deploy registered both host forms,
+destroy removed both and kept the shared index (READY throughout),
+prod untouched. What destroy DELIBERATELY leaves, now documented:
+Identity Platform initialization/providers/OAuth client (project-
+level trust config, shared by every env), user accounts in Identity
+Platform, Secret Manager secrets, enabled APIs, the Datastore
+database, and the auto-provisioned browser API key.

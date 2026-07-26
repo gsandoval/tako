@@ -134,8 +134,18 @@ func (g *Grants) read(ctx context.Context, typ, id string) (policy, bool, error)
 	}
 	var p policy
 	if err := g.C.do(ctx, getMethod, getURL, in, &p); err != nil {
-		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+		ae, isAPI := err.(*apiError)
+		if isAPI && ae.Status == http.StatusNotFound {
 			return policy{}, false, nil // target not created yet: no policy to observe
+		}
+		// Resource-scoped targets (SAs, run services, subscriptions…)
+		// answer 403/400 rather than 404 once deleted — a partial
+		// destroy must CONVERGE past them, not wedge forever. The
+		// project target stays strict: a 403 there is a real
+		// permission problem preflight should have caught.
+		if isAPI && typ != provision.TargetProject &&
+			(ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
+			return policy{}, false, nil
 		}
 		return policy{}, false, Classify(err, g.C.Project, "read the IAM policy of "+typ+" "+id, "roles/viewer")
 	}
@@ -216,6 +226,14 @@ func (g *Grants) apply(ctx context.Context, o provision.Object) error {
 		body, method = newPolicy, http.MethodPut
 	}
 	if err := g.C.do(ctx, method, setURL, body, nil); err != nil {
+		// The target can die between read and write — or, on partial
+		// destroys, before either (deleted resources' policy reads can
+		// answer 200 tombstones while writes 404). A gone non-project
+		// target has nothing left to revoke: converge.
+		if ae, ok := err.(*apiError); ok && typ != provision.TargetProject &&
+			(ae.Status == http.StatusNotFound || ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
+			return nil
+		}
 		return Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")
 	}
 	return nil

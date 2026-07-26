@@ -550,7 +550,10 @@ func runDestroy(args []string) error {
 	if envScoped {
 		kept := observed[:0]
 		for _, o := range observed {
-			if o.Kind == provision.KindRepo {
+			// Shared machinery survives env-scoped destroys: the repo,
+			// and datastore indexes — they serve EVERY namespace (a
+			// pr-env teardown once deleted prod's composite index).
+			if o.Kind == provision.KindRepo || o.Kind == provision.KindDatastoreIndex {
 				continue
 			}
 			kept = append(kept, o)
@@ -603,6 +606,19 @@ func runDestroy(args []string) error {
 		return fmt.Errorf("aborted (typed %q, want %q)", strings.TrimSpace(line), app)
 	}
 
+	// Sign-in domains tako registered come off on the way out — the
+	// deterministic hosts plus each live service URI, collected BEFORE
+	// the services are deleted.
+	var authHosts []string
+	if len(needsOf(graph, t.env).AuthProviders) > 0 {
+		for _, svc := range graph.Services {
+			authHosts = append(authHosts, strings.TrimPrefix(cfg.RunURL(svc.Name), "https://"))
+			if u, err := runs.URL(ctx, cfg.Name(svc.Name)); err == nil {
+				authHosts = append(authHosts, strings.TrimPrefix(u, "https://"))
+			}
+		}
+	}
+
 	deleters := map[provision.Kind]interface {
 		Delete(ctx context.Context, name string) error
 	}{
@@ -628,15 +644,22 @@ func runDestroy(args []string) error {
 			}
 		}
 	}
-	if len(dataKinds) > 0 {
-		n, err := client.PurgeDatastore(ctx, t.env, dataKinds)
+	if len(purgeKinds) > 0 {
+		n, err := client.PurgeDatastore(ctx, t.env, purgeKinds)
 		if err != nil {
 			return err
 		}
 		fmt.Printf("  ✗ datastore data (%d entities in namespace %s)\n", n, t.env)
 	}
+	// Sign-in domains tako registered come off on the way out — before
+	// the env-scoped return, so previews unregister too.
+	if len(authHosts) > 0 {
+		if err := client.RemoveAuthorizedDomains(ctx, authHosts, sayf); err != nil {
+			return err
+		}
+	}
 	if envScoped {
-		fmt.Printf("✓ destroyed (env %s only — shared repo and framework bucket stay)\n", t.env)
+		fmt.Printf("✓ destroyed (env %s only — shared repo, indexes, and framework bucket stay)\n", t.env)
 		return nil
 	}
 	lease := &gcp.Lease{C: client, App: app, Env: t.env, Labels: cfg.Labels(), Say: sayf}
