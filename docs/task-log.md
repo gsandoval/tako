@@ -4967,3 +4967,113 @@ up the new indirect deps via tidy).
 
 W4 complete agent-side. W5 (auth) proposal next — the last slice
 before the W6 milestone gate.
+
+## W5 — DX proposal: Auth — Identity Platform, _session, dev users (2026-07-26)
+
+The last slice before the W6 milestone gate. Spec §2.9 + §4.7 + Part
+3b are normative. Frozen surface made true: `tako.Auth`,
+`WithGoogle`/`WithEmail`, `WithAuth`, `ctx.User`/`MaybeUser` (real
+identities — TestApp.SignIn already works). Nothing added.
+
+### 0. The headline
+
+Auth is one declaration and one option:
+
+```go
+var auth = tako.Auth(tako.WithGoogle())
+
+var Save = tako.Page("POST /p", save, tako.WithAuth())      // 401 without a user
+```
+
+The framework injects `/api/_session`: the browser signs in with
+Identity Platform's client flow (Google button), posts the Firebase
+ID token there once, and gets an HttpOnly `_session` cookie — SSR
+pages and fetches share one validation path in the shim. `ctx.User()`
+is guaranteed on WithAuth routes; journal's writes close (`Save` +
+`Publish` gain WithAuth, posts gain an Owner only the author may
+toggle), and the security summary's new warning line (the discovered-
+work item from your W2 question) reports any PUBLIC service still
+exposing mutating routes without WithAuth. Locally there is no GCP
+dependency at all: tako dev injects a "sign in as test user" bar —
+dev-minted sessions, same cookie, same shim path.
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **Session = signed cookie, server-stateless (RECOMMENDED).** The
+   _session exchange verifies the Firebase ID token (Identity
+   Platform's public JWKS), then mints tako's own HMAC-signed cookie
+   (uid, email, name, expiry ≤ 7d; key from the framework bucket,
+   created on first deploy — like local's signing.key). No session
+   store, no revocation list in v0: sign-out clears the cookie,
+   expiry bounds the window. Alternative: Firestore-backed sessions
+   with revocation — a datastore write per sign-in and a read per
+   request, for a capability no example demands yet.
+2. **CSRF binds to the session when present (RECOMMENDED).** The W2
+   double-submit token continues for anonymous browsers; once a
+   _session exists, the CSRF token derives from it (HMAC of the
+   session id) — a stolen anonymous token cannot ride an
+   authenticated session. This was the standing W2 note.
+3. **Identity Platform config is preflight, not reconciled
+   (RECOMMENDED).** Enabling Identity Platform and its Google
+   provider is a console one-time (it rides a marketplace-style
+   enablement plus OAuth consent screen — genuinely interactive).
+   Preflight probes the API and prints the exact console steps when
+   absent; tako never mutates auth config. Alternative: reconcile
+   provider config via the Admin API — possible for defaults, but
+   the consent screen is unavoidably manual anyway.
+
+### 2. Semantics being locked
+
+- **`/api/_session`**: POST {idToken} → verify (aud/iss/exp against
+  the project, JWKS cached) → Set-Cookie `_session` (HttpOnly,
+  Secure in cloud, SameSite=Lax, ≤7d). DELETE → clear (sign-out).
+  Injected only when the app declares Auth.
+- **WithAuth**: 401 `sign in to continue` (json for api, plain for
+  pages) when no valid session; ctx.User() guaranteed past it.
+  MaybeUser everywhere else; User() on a public route without a
+  session keeps panicking (the honest contract).
+- **User**: ID (stable uid), Email, Name — from the verified token.
+- **Dev bar (tako dev)**: a small injected banner (documents only)
+  listing test users (alice, bob + free-text); selecting one mints a
+  dev session cookie signed with the local key. The generated main is
+  unchanged in the cloud (the bar injects only under local backend).
+- **journal**: Save/Publish gain WithAuth; Post gains Owner (uid);
+  publish checks ownership (403 `only the author can publish`);
+  home/read stay public; layout shows the user or a sign-in link.
+  W6's demo signs in as alice locally and via Google in the cloud.
+- **Security summary**: public services now append
+  `⚠ N mutating route(s) without WithAuth: POST /x …` — the W2
+  review item, actionable now that WithAuth exists.
+
+### 3. Internals
+
+- Root: AuthHandle recorded (providers into the graph); WithAuth into
+  handler options (analyzer records RequiresAuth).
+- `pkg/analyzer`: auth resource kind real (not-yet dies); Handler
+  gains RequiresAuth; summary shows `auth (google)` and per-route 🔒.
+- `pkg/runtime`: session.go (JWKS verify, cookie mint/verify/clear,
+  _session handler), WithAuth wrapping in PageHandler/JSONHandler
+  (401 text), requestCtx.user set from the cookie, CSRF derivation
+  per call 2, dev bar middleware (local only).
+- `pkg/codegen`: mount /api/_session when Auth declared; pass
+  RequiresAuth into handler wrappers.
+- Preflight: identitytoolkit API probe + provider-absent text with
+  console steps (only when Auth declared).
+- `examples/journal`: as §2; app_test uses TestApp.SignIn (the F7
+  harness path) plus HTTP-level session tests.
+
+### 4. Not in scope (W5 non-goals)
+
+- WithEmail flows beyond the declaration (Google is journal's
+  provider; email/password validates when an example demands it);
+  roles/permissions; account linking; MFA; session revocation lists;
+  the dev bar in cloud builds.
+
+**Validation** (agent-side; the human gate is W6 — its script will
+walk sign-in in the browser): unit + journal tests, dev-bar smoke,
+full cycle on tako-test-01 with Identity Platform enabled once by
+hand per preflight's printed steps (I will report the exact console
+friction encountered — it becomes the preflight text).
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
