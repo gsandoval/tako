@@ -121,3 +121,36 @@ func (c *Client) CountKind(ctx context.Context, namespace, kind string) (int, er
 	}
 	return 0, nil
 }
+
+// Namespaces lists the database's namespaces via the __namespace__
+// pseudo-kind ("" is the default namespace, which tako never writes).
+func (c *Client) Namespaces(ctx context.Context) ([]string, error) {
+	body := map[string]any{
+		"query": map[string]any{"kind": []map[string]any{{"name": "__namespace__"}}},
+	}
+	var out struct {
+		Batch struct {
+			EntityResults []struct {
+				Entity struct {
+					Key struct {
+						Path []struct {
+							Name string `json:"name"`
+						} `json:"path"`
+					} `json:"key"`
+				} `json:"entity"`
+			} `json:"entityResults"`
+		} `json:"batch"`
+	}
+	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runQuery", body, &out); err != nil {
+		return nil, Classify(err, c.Project, "list datastore namespaces", "roles/datastore.viewer")
+	}
+	var names []string
+	for _, er := range out.Batch.EntityResults {
+		for _, p := range er.Entity.Key.Path {
+			if p.Name != "" {
+				names = append(names, p.Name)
+			}
+		}
+	}
+	return names, nil
+}

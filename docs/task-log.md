@@ -4666,3 +4666,20 @@ inert, §5 the full cycle with the first-grant judgment and ETag
 parity, §6 destroy naming the posts kind. Record ONE verdict in
 docs/validation-log.md for the milestone (W1's deferred row points at
 it). W3 (fragments + htmx — journal goes interactive) follows.
+
+## W2 milestone follow-ups: conformance namespace hygiene (2026-07-26)
+
+The user's gate run surfaced the standing C3 discovered-work item for
+real: ~100 conf-<hex> namespaces buried journal's prod namespace in
+the Datastore console dropdown. Done, per instruction: (1) one-time
+purge of tako-test-01 — 306 fixture entities across the conf-*
+namespaces (empty namespaces age out of the console's metadata
+listing); provision/gcp gained Namespaces() (the __namespace__
+pseudo-kind — destroy/prune can use it later). (2) conformance's
+gcpClient now registers a t.Cleanup that purges the chapter's
+namespace (kindless __key__ query → batched deletes, best-effort);
+verified live — the full 18-chapter Entity run now leaves ZERO
+entities behind. The conf-* discovered-work item is closed. Also
+recorded in the W2 verdict: the security summary should flag mutating
+routes without WithAuth on public services (lands with W5, where
+WithAuth becomes enforceable).

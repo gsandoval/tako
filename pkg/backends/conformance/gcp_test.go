@@ -32,7 +32,68 @@ func gcpClient(t *testing.T, app, env string) *gcpb.Client {
 	if err != nil {
 		t.Fatalf("gcp auth: %v", err)
 	}
+	// The env is a throwaway Datastore namespace: purge it on the way
+	// out so the console's namespace dropdown stays readable (conf-*
+	// litter buried real data before this cleanup existed).
+	t.Cleanup(func() { purgeNamespace(t, c, env) })
 	return c
+}
+
+// purgeNamespace deletes every entity in the chapter's namespace — a
+// kindless __key__ query batched into deletes, best-effort (cleanup
+// failures log, never fail the chapter).
+func purgeNamespace(t *testing.T, c *gcpb.Client, namespace string) {
+	ctx := context.Background()
+	base := "https://datastore.googleapis.com/v1/projects/" + *project
+	for {
+		body := strings.NewReader(fmt.Sprintf(
+			`{"partitionId":{"projectId":%q,"namespaceId":%q},"query":{"projection":[{"property":{"name":"__key__"}}],"limit":500}}`,
+			*project, namespace))
+		req, err := http.NewRequestWithContext(ctx, "POST", base+":runQuery", body)
+		if err != nil {
+			t.Logf("namespace cleanup: %v", err)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := c.HC.Do(req)
+		if err != nil {
+			t.Logf("namespace cleanup: %v", err)
+			return
+		}
+		var out struct {
+			Batch struct {
+				EntityResults []struct {
+					Entity struct {
+						Key json.RawMessage `json:"key"`
+					} `json:"entity"`
+				} `json:"entityResults"`
+			} `json:"batch"`
+		}
+		if err := jsonDecode(resp, &out); err != nil {
+			t.Logf("namespace cleanup: %v", err)
+			return
+		}
+		if len(out.Batch.EntityResults) == 0 {
+			return
+		}
+		var muts []string
+		for _, er := range out.Batch.EntityResults {
+			muts = append(muts, fmt.Sprintf(`{"delete":%s}`, er.Entity.Key))
+		}
+		commit := strings.NewReader(fmt.Sprintf(`{"mode":"NON_TRANSACTIONAL","mutations":[%s]}`, strings.Join(muts, ",")))
+		creq, _ := http.NewRequestWithContext(ctx, "POST", base+":commit", commit)
+		creq.Header.Set("Content-Type", "application/json")
+		if cres, err := c.HC.Do(creq); err == nil {
+			cres.Body.Close()
+			if cres.StatusCode/100 != 2 {
+				t.Logf("namespace cleanup: commit HTTP %d", cres.StatusCode)
+				return
+			}
+		} else {
+			t.Logf("namespace cleanup: %v", err)
+			return
+		}
+	}
 }
 
 func randHex(t *testing.T) string {
