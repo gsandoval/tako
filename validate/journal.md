@@ -80,13 +80,15 @@ revocation/fragment/markdown contracts as user-style tests.
 go run ../../cmd/tako deploy --project <test-project>
 ```
 
-**Preflight will stop you** with the one genuinely manual setup of
-the whole feature — the Google provider needs a REAL OAuth web
-client. Judge the printed steps (consent screen → web-client
-credentials with the firebaseapp.com redirect URI → paste into the
-provider), do them once, re-run. Preflight also catches placeholder
-client ids (the console accepts anything; Google then answers
-invalid_client at the first popup — found the hard way on this walk).
+**The deploy will stop you** at the one genuinely manual step of the
+whole feature — the Google provider (Google has no API for creating
+external OAuth clients). Judge the printed instruction: the PRIMARY
+route is one toggle in the Firebase console (auto-provisions the
+client); the GCP three-step route is the fallback. Everything else —
+initialization, email provider, client config, authorized domains
+(both Cloud Run host forms) — is automated with narration; placeholder
+client ids are rejected before Google can answer invalid_client
+(found the hard way on this walk).
 
 **Judge the plan + summary:** `posts (published, -created)` composite;
 `datastore [user]` covering entities AND sessions; identitytoolkit in

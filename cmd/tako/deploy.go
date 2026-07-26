@@ -154,13 +154,13 @@ func runDeploy(args []string) error {
 	// services' hosts registered as authorized sign-in domains (the
 	// popup refuses unregistered origins). Deterministic URLs make the
 	// hosts known before anything deploys.
-	if len(needsOf(graph, t.env).AuthProviders) > 0 {
+	if providers := needsOf(graph, t.env).AuthProviders; len(providers) > 0 {
 		var hosts []string
 		for _, svc := range graph.Services {
 			u := cfg.RunURL(svc.Name)
 			hosts = append(hosts, strings.TrimPrefix(u, "https://"))
 		}
-		authClient, err := client.EnsureAuthClient(ctx, hosts, sayf)
+		authClient, err := client.EnsureAuthClient(ctx, hosts, providers, !t.planOnly, sayf)
 		if err != nil {
 			return err
 		}
@@ -303,7 +303,7 @@ func runDeploy(args []string) error {
 	// visit). Sign-in popups authorize by exact page host: register the
 	// live ones too, now that the services exist.
 	if cfg.AuthAPIKey != "" {
-		if _, err := client.EnsureAuthClient(ctx, liveHosts, sayf); err != nil {
+		if _, err := client.EnsureAuthClient(ctx, liveHosts, nil, true, sayf); err != nil {
 			return err
 		}
 	}

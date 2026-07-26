@@ -103,44 +103,41 @@ never-auto-delete rule protects data, not IAM).
   verification failure texts distinguish "no token" (misconfigured
   subscription) from "wrong audience" (stale URL).
 
-## Identity Platform (tako.Auth) — the one-time interactive setup
+## Identity Platform (tako.Auth) — automated to the honest maximum
 
-Declaring `tako.Auth(...)` makes sign-in part of the app, and most of
-its cloud surface is automatic: the deploy enables the Identity
-Toolkit API, sessions are entity records under the runtime's existing
-`datastore.user` grant, and token verification needs no credentials at
-all (public certs). Two things are one-time PROJECT setup that tako
-never does for you — preflight checks both and prints these exact
-steps when absent (a deploy without them would produce an app whose
-sign-in fails silently in the browser):
+Declaring `tako.Auth(...)` makes sign-in part of the app, and the
+deploy automates EVERYTHING mechanical, narrated as it goes:
 
-1. **Initialize Identity Platform**: console → Identity Platform →
-   "Get started" (one click). By API it is
-   `identityPlatform:initializeAuth` — note that Identity Toolkit
-   admin calls on user ADC credentials require the
-   `x-goog-user-project` quota-project header.
-2. **Configure each declared provider.** For Google this takes a REAL
-   OAuth web client — the provider form accepts placeholder text and
-   sign-in then fails at the first popup with `invalid_client`
-   (preflight now rejects non-`.apps.googleusercontent.com` ids):
-   (1) APIs & Services → OAuth consent screen — configure (External,
-   app name, support email); (2) APIs & Services → Credentials →
-   Create credentials → OAuth client ID → Web application, authorized
-   redirect URI `https://<project>.firebaseapp.com/__/auth/handler`;
-   (3) Identity Platform → Providers → Google → paste that client id
-   and secret. Email/Password is a single toggle.
+- **Initialization**: absent Identity Platform config is initialized
+  by the deploy (`auth initialized Identity Platform`). (Admin calls
+  need the `x-goog-user-project` quota header on user ADC — handled.)
+- **Email provider**: declaring `WithEmail` IS the decision — the
+  deploy enables it (`auth email/password provider enabled`).
+- **Browser client config**: the auto-provisioned public API key and
+  auth domain are discovered and injected as env for the framework's
+  sign-in page.
+- **Authorized domains**: the app's own service hosts — BOTH Cloud Run
+  URL forms — are registered for sign-in popups (`auth <host>
+  authorized for sign-in`).
 
-tako reads the trust configuration (preflight) but never writes it:
-providers and consent are decisions the project owner clicks, exactly
-like secret values. Two MECHANICAL pieces the deploy does own: it
-reads the browser client config (the public API key + auth domain —
-injected as env so the framework's /api/_session/signin page can run
-the flow), and it registers the app's own deployed URLs as authorized
-sign-in domains (narrated as `auth <host> authorized for sign-in` —
-the popup refuses unregistered origins, and tako's own URLs are not a
-trust question). **The user-facing developer documentation must carry
-this section** — until that documentation exists as its own
-deliverable, this file and the preflight text are its homes.
+**The one genuinely manual step** is the Google provider, because
+Google exposes no public API for creating external OAuth clients. The
+deploy BLOCKS with this instruction until it is done (and rejects
+placeholder client ids — the console accepts anything; Google then
+answers `invalid_client` at the first popup):
+
+> enable the Google provider:
+> `https://console.firebase.google.com/project/<p>/authentication/providers`
+> → Google → Enable (pick a support email) → Save — the Firebase
+> console auto-provisions the OAuth client. Manual alternative (org-
+> restricted consoles): consent screen + an OAuth web client with
+> redirect URI `https://<p>.firebaseapp.com/__/auth/handler`, pasted
+> into Identity Platform → Providers → Google.
+
+`tako deploy --plan` performs all checks without mutating (would-do
+narration). **The user-facing developer documentation must carry this
+section** — until that documentation exists as its own deliverable,
+this file and the deploy's blocking error text are its homes.
 
 ## Non-goals
 

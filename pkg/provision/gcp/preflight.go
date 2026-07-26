@@ -133,15 +133,6 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		}
 	}
 
-	// Auth needs Identity Platform INITIALIZED and each declared
-	// provider CONFIGURED — one-time console steps a deploy cannot do
-	// for you (the OAuth consent screen is interactive). Without them
-	// the app deploys but sign-in fails in the browser with no hint,
-	// so absence is a preflight gap with the exact steps.
-	if len(needs.AuthProviders) > 0 {
-		gaps = append(gaps, c.authGaps(ctx, needs.AuthProviders)...)
-	}
-
 	// APIs and roles can be right while the Datastore database simply
 	// doesn't exist — a distinct, fixable state with its own command.
 	if needs.Datastore {
@@ -180,10 +171,21 @@ func (c *Client) ProjectNumber(ctx context.Context) (string, error) {
 // doIdentity runs one Identity Platform admin call. These endpoints
 // demand a quota project on user ADC credentials (the
 // x-goog-user-project header) — the recorded W5 gotcha.
-func (c *Client) doIdentity(ctx context.Context, url string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (c *Client) doIdentity(ctx context.Context, method, url string, in, out any) error {
+	var body io.Reader
+	if in != nil {
+		raw, err := json.Marshal(in)
+		if err != nil {
+			return err
+		}
+		body = bytes.NewReader(raw)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
 		return err
+	}
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 	req.Header.Set("x-goog-user-project", c.Project)
 	res, err := c.HC.Do(req)
@@ -195,12 +197,48 @@ func (c *Client) doIdentity(ctx context.Context, url string, out any) error {
 	if res.StatusCode/100 != 2 {
 		return parseAPIError(res.StatusCode, url, raw)
 	}
+	if out == nil {
+		return nil
+	}
 	return json.Unmarshal(raw, out)
 }
 
-// authGaps checks Identity Platform initialization and each declared
-// provider, one actionable line per gap.
-func (c *Client) authGaps(ctx context.Context, providers []string) []string {
+// isNotFoundOrDenied matches the "Identity Platform not set up yet"
+// answers (the API 404s or 403s CONFIGURATION_NOT_FOUND before
+// initialization).
+func isNotFoundOrDenied(err error) bool {
+	ae, ok := err.(*apiError)
+	return ok && (ae.Status == http.StatusNotFound || ae.Status == http.StatusForbidden)
+}
+
+// AuthClient is Identity Platform's browser client configuration plus
+// the domain registrations sign-in popups require.
+type AuthClient struct {
+	APIKey     string
+	AuthDomain string
+}
+
+// googleProviderSteps: the ONE genuinely manual step of the whole
+// auth feature. Google's OAuth clients for external apps have no
+// public creation API — but the Firebase console auto-provisions one
+// behind a single toggle, so that is the primary instruction (the
+// hand-built GCP path stays as the fallback for org-restricted
+// consoles).
+func googleProviderSteps(project string) string {
+	return fmt.Sprintf("enable the Google provider (the one manual step): https://console.firebase.google.com/project/%s/authentication/providers → Google → Enable (pick a support email) → Save — the Firebase console auto-provisions the OAuth client. Manual alternative: APIs & Services → OAuth consent screen, then Credentials → OAuth client ID (Web application, redirect URI https://%s.firebaseapp.com/__/auth/handler), pasted into Identity Platform → Providers → Google", project, project)
+}
+
+// EnsureAuthClient makes the app's declared sign-in REAL, automating
+// every mechanical piece and stopping only at the one trust/console
+// step tako cannot do: it initializes Identity Platform when absent,
+// enables the email provider when declared (the declaration IS the
+// decision), verifies a declared Google provider carries a real OAuth
+// client (the console accepts placeholders; Google then answers
+// invalid_client at the first popup), reads the browser client config,
+// and registers the given service hosts as authorized sign-in domains.
+// mutate=false (tako deploy --plan) checks and narrates without
+// touching anything.
+func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string, mutate bool, say func(format string, args ...any)) (AuthClient, error) {
 	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
 	var config struct {
 		SignIn struct {
@@ -208,16 +246,45 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 				Enabled bool `json:"enabled"`
 			} `json:"email"`
 		} `json:"signIn"`
+		Client struct {
+			APIKey            string `json:"apiKey"`
+			FirebaseSubdomain string `json:"firebaseSubdomain"`
+		} `json:"client"`
+		AuthorizedDomains []string `json:"authorizedDomains"`
 	}
-	if err := c.doIdentity(ctx, base+"/config", &config); err != nil {
-		if ae, ok := err.(*apiError); ok && (ae.Status == http.StatusNotFound || ae.Status == http.StatusForbidden) {
-			return []string{fmt.Sprintf("Identity Platform is not set up in %s — console → Identity Platform → \"Get started\" (one click initializes it), then Providers → add each declared provider (%s)", c.Project, strings.Join(providers, ", "))}
+	err := c.doIdentity(ctx, http.MethodGet, base+"/config", nil, &config)
+	if isNotFoundOrDenied(err) {
+		// Uninitialized: mechanical, automated.
+		if !mutate {
+			say("auth         would initialize Identity Platform (mechanical, done on a real deploy)")
+			return AuthClient{}, nil
 		}
-		return []string{fmt.Sprintf("cannot check Identity Platform config: %v", err)}
+		if err := c.doIdentity(ctx, http.MethodPost, base[:strings.LastIndex(base, "/")]+"/"+c.Project+"/identityPlatform:initializeAuth", map[string]any{}, nil); err != nil {
+			return AuthClient{}, fmt.Errorf("initializing Identity Platform: %w", err)
+		}
+		say("auth         initialized Identity Platform")
+		if err := c.doIdentity(ctx, http.MethodGet, base+"/config", nil, &config); err != nil {
+			return AuthClient{}, fmt.Errorf("reading the Identity Platform config after initialization: %w", err)
+		}
+	} else if err != nil {
+		return AuthClient{}, fmt.Errorf("reading the Identity Platform client config: %w", err)
 	}
-	var gaps []string
+
 	for _, p := range providers {
 		switch p {
+		case "email":
+			if !config.SignIn.Email.Enabled {
+				// Declared → enabled: the declaration is the decision.
+				if !mutate {
+					say("auth         would enable the email/password provider (declared)")
+					continue
+				}
+				body := map[string]any{"signIn": map[string]any{"email": map[string]any{"enabled": true, "passwordRequired": true}}}
+				if err := c.doIdentity(ctx, http.MethodPatch, base+"/config?updateMask=signIn.email", body, nil); err != nil {
+					return AuthClient{}, fmt.Errorf("enabling the email provider: %w", err)
+				}
+				say("auth         email/password provider enabled (declared)")
+			}
 		case "google":
 			var idps struct {
 				Configs []struct {
@@ -226,9 +293,8 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 					ClientID string `json:"clientId"`
 				} `json:"defaultSupportedIdpConfigs"`
 			}
-			if err := c.doIdentity(ctx, base+"/defaultSupportedIdpConfigs", &idps); err != nil {
-				gaps = append(gaps, fmt.Sprintf("cannot check sign-in providers: %v", err))
-				continue
+			if err := c.doIdentity(ctx, http.MethodGet, base+"/defaultSupportedIdpConfigs", nil, &idps); err != nil {
+				return AuthClient{}, fmt.Errorf("checking sign-in providers: %w", err)
 			}
 			enabled, clientID := false, ""
 			for _, cfg := range idps.Configs {
@@ -238,51 +304,13 @@ func (c *Client) authGaps(ctx context.Context, providers []string) []string {
 			}
 			switch {
 			case !enabled:
-				gaps = append(gaps, fmt.Sprintf("the Google sign-in provider is not configured in %s — %s", c.Project, googleProviderSteps))
+				return AuthClient{}, fmt.Errorf("the Google sign-in provider is not configured in %s — %s", c.Project, googleProviderSteps(c.Project))
 			case !strings.HasSuffix(clientID, ".apps.googleusercontent.com"):
-				// The console accepts anything in the client fields;
-				// Google's OAuth endpoint then answers invalid_client at
-				// the first popup. Catch the placeholder here instead.
-				gaps = append(gaps, fmt.Sprintf("the Google provider in %s has client id %q, which is not a real OAuth web client (they end in .apps.googleusercontent.com) — sign-in will fail with invalid_client; %s", c.Project, clientID, googleProviderSteps))
-			}
-		case "email":
-			if !config.SignIn.Email.Enabled {
-				gaps = append(gaps, fmt.Sprintf("the email sign-in provider is not enabled in %s — console → Identity Platform → Providers → add Email/Password", c.Project))
+				return AuthClient{}, fmt.Errorf("the Google provider in %s has client id %q, which is not a real OAuth web client — sign-in will fail with invalid_client; %s", c.Project, clientID, googleProviderSteps(c.Project))
 			}
 		}
 	}
-	return gaps
-}
 
-// googleProviderSteps is the full, verified recipe (the W6 gate walk
-// tripped over every shortcut in the earlier wording): a REAL OAuth
-// web client, its redirect URI, then the paste.
-const googleProviderSteps = "the one-time interactive setup: (1) console → APIs & Services → OAuth consent screen — configure it (External, app name, support email); (2) APIs & Services → Credentials → Create credentials → OAuth client ID → Web application, with authorized redirect URI https://<project>.firebaseapp.com/__/auth/handler; (3) Identity Platform → Providers → Google → paste that client id and secret"
-
-// AuthClient is Identity Platform's browser client configuration plus
-// the domain registrations sign-in popups require.
-type AuthClient struct {
-	APIKey     string
-	AuthDomain string
-}
-
-// EnsureAuthClient reads the client config and registers the given
-// service hosts as authorized sign-in domains (mechanical registration
-// of tako's OWN deployed URLs — the trust decisions, providers and
-// consent, stay manual; see docs/tako-cloud-permissions.md). say
-// narrates each domain added.
-func (c *Client) EnsureAuthClient(ctx context.Context, hosts []string, say func(format string, args ...any)) (AuthClient, error) {
-	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
-	var config struct {
-		Client struct {
-			APIKey            string `json:"apiKey"`
-			FirebaseSubdomain string `json:"firebaseSubdomain"`
-		} `json:"client"`
-		AuthorizedDomains []string `json:"authorizedDomains"`
-	}
-	if err := c.doIdentity(ctx, base+"/config", &config); err != nil {
-		return AuthClient{}, fmt.Errorf("reading the Identity Platform client config: %w", err)
-	}
 	if config.Client.APIKey == "" {
 		return AuthClient{}, fmt.Errorf("Identity Platform has no browser API key in %s — initialization normally provisions one (console → Identity Platform → Application setup details)", c.Project)
 	}
@@ -302,33 +330,22 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts []string, say func(
 		}
 	}
 	if len(missing) > 0 || len(current) != len(config.AuthorizedDomains) {
-		domains := append(current, missing...)
-		body, err := json.Marshal(map[string]any{"authorizedDomains": domains})
-		if err != nil {
-			return AuthClient{}, err
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPatch,
-			base+"/config?updateMask=authorizedDomains", bytes.NewReader(body))
-		if err != nil {
-			return AuthClient{}, err
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("x-goog-user-project", c.Project)
-		res, err := c.HC.Do(req)
-		if err != nil {
-			return AuthClient{}, err
-		}
-		raw, _ := io.ReadAll(res.Body)
-		res.Body.Close()
-		if res.StatusCode/100 != 2 {
-			return AuthClient{}, parseAPIError(res.StatusCode, base+"/config", raw)
-		}
-		for _, d := range missing {
-			if say != nil {
+		if !mutate {
+			for _, d := range missing {
+				say("auth         would authorize %s for sign-in", d)
+			}
+		} else {
+			domains := append(current, missing...)
+			body := map[string]any{"authorizedDomains": domains}
+			if err := c.doIdentity(ctx, http.MethodPatch, base+"/config?updateMask=authorizedDomains", body, nil); err != nil {
+				return AuthClient{}, fmt.Errorf("authorizing sign-in domains: %w", err)
+			}
+			for _, d := range missing {
 				say("auth         %s authorized for sign-in", d)
 			}
 		}
 	}
+
 	sub := config.Client.FirebaseSubdomain
 	if sub == "" {
 		sub = c.Project

@@ -5275,3 +5275,26 @@ stops on exactly the user's state. The permissions doc and gate
 script carry the corrected wording (the earlier "accept the consent
 defaults" was a shortcut this walk falsified — the "verified wording
 lands after the W6 walk" note, cashed in).
+
+## W6 fix 4: auth setup automated to its honest maximum (2026-07-26)
+
+The user pushed on the right axis: the growing instruction list was
+under-automated. Reworked — EnsureAuthClient now OWNS the auth
+surface: it initializes Identity Platform when absent (mechanical,
+narrated), enables the email provider when declared (the declaration
+is the decision), rejects missing/placeholder Google clients with a
+BLOCKING error whose primary instruction is the one-toggle Firebase
+console route (Firebase auto-provisions the OAuth client Google
+gives no public API for; the GCP three-step recipe is the fallback
+for org-restricted consoles), injects the browser client config, and
+registers both Cloud Run host forms as authorized domains.
+`--plan` runs every check without mutating (would-do narration).
+Provider gap detection moved OUT of Preflight into this one place;
+the permissions doc rewrote its section around the automation list +
+the single manual step. Live: the placeholder state blocked with the
+new text until the user's real OAuth client landed
+(119764066724-….apps.googleusercontent.com — verified), after which
+the plan runs clean. The answer to "documented in a way that blocks
+setup or honestly automated": both — everything mechanical is
+automated, and the one manual step is enforced by a deploy-blocking
+error that carries its own instructions.
