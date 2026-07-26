@@ -288,12 +288,24 @@ func runDeploy(args []string) error {
 	}
 
 	fmt.Println()
+	var liveHosts []string
 	for _, svc := range graph.Services {
 		url, err := runs.URL(ctx, cfg.Name(svc.Name))
 		if err != nil {
 			return err
 		}
+		liveHosts = append(liveHosts, strings.TrimPrefix(url, "https://"))
 		fmt.Printf("✓ %s → %s\n", cfg.Name(svc.Name), url)
+	}
+	// Cloud Run answers on TWO hosts per service — the deterministic
+	// projectNumber form (authorized pre-deploy) and the legacy uri the
+	// API reports (the one the ✓ lines print, so the one browsers
+	// visit). Sign-in popups authorize by exact page host: register the
+	// live ones too, now that the services exist.
+	if cfg.AuthAPIKey != "" {
+		if _, err := client.EnsureAuthClient(ctx, liveHosts, sayf); err != nil {
+			return err
+		}
 	}
 	if t.canary > 0 {
 		fmt.Println()

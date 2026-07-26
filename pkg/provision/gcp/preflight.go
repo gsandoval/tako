@@ -275,17 +275,22 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts []string, say func(
 		return AuthClient{}, fmt.Errorf("Identity Platform has no browser API key in %s — initialization normally provisions one (console → Identity Platform → Application setup details)", c.Project)
 	}
 	have := map[string]bool{}
+	var current []string
 	for _, d := range config.AuthorizedDomains {
-		have[d] = true
+		if !have[d] { // dedupe defensively — a raw PATCH can double up
+			have[d] = true
+			current = append(current, d)
+		}
 	}
 	missing := []string{}
 	for _, h := range hosts {
 		if !have[h] {
+			have[h] = true
 			missing = append(missing, h)
 		}
 	}
-	if len(missing) > 0 {
-		domains := append(append([]string{}, config.AuthorizedDomains...), missing...)
+	if len(missing) > 0 || len(current) != len(config.AuthorizedDomains) {
+		domains := append(current, missing...)
 		body, err := json.Marshal(map[string]any{"authorizedDomains": domains})
 		if err != nil {
 			return AuthClient{}, err
