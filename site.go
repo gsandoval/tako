@@ -37,7 +37,14 @@ func (s *SiteHandle) Render(ctx Ctx, template string, data any) (HTML, error) {
 // Fragment renders the named template with data without the layout, for
 // htmx-style partial updates.
 func (s *SiteHandle) Fragment(ctx Ctx, template string, data any) (HTML, error) {
-	return HTML{}, errors.New("tako: Fragment arrives with W3 (fragments + htmx) — Render serves whole pages until then")
+	if hooks.RenderFragment == nil {
+		return HTML{}, errors.New("tako: site templates are not wired — Fragment works in generated services (tako dev / deploy), not bare tests")
+	}
+	markup, err := hooks.RenderFragment(ctx, template, data)
+	if err != nil {
+		return HTML{}, err
+	}
+	return HTML{markup: markup, fragment: true}, nil
 }
 
 // Markdown renders markdown source to HTML. Output is sanitized by default
@@ -47,11 +54,12 @@ func (s *SiteHandle) Markdown(ctx Ctx, src string) (HTML, error) {
 	return HTML{}, errors.New("tako: Markdown arrives with W4 — render bodies escaped until then")
 }
 
-// HTML is the rendered result of a Page handler: markup, or a redirect
-// produced by tako.Redirect.
+// HTML is the rendered result of a Page handler: markup (a document, or
+// a layoutless fragment), or a redirect produced by tako.Redirect.
 type HTML struct {
 	markup   []byte
 	redirect string
+	fragment bool
 }
 
 // Redirect makes a Page handler respond with a redirect to target — a

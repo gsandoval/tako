@@ -8,7 +8,8 @@
         "journal.Home",
         "journal.Read",
         "journal.Write",
-        "journal.Save"
+        "journal.Save",
+        "journal.Publish"
       ],
       "profile": "default"
     }
@@ -21,7 +22,12 @@
       "package": "journal",
       "type": "Post",
       "indexes": [
+        "Published",
         "Created"
+      ],
+      "composite": [
+        "published",
+        "-created"
       ],
       "pos": "app.go:15:2"
     },
@@ -47,7 +53,7 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /",
-      "pos": "app.go:30:2"
+      "pos": "app.go:31:2"
     },
     {
       "kind": "page",
@@ -64,7 +70,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:31:2"
+      "pos": "app.go:32:2"
     },
     {
       "kind": "page",
@@ -72,7 +78,7 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /write",
-      "pos": "app.go:32:2"
+      "pos": "app.go:33:2"
     },
     {
       "kind": "page",
@@ -95,7 +101,24 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:33:2"
+      "pos": "app.go:34:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Publish",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /p/{id}/publish",
+      "req_type": "PublishReq",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:35:2"
     }
   ],
   "edges": [
@@ -115,6 +138,13 @@
     },
     {
       "from": "journal.Save",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.Publish",
       "to": "posts",
       "to_kind": "entity",
       "kind": "resource",

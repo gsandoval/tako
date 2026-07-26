@@ -1,0 +1,5 @@
+<!-- htmx swaps JUST this button; the no-JS form round-trips the page -->
+<form method="post" action="/p/{{ .ID }}/publish" hx-post="/p/{{ .ID }}/publish" hx-swap="outerHTML">
+  {{ csrf }}
+  <button class="toggle">{{ if .Published }}Unpublish{{ else }}Publish{{ end }}</button>
+</form>

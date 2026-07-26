@@ -46,6 +46,11 @@ var HandlerInfo func(h any) (kind, source string, invoke any)
 // is the request's context.Context (carries the CSRF token).
 var RenderSite func(ctx context.Context, name string, data any) ([]byte, error)
 
+// RenderFragment renders a site template WITHOUT the layout — the
+// htmx partial path (site.Fragment).
+var RenderFragment func(ctx context.Context, name string, data any) ([]byte, error)
+
 // HTMLParts opens a tako.HTML for the runtime's page handler — the SDK
-// sets it at init (typed as any to avoid the import cycle).
-var HTMLParts func(h any) (markup []byte, redirect string)
+// sets it at init (typed as any to avoid the import cycle). fragment
+// marks layoutless partials (they skip the document-only headers).
+var HTMLParts func(h any) (markup []byte, redirect string, fragment bool)

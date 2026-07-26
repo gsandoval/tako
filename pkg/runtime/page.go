@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 
 	tako "github.com/gsandoval/tako"
@@ -40,6 +41,7 @@ var siteTemplates map[string]*template.Template
 // template named — the dev loop iterates on exactly that text.
 func RegisterSiteTemplates(fsys fs.FS) {
 	hooks.RenderSite = renderSite
+	hooks.RenderFragment = renderFragment
 	siteTemplates = map[string]*template.Template{}
 	siteParseErrors = map[string]error{}
 
@@ -54,11 +56,39 @@ func RegisterSiteTemplates(fsys fs.FS) {
 		return
 	}
 	siteSetupError = nil
+
+	// Two tiers: PAGES define the layout's "content" block (each gets
+	// its own clone — their block names would collide in one set);
+	// PARTIALS don't, and parse into the shared base so any page or
+	// fragment can {{ template }} them (post cards, toggles).
+	var pages, partials []string
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || name == "layout.html" || !strings.HasSuffix(name, ".html") {
 			continue
 		}
+		raw, err := fs.ReadFile(fsys, "templates/"+name)
+		if err != nil {
+			siteParseErrors[name] = err
+			continue
+		}
+		if definesContent(string(raw)) {
+			pages = append(pages, name)
+		} else {
+			partials = append(partials, name)
+		}
+	}
+	for _, name := range partials {
+		if _, err := layout.ParseFS(fsys, "templates/"+name); err != nil {
+			siteParseErrors[name] = err
+		}
+	}
+	for _, name := range partials {
+		if siteParseErrors[name] == nil {
+			siteTemplates[name] = layout // fragments render from the shared base
+		}
+	}
+	for _, name := range pages {
 		t, err := layout.Clone()
 		if err == nil {
 			_, err = t.ParseFS(fsys, "templates/"+name)
@@ -71,12 +101,26 @@ func RegisterSiteTemplates(fsys fs.FS) {
 	}
 }
 
+var definesContentRe = regexp.MustCompile(`\{\{-?\s*(define|block)\s+"content"`)
+
+func definesContent(src string) bool { return definesContentRe.MatchString(src) }
+
 var (
 	siteParseErrors = map[string]error{}
 	siteSetupError  error
 )
 
 func renderSite(ctx context.Context, name string, data any) ([]byte, error) {
+	return renderNamed(ctx, name, "layout.html", data)
+}
+
+// renderFragment executes the named template itself — no layout, the
+// htmx partial path. Same template set, same funcs, same escaping.
+func renderFragment(ctx context.Context, name string, data any) ([]byte, error) {
+	return renderNamed(ctx, name, name, data)
+}
+
+func renderNamed(ctx context.Context, name, root string, data any) ([]byte, error) {
 	if siteSetupError != nil {
 		return nil, siteSetupError
 	}
@@ -95,7 +139,7 @@ func renderSite(ctx context.Context, name string, data any) ([]byte, error) {
 	var buf bytes.Buffer
 	// The token travels the context so {{ csrf }} works anywhere in the
 	// tree without threading it through handler data.
-	if err := t.Funcs(requestFuncs(ctx)).ExecuteTemplate(&buf, "layout.html", data); err != nil {
+	if err := t.Funcs(requestFuncs(ctx)).ExecuteTemplate(&buf, root, data); err != nil {
 		return nil, fmt.Errorf("template %s: %v", name, err)
 	}
 	return buf.Bytes(), nil
@@ -140,7 +184,11 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 			}
 		}
 		rctx := context.WithValue(r.Context(), csrfTokenKey{}, token)
-		ctx := &requestCtx{Context: rctx, log: slog.Default().With("req", reqID)}
+		// IsHTMX is the HX-Request header, nothing else (the F10 fence:
+		// a request-shape probe — the framework never switches modes on
+		// it by itself; handlers do).
+		ctx := &requestCtx{Context: rctx, log: slog.Default().With("req", reqID),
+			isHTMX: r.Header.Get("HX-Request") == "true"}
 
 		var req Req
 		if decode != nil {
@@ -155,17 +203,29 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 			pageError(w, ctx, reqID, err)
 			return
 		}
-		markup, redirect := hooks.HTMLParts(res)
+		markup, redirect, fragment := hooks.HTMLParts(res)
 		if redirect != "" {
+			// Dual-mode: htmx cannot follow a 303 into a swap, so it
+			// gets 200 + HX-Redirect (full-page client navigation);
+			// plain requests keep the POST-redirect-GET 303.
+			if ctx.isHTMX {
+				w.Header().Set("HX-Redirect", redirect)
+				w.WriteHeader(http.StatusOK)
+				return
+			}
 			http.Redirect(w, r, redirect, http.StatusSeeOther)
 			return
 		}
 		h := w.Header()
 		h.Set("Content-Type", "text/html; charset=utf-8")
 		h.Set("Cache-Control", "no-cache")
-		h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
 		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		if !fragment {
+			// Documents carry the CSP; fragments are partials injected
+			// into a page that already has one.
+			h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
+			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		}
 		_, _ = w.Write(markup)
 	})
 }

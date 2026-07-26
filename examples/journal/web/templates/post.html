@@ -3,6 +3,7 @@
 <article>
   <h2>{{ .Title }}</h2>
   <time>{{ .Created.Format "January 2, 2006" }}</time>
-  <pre class="body">{{ .Body }}</pre> <!-- escaped; {{ "{{ markdown }}" }} arrives in W4 -->
+  <pre class="body">{{ .Body }}</pre> <!-- escaped; markdown arrives in W4 -->
+  {{ template "publish-toggle.html" . }}
 </article>
 {{ end }}

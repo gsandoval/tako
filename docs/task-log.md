@@ -4783,3 +4783,57 @@ a scripted curl walk (HX-Request vs plain against the same routes)
 
 **STOP — awaiting DX approval (and the two §1 scope calls) before
 implementation.**
+
+## W3 — implementation: Fragments + htmx — journal is interactive (2026-07-26)
+
+Proposal approved with both §1 recommendations (htmx vendored; the
+Published toggle now). Agent-validated per the batching; gates at W6.
+
+**Runtime/SDK (frozen surface made true):** PageHandler sets IsHTMX
+from the HX-Request header (the F10 fence holds — a request-shape
+probe the framework never acts on itself); tako.Redirect is dual-mode
+(plain → 303, htmx → 200 + HX-Redirect, pinned by a harness route
+that always redirects); site.Fragment renders layoutless through the
+same template set with the same funcs and escaping; fragment
+responses skip the document-only CSP/referrer headers (partials
+inject into a page that has them). HTML carries a fragment bit
+through the hooks bridge.
+
+**Template registry grew a page/partial split** — the real design
+work of the slice: pages define the layout's "content" block and
+would collide in one set, so each still clones; PARTIALS (no content
+block — post-card.html, publish-toggle.html) parse into the shared
+base every page sees, so {{ template "post-card.html" . }} works from
+any page AND site.Fragment renders the same file as an htmx response.
+One template, both uses — journal's home literally ranges the same
+post-card partial that save returns as a fragment. (Found by the W2
+escaping test breaking: post.html's toggle reference didn't exist in
+its isolated clone.)
+
+**journal:** htmx 2.0.4 vendored (50KB, content-hash-named
+htmx.min.e209dda5.js — the first name, htmx.e209dda5.min.js, missed
+the immutable regex because the hash must precede the FINAL
+extension; caught by the smoke, renamed); Post gains Published
+(indexed — the home query Where(Published)+OrderBy(-Created) derives
+the composite `posts (published, -created)`, journal's first);
+layout gains the deferred script tag + body hx-headers carrying the
+CSRF token (zero per-form wiring); home is an inline hx-post form
+swapping post-cards into #posts with a no-JS fallback to the same
+handler's 303; the post page carries the publish toggle that swaps
+just its button. Tests: fragment-vs-303 from one handler, HX-Redirect
+contract, toggle actually flips across two swaps, fragments escape
+like pages, all W2 tests untouched and green.
+
+**Live cycle (tako-test-01):** deploy created the composite index and
+built it; after the usual ~60s IAM window the htmx save returned the
+post-card fragment from the cloud, the plain save 303'd, the toggle
+swapped its button, home listed via the composite query, the vendored
+htmx served immutable; destroy clean. Full local sweep green.
+
+**Discovered work (not done):** standing items unchanged; new: the
+partial/page classifier is a regex over the source ({{ define
+"content" }}) — honest but implicit; if it ever misclassifies a real
+site, an explicit partials/ subdirectory convention is the fix.
+
+W3 complete agent-side. W4 (markdown, sanitized by default) proposal
+next; human gate at W6.

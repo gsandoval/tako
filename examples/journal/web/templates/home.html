@@ -1,6 +1,14 @@
 {{ define "content" }}
-{{ if not . }}<p>Nothing here yet — <a href="/write">write the first post</a>.</p>{{ end }}
-<ul class="posts">
-{{ range . }}  <li><a href="/p/{{ .ID }}">{{ .Title }}</a> <time>{{ .Created.Format "2006-01-02" }}</time></li>
-{{ end }}</ul>
+<!-- With JS: the new card swaps in atop #posts, no navigation.
+     Without: the same form posts plainly and save answers 303. -->
+<form method="post" action="/p" hx-post="/p" hx-target="#posts" hx-swap="afterbegin" hx-on::after-request="this.reset()">
+  {{ csrf }}
+  <p><input name="title" placeholder="Title" required></p>
+  <p><textarea name="body" rows="4" placeholder="Write in markdown…"></textarea></p>
+  <p><button>Publish</button></p>
+</form>
+{{ if not . }}<p>Nothing here yet — write the first post above.</p>{{ end }}
+<div id="posts">
+{{ range . }}{{ template "post-card.html" . }}{{ end }}
+</div>
 {{ end }}
