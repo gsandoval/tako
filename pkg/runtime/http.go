@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	tako "github.com/gsandoval/tako"
@@ -76,7 +77,14 @@ func Serve(h http.Handler) {
 	if port == "" {
 		port = "8080"
 	}
-	if err := http.ListenAndServe(":"+port, logRequests(h)); err != nil {
+	err := http.ListenAndServe(":"+port, logRequests(h))
+	if err != nil && strings.Contains(err.Error(), "address already in use") {
+		// A collision here answers requests with SOMEONE ELSE'S responses
+		// — mysterious 404s. Name the fix.
+		fmt.Fprintf(os.Stderr, "tako: serve: port %s is already in use by another process — set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :%s`)\n", port, port)
+		os.Exit(1)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "tako: serve: %v\n", err)
 		os.Exit(1)
 	}

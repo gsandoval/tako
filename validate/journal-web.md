@@ -7,10 +7,20 @@ For the W1-only judgments in depth (WithBuild/hugo, WithDevProxy,
 failure texts), validate/site.md remains runnable — §1 here condenses
 its keepers.
 
+**No installed `tako` needed:** every command below runs the CLI from
+the repo (`go run ../../cmd/tako …` from an example dir). To install
+it instead: `go build -o ~/bin/tako ./cmd/tako` from the repo root
+(then plain `tako …` works anywhere). **Port:** dev serves on $PORT
+(default 8080, which collides with anything already there — Java app
+servers love it); every step here pins PORT=8090 explicitly. If a
+boot reports the entity store held by another process, an orphaned
+service from an earlier run has the lock — the error text names the
+lsof command.
+
 ## 1. The static half (W1 condensed)
 
 ```
-cd examples/journal && tako dev
+cd examples/journal && PORT=8090 go run ../../cmd/tako dev
 curl -sI localhost:8090/about                          # static page
 curl -sI localhost:8090/assets/site.9f86d081.css       # fingerprinted
 curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' localhost:8090/about-us
@@ -59,7 +69,7 @@ floor; W4's sanitized markdown replaces it without opening the hole.
 ## 5. Full cycle
 
 ```
-tako deploy --project <test-project>
+go run ../../cmd/tako deploy --project <test-project>
 BASE=<the ✓ journal URL>
 ```
 
@@ -73,7 +83,7 @@ values match local (byte parity through the embed); the full write →
 ## 6. Destroy
 
 ```
-tako destroy --project <test-project>    # DATA names the posts kind
+go run ../../cmd/tako destroy --project <test-project>    # DATA names the posts kind
 ```
 
 Typed confirmation; clean project. Record the verdict in

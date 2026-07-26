@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -28,8 +29,15 @@ func OpenEntity(dir string) (*EntityStore, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	db, err := bolt.Open(filepath.Join(dir, "entity.db"), 0o644, &bolt.Options{Timeout: time.Second})
+	path := filepath.Join(dir, "entity.db")
+	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: time.Second})
 	if err != nil {
+		if errors.Is(err, bolt.ErrTimeout) {
+			// The one way this happens in practice: another process has
+			// the file locked — usually an orphaned service from an
+			// earlier dev run. Say so, and say how to find it.
+			return nil, fmt.Errorf("opening local entity store: another process holds %s — an orphaned service from a previous run? find it with `lsof %s` and kill it (or remove .tako/data if nothing holds it)", path, path)
+		}
 		return nil, fmt.Errorf("opening local entity store: %w", err)
 	}
 	return &EntityStore{db: db}, nil

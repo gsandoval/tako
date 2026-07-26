@@ -3,12 +3,15 @@
 Stage 3 opens. journal is born as the smallest tako website: one
 declaration, zero handlers, correct headers, one binary. Prereqs for
 §4: gcloud ADC and the test project (no new APIs, grants, or plan
-objects — judge that too).
+objects — judge that too). No installed `tako` needed: run the CLI as
+`go run ../../cmd/tako …` from the example dir (or install once with
+`go build -o ~/bin/tako ./cmd/tako` from the repo root). Dev serves
+on $PORT (default 8080 — often taken); every step pins PORT=8090.
 
 ## 1. The static shell, locally
 
 ```
-cd examples/journal && tako dev
+cd examples/journal && PORT=8090 go run ../../cmd/tako dev
 curl -sI localhost:8090/                              # HTML
 curl -sI localhost:8090/assets/site.9f86d081.css      # fingerprinted
 curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' localhost:8090/about-us
@@ -34,7 +37,7 @@ point is tako runs YOUR command and serves YOUR output dir:
 # temporary edit to examples/journal/app.go:
 #   tako.Site("./web", tako.WithBuild("hugo --minify", "public"))   (hugo)
 #   tako.Site("./web", tako.WithBuild("sh build.sh", "dist"))       (any script)
-tako dev      # observe: ⛅ site  <cmd> → <out> (N files), then serving
+PORT=8090 go run ../../cmd/tako dev      # observe: ⛅ site  <cmd> → <out> (N files), then serving
 ```
 
 **Judge:** the build narrates and re-runs on change; a failing command
@@ -47,7 +50,7 @@ the its-output-dir-is-empty text. Revert the edit.
 ```
 # temporary: tako.Site("./web", tako.WithDevProxy("http://localhost:1313"))
 hugo server -p 1313 &     # or any dev server (vite, astro, python -m http.server)
-tako dev                  # site requests proxy through; deploy ignores the proxy
+PORT=8090 go run ../../cmd/tako dev      # site requests proxy through; deploy ignores the proxy
 ```
 
 **Judge:** local requests hit the generator's server (its live-reload
@@ -57,7 +60,7 @@ dir/build for DEPLOY (the proxy is dev-only). Revert.
 ## 4. Full cycle — the binary IS the site
 
 ```
-tako deploy --project <test-project>
+go run ../../cmd/tako deploy --project <test-project>
 BASE=<the ✓ journal URL>
 curl -sI $BASE/ ; curl -sI $BASE/assets/site.9f86d081.css
 curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' $BASE/about-us
@@ -67,6 +70,6 @@ curl -s -o /dev/null -w '%{http_code} -> %{redirect_url}\n' $BASE/about-us
 ETag values (same content, same hash), same cache-control split, same
 308. The plan shows NOTHING new beyond C-phase kinds (no site objects:
 the binary carries it); `analyzing` says `1 service, 0 endpoints,
-1 site`. Then `tako destroy` (typed name) leaves the project clean.
+1 site`. Then `go run ../../cmd/tako destroy --project <test-project>` (typed name) leaves the project clean.
 
 Record the verdict in docs/validation-log.md (feature W1, gate W1).
