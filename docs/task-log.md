@@ -5077,3 +5077,37 @@ friction encountered — it becomes the preflight text).
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+### W5 amendment (2026-07-26, per review): sessions are Datastore-backed
+
+Call 1 is overridden by the user: sessions live in the entity store,
+not in a signed cookie. The revised design:
+
+- **The cookie carries only an opaque random id** (128-bit hex,
+  HttpOnly, Secure in cloud, SameSite=Lax). No claims in the cookie,
+  nothing to forge, no signing key needed for sessions.
+- **The record is a framework-internal entity**, kind `_tako_session`
+  (single leading underscore — legal in Datastore, impossible from
+  user declarations, excluded from destroy/prune DATA listings by its
+  prefix but PURGED with the namespace on destroy): {uid, email,
+  name, csrf, created, expires}. Stored through the same
+  backends.Entity hook as user entities — bbolt locally, Datastore in
+  the cloud, one code path; the dev bar mints the same records.
+- **Per-request cost is a Get** on routes that consult the user
+  (WithAuth always; MaybeUser when the cookie is present). No
+  in-process caching in v0 — honest and revocation-coherent.
+- **Revocation is real**: sign-out DELETEs the record; an operator
+  can delete sessions in the console. Expired records read as absent
+  and lazily delete on touch (bulk cleanup: discovered work for the
+  cron/scheduler era).
+- **CSRF simplifies** (absorbing call 2): the token is STORED in the
+  session record — authenticated CSRF checks compare against it;
+  anonymous browsers keep the W2 double-submit cookie.
+- **Grants/preflight**: declaring Auth makes the app an entity-store
+  consumer — Needs.Datastore and the project datastore.user grant
+  derive from Auth itself (journal already has entities; an
+  auth-only app would otherwise deploy without its session store).
+  The security summary explains: `datastore [user — sessions]` when
+  auth alone demands it.
+- Call 3 (Identity Platform via preflight guidance) stands as
+  recommended.
