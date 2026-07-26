@@ -5182,3 +5182,24 @@ wording lands after the W6 walk); dev-bar Content-Length rewrite
 buffers whole documents (fine for dev).
 
 W5 complete agent-side. W6 (the milestone assembly) next.
+
+## W6 — the milestone assembly: journal, complete (2026-07-26)
+
+No new feature code — W6 is the assembly and its gate script.
+`validate/journal.md` is the unified local+cloud walk (F9 style):
+graph review (🔒s, auth line, composite), the dev-bar sign-in +
+fragment-swapping write flow, the XSS judgment (stripped, not
+escaped), sessions-as-records (including operator revocation from
+the console, live), the suite as user-style tests, and the cloud leg
+with real Google sign-in — whose ONE manual prerequisite (console →
+Identity Platform → Providers → add Google) is exactly the friction
+W5's live run isolated. Everything the script judges was agent-
+validated in the W3/W4/W5 slices; the milestone walk verifies those
+claims end to end in one sitting.
+
+**GATE REQUEST — W6 MILESTONE: journal complete (closes W3–W6).**
+Run `validate/journal.md` §§1–6 (the Google provider console step in
+§6 is the only manual setup) and record ONE verdict in
+docs/validation-log.md. This is Stage 3's mid-point DX review —
+notes beyond pass/fail are welcome; W7 (`tako gen client ts`, shop
+is born) follows on a pass.
