@@ -4683,3 +4683,103 @@ entities behind. The conf-* discovered-work item is closed. Also
 recorded in the W2 verdict: the security summary should flag mutating
 routes without WithAuth on public services (lands with W5, where
 WithAuth becomes enforceable).
+
+## W3 — DX proposal: Fragments + htmx — journal goes interactive (2026-07-26)
+
+The W2 milestone is recorded; W3–W5 validate agent-side per slice and
+gate together at W6 (journal complete). Spec §2.11's hypermedia
+paragraph + Part 3b are normative. Frozen surface made true:
+`site.Fragment`, `ctx.IsHTMX` (F10 fence: request-shape probe only),
+`tako.Redirect`'s dual mode. Nothing added.
+
+### 0. The headline
+
+One handler serves both worlds — the spec's centerpiece pattern:
+
+```go
+func save(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {
+    p := Post{…}
+    if err := posts.Put(ctx, p); err != nil { return tako.HTML{}, err }
+    if ctx.IsHTMX() {
+        return site.Fragment(ctx, "post-card.html", p)  // swapped into the list
+    }
+    return tako.Redirect("/p/" + p.ID)                  // no-JS fallback
+}
+```
+
+journal's home grows an inline write form (`hx-post="/p"
+hx-target="#posts" hx-swap="afterbegin"`): with JS, a new post-card
+appears without navigation; without JS, the same form posts plainly
+and the same handler answers 303 — progressive enhancement with zero
+branching beyond the IsHTMX line. htmx POSTs pass CSRF with no
+configuration: layout gains `hx-headers` reading the existing meta
+tag. And Redirect becomes dual-mode: under htmx it answers 200 +
+`HX-Redirect` (htmx cannot follow a 303 into a swap), plain requests
+keep the 303.
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **htmx is VENDORED into journal (RECOMMENDED).** A pinned
+   htmx.min.js in web/assets, fingerprinted, served like any asset —
+   the spec's "no client framework beyond htmx as a static asset",
+   and no CDN (the site stays self-contained; CSP default-src 'self'
+   keeps holding). Alternative: CDN script tag — breaks CSP and
+   self-containment.
+2. **The Published toggle joins NOW (RECOMMENDED).** Part 3b's
+   `publish` handler (fragment-swaps just the button) is the second
+   fragment pattern the W6 demo runs; Post gains `Published bool`
+   (indexed), home lists published posts only, /write's flow
+   publishes immediately (drafts are a UX nicety journal doesn't
+   need), the toggle sits on the post page. Open until W5's auth,
+   like every write — same documented gap. Alternative: defer to W6
+   assembly and demo only the create fragment here.
+
+### 2. Semantics being locked
+
+- **IsHTMX** = the `HX-Request: true` header, nothing else (the F10
+  fence: a request-shape probe, never a rendering-mode switch the
+  framework acts on by itself).
+- **site.Fragment** renders the named template WITHOUT the layout —
+  same template set, same funcs ({{ csrf }} works inside fragments),
+  same escaping. Fragment responses carry no-cache + nosniff but NOT
+  the document CSP (they are partials injected into a page that has
+  one).
+- **Redirect, dual-mode**: plain → 303 + Location; htmx (HX-Request)
+  → 200 + HX-Redirect (full-page client navigation). One return, both
+  worlds, per the frozen doc comment.
+- **CSRF via hx-headers**: layout's <body> gains
+  `hx-headers='{"X-CSRF-Token": "<token>"}'` from the existing
+  csrfToken func — every htmx request passes the header the W2
+  verifier already accepts. No new mechanism.
+- **PageHandler** sets the ctx flag from the header; no other change.
+
+### 3. Internals
+
+- `pkg/runtime`: requestCtx gains isHTMX (set in PageHandler);
+  fragment render path (skip layout: execute the named template
+  directly); Redirect branch on the flag. hooks bridge grows
+  RenderFragment.
+- Root: site.Fragment wires through hooks (W3 pointer dies);
+  Redirect doc comment already says HX-Redirect.
+- `examples/journal`: htmx.min.js vendored (pinned 2.x, fingerprinted
+  name); home gains the inline form + #posts list of post-card
+  fragments; post page gains the publish toggle; Save/Publish serve
+  both worlds. Tests: HX-Request save → fragment (no <html>, has the
+  card), plain save → 303 (the W2 test keeps passing untouched),
+  HX-Request redirect path → 200 + HX-Redirect header, toggle swap,
+  CSRF via X-CSRF-Token header (already covered), fragment escaping.
+- No SDK surface changes; no cloud surface changes (no new grants,
+  objects, or APIs — W3 is pure request-path).
+
+### 4. Not in scope (W3 non-goals)
+
+- Markdown (W4 — bodies still escape); auth (W5 — writes and the
+  toggle stay open, documented); hx-boost/SSE/websockets (nothing in
+  the spec asks); styled error fragments.
+
+**Validation** (agent-side; the human gate is W6): journal tests +
+a scripted curl walk (HX-Request vs plain against the same routes)
++ the full cycle on tako-test-01 — transcript in the task log.
+
+**STOP — awaiting DX approval (and the two §1 scope calls) before
+implementation.**
