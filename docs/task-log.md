@@ -5330,3 +5330,158 @@ Identity Platform initialization/providers/OAuth client (project-
 level trust config, shared by every env), user accounts in Identity
 Platform, Secret Manager secrets, enabled APIs, the Datastore
 database, and the auto-provisioned browser API key.
+
+## W6 MILESTONE — verdict recorded (2026-07-26)
+
+Pass, recorded in docs/validation-log.md — closes W3, W4, W5, W6. The
+gate walk ran validate/journal.md on tako-test-01 AND repeated the
+full flow on a fresh project (tako-test-02), which caught the last
+bug: initializeAuth built its URL on /admin/v2 instead of /v2 (the
+branch had never executed where auth pre-existed) — fixed in 5c9cd9e
+with HTML error bodies compressed to one line. Standing requirement
+carried forward: the Identity Platform manual-step instruction MUST
+appear in the final developer documentation. Journal is complete.
+W7 begins Stage 3's back half; the next human gate is W11.
+
+## W7 — DX proposal: `tako gen client ts` — shop is born (2026-07-26)
+
+Spec §2.11's last piece: "a typed TypeScript client for every `api`
+endpoint (param/response types from the Go signatures, session auth
+pre-wired), so the frontend talking to the backend is generated, not
+hand-maintained." A CLI subcommand — NO SDK surface change (the F10
+freeze holds; precedent: `gen graph --json` landed post-freeze as CLI
+growth). shop is born as the consumer: journal showed the hypermedia
+path; shop is the "website with an API" path.
+
+### 0. The headline
+
+```
+cd examples/shop && go run ../../cmd/tako gen client ts
+  client   .tako/gen/client/ts/api.ts — 3 endpoints, 5 types
+           (1 private endpoint excluded: browsers cannot mint OIDC)
+```
+
+The generated file is plain fetch, one ES module, zero dependencies,
+strict-mode clean:
+
+```ts
+import { createClient, ApiError } from "./api";
+
+const api = createClient();                 // same-origin; session cookie rides along
+const products = await api.listProducts();  // typed: Product[]
+try {
+  await api.placeOrder({ productId: products[0].id, qty: 2 });
+} catch (e) {
+  if (e instanceof ApiError && e.status === 401) {
+    location.assign("/api/_session/signin?next=/");   // journal's machinery, reused
+  }
+}
+```
+
+### 1. Scope calls needing your decision (before anything else)
+
+1. **shop declares `tako.Auth(tako.WithEmail())` (RECOMMENDED).**
+   Checkout needs sign-in, and email/password finally gets the example
+   that demands it (the deferred W5 non-goal closes). It is the ONE
+   provider machine-testable end to end — no browser, no OAuth popup:
+   cloud validation creates a throwaway user over the admin API,
+   `signInWithPassword` for a real ID token, drives the session
+   exchange, deletes the user. The W6 email automation (auto-enable on
+   declaration) gets its live end-to-end exercise. Alternative: Google
+   again — browser-only validation, nothing new proven.
+2. **shop's page is TS bundled by `WithBuild` (RECOMMENDED):**
+   `tako.WithBuild("npx esbuild src/app.ts --bundle --outdir=dist", "dist")`
+   (shape illustrative) — the generated client runs in a real browser
+   bundle, typechecked by the toolchain that consumes it. Node is
+   needed on the deploying machine only (like Hugo in W1's variant),
+   NEVER by `go test` / `tako test`. Alternative: commit a hand-compiled
+   .js asset — no Node anywhere, but nothing typechecks anywhere either.
+3. **Output goes to `.tako/gen/client/ts/api.ts` by default, `--out`
+   to relocate (RECOMMENDED).** Settled decision 3: generated code
+   lives under .tako/gen, human-readable; the frontend imports from
+   there (shop does) or `--out web/src/api.ts` drops it into an
+   existing frontend tree. Alternative: default straight into the site
+   dir — convenient but plants generated code in user-owned space.
+
+### 2. Semantics being locked
+
+- **Coverage: `api` endpoints only.** Pages are server-rendered;
+  workers/subscribers/crons have no browser surface. `private`
+  (IAM-only) endpoints are excluded WITH a comment naming them —
+  exclusion is visible, never silent.
+- **Names:** endpoint var → lowerCamel method (`ListProducts` →
+  `listProducts`); a collision is a generation error with file:line.
+- **Type mapping:** string→string, bool→boolean, int/int64/float64→
+  number, time.Time→string (RFC 3339, documented), []T→T[],
+  map[string]T→Record<string, T>, *T→T | null, nested exported
+  structs→interfaces. `json` tags rule response/body field names
+  (`json:"-"` omitted, `,omitempty`→optional `?`). An unsupported
+  field type (chan, func, interface) is a generation error naming the
+  field, file:line.
+- **Wire = the generated decoders, mirrored:** `path:` fields become
+  positional args in route order; `query:` fields an options object;
+  remaining fields the JSON body. `tako.Blob` results → the method
+  returns the raw `Response` (caller streams); Blob REQUEST fields →
+  endpoint excluded with a comment (multipart is the signed-URL
+  story, not the JSON client's).
+- **Session auth pre-wired:** `credentials: "same-origin"` so the W5
+  `_session` cookie rides every call; non-GET methods attach
+  `X-CSRF-Token` from the layout's meta tag when present (free
+  defense-in-depth for cookie-authed JSON; server behavior unchanged).
+  `createClient({ baseUrl?, headers? })` — baseUrl for driving a
+  deployed api from outside the origin, headers for non-browser
+  callers (validation passes the session cookie explicitly; Node's
+  fetch ignores `credentials`).
+- **Errors:** non-2xx → `throw new ApiError(status, message)` parsed
+  from tako's error body, falling back to statusText. No silent
+  retries (v0's stance, same as §2.12).
+- **Deterministic:** endpoint source order, no timestamps —
+  regenerating an unchanged app yields a byte-identical file.
+
+### 3. shop v0 (the W7 slice)
+
+- `app.go`: `products` entity (Name, PriceCents), `orders` entity
+  (Owner indexed, Created); `tako.Auth(tako.WithEmail())`;
+  `ListProducts` GET /api/products, `GetProduct` GET
+  /api/products/{id}, `PlaceOrder` POST /api/orders 🔒 (unknown
+  product → 404 "unknown product"), `AddProduct` POST /api/products 🔒
+  (v0 has no admin concept — settled decision 11; any signed-in user
+  stocks the shelf, documented as demo scaffolding shop will outgrow).
+- `web/`: index.html + `src/app.ts` importing the generated client —
+  list products, place an order, 401 → sign-in link. Bundled per §1.2.
+- Tests (user-style): list/get, order 401 signed-out, order placed
+  with a dev session, 404 unknown product, ownership on order listing
+  if listed. `tako test` needs no Node (WithBuild not run by tests —
+  the known gap stands).
+
+### 4. Internals
+
+- `cmd/tako`: `gen client ts` beside `gen graph`; `--out` flag.
+- `pkg/clientgen` (new): runs beside the analyzer with go/types
+  access (AppGraph Bindings carry scalars only; body/response type
+  TREES need types.Type — same reason codegen works from the typed
+  load). Golden tests in pkg/clientgen/testdata: input package →
+  expected api.ts; error cases assert exact message + file:line.
+- **Cloud errors & permissions: none new.** Generation is local
+  static analysis. shop's deploy rides existing surfaces — the email
+  provider auto-enables via W6's EnsureAuthClient (this time on a
+  declaration that means it).
+
+### 5. Not in scope (W7 non-goals)
+
+- Other languages (`gen client <lang>` namespace leaves room); a Go
+  client (§2.12 typed calls are the Go story — W9); npm packaging (a
+  file, not a package — users own their build); retry/backoff;
+  streaming/SSE; multipart upload methods; coordination on orders
+  (double-stock races are W8's Lock demo, deliberately).
+
+**Validation** (agent-side; the human gate is W11): clientgen
+goldens; shop suite; `npx tsc --noEmit --strict` on the generated
+client; full cycle on tako-test-01 — deploy, throwaway email user →
+signInWithPassword → session cookie, a Node script importing the
+generated client places a real order against the deployed api (the
+gate criterion verbatim), 401 without the cookie judged, destroy.
+Transcript in the task log.
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
