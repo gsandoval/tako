@@ -5986,3 +5986,91 @@ economics, AUTOMATIC session propagation.
 W10 (Jobs + the deferred Singleton, batch profile) proceeds without a
 stop per the user's pacing directive; W11 assembles shop complete and
 is the next human gate.
+
+## W10 — DX proposal: Jobs + Singleton, the batch slice (2026-07-27; auto-proceeds per pacing directive)
+
+Spec §2.7 verbatim: `tako.Job[T](name)` + `tako.JobHandler(job, fn)` —
+long-running compute as a Cloud Run JOB (no request timeout), triggered
+from any handler with `job.Run(ctx, params)`; `WithParallel(n)` maps to
+task-count fan-out. Plus the W8-deferred `tako.Singleton(name, fn)`:
+exactly-one long loop via min=1/max=1 + the §4.4 lease. Frozen surface
+made true; nothing added.
+
+### 0. The headline (shop's demands)
+
+```go
+// Settlement outlives any request deadline: sum the day's orders into
+// a report, however long that takes.
+var (
+    settle      = tako.Job[SettleParams]("settle")
+    Settle      = tako.JobHandler(settle, runSettle)
+    StartSettle = tako.API("POST /api/settle", startSettle, tako.WithAuth())
+)
+func startSettle(ctx tako.Ctx, req SettleReq) (SettleStarted, error) {
+    return SettleStarted{Started: true}, settle.Run(ctx, SettleParams{Day: req.Day, ThrottleMs: req.ThrottleMs})
+}
+
+// Sequential invoice numbers: the honest singleton — a strictly
+// monotonic, bookkeeping-grade sequence is genuinely SERIAL work (Tx
+// contention on a hot counter is the anti-pattern), and exactly-one
+// across revisions is what min=1/max=1 + the lease guarantee.
+var Invoicer = tako.Singleton("invoicer", assignInvoices)
+```
+
+### 1. Scope calls (auto-adopted, recommended options)
+
+1. **Local jobs ride the queue dispatcher** — `Run` publishes to an
+   internal `_job:<name>` queue whose consumer is the handler; tests
+   get DrainQueues/WaitIdle semantics for jobs FOR FREE and the
+   TestApp surface stays frozen. Cloud runs the real Cloud Run Jobs
+   API. Alternative: bare goroutines (invisible to draining).
+2. **Job params ride execution overrides** as
+   `--tako-job-params <json>` container args; the generated job main
+   decodes and runs. Retries are Cloud Run's maxRetries=3; v0 makes no
+   Permanent distinction for jobs (documented). Alternative: params
+   via a staging entity (an extra write + cleanup for nothing yet).
+3. **Singleton is a min=1/max=1 run SERVICE** (concurrency 1, CPU
+   always on) whose generated main campaigns DoLease("singleton-<name>")
+   forever around fn and serves a bare health endpoint — reusing the
+   entire run-service machinery instead of inventing a resource.
+   Deploy handoff = lease handoff (spec §4.4 verbatim). fn returning
+   is a restart with backoff, narrated; fn ctx cancels on lease loss.
+4. **Triggering a job derives run.invoker ON THE JOB** (Cloud Run
+   jobs accept the same role for jobs.run) + a
+   `TAKO_JOB_<NAME>` physical-name env injection, mirroring W9's
+   callee URLs.
+
+### 2. Semantics being locked
+
+- Job fn is the ONE async shape `func(Ctx, T) error`; local retries
+  come from the dispatcher (5 × backoff → dead-letter JSON on disk),
+  cloud retries from maxRetries=3 — both documented, not identical
+  (jobs are compute, not messaging; the conformance contract stays
+  queue-level).
+- `Run` returns once the execution is HANDED OFF (queued locally,
+  execution created on gcp) — never waits for completion.
+- WithParallel(n) → taskCount n; the per-task index is NOT surfaced
+  in v0 (no example demands it; documented pointer).
+- Singleton fn: runs while the lease is held; loss cancels ctx; the
+  loop re-campaigns. Two revisions during deploy = one holder,
+  provably (the W8 machinery, reused).
+- Analyzer: Job/JobHandler/Singleton leave not-yet; const names;
+  `run` edges from Run call sites (the verb existed in the Edge
+  vocabulary since C-phase); JobHandler without its Job (or twice) is
+  an error; jobs partition into their OWN deployable (batch profile),
+  singletons into min1 services.
+
+### 3. Not in scope (W10 non-goals)
+
+- Per-task index/sharding API; job progress/status queries; cron →
+  job triggers (scheduler slice); Permanent for jobs; job-to-job
+  chaining; execution overrides beyond params.
+
+**Validation** (agent-side; W11 is the gate): suite (job through
+DrainQueues, invoice numbers strictly sequential under concurrent
+orders); cloud — deploy shop (job `settle` in the plan + run.invoker
+on it, invoicer service min=1), trigger a settlement with ThrottleMs
+sized to OUTLIVE the service request timeout (the gate criterion:
+the execution completes anyway — judged from execution state + the
+report entity), invoice numbers assigned by exactly one instance,
+destroy removes the job. Transcript in the task log.
