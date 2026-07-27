@@ -1,2 +1,2 @@
 app.go:5:12: tako.Auth needs at least one provider (WithGoogle, WithEmail) (tako/auth-provider)
-app.go:7:15: tako.Job is not available yet — the multi-service slice (jobs, locks, singletons) arrives with Phase H (tako/not-yet)
+app.go:7:15: tako.Job is not available yet — jobs and singletons arrive with the batch slice (W10) (tako/not-yet)

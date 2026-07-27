@@ -101,6 +101,10 @@ type Handler struct {
 	Route string `json:"route,omitempty"`
 	// Schedule is the schedule for Cron handlers.
 	Schedule string `json:"schedule,omitempty"`
+	// Singleflight marks a Cron declared with tako.WithSingleflight:
+	// the handler runs under the §4.4 lease, collapsing overlapping
+	// runs across instances.
+	Singleflight bool `json:"singleflight,omitempty"`
 	// Binding is the bound source's name for Worker/Subscribe/Job
 	// handlers: the queue or topic name, or "<bucket>.Uploaded" for
 	// bucket-event subscribers.

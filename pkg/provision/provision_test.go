@@ -58,9 +58,10 @@ func TestFreshProjectPlansAllCreates(t *testing.T) {
 	want := `  + create  artifact repo tako
   + create  service account hello-sa
   + create  run service hello
+  + create  iam grants bucket my-proj-tako
   + create  iam grants run hello
   + create  iam grants serviceAccount hello-sa@my-proj.iam.gserviceaccount.com
-  5 creates, 0 updates, 0 skips, 0 orphans
+  6 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)
@@ -78,7 +79,7 @@ func TestSecondDeployIsAllSkips(t *testing.T) {
 	}
 	plan := Compute("hello", "prod", desired, cloud.observed())
 	c, u, s, o := plan.Counts()
-	if c != 0 || u != 0 || s != 5 || o != 0 {
+	if c != 0 || u != 0 || s != 6 || o != 0 {
 		t.Fatalf("second plan = %d/%d/%d/%d:\n%s", c, u, s, o, plan.Render())
 	}
 	if plan.Changed() {
@@ -102,7 +103,7 @@ func TestNewImageDigestPlansUpdate(t *testing.T) {
 	}
 	plan := Compute("hello", "prod", next, cloud.observed())
 	c, u, s, _ := plan.Counts()
-	if c != 0 || u != 1 || s != 4 {
+	if c != 0 || u != 1 || s != 5 {
 		t.Fatalf("plan after digest change:\n%s", plan.Render())
 	}
 }
@@ -156,6 +157,7 @@ func TestEnvPrefixesNamesAndSpecs(t *testing.T) {
 	}
 	want := []string{
 		"tako", "pr-42-hello-sa", "pr-42-hello",
+		"bucket my-proj-tako",
 		"run pr-42-hello", "serviceAccount pr-42-hello-sa@my-proj.iam.gserviceaccount.com",
 	}
 	for i := range want {

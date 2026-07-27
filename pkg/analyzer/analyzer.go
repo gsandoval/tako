@@ -192,10 +192,15 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 				}
-			case "Job", "JobHandler", "Lock", "Singleton":
+			case "Lock":
+				if r := extractLock(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "lock"}
+				}
+			case "Job", "JobHandler", "Singleton":
 				errs = append(errs, &Error{
 					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
-					Msg:  fmt.Sprintf("tako.%s is not available yet — the multi-service slice (jobs, locks, singletons) arrives with Phase H", d.ctor),
+					Msg:  fmt.Sprintf("tako.%s is not available yet — jobs and singletons arrive with the batch slice (W10)", d.ctor),
 					Rule: "not-yet",
 				})
 			}

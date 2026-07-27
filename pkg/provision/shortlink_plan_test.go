@@ -64,6 +64,7 @@ func TestShortlinkPlanRender(t *testing.T) {
   + create  pull subscription shortlink-countclick-dead
   + create  run service shortlink
   + create  run service shortlink-countclick
+  + create  iam grants bucket my-proj-tako
   + create  iam grants project
   + create  iam grants run shortlink
   + create  iam grants run shortlink-countclick
@@ -73,7 +74,7 @@ func TestShortlinkPlanRender(t *testing.T) {
   + create  iam grants topic clicks
   + create  iam grants topic shortlink-countclick-dead
   + create  push subscription shortlink-countclick
-  18 creates, 0 updates, 0 skips, 0 orphans
+  19 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)

@@ -292,3 +292,41 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 	}
 	return res
 }
+
+// extractLock validates one tako.Lock declaration (W8): a constant
+// name and — deliberately — no options: the lease policy (30s TTL,
+// ttl/3 heartbeats, 2s campaigns) is framework-owned in v0.
+func extractLock(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return nil
+	}
+	bad := false
+	lockName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Lock name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	for _, opt := range call.Args[1:] {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+			Msg:  "tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned",
+			Rule: "invalid-option",
+		})
+		bad = true
+	}
+	if bad {
+		return nil
+	}
+	return &Resource{
+		Kind:    "lock",
+		Name:    lockName,
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+}

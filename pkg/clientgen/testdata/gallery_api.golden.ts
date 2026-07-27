@@ -40,6 +40,21 @@ export interface ObjectInfo {
   updated: string;
 }
 
+/** gallery.ReindexRun */
+export interface ReindexRun {
+  id: string;
+  started: string;
+  finished: string;
+  photos: number;
+  demoted: number;
+}
+
+/** gallery.ReindexRes */
+export interface ReindexRes {
+  started: boolean;
+  run: ReindexRun;
+}
+
 /** A non-2xx response, message parsed from tako's {"error": ...} body. */
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -119,6 +134,14 @@ export function createClient(opts: ClientOptions = {}) {
     /** gallery.Objects — GET /api/objects */
     async objects(): Promise<ObjectInfo[]> {
       return (await call("GET", `/api/objects`, null, undefined)).json();
+    },
+    /** gallery.Reindex — POST /api/reindex */
+    async reindex(): Promise<ReindexRes> {
+      return (await call("POST", `/api/reindex`, null, undefined)).json();
+    },
+    /** gallery.ReindexRuns — GET /api/reindex/runs */
+    async reindexRuns(): Promise<ReindexRun[]> {
+      return (await call("GET", `/api/reindex/runs`, null, undefined)).json();
     },
   };
 }

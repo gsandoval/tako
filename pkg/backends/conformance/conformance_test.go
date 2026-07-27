@@ -176,3 +176,29 @@ func TestBucketEvents(t *testing.T) {
 		t.Fatalf("unknown -backend %q", *backend)
 	}
 }
+
+func TestLease(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunLease(t, func(t *testing.T) (backends.Lease, func(name string)) {
+			l := local.NewMemoryLease()
+			return l, l.Break
+		})
+	case "gcp":
+		// Leases are objects in the SHARED framework bucket
+		// (<project>-tako) — ensured here, never deleted (deploys and
+		// other apps use it); each chapter's objects are scoped by a
+		// random app name and removed on cleanup. The breaker is an
+		// unconditional object delete — exactly what an operator does
+		// to force-release a wedged lease.
+		RunLease(t, func(t *testing.T) (backends.Lease, func(name string)) {
+			c := gcpClient(t, "conf"+randHex(t), "prod")
+			ensureFrameworkBucket(t, c)
+			s := gcpb.NewLeaseStore(c)
+			t.Cleanup(func() { purgeLeaseObjects(t, c) })
+			return s, func(name string) { breakLease(t, c, name) }
+		})
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}

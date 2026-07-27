@@ -553,3 +553,70 @@ func TestBucketNotificationGCP(t *testing.T) {
 		t.Fatalf("notification object = %+v", obj)
 	}
 }
+
+// ensureFrameworkBucket creates <project>-tako if absent — the SHARED
+// framework bucket (deploy leases live there too), so it is never
+// deleted by conformance cleanup.
+func ensureFrameworkBucket(t *testing.T, c *gcpb.Client) {
+	t.Helper()
+	name := *project + "-tako"
+	req, err := http.NewRequestWithContext(context.Background(), "POST",
+		"https://storage.googleapis.com/storage/v1/b?project="+*project,
+		strings.NewReader(fmt.Sprintf(`{"name":%q,"iamConfiguration":{"uniformBucketLevelAccess":{"enabled":true}}}`, name)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		t.Fatalf("ensure framework bucket: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusConflict {
+		t.Fatalf("ensure framework bucket: HTTP %d", resp.StatusCode)
+	}
+}
+
+// breakLease unconditionally deletes a lease object — the operator's
+// force-release, and conformance's loss-injection hook. The object
+// name re-derives the store's app+env scoping, pinning it as contract.
+func breakLease(t *testing.T, c *gcpb.Client, name string) {
+	t.Helper()
+	obj := "leases/run-" + c.Opts.App + "-" + c.Opts.Env + "-" + name
+	u := "https://storage.googleapis.com/storage/v1/b/" + *project + "-tako/o/" + url.PathEscape(obj)
+	req, _ := http.NewRequestWithContext(context.Background(), "DELETE", u, nil)
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		t.Fatalf("break lease %s: %v", name, err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("break lease %s: HTTP %d", name, resp.StatusCode)
+	}
+}
+
+// purgeLeaseObjects removes this chapter's lease objects from the
+// shared framework bucket (the bucket itself stays).
+func purgeLeaseObjects(t *testing.T, c *gcpb.Client) {
+	prefix := "leases/run-" + c.Opts.App + "-"
+	u := "https://storage.googleapis.com/storage/v1/b/" + *project + "-tako/o?fields=items(name)&prefix=" + url.QueryEscape(prefix)
+	resp, err := c.HC.Get(u)
+	if err != nil {
+		t.Logf("lease cleanup list: %v", err)
+		return
+	}
+	var listing struct {
+		Items []struct {
+			Name string `json:"name"`
+		} `json:"items"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&listing)
+	resp.Body.Close()
+	for _, it := range listing.Items {
+		du := "https://storage.googleapis.com/storage/v1/b/" + *project + "-tako/o/" + url.PathEscape(it.Name)
+		req, _ := http.NewRequestWithContext(context.Background(), "DELETE", du, nil)
+		if r, err := c.HC.Do(req); err == nil {
+			r.Body.Close()
+		}
+	}
+}

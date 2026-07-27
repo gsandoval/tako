@@ -95,6 +95,11 @@ func BootGCP() error {
 	hooks.Signer = gcpb.NewSigner(c)
 	hooks.Cache = local.NewMemoryCache()
 	hooks.Metrics = local.NewMetricsLog()
+	// Leases are objects in the framework bucket — the real §4.4
+	// mechanism, shared with the deploy lease.
+	hooks.Lease = gcpb.NewLeaseStore(c)
+	hooks.LeaseOwner = leaseOwner()
+	hooks.CronSkipped = narrateCronSkip
 	// tako.Permanent short-circuits to this service's own dead topic:
 	// Pub/Sub cannot express "nack without retry", so PushHandler
 	// publishes and acks — one attempt, then dead-letter, like local.
@@ -145,7 +150,21 @@ func BootLocal(dir string) error {
 		fmt.Printf("☢ chaos: enabled (seed %d) — deliveries may duplicate, reorder, redeliver\n", seed)
 	}
 	booted = app
+	hooks.CronSkipped = narrateCronSkip
 	return nil
+}
+
+// narrateCronSkip is the singleflight skip line — a collapsed
+// overlapping run is the feature working, never an error.
+func narrateCronSkip(name string) {
+	fmt.Printf("↻ cron %s skipped — an overlapping run holds the lease\n", name)
+}
+
+// leaseOwner names this instance in lease records (the cloud face;
+// local boots name themselves in internal/boot).
+func leaseOwner() string {
+	host, _ := os.Hostname()
+	return fmt.Sprintf("%s-%d", host, os.Getpid())
 }
 
 // checkSecrets refuses to boot with any declared secret unset — that is

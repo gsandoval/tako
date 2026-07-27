@@ -96,6 +96,11 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		ensure(target{TargetRunService, cfg.Name(svc.Name)})
 		ensure(target{TargetServiceAccount, cfg.SAEmail(svc.Name)})
 	}
+	// The framework bucket is always managed (the deploy lease lives
+	// there), so it is always a grants target: an app that STOPS using
+	// locks converges to zero lease bindings instead of keeping stale
+	// objectAdmin.
+	ensure(target{TargetBucket, cfg.Project + "-tako"})
 
 	svcOf := map[string]string{} // handler var → service name
 	for _, h := range g.Handlers {
@@ -135,6 +140,19 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			if e.Verb == "publish" {
 				add(target{TargetTopic, cfg.Name(e.To)}, "roles/pubsub.publisher", member)
 			}
+		case "lock":
+			// Leases are objects in the framework bucket (spec §4.4) —
+			// object-level CAS writes need objectAdmin there. Bucket-wide
+			// (GCS has no prefix IAM); the summary names the lease use.
+			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin", member)
+		}
+	}
+
+	// Singleflight crons hold the same kind of lease without a Lock var.
+	for _, h := range g.Handlers {
+		if h.Kind == "cron" && h.Singleflight {
+			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin",
+				"serviceAccount:"+cfg.SAEmail(h.Service))
 		}
 	}
 

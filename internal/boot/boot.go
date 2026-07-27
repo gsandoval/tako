@@ -4,6 +4,11 @@
 package boot
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"os"
+
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
 	"github.com/gsandoval/tako/pkg/backends/local"
@@ -75,7 +80,20 @@ func Local(opts Options) (*App, error) {
 	hooks.Signer = signer
 	hooks.Cache = app.Cache
 	hooks.Metrics = app.Metrics
+	// One lease table per process: dev's whole app IS one instance, and
+	// TestApp goroutines contend on it for real.
+	hooks.Lease = local.NewMemoryLease()
+	hooks.LeaseOwner = leaseOwner()
 	return app, nil
+}
+
+// leaseOwner names this process in lease records — what an operator
+// sees on a wedged lease.
+func leaseOwner() string {
+	host, _ := os.Hostname()
+	var b [3]byte
+	_, _ = rand.Read(b[:])
+	return fmt.Sprintf("%s-%d-%s", host, os.Getpid(), hex.EncodeToString(b[:]))
 }
 
 // Close releases the app's resources.

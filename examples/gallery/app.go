@@ -8,6 +8,7 @@ import (
 	_ "image/gif" // register decoders: uploads arrive in any common format
 	"image/jpeg"
 	"image/png"
+	"sort"
 	"strings"
 	"time"
 
@@ -30,6 +31,13 @@ var (
 	notifier = tako.Secret("notifier-key")
 	ups      = tako.Counter("uploads")
 	thumbMs  = tako.Histogram("thumb_ms")
+
+	// relock guards the reindex critical section (spec §2.5/§4.4): a
+	// cross-entity, cross-bucket repair that must not interleave with
+	// itself — across ALL instances, which is what makes it a Lock and
+	// not a Tx. reruns is its ledger: every held window on record.
+	relock = tako.Lock("reindex")
+	reruns = tako.Entity[ReindexRun]("reindex-runs")
 )
 
 type Photo struct {
@@ -58,6 +66,8 @@ var (
 	Thumb       = tako.API("GET /api/photos/{id}/thumb", thumb)
 	List        = tako.API("GET /api/photos", list)
 	Objects     = tako.API("GET /api/objects", objects)
+	Reindex     = tako.API("POST /api/reindex", reindex)
+	ReindexRuns = tako.API("GET /api/reindex/runs", listRuns)
 
 	// The pipeline is event-driven end to end:
 	// upload → bucket event → queue → worker → topic → 2 subscribers.
@@ -298,6 +308,86 @@ func cleanupOrphans(ctx tako.Ctx) error {
 	return nil
 }
 
+// ReindexRun is one held reindex window — the ledger the validation
+// (and any operator) reads to see that runs never overlap.
+type ReindexRun struct {
+	ID       string    `entity:"id" json:"id"`
+	Started  time.Time `json:"started"`
+	Finished time.Time `json:"finished"`
+	Photos   int       `json:"photos"`  // ready photos verified
+	Demoted  int       `json:"demoted"` // thumbs found missing → Ready flipped off
+}
+
+// ReindexRes reports whether this call held the lock. started=false is
+// not an error: a rebuild is already running somewhere, and this call
+// collapsed into it.
+type ReindexRes struct {
+	Started bool       `json:"started"`
+	Run     ReindexRun `json:"run"`
+}
+
+// reindex repairs the gallery under the lock: TryDo, because a caller
+// finding a rebuild mid-flight should NOT queue another — the running
+// one already does the work.
+func reindex(ctx tako.Ctx, _ struct{}) (ReindexRes, error) {
+	var run ReindexRun
+	ran, err := relock.TryDo(ctx, func(ctx tako.Ctx) error {
+		var err error
+		run, err = rebuild(ctx)
+		return err
+	})
+	return ReindexRes{Started: ran, Run: run}, err
+}
+
+// rebuild is the critical section: verify every ready photo's thumb
+// still exists (demoting the entity when it doesn't — an operator may
+// have deleted objects), then rebuild every cached feed from the
+// repaired truth. Cross-entity + cross-bucket: exactly the shape that
+// needs a Lock, not a Tx.
+func rebuild(ctx tako.Ctx) (ReindexRun, error) {
+	run := ReindexRun{ID: tako.NewID(), Started: time.Now()}
+	all, err := photoStore.Query(ctx).Where("Ready", "=", true).Limit(1000).All()
+	if err != nil {
+		return run, err
+	}
+	owners := map[string]bool{"": true}
+	for _, p := range all {
+		ok, err := photos.Exists(ctx, p.ID+"_thumb")
+		if err != nil {
+			return run, err
+		}
+		if !ok {
+			if err := photoStore.Update(ctx, p.ID, func(p *Photo) { p.Ready = false }); err != nil {
+				return run, err
+			}
+			run.Demoted++
+			continue
+		}
+		owners[p.Owner] = true
+	}
+	run.Photos = len(all)
+	for owner := range owners {
+		current, err := readyPhotos(ctx, owner)
+		if err != nil {
+			return run, err
+		}
+		if err := feed.Put(ctx, feedKey(owner), current); err != nil {
+			return run, err
+		}
+	}
+	run.Finished = time.Now()
+	return run, reruns.Put(ctx, run)
+}
+
+func listRuns(ctx tako.Ctx, _ struct{}) ([]ReindexRun, error) {
+	runs, err := reruns.Query(ctx).All()
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Started.Before(runs[j].Started) })
+	return runs, nil
+}
+
 func objects(ctx tako.Ctx, _ struct{}) ([]tako.ObjectInfo, error) {
 	var out []tako.ObjectInfo
 	it := photos.List(ctx, "")
@@ -306,4 +396,3 @@ func objects(ctx tako.Ctx, _ struct{}) ([]tako.ObjectInfo, error) {
 	}
 	return out, it.Err()
 }
-

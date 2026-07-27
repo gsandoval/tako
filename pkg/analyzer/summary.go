@@ -40,7 +40,11 @@ func HandlerLine(h Handler) string {
 	case "subscribe":
 		return fmt.Sprintf("subscriber %s ← %s %s (%s)", ShortVar(h), h.BindingKind, h.Binding, ShortPos(h.Pos))
 	case "cron":
-		return fmt.Sprintf("cron %s — %s (%s)", ShortVar(h), h.Schedule, ShortPos(h.Pos))
+		flight := ""
+		if h.Singleflight {
+			flight = " (singleflight)"
+		}
+		return fmt.Sprintf("cron %s — %s%s (%s)", ShortVar(h), h.Schedule, flight, ShortPos(h.Pos))
 	}
 	return fmt.Sprintf("%s → %s%s (%s)", h.Route, ShortVar(h), lock, ShortPos(h.Pos))
 }

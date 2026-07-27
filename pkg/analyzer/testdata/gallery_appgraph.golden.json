@@ -12,6 +12,8 @@
         "gallery.Thumb",
         "gallery.List",
         "gallery.Objects",
+        "gallery.Reindex",
+        "gallery.ReindexRuns",
         "gallery.Cleanup"
       ],
       "profile": "default"
@@ -55,7 +57,7 @@
       "name": "photos",
       "var": "gallery.photos",
       "package": "gallery",
-      "pos": "app.go:20:2"
+      "pos": "app.go:21:2"
     },
     {
       "kind": "entity",
@@ -71,7 +73,7 @@
         "owner",
         "ready"
       ],
-      "pos": "app.go:21:2"
+      "pos": "app.go:22:2"
     },
     {
       "kind": "queue",
@@ -79,7 +81,7 @@
       "var": "gallery.thumbs",
       "package": "gallery",
       "type": "ThumbJob",
-      "pos": "app.go:22:2"
+      "pos": "app.go:23:2"
     },
     {
       "kind": "topic",
@@ -87,35 +89,50 @@
       "var": "gallery.ready",
       "package": "gallery",
       "type": "PhotoReady",
-      "pos": "app.go:23:2"
+      "pos": "app.go:24:2"
     },
     {
       "kind": "cache",
       "name": "feed",
       "var": "gallery.feed",
       "package": "gallery",
-      "pos": "app.go:29:2"
+      "pos": "app.go:30:2"
     },
     {
       "kind": "secret",
       "name": "notifier-key",
       "var": "gallery.notifier",
       "package": "gallery",
-      "pos": "app.go:30:2"
+      "pos": "app.go:31:2"
     },
     {
       "kind": "counter",
       "name": "uploads",
       "var": "gallery.ups",
       "package": "gallery",
-      "pos": "app.go:31:2"
+      "pos": "app.go:32:2"
     },
     {
       "kind": "histogram",
       "name": "thumb_ms",
       "var": "gallery.thumbMs",
       "package": "gallery",
-      "pos": "app.go:32:2"
+      "pos": "app.go:33:2"
+    },
+    {
+      "kind": "lock",
+      "name": "reindex",
+      "var": "gallery.relock",
+      "package": "gallery",
+      "pos": "app.go:39:2"
+    },
+    {
+      "kind": "entity",
+      "name": "reindex-runs",
+      "var": "gallery.reruns",
+      "package": "gallery",
+      "type": "ReindexRun",
+      "pos": "app.go:40:2"
     }
   ],
   "handlers": [
@@ -140,7 +157,7 @@
           "type": "blob"
         }
       ],
-      "pos": "app.go:54:2"
+      "pos": "app.go:62:2"
     },
     {
       "kind": "api",
@@ -150,7 +167,7 @@
       "route": "POST /api/uploads",
       "req_type": "StartUploadReq",
       "has_body": true,
-      "pos": "app.go:55:2"
+      "pos": "app.go:63:2"
     },
     {
       "kind": "api",
@@ -167,7 +184,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:56:2"
+      "pos": "app.go:64:2"
     },
     {
       "kind": "api",
@@ -185,7 +202,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:57:2"
+      "pos": "app.go:65:2"
     },
     {
       "kind": "api",
@@ -203,7 +220,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:58:2"
+      "pos": "app.go:66:2"
     },
     {
       "kind": "api",
@@ -211,7 +228,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos",
-      "pos": "app.go:59:2"
+      "pos": "app.go:67:2"
     },
     {
       "kind": "api",
@@ -219,7 +236,23 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/objects",
-      "pos": "app.go:60:2"
+      "pos": "app.go:68:2"
+    },
+    {
+      "kind": "api",
+      "var": "gallery.Reindex",
+      "package": "gallery",
+      "service": "gallery",
+      "route": "POST /api/reindex",
+      "pos": "app.go:69:2"
+    },
+    {
+      "kind": "api",
+      "var": "gallery.ReindexRuns",
+      "package": "gallery",
+      "service": "gallery",
+      "route": "GET /api/reindex/runs",
+      "pos": "app.go:70:2"
     },
     {
       "kind": "subscribe",
@@ -228,7 +261,7 @@
       "service": "gallery-onuploaded",
       "binding": "photos.Uploaded",
       "binding_kind": "bucket",
-      "pos": "app.go:64:2"
+      "pos": "app.go:74:2"
     },
     {
       "kind": "worker",
@@ -236,7 +269,7 @@
       "package": "gallery",
       "service": "gallery-makethumb",
       "binding": "thumbnails",
-      "pos": "app.go:65:2"
+      "pos": "app.go:75:2"
     },
     {
       "kind": "subscribe",
@@ -245,7 +278,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:66:2"
+      "pos": "app.go:76:2"
     },
     {
       "kind": "subscribe",
@@ -254,7 +287,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:67:2"
+      "pos": "app.go:77:2"
     },
     {
       "kind": "cron",
@@ -262,7 +295,8 @@
       "package": "gallery",
       "service": "gallery",
       "schedule": "every 24h",
-      "pos": "app.go:68:2"
+      "singleflight": true,
+      "pos": "app.go:78:2"
     }
   ],
   "edges": [
@@ -326,6 +360,48 @@
       "from": "gallery.Objects",
       "to": "photos",
       "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Reindex",
+      "to": "photos",
+      "to_kind": "bucket",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Reindex",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Reindex",
+      "to": "photos",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.Reindex",
+      "to": "reindex",
+      "to_kind": "lock",
+      "kind": "resource",
+      "verb": "lease"
+    },
+    {
+      "from": "gallery.Reindex",
+      "to": "reindex-runs",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "gallery.ReindexRuns",
+      "to": "reindex-runs",
+      "to_kind": "entity",
       "kind": "resource",
       "verb": "read"
     },

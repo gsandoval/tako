@@ -1,0 +1,1 @@
+app.go:6:24: tako.Lock name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)

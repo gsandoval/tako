@@ -41,6 +41,11 @@ func verbOf(kind, method string) string {
 		}
 	case "secret":
 		return "read"
+	case "lock":
+		switch method {
+		case "Do", "TryDo":
+			return "lease"
+		}
 	}
 	return ""
 }

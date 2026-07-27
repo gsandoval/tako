@@ -147,8 +147,14 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		})
 	}
 
+	singleflight := false
 	for _, opt := range call.Args[2:] {
-		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && !cronOptions[optName] {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if isOpt && optName == "WithSingleflight" {
+			singleflight = true
+			continue
+		}
+		if isOpt && !cronOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
 				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight)",
@@ -162,12 +168,13 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	}
 
 	return &Handler{
-		Kind:     "cron",
-		Var:      pkg.Name + "." + name.Name,
-		Package:  pkg.PkgPath,
-		Service:  pkg.Name,
-		Schedule: sched,
-		Pos:      relPos(dir, pkg.Fset, name.Pos()),
+		Kind:         "cron",
+		Var:          pkg.Name + "." + name.Name,
+		Package:      pkg.PkgPath,
+		Service:      pkg.Name,
+		Schedule:     sched,
+		Singleflight: singleflight,
+		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

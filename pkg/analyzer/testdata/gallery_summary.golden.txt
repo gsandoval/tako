@@ -1,13 +1,15 @@
 gallery: 5 services
   service gallery (package gallery, profile default)
-    POST /api/photos → Upload (app.go:54)
-    POST /api/uploads → StartUpload (app.go:55)
-    GET /api/photos/{id}/download → Download (app.go:56)
-    GET /api/photos/{id}/image → Image (app.go:57)
-    GET /api/photos/{id}/thumb → Thumb (app.go:58)
-    GET /api/photos → List (app.go:59)
-    GET /api/objects → Objects (app.go:60)
-    cron Cleanup — every 24h (app.go:68)
+    POST /api/photos → Upload (app.go:62)
+    POST /api/uploads → StartUpload (app.go:63)
+    GET /api/photos/{id}/download → Download (app.go:64)
+    GET /api/photos/{id}/image → Image (app.go:65)
+    GET /api/photos/{id}/thumb → Thumb (app.go:66)
+    GET /api/photos → List (app.go:67)
+    GET /api/objects → Objects (app.go:68)
+    POST /api/reindex → Reindex (app.go:69)
+    GET /api/reindex/runs → ReindexRuns (app.go:70)
+    cron Cleanup — every 24h (singleflight) (app.go:78)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -16,8 +18,10 @@ gallery: 5 services
     secret notifier-key
     counter uploads
     histogram thumb_ms
+    lock reindex
+    entity reindex-runs
   service gallery-onuploaded (package gallery, profile default)
-    subscriber OnUploaded ← bucket photos.Uploaded (app.go:64)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:74)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -26,8 +30,10 @@ gallery: 5 services
     secret notifier-key
     counter uploads
     histogram thumb_ms
+    lock reindex
+    entity reindex-runs
   service gallery-makethumb (package gallery, profile default)
-    worker MakeThumb ← queue thumbnails (app.go:65)
+    worker MakeThumb ← queue thumbnails (app.go:75)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -36,8 +42,10 @@ gallery: 5 services
     secret notifier-key
     counter uploads
     histogram thumb_ms
+    lock reindex
+    entity reindex-runs
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:66)
+    subscriber NotifyOwner ← topic photo-ready (app.go:76)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -46,8 +54,10 @@ gallery: 5 services
     secret notifier-key
     counter uploads
     histogram thumb_ms
+    lock reindex
+    entity reindex-runs
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:67)
+    subscriber WarmFeed ← topic photo-ready (app.go:77)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -56,3 +66,5 @@ gallery: 5 services
     secret notifier-key
     counter uploads
     histogram thumb_ms
+    lock reindex
+    entity reindex-runs

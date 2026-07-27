@@ -19,9 +19,10 @@ var cronInert bool
 
 // RegisterCron starts the named cron on its schedule. Generated mains
 // call it once per cron at startup; runs are serialized per cron — a
-// tick landing mid-run is skipped with a narration, the honest local
-// face of WithSingleflight (the cross-instance lease arrives with cloud
-// scheduling).
+// tick landing mid-run is skipped with a narration. WithSingleflight
+// additionally wraps the handler itself in the §4.4 lease (done at
+// declaration, so every trigger inherits it): overlapping runs
+// collapse across instances, narrated with the ↻ line.
 func RegisterCron(name string, h tako.Handler) {
 	kind, sched, invoke := hooks.HandlerInfo(h)
 	if kind != "cron" {

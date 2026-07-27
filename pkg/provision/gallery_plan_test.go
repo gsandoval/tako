@@ -107,6 +107,7 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  run service gallery-notifyowner
   + create  run service gallery-warmfeed
   + create  iam grants bucket my-proj-gallery-photos
+  + create  iam grants bucket my-proj-tako
   + create  iam grants project
   + create  iam grants run gallery
   + create  iam grants run gallery-makethumb
@@ -134,7 +135,7 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  push subscription gallery-makethumb
   + create  push subscription gallery-notifyowner
   + create  push subscription gallery-warmfeed
-  53 creates, 0 updates, 0 skips, 0 orphans
+  54 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)

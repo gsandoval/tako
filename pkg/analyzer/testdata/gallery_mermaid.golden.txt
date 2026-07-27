@@ -7,6 +7,8 @@ flowchart LR
     h_gallery_Thumb["GET /api/photos/{id}/thumb → Thumb"]
     h_gallery_List["GET /api/photos → List"]
     h_gallery_Objects["GET /api/objects → Objects"]
+    h_gallery_Reindex["POST /api/reindex → Reindex"]
+    h_gallery_ReindexRuns["GET /api/reindex/runs → ReindexRuns"]
     h_gallery_Cleanup["cron Cleanup — every 24h"]
   end
   subgraph svc_gallery_onuploaded["service gallery-onuploaded"]
@@ -29,6 +31,8 @@ flowchart LR
   r_secret_notifier_key(["secret notifier-key"])
   r_counter_uploads(["counter uploads"])
   r_histogram_thumb_ms(["histogram thumb_ms"])
+  r_lock_reindex(["lock reindex"])
+  r_entity_reindex_runs[("entity reindex-runs")]
   r_bucket_photos -. "photos.Uploaded" .-> h_gallery_OnUploaded
   r_queue_thumbnails --> h_gallery_MakeThumb
   r_topic_photo_ready --> h_gallery_NotifyOwner

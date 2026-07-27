@@ -349,6 +349,9 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			if fmt.Sprint(target["type"]) == provision.TargetProject {
 				line = fmt.Sprintf("%s on the project (GCP has no per-kind Datastore IAM)", b["role"])
 			}
+			if fmt.Sprint(target["type"]) == provision.TargetBucket && fmt.Sprint(target["id"]) == cfg.Project+"-tako" {
+				line = fmt.Sprintf("%s on the framework bucket (leases — Lock/singleflight)", b["role"])
+			}
 			byMember[member] = append(byMember[member], line)
 		}
 	}

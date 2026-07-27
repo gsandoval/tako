@@ -1,12 +1,16 @@
 package tako
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"reflect"
 	"runtime"
 	"strings"
 	"sync"
+
+	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/pkg/backends"
 )
 
 // Handlers are declared exactly like resources: a package-level var, a
@@ -154,12 +158,38 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Opti
 // Cron handlers run inside the package's app service. In tests,
 // app.AdvanceCron(name) fires one run synchronously.
 func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler {
+	name := fnName(fn)
+	invoke := func(ctx Ctx, _ []byte) error { return fn(ctx) }
+	for _, o := range opts {
+		if o.name == "singleflight" {
+			// The wrap lives HERE so every trigger — dev ticker,
+			// AdvanceCron, a future scheduler — inherits it: one CAS
+			// attempt on the cron's lease; held elsewhere means an
+			// overlapping run is live, and this one collapses into it.
+			invoke = singleflightInvoke(name, fn)
+		}
+	}
 	return register(Handler{
 		kind:   "cron",
 		source: schedule,
-		name:   fnName(fn),
-		invoke: func(ctx Ctx, _ []byte) error { return fn(ctx) },
+		name:   name,
+		invoke: invoke,
 	})
+}
+
+func singleflightInvoke(name string, fn func(Ctx) error) func(Ctx, []byte) error {
+	return func(ctx Ctx, _ []byte) error {
+		if hooks.Lease == nil {
+			return fn(ctx) // unwired (bare test): run plainly
+		}
+		ran, err := backends.TryDoLease(ctx, hooks.Lease, "cron-"+name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+			return fn(reroot(ctx, c))
+		})
+		if err == nil && !ran && hooks.CronSkipped != nil {
+			hooks.CronSkipped(name)
+		}
+		return err
+	}
 }
 
 // Singleton declares a long-running loop of which exactly one instance runs

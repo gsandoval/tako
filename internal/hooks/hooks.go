@@ -31,6 +31,18 @@ var Cache backends.Cache
 // Metrics is the wired metrics sink; nil until boot.
 var Metrics backends.Metrics
 
+// Lease is the wired lease backend (spec §4.4) behind tako.Lock and
+// cron singleflight; nil until boot.
+var Lease backends.Lease
+
+// LeaseOwner identifies this instance in lease records — set at boot,
+// unique per process (operators read it off a wedged lease).
+var LeaseOwner string
+
+// CronSkipped, when set (pkg/runtime), narrates a singleflight cron
+// run that found the lease held — a skip is normal, never an error.
+var CronSkipped func(name string)
+
 // DeclaredSecrets is set by the SDK at init: it lists every secret name
 // declared via tako.Secret, so boot can refuse to start with any unset.
 var DeclaredSecrets func() []string
