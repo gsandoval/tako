@@ -6074,3 +6074,51 @@ sized to OUTLIVE the service request timeout (the gate criterion:
 the execution completes anyway — judged from execution state + the
 report entity), invoice numbers assigned by exactly one instance,
 destroy removes the job. Transcript in the task log.
+
+## W10 — implementation + agent-side validation: Jobs + Singleton (2026-07-27)
+
+Landed per the auto-adopted proposal (d585a7b + 1bd9c4e live fixes).
+Local jobs ride the queue dispatcher (DrainQueues covers them, the
+TestApp wires them, failures dead-letter inspectably); cloud jobs are
+real Cloud Run JOBS — params over --tako-job-params, maxRetries 3,
+3600s timeout. Singletons are min=1/max=1 concurrency-1 services
+looping DoLease("singleton-<name>") — the W8 machinery, reused whole.
+The not-yet rule now covers only WithDomain/WithCDN.
+
+**Validation transcript (agent-side; W11 is the human gate):**
+- Suite: a settlement runs to completion through the local queue path
+  (report 2 orders/1200¢), invoice numbers strictly sequential in
+  arrival order and idempotent on re-sweep.
+- Cloud (tako-test-01, FOUR deployables): plan created `run job
+  shop-settle` + `iam grants runjob`; deploy printed the job line
+  ("no URL, no request timeout"); invoicer live at min=1.
+- **Six orders → invoices [1,2,3,4,5,6], strictly sequential**, all
+  assigned by the exactly-one lease-holding instance.
+- **THE GATE CRITERION: a settlement with throttleMs=60000 over 6
+  orders — the trigger returned instantly, the execution ran the job
+  body for 6m0.3s (DOUBLE the 300s service request timeout) and
+  Completed successfully; reports/2026-07-27 reads 6 orders /
+  4250¢, exactly the sum.** User deleted, destroy removed the job,
+  all four services, four+ sign-in domains, 10 entities.
+- **Fixed live (all wearing the honest error texts first):**
+  (1) singleton loops never derived the framework-bucket lease grant
+  — the invoicer 403-looped until grants covered kind singleton;
+  (2) run.invoker does NOT include run.jobs.runWithOverrides — the
+  params channel needs run.developer, now derived scoped to the one
+  job; (3) the v0 aggregate-composite "never under-indexes" claim
+  BROKE when orders' query shapes split — (owner, invoiced,
+  -created) served neither query; shop sorts in memory and the fix
+  is logged below.
+
+**Discovered work:**
+- Per-query composite derivation (the aggregate tuple under-indexes
+  split query shapes — hit live; the graph comment's claim was
+  falsified).
+- Stale composite indexes from mid-development schema changes are
+  invisible to destroy (three lingered; deleted by hand). Index
+  orphan detection wants to exist.
+- Job/singleton services reuse the async "OIDC push · redelivery"
+  ingress text in the security summary — wrong flavor, cosmetic.
+- WithProfile is accepted everywhere and extracted NOWHERE (all
+  services run default knobs) — pre-existing, noticed while wiring
+  job profiles.
