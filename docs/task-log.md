@@ -5485,3 +5485,71 @@ Transcript in the task log.
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+## W7 — implementation + agent-side validation: tako gen client ts; shop is born (2026-07-27)
+
+Landed as approved, all three scope calls as recommended (9c8d88b).
+`pkg/clientgen` walks Req/Res type TREES via the new
+`analyzer.AnalyzeTyped` (the AppGraph carries scalar bindings only);
+`Handler` now records `WithPrivate` so exclusions are graph-visible.
+Goldens pin the emitted TypeScript byte for byte (shortlink: body +
+path + query; gallery: the exclusion story — multipart upload excluded
+WITH its reason, blob downloads return the raw `Response`) and the
+diagnostics (`tako/client-type` for chan / non-string map keys,
+`tako/client-name` for method collisions — URLFor/UrlFor both
+camel-case to urlFor), plus a two-runs-byte-identical determinism pin.
+
+**examples/shop v0:** products/orders api (writes 🔒), email/password
+auth, TS frontend importing the COMMITTED generated client
+(web/src/api.ts; TestGeneratedClientIsFresh pins it against the Go
+signatures — drift fails the suite), bundled by WithBuild (esbuild via
+npx; Node on the deploying machine only — `go test` and `tako test`
+never need it). Suite: catalog/order flow, 3× anonymous-401 texts,
+unknown-product 404s, owner-scoped orders, 422 validation texts.
+
+**Validation transcript (agent-side; the human gate is W11):**
+- `tsc --noEmit --strict` clean on the generated clients of shortlink,
+  gallery, AND shop (including shop's app.ts importing it — the types
+  work in a real consumer).
+- Local: `tako test` green; dev walk on :8090 — home + bundled app.js
+  200, dev-session curl flow (add/list/get/order/list, 401 + 404
+  texts), then drive.mjs (Node + the generated client against dev):
+  typed results and `ApiError 401 "sign in to continue"` /
+  `ApiError 404 "unknown product"` as instanceof-checkable errors.
+- Cloud (tako-test-01): deploy 6m42s — WithBuild narrated (⛅ site …
+  2 files), composite `orders (owner, -created)` built, both Run host
+  forms authorized for sign-in, email provider found already enabled
+  (the declaration was satisfied — no narration, correctly), security
+  summary derived shop-sa + datastore.user, NO mutating-routes ⚠
+  (all writes carry WithAuth). First requests 403'd on runQuery for
+  ~40s (fresh-SA IAM propagation; the honest runtime-403 error text
+  fired) then converged untouched.
+- THE GATE CRITERION, verbatim: created w7test@example.com over the
+  API-key signUp, `signInWithPassword` → real RS256 ID token →
+  `POST /api/_session {idToken}` → Datastore-backed `_session` cookie
+  → **drive.mjs (Node, the generated client, baseUrl = the deployed
+  URL, Cookie in ClientOptions.headers) listed products and PLACED A
+  REAL ORDER (2 × cloud tea = 1050¢)**, listed it back, and surfaced
+  anonymous-401 + unknown-404 as typed ApiErrors. Sign-out deleted
+  the session record (dead cookie → 401); the throwaway user was
+  deleted.
+- Destroy: DATA named `products, orders` (sessions purged silently —
+  credentials, not content), both `✗ sign-in domain` lines fired,
+  project left clean.
+
+**Discovered work (not done, per scope):**
+- Multi-app projects: a full app destroy deletes the artifact repo
+  `tako` and the framework bucket, which are shared ACROSS APPS on
+  the project (journal + shop). Env-scoped destroys already spare
+  them; app destroys should count sibling apps first. (No harm this
+  walk — the project had no other app.)
+- Fresh-SA IAM propagation: the first ~1 min of runtime Datastore
+  calls can 403 with the "deploy bug" error text. A deploy-time
+  readiness probe (or propagation wording in that text) would spare
+  the alarm.
+- Orphaned dev processes accumulate across sessions (seven stale
+  `tako dev` roots found this walk); `tako dev` could reap or at
+  least list its own strays.
+
+W8 (Lock, WithSingleflight, Singleton — the §4.4 lease) follows; its
+DX proposal is the next stop.
