@@ -6122,3 +6122,22 @@ The not-yet rule now covers only WithDomain/WithCDN.
 - WithProfile is accepted everywhere and extracted NOWHERE (all
   services run default knobs) — pre-existing, noticed while wiring
   job profiles.
+
+## W11 — MILESTONE ASSEMBLED: shop, complete — awaiting the human gate (2026-07-27)
+
+Stage 3's final gate is ready. validate/shop.md is the single walk
+(local + cloud, F9 style) closing W7, W8, W9, and W10 — and with them
+STAGE 3. Everything below is already agent-validated per slice
+(transcripts above); the gate is the human's DX review of the whole:
+the generated TS client as the frontend contract, four deployables
+from one package tree, every trust edge live (private front door,
+revoke-and-heal, six-minute settlement, exactly-one invoicer), and
+the analyzer's error texts as product.
+
+Full tree green at this commit; all five example modules green. The
+verdict row in docs/validation-log.md closes the stage. Standing
+requirement carried since W6: the Identity Platform manual step is in
+docs/tako-cloud-permissions.md and MUST land in the final developer
+documentation (a Stage 4 deliverable). Stage 4 decomposition
+(scheduler, custom domains, per-query composites, the operator era)
+follows the verdict.
