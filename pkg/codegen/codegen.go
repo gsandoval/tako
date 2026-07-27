@@ -232,7 +232,10 @@ import (
 	}
 	b.WriteString("func main() {\n")
 
-	if hasResources(g, svc) {
+	if hasResources(g, svc) || hasAuth(g) {
+		// Auth is app-wide: even a resource-less service resolves
+		// PROPAGATED sessions (§2.12) against the shared session store,
+		// and that store is wired at boot.
 		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
 	}
 	b.WriteString(callBlock)

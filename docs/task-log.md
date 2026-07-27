@@ -5927,3 +5927,62 @@ session-record architecture replaces it. Threat model documented
 with the feature: presenting a session id is equivalent to
 presenting the session cookie — no new authority is minted.
 Service identity stays at the IAM layer (no ctx.Caller() in v0).
+
+## Stage 3 pacing note (user-directed, 2026-07-27)
+
+The user directed mid-W9: proceed through the remaining slices WITHOUT
+per-slice stops — the next human check is the W11 milestone gate. W10's
+DX proposal is still WRITTEN here (the record stands and is reviewable
+at the gate), but it auto-proceeds with its recommended options
+instead of pausing.
+
+## W9 — implementation + agent-side validation: cross-service Endpoints (2026-07-27)
+
+Landed as approved with all four calls (9255a56 + the billing boot fix
+below): route-as-wire, X-Tako-Deadline 500ms/1s, deploy-⚠s for
+economics, AUTOMATIC session propagation.
+
+**Discoveries while building:**
+- Call cycles need NO analyzer rule: calling b.Step requires importing
+  b, and package = service makes any service cycle an import cycle Go
+  itself refuses. The spec's "analyzer rejects call cycles" is
+  satisfied by construction; §2.12 gets a fix-up note.
+- The freeze held with zero new exported symbols: Endpoint learned its
+  package at construction (reflection at declaration, never the
+  request path) and Call consults a hooks registry the generated main
+  fills — nothing registered means direct in-process, which IS the
+  dev/test/co-located story.
+
+**Validation transcript (agent-side; the human gate is W11):**
+- Unit wire contract: OIDC bearer + session id + margin-reduced
+  deadline + trace id on the wire; billing's 422 typed through;
+  front-door 403 → the run.invoker remediation; sub-floor budget fails
+  before the network; a callee resolves a propagated session id and
+  rejects a forged one (the lookup IS the verification).
+- shop suite: ChargedBy=alice across the in-process hop, 422
+  verbatim, anonymous callers honestly anonymous, order carries its
+  receipt; analyzer error fixtures raw-call + mixed-ingress pinned.
+- Cloud (tako-test-01, two services): plan created billing with
+  IAM-only ingress; summary printed "ingress: IAM-only (callers:
+  shop-sa)" and "call graph: shop.PlaceOrder → billing.Charge"; the
+  cold-start ⚠ fired (billing is scale-to-zero, priced honestly).
+  Direct curl to billing → 403 at Google's front door. An
+  email-minted session placed an order THROUGH the OIDC hop (receipt
+  on the order); operator curl with a personal identity token +
+  X-Tako-Session resolved chargedBy to the real uid — session
+  propagation live on the callee. **THE GATE CRITERION: hand-revoked
+  run.invoker → orders failed with the exact readable text naming
+  the grant; re-deploy planned precisely `~ update iam grants run
+  billing` and orders healed.** Destroy unregistered BOTH services'
+  four sign-in domains and purged 10 entities.
+- **Fixed during validation:** billing's generated main skipped
+  runtime.Boot() (a resource-less package) so propagated sessions
+  resolved to nobody — chargedBy came back empty in the cloud while
+  local tests passed (TestApp boots everything). Codegen now boots
+  when the APP declares auth, not just when the package declares
+  resources. The fresh-grant IAM propagation window (~1–2 min) showed
+  twice more, wearing the honest error text both times.
+
+W10 (Jobs + the deferred Singleton, batch profile) proceeds without a
+stop per the user's pacing directive; W11 assembles shop complete and
+is the next human gate.
