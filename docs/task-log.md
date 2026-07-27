@@ -5692,3 +5692,64 @@ cron overlap, destroy clean. Transcript in the task log.
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+## W8 — implementation + agent-side validation: Lock + WithSingleflight (2026-07-27)
+
+Landed as approved, all three scope calls as recommended (caa47b1):
+Singleton deferred to W10, zero Lock options, gallery reindex as the
+real critical section.
+
+**Shape:** `backends.Lease` — three CAS ops (TryAcquire/Extend/
+Release, fencing tokens = GCS generations / a local counter);
+campaigning, ttl/3 heartbeats, and loss-cancellation are SHARED logic
+(DoLease/TryDoLease), so local and gcp cannot diverge semantically.
+gcp leases are ifGenerationMatch object writes in the framework
+bucket (`leases/run-<app>-<env>-<name>` — env-scoped; the deploy
+lease keeps `leases/deploy-…`). Lock.Do/TryDo wire through hooks;
+WithSingleflight wraps the cron handler AT DECLARATION (dev ticker,
+AdvanceCron, future scheduler all inherit); ↻ narration on skip.
+Lock use derives objectAdmin on the framework bucket, which is now
+ALWAYS a grants target (dropping lock use converges to revocation);
+plans grew one `iam grants bucket <project>-tako` line everywhere.
+Discovered while wiring gallery: Cleanup had declared
+WithSingleflight since F8 — accepted, recorded in the graph, and
+IGNORED until now; the declaration finally means something.
+
+**Validation transcript (agent-side; the human gate is W11):**
+- Conformance Lease chapter 7/7 on local AND live GCS (tako-test-01):
+  exclusion + non-reentrancy, TTL crash-expiry, stale fencing tokens
+  can't extend or release, DoLease serializes 3 contenders
+  (interleaving-free ledger), TryDo held/free, heartbeats carry a run
+  to 3× its ttl uncancelled, forced loss (unconditional object
+  delete — the operator move) cancels the run ctx and surfaces the
+  lost-lease error.
+- gallery suite: reindex repairs (torn thumb demoted, feeds rebuilt,
+  ledger window recorded), deterministic collapse (the test occupies
+  the very lease the handler campaigns for; ledger stays at one
+  entry), cron collapse via the pinned `cron-cleanupOrphans` name —
+  an orphan survives the collapsed run and dies on the free one.
+- Dev walk (:8090): banner shows `lock reindex` and
+  `cron Cleanup — every 24h (singleflight)`; reindex endpoint + runs
+  ledger live. (Two zombie dev processes from earlier sessions
+  squatted 8090 again — the loud port error named them both times.)
+- Cloud (tako-test-01): deploy 9m14s; security summary line verbatim:
+  "roles/storage.objectAdmin on the framework bucket (leases —
+  Lock/singleflight)"; the ⚠ open-mutating-routes warning now lists
+  POST /api/reindex (gallery's documented no-auth posture — the
+  system stays honest). Six photos seeded through the real pipeline.
+  **THE GATE CRITERION, exceeded: FOUR concurrent reindex POSTs
+  against the deployed service — exactly ONE held the GCS lease and
+  ran (6 photos verified, 252ms window), three answered
+  started:false. One ledger entry. A second round ran and the ledger
+  shows two disjoint windows.** Destroy clean (8 entities incl. the
+  reindex-runs ledger; framework bucket last).
+- Cron singleflight in the CLOUD is untriggerable today (crons are
+  inert until the scheduler feature — the ⚠ says so at deploy); its
+  collapse is pinned by suite + conformance. Noted for the scheduler
+  slice.
+- Cache-warming footnote from the walk: /api/photos read as 0 for up
+  to a minute after seeding — the per-instance feed cache being
+  honest (v0's documented posture), not a pipeline failure.
+
+W9 (cross-service Endpoints — typed calls, OIDC, deadline budgets;
+shop splits into services) follows; its DX proposal is the next stop.
