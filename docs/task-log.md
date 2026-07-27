@@ -5907,3 +5907,23 @@ and cold-start ⚠s judged, destroy. Transcript in the task log.
 
 **STOP — awaiting DX approval (and the three §1 scope calls) before
 implementation.**
+
+## W9 — proposal amendment: automatic session propagation (user-directed, 2026-07-27)
+
+§1 gains a fourth approved call: **cross-service calls carry the
+user automatically.** The stub attaches the caller's session ID as a
+header when the calling ctx has one; the callee resolves it against
+the SAME `_tako_session` store every service already reads (W5's
+Datastore-backed sessions are what make this cheap — verification is
+a record lookup, not crypto). `ctx.User()` in billing is alice, the
+same verified, revocable identity as in shop; a worker or cron
+calling the same endpoint has no session and `MaybeUser()` is
+honestly false; deleting the session record kills the identity
+mid-chain. WithAuth on a private endpoint = IAM-authenticated caller
+AND a signed-in user behind it. No new exported symbols — automatic,
+so the F10 freeze holds. Spec fix-up recorded for §2.12's "off by
+default" sentence: that caution priced the SIGNED-header design; the
+session-record architecture replaces it. Threat model documented
+with the feature: presenting a session id is equivalent to
+presenting the session cookie — no new authority is minted.
+Service identity stays at the IAM layer (no ctx.Caller() in v0).
