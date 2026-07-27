@@ -1,0 +1,1 @@
+app.go:8:2: chan int cannot ride JSON — client types are strings, bools, numbers, time.Time, slices, string-keyed maps, and exported structs of those (tako/client-type)

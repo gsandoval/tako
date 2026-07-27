@@ -1,0 +1,1 @@
+app.go:8:2: map key int cannot ride JSON — client types need map[string]T (tako/client-type)

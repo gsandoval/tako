@@ -1,0 +1,1 @@
+app.go:7:5: client method urlFor already generated from collision.URLFor — endpoint vars must map to distinct method names (tako/client-name)

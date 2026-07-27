@@ -186,3 +186,29 @@ func TestJournalSummary(t *testing.T) {
 	}
 	compareGolden(t, "testdata/journal_summary.golden.txt", []byte(Summary(g)))
 }
+
+// TestShopGraph goldens the AppGraph of examples/shop — W7's acceptance
+// graph: an api-only service with a WithBuild site and email auth, the
+// input `tako gen client ts` consumes.
+func TestShopGraph(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/shop")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/shop): %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	compareGolden(t, "testdata/shop_appgraph.golden.json", got)
+}
+
+// TestShopSummary goldens the summary with 🔒 api routes, the build
+// site, and the email auth line.
+func TestShopSummary(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/shop")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/shop): %v", err)
+	}
+	compareGolden(t, "testdata/shop_summary.golden.txt", []byte(Summary(g)))
+}

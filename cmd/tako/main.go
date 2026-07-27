@@ -54,6 +54,9 @@ Usage:
   tako gen graph [--json | --mermaid]
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
+  tako gen client ts [--out <path>]
+                       generate a typed TypeScript client for the app's
+                       api endpoints (default .tako/gen/client/ts/api.ts)
 
 Commands arriving in later slices: a migrating tako rename.
 `
@@ -117,6 +120,12 @@ func main() {
 			fail(err)
 		}
 	case "gen":
+		if len(os.Args) >= 3 && os.Args[2] == "client" {
+			if err := runGenClient(os.Args[3:]); err != nil {
+				fail(err)
+			}
+			return
+		}
 		if len(os.Args) < 3 || os.Args[2] != "graph" {
 			fmt.Fprint(os.Stderr, usage)
 			os.Exit(2)

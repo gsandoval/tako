@@ -56,6 +56,32 @@ func (l ErrorList) Error() string {
 // returns an ErrorList when the app violates analysis rules, or another
 // error when the module doesn't load (e.g. it doesn't compile).
 func Analyze(cfg Config) (*AppGraph, error) {
+	tg, err := AnalyzeTyped(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return tg.Graph, nil
+}
+
+// TypedGraph is Analyze's output plus the go/types view that generators
+// beyond codegen need: clientgen walks handler Req/Res type TREES, which
+// the JSON-shaped AppGraph deliberately does not carry.
+type TypedGraph struct {
+	// Graph is the ordinary analysis output.
+	Graph *AppGraph
+	// Funcs maps a handler's Var to its root function; the signature
+	// yields the Req (param 1) and Res (result 0) types.
+	Funcs map[string]*types.Func
+	// Fset renders positions of objects reached through Funcs.
+	Fset *token.FileSet
+	// Dir is the analyzed module directory (positions render relative
+	// to it).
+	Dir string
+}
+
+// AnalyzeTyped is Analyze, keeping the typed view alive for generators
+// that walk beyond the AppGraph.
+func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	if abs, err := filepath.Abs(cfg.Dir); err == nil {
 		cfg.Dir = abs
 	}
@@ -265,7 +291,8 @@ func Analyze(cfg Config) (*AppGraph, error) {
 		}
 	}
 	graph.Edges = deriveEdges(pkgs, resourceVars, handlerFuncs, graph.Handlers)
-	return graph, nil
+	// go/packages shares one FileSet across the load when none is given.
+	return &TypedGraph{Graph: graph, Funcs: handlerFuncs, Fset: pkgs[0].Fset, Dir: cfg.Dir}, nil
 }
 
 // sdkConstructor returns the SDK constructor name a call invokes ("API",

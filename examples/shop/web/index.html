@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>shop</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
+    button { cursor: pointer; }
+    .product { display: flex; justify-content: space-between; align-items: center; padding: .5rem 0; border-bottom: 1px solid #ddd; }
+    #status { color: #b00; min-height: 1.5rem; }
+  </style>
+</head>
+<body>
+  <h1>shop</h1>
+  <p><a href="/api/_session/signin?next=/">sign in</a> to buy.</p>
+  <div id="status"></div>
+  <div id="products">loading…</div>
+  <h2>your orders</h2>
+  <div id="orders">sign in to see orders.</div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

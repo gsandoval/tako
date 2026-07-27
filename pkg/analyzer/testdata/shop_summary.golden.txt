@@ -1,0 +1,11 @@
+shop: 1 service
+  service shop (package shop, profile default)
+    GET /api/products → ListProducts (app.go:53)
+    GET /api/products/{id} → GetProduct (app.go:54)
+    POST /api/products → AddProduct 🔒 (app.go:55)
+    POST /api/orders → PlaceOrder 🔒 (app.go:56)
+    GET /api/orders → ListOrders 🔒 (app.go:57)
+    entity products
+    entity orders (indexes: Owner, Created)
+    site ./web/dist
+    auth (email)

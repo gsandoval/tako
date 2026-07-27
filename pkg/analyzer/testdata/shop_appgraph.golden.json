@@ -1,0 +1,165 @@
+{
+  "module": "shop",
+  "services": [
+    {
+      "name": "shop",
+      "package": "shop",
+      "handlers": [
+        "shop.ListProducts",
+        "shop.GetProduct",
+        "shop.AddProduct",
+        "shop.PlaceOrder",
+        "shop.ListOrders"
+      ],
+      "profile": "default"
+    }
+  ],
+  "resources": [
+    {
+      "kind": "entity",
+      "name": "products",
+      "var": "shop.products",
+      "package": "shop",
+      "type": "Product",
+      "pos": "app.go:22:2"
+    },
+    {
+      "kind": "entity",
+      "name": "orders",
+      "var": "shop.orders",
+      "package": "shop",
+      "type": "Order",
+      "indexes": [
+        "Owner",
+        "Created"
+      ],
+      "composite": [
+        "owner",
+        "-created"
+      ],
+      "pos": "app.go:23:2"
+    },
+    {
+      "kind": "site",
+      "name": "./web/dist",
+      "var": "shop.site",
+      "package": "shop",
+      "dir": "web/dist",
+      "build": "cd web \u0026\u0026 npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js \u0026\u0026 cp index.html dist/",
+      "build_out": "web/dist",
+      "pos": "app.go:28:2"
+    },
+    {
+      "kind": "auth",
+      "name": "auth",
+      "var": "shop.auth",
+      "package": "shop",
+      "providers": [
+        "email"
+      ],
+      "pos": "app.go:34:2"
+    }
+  ],
+  "handlers": [
+    {
+      "kind": "api",
+      "var": "shop.ListProducts",
+      "package": "shop",
+      "service": "shop",
+      "route": "GET /api/products",
+      "pos": "app.go:53:2"
+    },
+    {
+      "kind": "api",
+      "var": "shop.GetProduct",
+      "package": "shop",
+      "service": "shop",
+      "route": "GET /api/products/{id}",
+      "req_type": "GetProductReq",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:54:2"
+    },
+    {
+      "kind": "api",
+      "var": "shop.AddProduct",
+      "package": "shop",
+      "service": "shop",
+      "route": "POST /api/products",
+      "requires_auth": true,
+      "req_type": "AddProductReq",
+      "has_body": true,
+      "pos": "app.go:55:2"
+    },
+    {
+      "kind": "api",
+      "var": "shop.PlaceOrder",
+      "package": "shop",
+      "service": "shop",
+      "route": "POST /api/orders",
+      "requires_auth": true,
+      "req_type": "PlaceOrderReq",
+      "has_body": true,
+      "pos": "app.go:56:2"
+    },
+    {
+      "kind": "api",
+      "var": "shop.ListOrders",
+      "package": "shop",
+      "service": "shop",
+      "route": "GET /api/orders",
+      "requires_auth": true,
+      "pos": "app.go:57:2"
+    }
+  ],
+  "edges": [
+    {
+      "from": "shop.ListProducts",
+      "to": "products",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.GetProduct",
+      "to": "products",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.AddProduct",
+      "to": "products",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.PlaceOrder",
+      "to": "orders",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.PlaceOrder",
+      "to": "products",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.ListOrders",
+      "to": "orders",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    }
+  ]
+}

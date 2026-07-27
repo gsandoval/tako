@@ -108,6 +108,11 @@ type Handler struct {
 	// RequiresAuth marks a route declared with tako.WithAuth: the shim
 	// guarantees ctx.User past a 401 gate.
 	RequiresAuth bool `json:"requires_auth,omitempty"`
+	// Private marks a route declared with tako.WithPrivate: IAM-only
+	// ingress, unreachable by browsers (excluded from generated
+	// browser clients; enforced at deploy from Phase H's service
+	// slice).
+	Private bool `json:"private,omitempty"`
 	// BindingKind distinguishes a Subscribe handler's source: "topic" or
 	// "bucket". Empty for workers (always a queue) and sync handlers.
 	BindingKind string `json:"binding_kind,omitempty"`
