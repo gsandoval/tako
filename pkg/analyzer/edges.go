@@ -1,6 +1,7 @@
 package analyzer
 
 import (
+	"fmt"
 	"go/ast"
 	"go/types"
 	"sort"
@@ -69,17 +70,30 @@ func funcArg(pkg *packages.Package, call *ast.CallExpr, idx int) *types.Func {
 	return nil
 }
 
-// deriveEdges computes resource-usage edges: for each handler, an AST
-// reference scan of its function, transitive through same-module calls
-// (v0 per spec §4.4 — slightly over-grants, never under-reports). Verbs
-// come from the SDK method invoked on the resource var.
-func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handlerFuncs map[string]*types.Func, handlers []Handler) []Edge {
+// deriveEdges computes resource-usage and service-call edges: for each
+// handler, an AST reference scan of its function, transitive through
+// same-module calls (v0 per spec §4.4 — slightly over-grants, never
+// under-reports). Verbs come from the SDK method invoked on the
+// resource var; a `.Call` on another handler's Endpoint var is a call
+// edge (§2.12). Raw cross-package handler-function calls — the hidden
+// RPC boundary — are diagnosed here, where the scan already looks.
+func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, handlers []Handler) ([]Edge, ErrorList) {
 	type ref struct {
 		res  resRef
 		verb string
 	}
 	refs := map[*types.Func][]ref{}          // direct resource touches per function
+	epRefs := map[*types.Func][]string{}     // Endpoint .Call targets per function
 	calls := map[*types.Func][]*types.Func{} // same-module call graph
+	var errs ErrorList
+
+	// Handler root functions, for the raw-cross-package-call error.
+	rootVarOf := map[*types.Func]string{}
+	for v, fn := range handlerFuncs {
+		if fn != nil {
+			rootVarOf[fn] = v
+		}
+	}
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
@@ -98,6 +112,21 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 						return true
 					}
 					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+						// endpoint.Call / pkg.Endpoint.Call → a typed
+						// service call (§2.12).
+						if sel.Sel.Name == "Call" {
+							var obj types.Object
+							switch x := sel.X.(type) {
+							case *ast.Ident:
+								obj = pkg.TypesInfo.Uses[x]
+							case *ast.SelectorExpr:
+								obj = pkg.TypesInfo.Uses[x.Sel]
+							}
+							if callee, ok := endpoints[obj]; ok {
+								epRefs[fn] = append(epRefs[fn], callee)
+								return true
+							}
+						}
 						if id, ok := sel.X.(*ast.Ident); ok {
 							if r, ok := vars[pkg.TypesInfo.Uses[id]]; ok {
 								if v := verbOf(r.kind, sel.Sel.Name); v != "" {
@@ -106,8 +135,16 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 								return true
 							}
 						}
-						if callee, ok := pkg.TypesInfo.Uses[sel.Sel].(*types.Func); ok && callee.Pkg() == pkg.Types {
-							calls[fn] = append(calls[fn], callee)
+						if callee, ok := pkg.TypesInfo.Uses[sel.Sel].(*types.Func); ok {
+							if callee.Pkg() == pkg.Types {
+								calls[fn] = append(calls[fn], callee)
+							} else if v, isRoot := rootVarOf[callee]; isRoot {
+								errs = append(errs, &Error{
+									Pos: relPos(dir, pkg.Fset, call.Pos()),
+									Msg: fmt.Sprintf("%s is a handler function — cross-service calls go through the Endpoint var (%s.Call(ctx, req)) so the RPC boundary stays visible", callee.Name(), v),
+									Rule: "raw-call",
+								})
+							}
 						}
 						return true
 					}
@@ -147,6 +184,30 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 		return out
 	}
 
+	// The same transitive union, for call targets.
+	epMemo := map[*types.Func]map[string]bool{}
+	var epReach func(fn *types.Func, seen map[*types.Func]bool) map[string]bool
+	epReach = func(fn *types.Func, seen map[*types.Func]bool) map[string]bool {
+		if got, ok := epMemo[fn]; ok {
+			return got
+		}
+		if seen[fn] {
+			return nil
+		}
+		seen[fn] = true
+		out := map[string]bool{}
+		for _, t := range epRefs[fn] {
+			out[t] = true
+		}
+		for _, callee := range calls[fn] {
+			for t := range epReach(callee, seen) {
+				out[t] = true
+			}
+		}
+		epMemo[fn] = out
+		return out
+	}
+
 	edges := []Edge{}
 	for _, h := range handlers {
 		fn := handlerFuncs[h.Var]
@@ -157,6 +218,12 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 		hs := make([]Edge, 0, len(set))
 		for r := range set {
 			hs = append(hs, Edge{From: h.Var, To: r.res.name, ToKind: r.res.kind, Kind: "resource", Verb: r.verb})
+		}
+		for t := range epReach(fn, map[*types.Func]bool{}) {
+			if t == h.Var {
+				continue // self-calls are just recursion
+			}
+			hs = append(hs, Edge{From: h.Var, To: t, Kind: "call", Verb: "call"})
 		}
 		sort.Slice(hs, func(i, j int) bool {
 			if hs[i].To != hs[j].To {
@@ -169,5 +236,5 @@ func deriveEdges(pkgs []*packages.Package, vars map[types.Object]resRef, handler
 		})
 		edges = append(edges, hs...)
 	}
-	return edges
+	return edges, errs
 }

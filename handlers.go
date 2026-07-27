@@ -23,6 +23,7 @@ import (
 // Endpoint var is callable from other service packages as a typed RPC.
 type Endpoint[Req, Res any] struct {
 	route string
+	pkg   string // declaring package path — the callee identity remote transports key on
 	opts  []Option
 	fn    func(Ctx, Req) (Res, error)
 }
@@ -33,6 +34,14 @@ type Endpoint[Req, Res any] struct {
 func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 	if e.fn == nil {
 		panic("tako: Call on a zero Endpoint — endpoints are declared with tako.API or tako.Page")
+	}
+	// A remote transport, when the generated main wired one for this
+	// endpoint's service (cloud only — dev and tests stay in-process,
+	// and so do co-located packages, which are never registered).
+	if raw := hooks.RemoteCallFor(e.pkg + " " + e.route); raw != nil {
+		if t, ok := raw.(func(Ctx, Req) (Res, error)); ok {
+			return t(ctx, req)
+		}
 	}
 	return e.fn(ctx, req)
 }
@@ -87,6 +96,19 @@ func declaredSecrets() []string {
 
 // fnName names a handler function for test wiring: the last segment of
 // its qualified name ("shortlink.countClick" → "countClick").
+// pkgOf is the declaring package path of a handler function —
+// constructor-time reflection (never the request path). The cut is the
+// first dot after the last slash: closures carry extra .funcN segments.
+func pkgOf(fn any) string {
+	pc := reflect.ValueOf(fn).Pointer()
+	full := runtime.FuncForPC(pc).Name()
+	slash := strings.LastIndexByte(full, '/')
+	if dot := strings.IndexByte(full[slash+1:], '.'); dot >= 0 {
+		return full[:slash+1+dot]
+	}
+	return full
+}
+
 func fnName(fn any) string {
 	pc := reflect.ValueOf(fn).Pointer()
 	full := runtime.FuncForPC(pc).Name()
@@ -102,14 +124,14 @@ func fnName(fn any) string {
 // untagged fields bind from the JSON body; binding code is generated
 // statically. An empty Req struct is fine.
 func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res] {
-	return Endpoint[Req, Res]{route: route, opts: opts, fn: fn}
+	return Endpoint[Req, Res]{route: route, pkg: pkgOf(fn), opts: opts, fn: fn}
 }
 
 // Page declares a server-rendered route. It binds Req exactly like API
 // (form: tags cover browser form posts) and returns HTML; CSRF is enforced
 // automatically on unsafe-method page routes.
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML] {
-	return Endpoint[Req, HTML]{route: route, opts: opts, fn: fn}
+	return Endpoint[Req, HTML]{route: route, pkg: pkgOf(fn), opts: opts, fn: fn}
 }
 
 // Worker binds fn as the single consumer of queue. Like every async

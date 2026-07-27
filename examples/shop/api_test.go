@@ -140,6 +140,9 @@ func TestCatalogAndOrderFlow(t *testing.T) {
 	if res3.StatusCode != 200 || order.TotalCents != 1350 || order.Qty != 3 {
 		t.Fatalf("order = %d %+v, want total 1350", res3.StatusCode, order)
 	}
+	if order.ReceiptID == "" {
+		t.Fatal("order carries no receipt — the billing.Charge call did not happen")
+	}
 
 	mine, _ := getJSON[[]Order](t, alice, srv.URL+"/api/orders")
 	if len(mine) != 1 || mine[0].ID != order.ID {
@@ -245,8 +248,11 @@ func TestGeneratedClientIsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Endpoints != 5 || len(sum.Excluded) != 0 {
-		t.Fatalf("summary = %+v, want 5 endpoints, none excluded", sum)
+	if sum.Endpoints != 5 || len(sum.Excluded) != 1 {
+		t.Fatalf("summary = %+v, want 5 endpoints and billing.Charge excluded (private)", sum)
+	}
+	if !strings.Contains(sum.Excluded[0].Reason, "private") {
+		t.Fatalf("exclusion reason = %q, want the private explanation", sum.Excluded[0].Reason)
 	}
 	committed, err := os.ReadFile("web/src/api.ts")
 	if err != nil {

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -202,6 +203,7 @@ func runDeploy(args []string) error {
 	plan := provision.Compute(app, t.env, desired, observed)
 	fmt.Printf("  plan\n%s", indentPlan(plan.Render()))
 	warnInertCrons(graph)
+	warnCallEdges(graph)
 
 	if t.planOnly {
 		return nil
@@ -361,6 +363,26 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			public[o.Name], _ = o.Spec["public"].(bool)
 		}
 	}
+	// Private ROUTE services (WithPrivate) close ingress like async
+	// services, but the honest text names the granted callers instead
+	// of the push identity.
+	privateRoutes := map[string]bool{}
+	svcOfVar := map[string]string{}
+	for _, h := range graph.Handlers {
+		svcOfVar[h.Var] = h.Service
+		if (h.Kind == "api" || h.Kind == "page") && h.Private {
+			privateRoutes[h.Service] = true
+		}
+	}
+	callersOf := map[string][]string{}
+	var callLines []string
+	for _, e := range graph.Edges {
+		if e.Kind != "call" || svcOfVar[e.From] == svcOfVar[e.To] {
+			continue
+		}
+		callersOf[svcOfVar[e.To]] = append(callersOf[svcOfVar[e.To]], cfg.SAName(svcOfVar[e.From]))
+		callLines = append(callLines, fmt.Sprintf("%s → %s", e.From, e.To))
+	}
 	for _, svc := range graph.Services {
 		email := cfg.SAEmail(svc.Name)
 		grants := byMember["serviceAccount:"+email]
@@ -371,6 +393,14 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 		ingress := "public ingress"
 		if !public[cfg.Name(svc.Name)] {
 			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
+			if privateRoutes[svc.Name] {
+				callers := "no granted callers yet"
+				if cs := callersOf[svc.Name]; len(cs) > 0 {
+					sort.Strings(cs)
+					callers = "callers: " + strings.Join(cs, ", ")
+				}
+				ingress = "ingress: IAM-only (" + callers + ")"
+			}
 		}
 		fmt.Printf("  %s runs as %s —\n    %s; %s\n", cfg.Name(svc.Name), email, grantText, ingress)
 		if public[cfg.Name(svc.Name)] {
@@ -389,6 +419,10 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 					len(open), strings.Join(open, ", "))
 			}
 		}
+	}
+	if len(callLines) > 0 {
+		sort.Strings(callLines)
+		fmt.Printf("  call graph: %s\n", strings.Join(callLines, " · "))
 	}
 }
 
@@ -434,6 +468,45 @@ func warnInertCrons(graph *analyzer.AppGraph) {
 	for _, h := range graph.Handlers {
 		if h.Kind == "cron" {
 			fmt.Printf("  ⚠ cron %s is not scheduled in the cloud yet (a scheduler feature follows); it still runs under tako dev\n", h.Var)
+		}
+	}
+}
+
+// warnCallEdges surfaces Cloud Run's sync-call costs at deploy time
+// (§2.12 — profile-dependent judgments live here, not the analyzer):
+// a call into a scale-to-zero callee pays its cold start on the
+// caller's clock, and chains past one hop couple autoscaling.
+func warnCallEdges(graph *analyzer.AppGraph) {
+	svcOf := map[string]string{}
+	profile := map[string]string{}
+	for _, h := range graph.Handlers {
+		svcOf[h.Var] = h.Service
+	}
+	for _, s := range graph.Services {
+		profile[s.Name] = s.Profile
+	}
+	callPairs := map[[2]string]bool{}
+	for _, e := range graph.Edges {
+		if e.Kind != "call" || svcOf[e.From] == svcOf[e.To] {
+			continue
+		}
+		callPairs[[2]string{svcOf[e.From], svcOf[e.To]}] = true
+	}
+	var pairs [][2]string
+	for p := range callPairs {
+		pairs = append(pairs, p)
+	}
+	sort.Slice(pairs, func(i, j int) bool { return pairs[i][0]+pairs[i][1] < pairs[j][0]+pairs[j][1] })
+	for _, p := range pairs {
+		if profile[p[1]] == "default" {
+			fmt.Printf("  ⚠ sync call %s → %s lands on a scale-to-zero service — cold starts bill the caller's latency; give %s tako.WithProfile(tako.Latency) (min-instance cost) or make the interaction async\n",
+				p[0], p[1], p[1])
+		}
+		for _, q := range pairs {
+			if q[0] == p[1] {
+				fmt.Printf("  ⚠ sync call chain %s → %s → %s — waiting callers hold their own request slots and couple the services' autoscaling; prefer events past one hop\n",
+					p[0], p[1], q[1])
+			}
 		}
 	}
 }

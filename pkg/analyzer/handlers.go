@@ -193,6 +193,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	if ctor == "Page" {
 		kind = "page"
 	}
+	reqRef, resRef := qualifiedSignature(pkg, call.Args[1])
 	return &Handler{
 		Kind:         kind,
 		Var:          pkg.Name + "." + name.Name,
@@ -200,6 +201,8 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		Service:      pkg.Name,
 		Route:        route,
 		ReqType:      req.ref,
+		ReqRef:       reqRef,
+		ResRef:       resRef,
 		Bindings:     bindings,
 		HasBody:      hasBody,
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
@@ -269,6 +272,23 @@ func resIsBlob(pkg *packages.Package, fnExpr ast.Expr) bool {
 
 // tagOf parses a raw struct-tag string.
 func tagOf(raw string) reflect.StructTag { return reflect.StructTag(raw) }
+
+// qualifiedSignature renders the handler's Req and Res types the way
+// ANOTHER package's generated code references them — package-name
+// qualified ("billing.ChargeReq"). Remote call stubs (§2.12) need both.
+func qualifiedSignature(pkg *packages.Package, fnExpr ast.Expr) (reqRef, resRef string) {
+	tv, ok := pkg.TypesInfo.Types[fnExpr]
+	if !ok {
+		return "", ""
+	}
+	sig, ok := tv.Type.(*types.Signature)
+	if !ok || sig.Params().Len() < 2 || sig.Results().Len() < 1 {
+		return "", ""
+	}
+	qual := func(p *types.Package) string { return p.Name() }
+	return types.TypeString(sig.Params().At(1).Type(), qual),
+		types.TypeString(sig.Results().At(0).Type(), qual)
+}
 
 // binding builds one Binding, checking the field's type is bindable.
 func (f field) binding(dir string, pkg *packages.Package, kind, name string, fail func(*Error)) Binding {

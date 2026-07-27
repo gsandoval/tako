@@ -107,6 +107,19 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		svcOf[h.Var] = h.Service
 	}
 
+	// Call edges (§2.12): the caller's SA may invoke the callee — the
+	// whole cross-service trust model in one derived binding.
+	for _, e := range g.Edges {
+		if e.Kind != "call" {
+			continue
+		}
+		from, to := svcOf[e.From], svcOf[e.To]
+		if from == "" || to == "" || from == to {
+			continue
+		}
+		add(target{TargetRunService, cfg.Name(to)}, "roles/run.invoker", "serviceAccount:"+cfg.SAEmail(from))
+	}
+
 	for _, e := range g.Edges {
 		if e.Kind != "resource" {
 			continue

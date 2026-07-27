@@ -4,6 +4,9 @@
 // dependencies. The session cookie rides every call (same-origin);
 // non-GET requests attach X-CSRF-Token from the page's meta tag.
 // int64 fields ride as number — values past 2^53 lose precision.
+//
+// Excluded (not browser-callable):
+//   billing.Charge POST /charge — private (IAM-only — browsers cannot mint OIDC)
 
 /** shop.Product */
 export interface Product {
@@ -31,6 +34,7 @@ export interface Order {
   productId: string;
   qty: number;
   totalCents: number;
+  receiptId: string;
   created: string;
 }
 

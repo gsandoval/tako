@@ -123,6 +123,12 @@ type Handler struct {
 	// ReqType names the request struct as generated code references it
 	// within the handler's package; empty for struct{}.
 	ReqType string `json:"req_type,omitempty"`
+	// ReqRef and ResRef are the request/response types as OTHER
+	// packages' generated code references them (package-name
+	// qualified, e.g. "billing.ChargeReq") — remote call stubs (§2.12)
+	// name both. ResRef may be a basic or slice expression.
+	ReqRef string `json:"req_ref,omitempty"`
+	ResRef string `json:"res_ref,omitempty"`
 	// Bindings are the request struct's tagged fields, in source order.
 	Bindings []Binding `json:"bindings,omitempty"`
 	// HasBody reports whether untagged request fields bind from the JSON

@@ -1,0 +1,1 @@
+app.go:13:9: ChargeFn is a handler function — cross-service calls go through the Endpoint var (billing.Charge.Call(ctx, req)) so the RPC boundary stays visible (tako/raw-call)

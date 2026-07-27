@@ -15,6 +15,8 @@ import (
 	"sort"
 	"time"
 
+	"shop/billing"
+
 	"github.com/gsandoval/tako"
 )
 
@@ -46,6 +48,7 @@ type Order struct {
 	ProductID  string    `json:"productId"`
 	Qty        int       `json:"qty"`
 	TotalCents int       `json:"totalCents"`
+	ReceiptID  string    `json:"receiptId"` // billing's receipt — the cross-service hop's proof
 	Created    time.Time `entity:"index" json:"created"`
 }
 
@@ -121,6 +124,15 @@ func placeOrder(ctx tako.Ctx, req PlaceOrderReq) (Order, error) {
 		TotalCents: p.PriceCents * req.Qty,
 		Created:    time.Now(),
 	}
+	// The typed cross-service hop (§2.12): in-process in dev and
+	// tests, an OIDC-authenticated HTTP call in the cloud — same line.
+	// billing sees THIS user (the session propagates), and its typed
+	// errors surface here verbatim. No charge, no order.
+	receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{OrderID: o.ID, AmountCents: o.TotalCents})
+	if err != nil {
+		return Order{}, err
+	}
+	o.ReceiptID = receipt.ID
 	if err := orders.Put(ctx, o); err != nil {
 		return Order{}, err
 	}

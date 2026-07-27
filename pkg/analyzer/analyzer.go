@@ -105,6 +105,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	topicVars := map[types.Object]string{}    // topic var object → topic name
 	bucketVars := map[types.Object]string{}   // bucket var object → bucket name
 	resourceVars := map[types.Object]resRef{} // grant-relevant vars for the edge scan
+	endpointVars := map[types.Object]string{} // Endpoint vars (API/Page) → Var, for call edges
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
 	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
 	sitePackages := map[string]string{}       // package path → package name (service-from-site)
@@ -211,11 +212,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Page":
 				if h := extractPage(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Worker":
 				if h := extractWorker(cfg.Dir, pkg, d.name, d.call, queueVars, workersByQueue, &errs); h != nil {
@@ -295,10 +298,50 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			graph.Services = append(graph.Services, Service{Name: name, Package: path, Profile: "default"})
 		}
 	}
-	graph.Edges = deriveEdges(pkgs, resourceVars, handlerFuncs, graph.Handlers)
+	// A service's ingress is one Cloud Run setting: a package cannot
+	// half-close its front door.
+	checkMixedIngress(graph.Handlers, &errs)
+	var edgeErrs ErrorList
+	graph.Edges, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
+	errs = append(errs, edgeErrs...)
+	// Call CYCLES need no rule: a service cycle is an import cycle
+	// (calling b.Step requires importing b; package = service), which
+	// Go itself refuses before analysis ever runs.
+	if len(errs) > 0 {
+		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
+		return nil, errs
+	}
 	// go/packages shares one FileSet across the load when none is given.
 	return &TypedGraph{Graph: graph, Funcs: handlerFuncs, Fset: pkgs[0].Fset, Dir: cfg.Dir}, nil
 }
+
+// checkMixedIngress rejects a service mixing WithPrivate and public
+// routes: Cloud Run enforces ingress per SERVICE, so a private route in
+// a public service would be publicly reachable — silently.
+func checkMixedIngress(handlers []Handler, errs *ErrorList) {
+	private := map[string]*Handler{}
+	public := map[string]bool{}
+	for i, h := range handlers {
+		if h.Kind != "api" && h.Kind != "page" {
+			continue
+		}
+		if h.Private {
+			private[h.Service] = &handlers[i]
+		} else {
+			public[h.Service] = true
+		}
+	}
+	for svc, h := range private {
+		if public[svc] {
+			*errs = append(*errs, &Error{
+				Pos:  h.Pos,
+				Msg:  fmt.Sprintf("service %s mixes private and public routes — Cloud Run enforces WithPrivate at the service level, so private endpoints need their own package", svc),
+				Rule: "mixed-ingress",
+			})
+		}
+	}
+}
+
 
 // sdkConstructor returns the SDK constructor name a call invokes ("API",
 // "Worker", ...), or "" when the call is not into the SDK package.

@@ -219,7 +219,7 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		o(&conf)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqID := newRequestID()
+		reqID := incomingRequestID(r)
 		// The session (when present) carries the user AND the CSRF
 		// truth: a stolen anonymous token cannot ride a signed-in
 		// session (W5). Anonymous browsers keep the double-submit
@@ -246,7 +246,12 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 				}
 			}
 		}
-		rctx := context.WithValue(r.Context(), csrfTokenKey{}, token)
+		// Cross-service context (W9): session + trace ids ride as
+		// values so outgoing Calls propagate them; a propagated
+		// deadline bounds this handler too.
+		base, cancelDeadline := callContext(r, session, reqID)
+		defer cancelDeadline()
+		rctx := context.WithValue(base, csrfTokenKey{}, token)
 		// IsHTMX is the HX-Request header, nothing else (the F10 fence:
 		// a request-shape probe — the framework never switches modes on
 		// it by itself; handlers do).

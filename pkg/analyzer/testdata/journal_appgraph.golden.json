@@ -63,6 +63,8 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /",
+      "req_ref": "struct{}",
+      "res_ref": "tako.HTML",
       "pos": "app.go:37:2"
     },
     {
@@ -72,6 +74,8 @@
       "service": "journal",
       "route": "GET /p/{id}",
       "req_type": "ReadReq",
+      "req_ref": "journal.ReadReq",
+      "res_ref": "tako.HTML",
       "bindings": [
         {
           "field": "ID",
@@ -88,6 +92,8 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /write",
+      "req_ref": "struct{}",
+      "res_ref": "tako.HTML",
       "pos": "app.go:39:2"
     },
     {
@@ -98,6 +104,8 @@
       "route": "POST /p",
       "requires_auth": true,
       "req_type": "SaveReq",
+      "req_ref": "journal.SaveReq",
+      "res_ref": "tako.HTML",
       "bindings": [
         {
           "field": "Title",
@@ -122,6 +130,8 @@
       "route": "POST /p/{id}/publish",
       "requires_auth": true,
       "req_type": "PublishReq",
+      "req_ref": "journal.PublishReq",
+      "res_ref": "tako.HTML",
       "bindings": [
         {
           "field": "ID",

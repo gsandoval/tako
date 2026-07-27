@@ -43,6 +43,18 @@ var LeaseOwner string
 // run that found the lease held — a skip is normal, never an error.
 var CronSkipped func(name string)
 
+// remoteCalls maps "<pkgpath> <route>" to a typed remote-transport
+// closure (func(tako.Ctx, Req) (Res, error), held as any). Generated
+// mains register their REMOTE callees at boot (pkg/runtime); the SDK's
+// Endpoint.Call looks up here — nil means direct in-process.
+var remoteCalls = map[string]any{}
+
+// RegisterRemoteCall wires one endpoint's remote transport.
+func RegisterRemoteCall(key string, transport any) { remoteCalls[key] = transport }
+
+// RemoteCallFor returns the wired transport for the key, or nil.
+func RemoteCallFor(key string) any { return remoteCalls[key] }
+
 // DeclaredSecrets is set by the SDK at init: it lists every secret name
 // declared via tako.Secret, so boot can refuse to start with any unset.
 var DeclaredSecrets func() []string

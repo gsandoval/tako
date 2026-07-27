@@ -20,6 +20,8 @@
       "package": "hello",
       "service": "hello",
       "route": "GET /hello",
+      "req_ref": "struct{}",
+      "res_ref": "hello.Greeting",
       "pos": "hello.go:9:5"
     },
     {
@@ -29,6 +31,8 @@
       "service": "hello",
       "route": "GET /greet/{name}",
       "req_type": "GreetReq",
+      "req_ref": "hello.GreetReq",
+      "res_ref": "hello.Greeting",
       "bindings": [
         {
           "field": "Name",
@@ -52,6 +56,8 @@
       "service": "hello",
       "route": "POST /echo",
       "req_type": "EchoReq",
+      "req_ref": "hello.EchoReq",
+      "res_ref": "hello.Greeting",
       "has_body": true,
       "pos": "hello.go:11:5"
     }

@@ -143,6 +143,8 @@
       "service": "gallery",
       "route": "POST /api/photos",
       "req_type": "UploadReq",
+      "req_ref": "gallery.UploadReq",
+      "res_ref": "gallery.Photo",
       "bindings": [
         {
           "field": "Caption",
@@ -166,6 +168,8 @@
       "service": "gallery",
       "route": "POST /api/uploads",
       "req_type": "StartUploadReq",
+      "req_ref": "gallery.StartUploadReq",
+      "res_ref": "gallery.UploadTicket",
       "has_body": true,
       "pos": "app.go:63:2"
     },
@@ -176,6 +180,8 @@
       "service": "gallery",
       "route": "GET /api/photos/{id}/download",
       "req_type": "DownloadReq",
+      "req_ref": "gallery.DownloadReq",
+      "res_ref": "gallery.DownloadRes",
       "bindings": [
         {
           "field": "ID",
@@ -193,6 +199,8 @@
       "service": "gallery",
       "route": "GET /api/photos/{id}/image",
       "req_type": "ImageReq",
+      "req_ref": "gallery.ImageReq",
+      "res_ref": "tako.Blob",
       "bindings": [
         {
           "field": "ID",
@@ -211,6 +219,8 @@
       "service": "gallery",
       "route": "GET /api/photos/{id}/thumb",
       "req_type": "ThumbReq",
+      "req_ref": "gallery.ThumbReq",
+      "res_ref": "tako.Blob",
       "bindings": [
         {
           "field": "ID",
@@ -228,6 +238,8 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos",
+      "req_ref": "struct{}",
+      "res_ref": "[]gallery.Photo",
       "pos": "app.go:67:2"
     },
     {
@@ -236,6 +248,8 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/objects",
+      "req_ref": "struct{}",
+      "res_ref": "[]tako.ObjectInfo",
       "pos": "app.go:68:2"
     },
     {
@@ -244,6 +258,8 @@
       "package": "gallery",
       "service": "gallery",
       "route": "POST /api/reindex",
+      "req_ref": "struct{}",
+      "res_ref": "gallery.ReindexRes",
       "pos": "app.go:69:2"
     },
     {
@@ -252,6 +268,8 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/reindex/runs",
+      "req_ref": "struct{}",
+      "res_ref": "[]gallery.ReindexRun",
       "pos": "app.go:70:2"
     },
     {

@@ -81,11 +81,21 @@ func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 // loadSession resolves the request's session record, treating expired
 // records as absent (and lazily deleting them).
 func loadSession(r *http.Request) *sessionRecord {
-	c, err := r.Cookie(sessionCookie)
-	if err != nil || c.Value == "" || hooks.Entity == nil {
+	id := ""
+	if c, err := r.Cookie(sessionCookie); err == nil {
+		id = c.Value
+	}
+	if id == "" {
+		// Cross-service calls carry the caller's session ID (§2.12,
+		// W9 amendment): presenting the id is equivalent to presenting
+		// the cookie — the record lookup below IS the verification, and
+		// revocation kills the identity mid-chain.
+		id = r.Header.Get(sessionHeader)
+	}
+	if id == "" || hooks.Entity == nil {
 		return nil
 	}
-	doc, err := hooks.Entity.Get(r.Context(), sessionKind, c.Value)
+	doc, err := hooks.Entity.Get(r.Context(), sessionKind, id)
 	if err != nil {
 		return nil
 	}

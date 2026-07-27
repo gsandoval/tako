@@ -12,6 +12,14 @@
         "shop.ListOrders"
       ],
       "profile": "default"
+    },
+    {
+      "name": "billing",
+      "package": "shop/billing",
+      "handlers": [
+        "billing.Charge"
+      ],
+      "profile": "default"
     }
   ],
   "resources": [
@@ -21,7 +29,7 @@
       "var": "shop.products",
       "package": "shop",
       "type": "Product",
-      "pos": "app.go:22:2"
+      "pos": "app.go:24:2"
     },
     {
       "kind": "entity",
@@ -37,7 +45,7 @@
         "owner",
         "-created"
       ],
-      "pos": "app.go:23:2"
+      "pos": "app.go:25:2"
     },
     {
       "kind": "site",
@@ -47,7 +55,7 @@
       "dir": "web/dist",
       "build": "cd web \u0026\u0026 npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js \u0026\u0026 cp index.html dist/",
       "build_out": "web/dist",
-      "pos": "app.go:28:2"
+      "pos": "app.go:30:2"
     },
     {
       "kind": "auth",
@@ -57,7 +65,7 @@
       "providers": [
         "email"
       ],
-      "pos": "app.go:34:2"
+      "pos": "app.go:36:2"
     }
   ],
   "handlers": [
@@ -67,7 +75,9 @@
       "package": "shop",
       "service": "shop",
       "route": "GET /api/products",
-      "pos": "app.go:53:2"
+      "req_ref": "struct{}",
+      "res_ref": "[]shop.Product",
+      "pos": "app.go:56:2"
     },
     {
       "kind": "api",
@@ -76,6 +86,8 @@
       "service": "shop",
       "route": "GET /api/products/{id}",
       "req_type": "GetProductReq",
+      "req_ref": "shop.GetProductReq",
+      "res_ref": "shop.Product",
       "bindings": [
         {
           "field": "ID",
@@ -84,7 +96,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:54:2"
+      "pos": "app.go:57:2"
     },
     {
       "kind": "api",
@@ -94,8 +106,10 @@
       "route": "POST /api/products",
       "requires_auth": true,
       "req_type": "AddProductReq",
+      "req_ref": "shop.AddProductReq",
+      "res_ref": "shop.Product",
       "has_body": true,
-      "pos": "app.go:55:2"
+      "pos": "app.go:58:2"
     },
     {
       "kind": "api",
@@ -105,8 +119,10 @@
       "route": "POST /api/orders",
       "requires_auth": true,
       "req_type": "PlaceOrderReq",
+      "req_ref": "shop.PlaceOrderReq",
+      "res_ref": "shop.Order",
       "has_body": true,
-      "pos": "app.go:56:2"
+      "pos": "app.go:59:2"
     },
     {
       "kind": "api",
@@ -115,7 +131,22 @@
       "service": "shop",
       "route": "GET /api/orders",
       "requires_auth": true,
-      "pos": "app.go:57:2"
+      "req_ref": "struct{}",
+      "res_ref": "[]shop.Order",
+      "pos": "app.go:60:2"
+    },
+    {
+      "kind": "api",
+      "var": "billing.Charge",
+      "package": "shop/billing",
+      "service": "billing",
+      "route": "POST /charge",
+      "private": true,
+      "req_type": "ChargeReq",
+      "req_ref": "billing.ChargeReq",
+      "res_ref": "billing.Receipt",
+      "has_body": true,
+      "pos": "billing/billing.go:17:5"
     }
   ],
   "edges": [
@@ -139,6 +170,12 @@
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"
+    },
+    {
+      "from": "shop.PlaceOrder",
+      "to": "billing.Charge",
+      "kind": "call",
+      "verb": "call"
     },
     {
       "from": "shop.PlaceOrder",

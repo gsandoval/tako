@@ -25,14 +25,19 @@ func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Requ
 		o(&conf)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqID := newRequestID()
+		reqID := incomingRequestID(r)
 		session := loadSession(r)
 		if conf.requireAuth && session == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": authRequired})
 			return
 		}
+		// Cross-service context: session id + trace id ride as values
+		// (outgoing Calls re-propagate them); a propagated deadline
+		// bounds this handler too.
+		base, cancel := callContext(r, session, reqID)
+		defer cancel()
 		ctx := &requestCtx{
-			Context: r.Context(),
+			Context: base,
 			log:     slog.Default().With("req", reqID),
 		}
 		if session != nil {

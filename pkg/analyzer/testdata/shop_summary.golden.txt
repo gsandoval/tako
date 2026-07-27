@@ -1,11 +1,13 @@
-shop: 1 service
+shop: 2 services
   service shop (package shop, profile default)
-    GET /api/products → ListProducts (app.go:53)
-    GET /api/products/{id} → GetProduct (app.go:54)
-    POST /api/products → AddProduct 🔒 (app.go:55)
-    POST /api/orders → PlaceOrder 🔒 (app.go:56)
-    GET /api/orders → ListOrders 🔒 (app.go:57)
+    GET /api/products → ListProducts (app.go:56)
+    GET /api/products/{id} → GetProduct (app.go:57)
+    POST /api/products → AddProduct 🔒 (app.go:58)
+    POST /api/orders → PlaceOrder 🔒 (app.go:59)
+    GET /api/orders → ListOrders 🔒 (app.go:60)
     entity products
     entity orders (indexes: Owner, Created)
     site ./web/dist
     auth (email)
+  service billing (package shop/billing, profile default)
+    POST /charge → Charge (billing/billing.go:17)

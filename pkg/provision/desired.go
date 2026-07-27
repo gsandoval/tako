@@ -123,6 +123,29 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			async[h.Service] = false
 		}
 	}
+	// WithPrivate closes the front door (§2.12): IAM-only ingress, like
+	// async services. The analyzer rejects mixed packages, so one
+	// private route means the whole service is private.
+	privateSvc := map[string]bool{}
+	for _, h := range g.Handlers {
+		if (h.Kind == "api" || h.Kind == "page") && h.Private {
+			privateSvc[h.Service] = true
+		}
+	}
+	// Callees per service, from call edges: the deploy injects each
+	// callee's DETERMINISTIC URL (the same host form auth registers) so
+	// generated mains can wire remote transports without discovery.
+	svcOf := map[string]string{}
+	for _, h := range g.Handlers {
+		svcOf[h.Var] = h.Service
+	}
+	callees := map[string][]string{}
+	for _, e := range g.Edges {
+		if e.Kind != "call" || svcOf[e.From] == svcOf[e.To] {
+			continue
+		}
+		callees[svcOf[e.From]] = append(callees[svcOf[e.From]], svcOf[e.To])
+	}
 
 	// Buckets with Uploaded subscribers get an events topic, fed by
 	// GCS's own notifications (C5): every write — through-service or
@@ -161,6 +184,14 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			env["TAKO_AUTH_APIKEY"] = cfg.AuthAPIKey
 			env["TAKO_AUTH_DOMAIN"] = cfg.AuthDomain
 		}
+		seen := map[string]bool{}
+		for _, callee := range callees[svc.Name] {
+			if seen[callee] {
+				continue
+			}
+			seen[callee] = true
+			env["TAKO_CALLEE_"+strings.ToUpper(strings.ReplaceAll(callee, "-", "_"))] = cfg.RunURL(callee)
+		}
 		objs = append(objs,
 			Object{
 				Kind: KindServiceAccount,
@@ -178,8 +209,8 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					"env":            env,
 					"scaling":        knobs,
 					// Async services admit only the OIDC push identity;
-					// everything else stays public until auth lands.
-					"public": !async[svc.Name],
+					// WithPrivate services admit only granted callers.
+					"public": !async[svc.Name] && !privateSvc[svc.Name],
 				},
 			},
 		)
