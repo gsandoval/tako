@@ -5553,3 +5553,142 @@ unknown-product 404s, owner-scoped orders, 422 validation texts.
 
 W8 (Lock, WithSingleflight, Singleton — the §4.4 lease) follows; its
 DX proposal is the next stop.
+
+## W8 — DX proposal: Coordination — Lock, WithSingleflight (Singleton: scope call) (2026-07-27)
+
+Spec §2.5 + §4.4: one lease mechanism (a GCS object write guarded by
+ifGenerationMatch, {owner, expiry}, heartbeated at TTL/3, living in
+the framework bucket that already hosts the DEPLOY lease — same CAS
+pattern, now generalized to runtime) behind three user-facing faces.
+Frozen surface made true: `tako.Lock` / `Do` / `TryDo`,
+`tako.WithSingleflight()`. Raw leader election stays unexposed
+(settled: spec §"non-goals").
+
+### 0. The headline
+
+Both demands come from the spec's own examples:
+
+```go
+// gallery — Part 3 verbatim: overlapping slow cleanups collapse to one.
+var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+
+// gallery — Part 1's sample lock, made real: rebuilding the warmed
+// feed must not run twice concurrently, across ALL instances.
+var (
+    relock  = tako.Lock("reindex")
+    Reindex = tako.API("POST /api/reindex", reindex)
+)
+
+func reindex(ctx tako.Ctx, _ struct{}) (ReindexRes, error) {
+    ran, err := relock.TryDo(ctx, rebuildFeed)   // false: someone's mid-rebuild
+    return ReindexRes{Started: ran}, err
+}
+```
+
+Dev narration when the lease saves you:
+```
+↻ cron Cleanup skipped — an overlapping run holds the lease
+```
+
+**The teaching line (doc comments + summary):** Lock is for critical
+SECTIONS — cross-entity rebuilds, external systems, sequential
+cursors. Single-entity atomicity is `Tx`'s job; reaching for Lock
+there is the anti-pattern, and the docs say so where Lock is defined.
+
+### 1. Scope calls needing your decision
+
+1. **Singleton DEFERS to W10 (RECOMMENDED).** No example honestly
+   demands a long-lived exactly-one loop yet — every candidate I
+   tried (order dispatcher, price sync) is either a queue's job
+   (events are the preferred style, settled #6) or a Tx's job, and
+   shipping a contrived loop teaches the anti-pattern. W10 (Jobs —
+   the batch-profile slice) is its natural sibling: min=1/max=1
+   provisioning + a lease-guarded loop land together there, still
+   inside the W11 gate. The W8 gate criterion ("two instances
+   provably serialize") is Lock's anyway. Alternative: implement
+   Singleton now on a shop "dispatcher" loop (plan-as-written).
+2. **Lock takes NO options in v0 (RECOMMENDED).** TTL 30s /
+   heartbeat 10s / campaign poll 2s are framework policy; an option
+   surface (WithTTL) invites tuning nobody needs yet and the frozen
+   API stays frozen. The analyzer rejects any option with an exact
+   text. Alternative: WithTTL(d) now.
+3. **Reindex rebuilds gallery's warmed feed (RECOMMENDED)** — a real
+   cross-entity operation the example already owns (warmFeed exists
+   since F8), observable in validation via a start/end ledger the
+   rebuild writes. Alternative: a synthetic slow section.
+
+### 2. Semantics being locked
+
+- **Do(ctx, fn)**: campaigns until held (2s poll + jitter), runs fn
+  while heartbeating every 10s, releases on return. If the lease is
+  LOST mid-flight (heartbeat CAS fails — clock skew, forced release),
+  fn's ctx cancels; Do returns ctx.Err() after fn unwinds. Errors
+  from fn pass through verbatim.
+- **TryDo(ctx, fn)**: one CAS attempt; (false, nil) when held
+  elsewhere — never blocks, never retries.
+- **Lease identity**: `leases/run-<app>-<env>-<name>` in the
+  framework bucket — env-scoped like every runtime resource (pr-42's
+  reindex never blocks prod's); the deploy lease keeps its
+  `leases/deploy-…` namespace, untouched.
+- **Crash safety**: no release on crash — the TTL expires (≤30s) and
+  the next campaigner wins. Heartbeats extend from the HOLDER's
+  generation only (CAS), so a usurper can't be double-held.
+- **WithSingleflight**: codegen wraps the cron invoke in TryDo on
+  lock name `cron-<handler>`; a skipped run logs the ↻ line (dev and
+  cloud) and is NOT an error — dead-letter machinery never sees it.
+- **Local backend**: in-process lock table (mutex + waiters), same
+  semantics including TryDo false and ctx-cancel on forced loss (test
+  hook); no emulators (settled #9). Conformance is the contract:
+  mutual exclusion (interleaving-free ledger from N contending
+  goroutines), TryDo held/free, reacquire after release, crash-TTL
+  expiry (gcp: expire a stale lease object; local: clock hook).
+- **Grants**: an app whose graph reaches a Lock (or singleflight
+  cron) grants its runtime SA objectAdmin on `leases/*` of the
+  framework bucket — derived like every grant, one summary line:
+  `roles/storage.objectAdmin on tako-test-01-tako/leases (lease: reindex, cron-Cleanup)`.
+- **Plan/graph visibility**: `lock reindex` resource line; cron line
+  gains `(singleflight)`; no new provisioned objects (the framework
+  bucket already exists for the deploy lease).
+
+### 3. Internals
+
+- `pkg/backends`: Lease contract (Acquire(name, owner, ttl) CAS /
+  Heartbeat / Release / observe) + conformance chapter Lease;
+  `local/` in-process table; `gcp/` GCS object CAS (the deploy
+  lease's pattern, factored to be shared).
+- `pkg/runtime`: hooks for Do/TryDo (lock.go's panics die); cron
+  registration grows a singleflight flag; ↻ narration.
+- `pkg/analyzer`: Lock constructor → resource kind "lock" (const
+  name; error text for non-const); WithSingleflight recorded on cron
+  handlers (`singleflight` in the graph); Lock leaves the not-yet
+  list (Singleton stays, pointer updated to W10 if §1.1 approved);
+  edges: handler → lock var, verb "lease".
+- `pkg/codegen`: TryDo wrapper for singleflight crons; lease-grant
+  need surfaces through the existing needsOf path.
+- `examples/gallery`: Cleanup gains WithSingleflight; relock +
+  Reindex + rebuildFeed (+ ledger entity for the serialization
+  proof); suite grows contention tests (two goroutine Reindex calls
+  → one runs; AdvanceCron overlap → one).
+- **Cloud errors & permissions:** no new APIs, no new objects. The
+  one new failure mode: framework-bucket object write denied →
+  the existing four-way taxonomy applies (verb "acquire the
+  reindex lease", role roles/storage.objectAdmin). Preflight probes
+  nothing new (storage already probed).
+
+### 4. Not in scope (W8 non-goals)
+
+- Singleton (per §1.1 — W10 with Jobs); raw leader election (never);
+  lock options/TTL tuning; fencing tokens beyond ctx-cancel;
+  cross-app locks (lease names are app+env scoped by construction);
+  Redis/Datastore lease backends.
+
+**Validation** (agent-side; the human gate is W11): conformance
+(local + gcp) Lease chapter; gallery suite; dev walk — slow-cron
+overlap narrates ↻, two concurrent reindex curls → one `started:
+true`; cloud on tako-test-01 — deploy (grant line judged), TWO
+concurrent reindex POSTs against min-2-instance gallery serialize
+(ledger shows disjoint windows), ↻ line in cloud logs on a forced
+cron overlap, destroy clean. Transcript in the task log.
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
