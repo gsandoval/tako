@@ -179,7 +179,17 @@ func placeOrder(ctx tako.Ctx, req PlaceOrderReq) (Order, error) {
 }
 
 func listOrders(ctx tako.Ctx, _ struct{}) ([]Order, error) {
-	return orders.Query(ctx).Where("Owner", "=", ctx.User().ID).OrderBy("-Created").Limit(50).All()
+	// No OrderBy here: v0 derives ONE aggregate composite per entity,
+	// and orders' split query shapes (owner+created here,
+	// invoiced-only in the invoicer) would under-index it — hit live
+	// in W10, logged as discovered analyzer work. Sorting 50 orders in
+	// memory costs nothing.
+	mine, err := orders.Query(ctx).Where("Owner", "=", ctx.User().ID).Limit(50).All()
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(mine, func(i, j int) bool { return mine[i].Created.After(mine[j].Created) })
+	return mine, nil
 }
 
 type SettleReq struct {

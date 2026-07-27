@@ -7,7 +7,7 @@ shop: 4 services
     GET /api/orders → ListOrders 🔒 (app.go:95)
     POST /api/settle → StartSettle 🔒 (app.go:96)
     entity products
-    entity orders (indexes: Owner, Invoiced, Created)
+    entity orders (indexes: Owner, Invoiced)
     site ./web/dist
     auth (email)
     job settle
@@ -16,7 +16,7 @@ shop: 4 services
   service shop-settle (package shop, profile default)
     job Settle ← settle (app.go:98)
     entity products
-    entity orders (indexes: Owner, Invoiced, Created)
+    entity orders (indexes: Owner, Invoiced)
     site ./web/dist
     auth (email)
     job settle
@@ -25,7 +25,7 @@ shop: 4 services
   service shop-invoicer (package shop, profile default)
     singleton Invoicer — invoicer, exactly one everywhere (app.go:99)
     entity products
-    entity orders (indexes: Owner, Invoiced, Created)
+    entity orders (indexes: Owner, Invoiced)
     site ./web/dist
     auth (email)
     job settle

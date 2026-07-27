@@ -125,7 +125,9 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			continue
 		}
 		if jobSvc := jobSvcOf[e.To]; jobSvc != "" {
-			add(target{TargetRunJob, cfg.Name(jobSvc)}, "roles/run.invoker", "serviceAccount:"+cfg.SAEmail(svc))
+			// runWithOverrides (params ride execution overrides) sits in
+			// run.developer, not run.invoker — scoped to THIS job only.
+			add(target{TargetRunJob, cfg.Name(jobSvc)}, "roles/run.developer", "serviceAccount:"+cfg.SAEmail(svc))
 		}
 	}
 
@@ -183,9 +185,10 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		}
 	}
 
-	// Singleflight crons hold the same kind of lease without a Lock var.
+	// Singleflight crons and singleton loops hold the same kind of
+	// lease without a Lock var.
 	for _, h := range g.Handlers {
-		if h.Kind == "cron" && h.Singleflight {
+		if (h.Kind == "cron" && h.Singleflight) || h.Kind == "singleton" {
 			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin",
 				"serviceAccount:"+cfg.SAEmail(h.Service))
 		}
