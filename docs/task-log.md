@@ -5753,3 +5753,157 @@ IGNORED until now; the declaration finally means something.
 
 W9 (cross-service Endpoints — typed calls, OIDC, deadline budgets;
 shop splits into services) follows; its DX proposal is the next stop.
+
+## W9 — DX proposal: cross-service Endpoints — typed calls, OIDC, deadline budgets (2026-07-27)
+
+Spec §2.12 verbatim: package = service; an EXPORTED Endpoint var is the
+RPC surface; `.Call` is deliberately one word louder than a function
+call. No call-site rewriting anywhere — the endpoint value carries a
+transport the generated boot hook wires per environment. The frozen
+`Endpoint.Call` doc comment already promises all of this; W9 makes the
+remote half true. shop splits into services.
+
+### 0. The headline
+
+```go
+// billing/billing.go — a new PACKAGE, therefore a new SERVICE (mkdir, not YAML)
+package billing
+
+// Exported Endpoint var = callable from other service packages.
+// WithPrivate: IAM-only ingress — browsers and curl get 403 at
+// Google's front door; only granted SAs invoke.
+var Charge = tako.API("POST /charge", charge, tako.WithPrivate())
+
+type ChargeReq struct {
+    OrderID    string `json:"orderId"`
+    AmountCents int   `json:"amountCents"`
+}
+type Receipt struct {
+    ID          string `json:"id"`
+    AmountCents int    `json:"amountCents"`
+}
+
+// shop/app.go
+import "shop/billing"
+
+func placeOrder(ctx tako.Ctx, req PlaceOrderReq) (Order, error) {
+    …
+    receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{OrderID: o.ID, AmountCents: o.TotalCents})
+    …
+}
+```
+
+- **dev + tests**: direct in-process invocation — a breakpoint steps
+  from placeOrder straight into charge.
+- **cloud**: HTTP/JSON stub, OIDC ID token minted from shop-sa via
+  the metadata server (audience = billing's URL, validated natively
+  by Cloud Run — no shared secrets). The deploy summary prints the
+  call graph and the derived `run.invoker` grant.
+
+```
+  plan
+    + create  run service shop-billing        (private)
+    …
+Security summary:
+  shop-billing runs as shop-billing-sa@… — ingress: IAM-only (callers: shop-sa)
+  call graph: shop.PlaceOrder → billing.Charge
+```
+
+### 1. Scope calls needing your decision
+
+1. **Remote calls ride the endpoint's OWN route (RECOMMENDED).** The
+   stub POSTs to `https://<billing-url>/charge` with the same
+   path/query/body wire shape the generated decoder already speaks;
+   auth is the OIDC header. One surface — an operator can curl a
+   private endpoint with their own identity token, and Cloud Run's
+   IAM (not tako middleware) is the enforcement. Alternative: a
+   dedicated `/_tako/call` envelope — a second wire format to keep
+   honest forever, for no capability gained.
+2. **Deadline budgets: X-Tako-Deadline, 500ms margin, 1s floor
+   (RECOMMENDED).** The stub propagates the caller's remaining
+   deadline minus 500ms as an absolute timestamp header; the callee's
+   ctx honors it, so chains fail fast instead of stacking timeouts.
+   Below the 1s floor the call fails immediately with "deadline
+   budget exhausted before calling billing.Charge". Alternative: no
+   propagation in v0 (stacked-timeout debt from day one).
+3. **Cloud Run realities surface as DEPLOY-time ⚠, analyzer ERRORS
+   only for structure (RECOMMENDED).** Analyzer errors: calling a raw
+   handler FUNC across packages (hides the RPC boundary — error text
+   points at the Endpoint var), and call CYCLES between services.
+   Deploy ⚠ (it knows profiles): a sync edge into a scale-to-zero
+   callee ("give shop-billing tako.WithProfile(tako.Latency) or make
+   it async"), and sync chains deeper than one hop. Alternative:
+   everything at analysis time — but profile-dependent judgments
+   don't belong in the analyzer.
+
+### 2. Semantics being locked
+
+- **Visibility is Go's**: only EXPORTED Endpoint vars cross packages;
+  unexported stay service-internal. The analyzer error for raw
+  cross-package handler-func calls names the fix.
+- **WithPrivate becomes real** (recorded in the graph since W7): the
+  Run service is created WITHOUT the public invoker binding; callers'
+  SAs get `run.invoker` derived from call edges. Browsers/curl → 403
+  at the Google front end. The TS client already excludes private
+  endpoints with a visible reason (W7 anticipated this).
+- **No silent retries** — a typed call must not invent duplicate
+  charges; errors surface to the caller verbatim (typed status
+  errors cross the wire: billing's 422 is placeOrder's 422 to
+  handle, not a 500).
+- **Call edges derive grants**: caller-SA → `run.invoker` on callee;
+  revoking it breaks the call with a READABLE error naming the grant
+  (the gate criterion) — and a re-deploy converges it back.
+- **Trace context propagates** (request id header) so `tako logs`
+  correlates a call chain.
+- **Pages can Call too** (an Endpoint is an Endpoint); workers/crons
+  calling endpoints derive the same grants.
+
+### 3. Internals
+
+- Root SDK: Endpoint gains an unexported transport hook (no surface
+  change — the freeze holds); hooks bridge carries per-var remote
+  transports set by the generated main from deploy-injected
+  `TAKO_CALLEE_<SERVICE>` URLs.
+- `pkg/analyzer`: call edges (`Kind: "call"` — the Edge type has
+  carried the shape since C-phase), cycle detection (error), raw-func
+  error; goldens for shop's new two-service graph.
+- `pkg/codegen`: billing's main mounts /charge like any route; shop's
+  main wires billing.Charge's remote transport at boot.
+- `pkg/runtime`: OIDC token mint via metadata server (audience =
+  callee URL, cached until expiry — the Signer already speaks
+  metadata); deadline header honored in the handler shim.
+- `pkg/provision`: private services drop the public invoker;
+  `run.invoker` from call edges; deploy injects callee URLs
+  (deterministic names — same trick as auth's deterministic hosts);
+  call-graph + callers list in the security summary; the two ⚠s.
+- `examples/shop`: billing package (fake processor — deterministic
+  receipt ids, 422 on zero amounts); PlaceOrder charges before
+  storing; Order gains ReceiptID; tests — in-process Call, receipt
+  on the order, billing's 422 surfacing through placeOrder, private
+  exclusion note in the regenerated TS client.
+- **Cloud errors & permissions:** revoked/missing `run.invoker` →
+  the readable text ("shop-sa cannot invoke shop-billing — the
+  derived grant run.invoker is missing; re-run tako deploy");
+  callee cold-start timeout → the deadline error names the budget;
+  404 from a stale callee URL → "billing's URL changed — re-run
+  tako deploy". Taxonomy per docs/tako-cloud-permissions.md.
+
+### 4. Not in scope (W9 non-goals)
+
+- WithIdempotencyKey / retries (spec defers explicitly); signed
+  user-identity propagation (spec: off by default — a later opt-in);
+  VPC / ingress=internal (later WithVPC with stated costs);
+  `topology:` co-location config (the endgame, not the slice);
+  streaming; cross-MODULE calls (packages share the app's module).
+
+**Validation** (agent-side; the human gate is W11): analyzer goldens
+incl. cycle + raw-func error texts; shop suite (breakpoint story =
+tests step through Call in-process); cloud on tako-test-01 — deploy
+the split shop, curl billing directly → 403 at the front door, place
+an order through the site → receipt from a real OIDC hop, REVOKE
+run.invoker by hand → next order fails with the readable grant error
+(the gate criterion), re-deploy converges the grant back, deep-chain
+and cold-start ⚠s judged, destroy. Transcript in the task log.
+
+**STOP — awaiting DX approval (and the three §1 scope calls) before
+implementation.**
