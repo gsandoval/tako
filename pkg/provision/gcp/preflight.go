@@ -259,7 +259,10 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string
 			say("auth         would initialize Identity Platform (mechanical, done on a real deploy)")
 			return AuthClient{}, nil
 		}
-		if err := c.doIdentity(ctx, http.MethodPost, base[:strings.LastIndex(base, "/")]+"/"+c.Project+"/identityPlatform:initializeAuth", map[string]any{}, nil); err != nil {
+		// initializeAuth lives on the /v2/ surface; only the config
+		// resource is under /admin/v2/ (a wrong path gets Google's HTML
+		// 404 page, not a JSON error).
+		if err := c.doIdentity(ctx, http.MethodPost, "https://identitytoolkit.googleapis.com/v2/projects/"+c.Project+"/identityPlatform:initializeAuth", map[string]any{}, nil); err != nil {
 			return AuthClient{}, fmt.Errorf("initializing Identity Platform: %w", err)
 		}
 		say("auth         initialized Identity Platform")

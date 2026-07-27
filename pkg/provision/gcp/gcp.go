@@ -95,6 +95,11 @@ func parseAPIError(status int, url string, raw []byte) error {
 	msg := payload.Error.Message
 	if msg == "" {
 		msg = strings.TrimSpace(string(raw))
+		if strings.HasPrefix(msg, "<") {
+			// Google answers wrong URL paths with a full HTML error
+			// page; dumping it helps nobody.
+			msg = fmt.Sprintf("HTTP %d with an HTML (non-JSON) error page — usually a malformed API URL", status)
+		}
 	}
 	host := url
 	if i := strings.Index(url, "://"); i >= 0 {
