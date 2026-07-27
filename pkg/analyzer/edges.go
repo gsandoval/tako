@@ -47,6 +47,10 @@ func verbOf(kind, method string) string {
 		case "Do", "TryDo":
 			return "lease"
 		}
+	case "job":
+		if method == "Run" {
+			return "run"
+		}
 	}
 	return ""
 }

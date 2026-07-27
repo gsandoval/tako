@@ -185,6 +185,7 @@ func runDeploy(args []string) error {
 	repos := &gcp.Repos{C: client, Labels: cfg.Labels()}
 	sas := &gcp.ServiceAccounts{C: client, App: app, Env: t.env}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels(), Annotations: versionStamps(dir, graph)}
+	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -196,7 +197,7 @@ func runDeploy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
 	if err != nil {
 		return err
 	}
@@ -231,7 +232,7 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription), desired, applier); err != nil {
@@ -258,7 +259,8 @@ func runDeploy(args []string) error {
 		switch {
 		case strings.HasPrefix(e.Name, provision.TargetSubscription+" "):
 			onSubs.Entries = append(onSubs.Entries, e)
-		case strings.HasPrefix(e.Name, provision.TargetRunService+" "):
+		case strings.HasPrefix(e.Name, provision.TargetRunService+" "),
+			strings.HasPrefix(e.Name, provision.TargetRunJob+" "):
 			onRuns.Entries = append(onRuns.Entries, e)
 		default:
 			preRun.Entries = append(preRun.Entries, e)
@@ -279,6 +281,9 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRunService), desired, applier); err != nil {
 		return err
 	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindRunJob), desired, applier); err != nil {
+		return err
+	}
 	if err := provision.Apply(ctx, onRuns, desired, applier); err != nil {
 		return err
 	}
@@ -292,6 +297,10 @@ func runDeploy(args []string) error {
 	fmt.Println()
 	var liveHosts []string
 	for _, svc := range graph.Services {
+		if svc.Job {
+			fmt.Printf("✓ %s → job %s (run with %s.Run, no URL, no request timeout)\n", svc.Name, cfg.Name(svc.Name), jobBinding(graph, svc.Name))
+			continue
+		}
 		url, err := runs.URL(ctx, cfg.Name(svc.Name))
 		if err != nil {
 			return err
@@ -603,6 +612,7 @@ func runDestroy(args []string) error {
 	repos := &gcp.Repos{C: client, Labels: cfg.Labels()}
 	sas := &gcp.ServiceAccounts{C: client, App: app, Env: t.env}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
+	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -614,7 +624,7 @@ func runDestroy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
 	if err != nil {
 		return err
 	}
@@ -701,6 +711,7 @@ func runDestroy(args []string) error {
 		provision.KindPushSubscription:   subs,
 		provision.KindIamGrants:          grants,
 		provision.KindRunService:         runs,
+		provision.KindRunJob:             jobs,
 		provision.KindPullSubscription:   pulls,
 		provision.KindBucketNotification: notifications,
 		provision.KindTopic:              topics,
@@ -811,4 +822,14 @@ func serviceNames(g *analyzer.AppGraph) string {
 		names = append(names, svc.Name)
 	}
 	return strings.Join(names, ", ")
+}
+
+// jobBinding names the tako.Job a job deployable executes.
+func jobBinding(graph *analyzer.AppGraph, svc string) string {
+	for _, h := range graph.Handlers {
+		if h.Service == svc && h.Kind == "job" {
+			return h.Binding
+		}
+	}
+	return "?"
 }

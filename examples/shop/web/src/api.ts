@@ -35,7 +35,20 @@ export interface Order {
   qty: number;
   totalCents: number;
   receiptId: string;
+  invoiced: boolean;
+  invoiceNo: number;
   created: string;
+}
+
+/** shop.SettleReq (request body — path/query fields are method parameters) */
+export interface SettleReq {
+  day: string;
+  throttleMs: number;
+}
+
+/** shop.SettleStarted */
+export interface SettleStarted {
+  started: boolean;
 }
 
 /** A non-2xx response, message parsed from tako's {"error": ...} body. */
@@ -113,6 +126,10 @@ export function createClient(opts: ClientOptions = {}) {
     /** shop.ListOrders — GET /api/orders (sign-in required: 401 ApiError without a session) */
     async listOrders(): Promise<Order[]> {
       return (await call("GET", `/api/orders`, null, undefined)).json();
+    },
+    /** shop.StartSettle — POST /api/settle (sign-in required: 401 ApiError without a session) */
+    async startSettle(req: SettleReq): Promise<SettleStarted> {
+      return (await call("POST", `/api/settle`, null, req)).json();
     },
   };
 }

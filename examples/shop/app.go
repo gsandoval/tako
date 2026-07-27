@@ -34,6 +34,17 @@ var (
 	// machine-testable (no OAuth popup). The declaration auto-enables
 	// the provider in Identity Platform on deploy.
 	auth = tako.Auth(tako.WithEmail())
+
+	// settle is long-running compute (§2.7): a Cloud Run JOB in the
+	// cloud — no request timeout to outlive — and a tracked in-process
+	// execution locally.
+	settle  = tako.Job[SettleParams]("settle")
+	reports = tako.Entity[DailyReport]("reports")
+
+	// sequences backs the invoicer: bookkeeping-grade invoice numbers
+	// are strictly sequential — genuinely SERIAL work, which is what
+	// makes Invoicer a Singleton and not a worker.
+	sequences = tako.Entity[Sequence]("sequences")
 )
 
 type Product struct {
@@ -49,7 +60,31 @@ type Order struct {
 	Qty        int       `json:"qty"`
 	TotalCents int       `json:"totalCents"`
 	ReceiptID  string    `json:"receiptId"` // billing's receipt — the cross-service hop's proof
+	Invoiced   bool      `entity:"index" json:"invoiced"`
+	InvoiceNo  int64     `json:"invoiceNo"` // assigned by the invoicer singleton, strictly sequential
 	Created    time.Time `entity:"index" json:"created"`
+}
+
+// SettleParams is the settle job's input. ThrottleMs simulates slow
+// per-order work — the honest demo knob for "outlives any request
+// deadline" (a real settlement would be slow on its own).
+type SettleParams struct {
+	Day        string `json:"day"`
+	ThrottleMs int    `json:"throttleMs"`
+}
+
+// DailyReport is a settlement result: one record per run key.
+type DailyReport struct {
+	ID         string    `entity:"id" json:"id"`
+	Orders     int       `json:"orders"`
+	TotalCents int       `json:"totalCents"`
+	SettledAt  time.Time `json:"settledAt"`
+}
+
+// Sequence is a named counter; the invoicer is its only writer.
+type Sequence struct {
+	ID   string `entity:"id" json:"id"`
+	Next int64  `json:"next"`
 }
 
 var (
@@ -58,6 +93,10 @@ var (
 	AddProduct   = tako.API("POST /api/products", addProduct, tako.WithAuth())
 	PlaceOrder   = tako.API("POST /api/orders", placeOrder, tako.WithAuth())
 	ListOrders   = tako.API("GET /api/orders", listOrders, tako.WithAuth())
+	StartSettle  = tako.API("POST /api/settle", startSettle, tako.WithAuth())
+
+	Settle   = tako.JobHandler(settle, runSettle)
+	Invoicer = tako.Singleton("invoicer", assignInvoices)
 )
 
 func listProducts(ctx tako.Ctx, _ struct{}) ([]Product, error) {
@@ -141,4 +180,93 @@ func placeOrder(ctx tako.Ctx, req PlaceOrderReq) (Order, error) {
 
 func listOrders(ctx tako.Ctx, _ struct{}) ([]Order, error) {
 	return orders.Query(ctx).Where("Owner", "=", ctx.User().ID).OrderBy("-Created").Limit(50).All()
+}
+
+type SettleReq struct {
+	Day        string `json:"day"`
+	ThrottleMs int    `json:"throttleMs"`
+}
+
+type SettleStarted struct {
+	Started bool `json:"started"`
+}
+
+// startSettle HANDS OFF and returns immediately — the job is compute
+// you walk away from; the report entity is where its result lands.
+func startSettle(ctx tako.Ctx, req SettleReq) (SettleStarted, error) {
+	if err := settle.Run(ctx, SettleParams{Day: req.Day, ThrottleMs: req.ThrottleMs}); err != nil {
+		return SettleStarted{}, err
+	}
+	return SettleStarted{Started: true}, nil
+}
+
+// runSettle is the job body: sum every order into the day's report,
+// however long that takes — there is no request deadline here.
+func runSettle(ctx tako.Ctx, p SettleParams) error {
+	all, err := orders.Query(ctx).All()
+	if err != nil {
+		return err
+	}
+	report := DailyReport{ID: reportKey(p.Day)}
+	for _, o := range all {
+		if p.ThrottleMs > 0 {
+			time.Sleep(time.Duration(p.ThrottleMs) * time.Millisecond)
+		}
+		report.Orders++
+		report.TotalCents += o.TotalCents
+	}
+	report.SettledAt = time.Now()
+	return reports.Put(ctx, report)
+}
+
+func reportKey(day string) string {
+	if day == "" {
+		return "all"
+	}
+	return day
+}
+
+// assignInvoices is the singleton loop: sweep un-invoiced orders into
+// strictly sequential numbers, forever, exactly once across every
+// instance and revision (the lease is the guarantee).
+func assignInvoices(ctx tako.Ctx) error {
+	for {
+		if _, err := invoiceSweep(ctx); err != nil {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// invoiceSweep numbers pending orders in arrival order — one sweep,
+// directly testable.
+func invoiceSweep(ctx tako.Ctx) (int, error) {
+	pending, err := orders.Query(ctx).Where("Invoiced", "=", false).Limit(100).All()
+	if err != nil {
+		return 0, err
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].Created.Before(pending[j].Created) })
+	for _, o := range pending {
+		var no int64
+		err := sequences.Tx(ctx, func(tx tako.EntityTx[Sequence]) error {
+			seq, err := tx.Get("invoices")
+			if err != nil && !tako.IsNotFound(err) {
+				return err
+			}
+			seq.ID, seq.Next = "invoices", seq.Next+1
+			no = seq.Next
+			return tx.Put(seq)
+		})
+		if err != nil {
+			return 0, err
+		}
+		if err := orders.Update(ctx, o.ID, func(o *Order) { o.Invoiced, o.InvoiceNo = true, no }); err != nil {
+			return 0, err
+		}
+	}
+	return len(pending), nil
 }

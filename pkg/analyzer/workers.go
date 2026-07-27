@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/types"
 	"strings"
 
@@ -218,4 +219,110 @@ func resolveQueueVar(pkg *packages.Package, arg ast.Expr, queueVars map[types.Ob
 	}
 	name, ok := queueVars[obj]
 	return name, ok
+}
+
+// jobOptions is the option set tako.JobHandler accepts.
+var jobOptions = map[string]bool{"WithParallel": true}
+
+// extractJobHandler validates one tako.JobHandler declaration: its own
+// deployable (a Cloud Run JOB — no routes, no request timeout), bound
+// to exactly one declared tako.Job.
+func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, jobVars map[types.Object]string, jobsByName map[string]*Handler, errs *ErrorList) *Handler {
+	if name.Name == "_" || len(call.Args) < 2 {
+		return nil
+	}
+	bad := false
+	fail := func(e *Error) { *errs = append(*errs, e); bad = true }
+
+	jobName, ok := resolveQueueVar(pkg, call.Args[0], jobVars)
+	if !ok {
+		fail(&Error{
+			Pos:  relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg:  "tako.JobHandler must bind a job declared as a package-level var in this module",
+			Rule: "job-binding",
+		})
+		return nil
+	}
+	parallel := 0
+	for _, opt := range call.Args[2:] {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if isOpt && optName == "WithParallel" {
+			if optCall, ok := opt.(*ast.CallExpr); ok && len(optCall.Args) == 1 {
+				if tv, ok := pkg.TypesInfo.Types[optCall.Args[0]]; ok && tv.Value != nil {
+					if n, ok := constant.Int64Val(tv.Value); ok {
+						parallel = int(n)
+					}
+				}
+			}
+			continue
+		}
+		if isOpt && !jobOptions[optName] {
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, opt.Pos()),
+				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel)",
+					optName),
+				Rule: "invalid-option",
+			})
+		}
+	}
+	if prior := jobsByName[jobName]; prior != nil {
+		fail(&Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("job %q already has handler %s (%s) — a job has exactly one body",
+				jobName, ShortVar(*prior), ShortPos(prior.Pos)),
+			Rule: "one-job-handler",
+		})
+	}
+	if bad {
+		return nil
+	}
+	h := &Handler{
+		Kind:     "job",
+		Var:      pkg.Name + "." + name.Name,
+		Package:  pkg.PkgPath,
+		Service:  pkg.Name + "-" + strings.ToLower(name.Name),
+		Binding:  jobName,
+		Parallel: parallel,
+		Pos:      relPos(dir, pkg.Fset, name.Pos()),
+	}
+	jobsByName[jobName] = h
+	return h
+}
+
+// extractSingleton validates one tako.Singleton declaration: a min=1
+// service whose generated main runs the lease-guarded loop.
+func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
+	if name.Name == "_" || len(call.Args) < 2 {
+		return nil
+	}
+	singletonName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Singleton name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	bad := false
+	for _, opt := range call.Args[2:] {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+			Msg:  "tako.Singleton accepts no options in v0 — min=1/max=1 plus the lease is the whole contract",
+			Rule: "invalid-option",
+		})
+		bad = true
+	}
+	if bad {
+		return nil
+	}
+	return &Handler{
+		Kind:    "singleton",
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Service: pkg.Name + "-" + strings.ToLower(name.Name),
+		Binding: singletonName,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
 }

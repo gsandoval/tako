@@ -101,6 +101,9 @@ var profileKnobs = map[string]map[string]any{
 	"default": {"min": 0, "max": 20, "concurrency": 80, "cpu": "1", "memory": "512Mi"},
 	"latency": {"min": 1, "max": 100, "concurrency": 40, "cpu": "2", "memory": "1Gi"},
 	"batch":   {"min": 0, "max": 10, "concurrency": 10, "cpu": "2", "memory": "2Gi"},
+	// Singleton: min=1/max=1 keeps the loop's host alive; the LEASE is
+	// what makes it exactly-one (spec §4.4).
+	"singleton": {"min": 1, "max": 1, "concurrency": 1, "cpu": "1", "memory": "512Mi"},
 }
 
 // Desired derives the managed-object set from the AppGraph. images maps
@@ -146,6 +149,28 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 		callees[svcOf[e.From]] = append(callees[svcOf[e.From]], svcOf[e.To])
 	}
+	// Job triggers (§2.7): a service whose handlers Run a job gets the
+	// job's full resource name injected as TAKO_JOB_<name>.
+	jobSvcOf := map[string]string{}
+	for _, h := range g.Handlers {
+		if h.Kind == "job" {
+			jobSvcOf[h.Binding] = h.Service
+		}
+	}
+	jobTriggers := map[string]map[string]string{} // service → job name → resource
+	for _, e := range g.Edges {
+		if e.Kind != "resource" || e.ToKind != "job" || e.Verb != "run" {
+			continue
+		}
+		svc := svcOf[e.From]
+		if svc == "" || jobSvcOf[e.To] == "" {
+			continue
+		}
+		if jobTriggers[svc] == nil {
+			jobTriggers[svc] = map[string]string{}
+		}
+		jobTriggers[svc][e.To] = fmt.Sprintf("projects/%s/locations/%s/jobs/%s", cfg.Project, cfg.Region, cfg.Name(jobSvcOf[e.To]))
+	}
 
 	// Buckets with Uploaded subscribers get an events topic, fed by
 	// GCS's own notifications (C5): every write — through-service or
@@ -167,9 +192,16 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		if !ok {
 			return nil, fmt.Errorf("no image built for service %s", svc.Name)
 		}
-		knobs := profileKnobs[svc.Profile]
+		profile := svc.Profile
+		if svc.Singleton {
+			profile = "singleton"
+		}
+		if svc.Job {
+			profile = "batch"
+		}
+		knobs := profileKnobs[profile]
 		if knobs == nil {
-			return nil, fmt.Errorf("service %s has unknown profile %q", svc.Name, svc.Profile)
+			return nil, fmt.Errorf("service %s has unknown profile %q", svc.Name, profile)
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
@@ -192,28 +224,49 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			seen[callee] = true
 			env["TAKO_CALLEE_"+strings.ToUpper(strings.ReplaceAll(callee, "-", "_"))] = cfg.RunURL(callee)
 		}
-		objs = append(objs,
-			Object{
-				Kind: KindServiceAccount,
-				Name: cfg.SAName(svc.Name),
-				Spec: map[string]any{
-					"displayName": fmt.Sprintf("tako: service %s of app %s (%s)", svc.Name, cfg.App, cfg.Env),
-				},
+		for jobName, resource := range jobTriggers[svc.Name] {
+			env["TAKO_JOB_"+strings.ToUpper(strings.ReplaceAll(jobName, "-", "_"))] = resource
+		}
+		objs = append(objs, Object{
+			Kind: KindServiceAccount,
+			Name: cfg.SAName(svc.Name),
+			Spec: map[string]any{
+				"displayName": fmt.Sprintf("tako: service %s of app %s (%s)", svc.Name, cfg.App, cfg.Env),
 			},
-			Object{
-				Kind: KindRunService,
+		})
+		if svc.Job {
+			taskCount := 1
+			for _, h := range g.Handlers {
+				if h.Service == svc.Name && h.Parallel > 1 {
+					taskCount = h.Parallel
+				}
+			}
+			objs = append(objs, Object{
+				Kind: KindRunJob,
 				Name: cfg.Name(svc.Name),
 				Spec: map[string]any{
 					"image":          image,
 					"serviceAccount": cfg.SAEmail(svc.Name),
 					"env":            env,
-					"scaling":        knobs,
-					// Async services admit only the OIDC push identity;
-					// WithPrivate services admit only granted callers.
-					"public": !async[svc.Name] && !privateSvc[svc.Name],
+					"taskCount":      taskCount,
 				},
+			})
+			continue
+		}
+		objs = append(objs, Object{
+			Kind: KindRunService,
+			Name: cfg.Name(svc.Name),
+			Spec: map[string]any{
+				"image":          image,
+				"serviceAccount": cfg.SAEmail(svc.Name),
+				"env":            env,
+				"scaling":        knobs,
+				// Async services admit only the OIDC push identity;
+				// WithPrivate services admit only granted callers;
+				// singleton loops admit nobody's traffic but health.
+				"public": !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
 			},
-		)
+		})
 	}
 
 	for _, r := range g.Resources {

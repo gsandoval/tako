@@ -9,9 +9,28 @@
         "shop.GetProduct",
         "shop.AddProduct",
         "shop.PlaceOrder",
-        "shop.ListOrders"
+        "shop.ListOrders",
+        "shop.StartSettle"
       ],
       "profile": "default"
+    },
+    {
+      "name": "shop-settle",
+      "package": "shop",
+      "handlers": [
+        "shop.Settle"
+      ],
+      "profile": "default",
+      "job": true
+    },
+    {
+      "name": "shop-invoicer",
+      "package": "shop",
+      "handlers": [
+        "shop.Invoicer"
+      ],
+      "profile": "default",
+      "singleton": true
     },
     {
       "name": "billing",
@@ -39,10 +58,12 @@
       "type": "Order",
       "indexes": [
         "Owner",
+        "Invoiced",
         "Created"
       ],
       "composite": [
         "owner",
+        "invoiced",
         "-created"
       ],
       "pos": "app.go:25:2"
@@ -66,6 +87,30 @@
         "email"
       ],
       "pos": "app.go:36:2"
+    },
+    {
+      "kind": "job",
+      "name": "settle",
+      "var": "shop.settle",
+      "package": "shop",
+      "type": "SettleParams",
+      "pos": "app.go:41:2"
+    },
+    {
+      "kind": "entity",
+      "name": "reports",
+      "var": "shop.reports",
+      "package": "shop",
+      "type": "DailyReport",
+      "pos": "app.go:42:2"
+    },
+    {
+      "kind": "entity",
+      "name": "sequences",
+      "var": "shop.sequences",
+      "package": "shop",
+      "type": "Sequence",
+      "pos": "app.go:47:2"
     }
   ],
   "handlers": [
@@ -77,7 +122,7 @@
       "route": "GET /api/products",
       "req_ref": "struct{}",
       "res_ref": "[]shop.Product",
-      "pos": "app.go:56:2"
+      "pos": "app.go:91:2"
     },
     {
       "kind": "api",
@@ -96,7 +141,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:57:2"
+      "pos": "app.go:92:2"
     },
     {
       "kind": "api",
@@ -109,7 +154,7 @@
       "req_ref": "shop.AddProductReq",
       "res_ref": "shop.Product",
       "has_body": true,
-      "pos": "app.go:58:2"
+      "pos": "app.go:93:2"
     },
     {
       "kind": "api",
@@ -122,7 +167,7 @@
       "req_ref": "shop.PlaceOrderReq",
       "res_ref": "shop.Order",
       "has_body": true,
-      "pos": "app.go:59:2"
+      "pos": "app.go:94:2"
     },
     {
       "kind": "api",
@@ -133,7 +178,36 @@
       "requires_auth": true,
       "req_ref": "struct{}",
       "res_ref": "[]shop.Order",
-      "pos": "app.go:60:2"
+      "pos": "app.go:95:2"
+    },
+    {
+      "kind": "api",
+      "var": "shop.StartSettle",
+      "package": "shop",
+      "service": "shop",
+      "route": "POST /api/settle",
+      "requires_auth": true,
+      "req_type": "SettleReq",
+      "req_ref": "shop.SettleReq",
+      "res_ref": "shop.SettleStarted",
+      "has_body": true,
+      "pos": "app.go:96:2"
+    },
+    {
+      "kind": "job",
+      "var": "shop.Settle",
+      "package": "shop",
+      "service": "shop-settle",
+      "binding": "settle",
+      "pos": "app.go:98:2"
+    },
+    {
+      "kind": "singleton",
+      "var": "shop.Invoicer",
+      "package": "shop",
+      "service": "shop-invoicer",
+      "binding": "invoicer",
+      "pos": "app.go:99:2"
     },
     {
       "kind": "api",
@@ -197,6 +271,48 @@
       "to_kind": "entity",
       "kind": "resource",
       "verb": "read"
+    },
+    {
+      "from": "shop.StartSettle",
+      "to": "settle",
+      "to_kind": "job",
+      "kind": "resource",
+      "verb": "run"
+    },
+    {
+      "from": "shop.Settle",
+      "to": "orders",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.Settle",
+      "to": "reports",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.Invoicer",
+      "to": "orders",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.Invoicer",
+      "to": "orders",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.Invoicer",
+      "to": "sequences",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
     }
   ]
 }

@@ -55,6 +55,14 @@ func RegisterRemoteCall(key string, transport any) { remoteCalls[key] = transpor
 // RemoteCallFor returns the wired transport for the key, or nil.
 func RemoteCallFor(key string) any { return remoteCalls[key] }
 
+// RunJob, when set (BootGCP), starts a REAL Cloud Run Job execution;
+// nil means the local path — the job rides the queue dispatcher.
+var RunJob func(ctx context.Context, name string, params []byte) error
+
+// JobQueue names the internal local queue a job's executions ride —
+// one derivation, shared by Run (publish) and the wiring (consume).
+func JobQueue(name string) string { return "_job:" + name }
+
 // DeclaredSecrets is set by the SDK at init: it lists every secret name
 // declared via tako.Secret, so boot can refuse to start with any unset.
 var DeclaredSecrets func() []string

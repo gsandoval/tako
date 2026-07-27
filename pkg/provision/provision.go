@@ -23,6 +23,7 @@ const (
 	KindBucketNotification Kind = "bucket notification"
 	KindPullSubscription   Kind = "pull subscription"
 	KindRunService         Kind = "run service"
+	KindRunJob             Kind = "run job"
 	KindIamGrants          Kind = "iam grants"
 	KindPushSubscription   Kind = "push subscription"
 )
@@ -36,8 +37,8 @@ const (
 // identity). Destroy walks it backwards.
 var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
-	KindBucketNotification, KindPullSubscription, KindRunService, KindIamGrants,
-	KindPushSubscription,
+	KindBucketNotification, KindPullSubscription, KindRunService, KindRunJob,
+	KindIamGrants, KindPushSubscription,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.

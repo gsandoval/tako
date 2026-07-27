@@ -215,7 +215,14 @@ func singleflightInvoke(name string, fn func(Ctx) error) func(Ctx, []byte) error
 }
 
 // Singleton declares a long-running loop of which exactly one instance runs
-// across all revisions, with clean handoff between deploys.
+// across all revisions, with clean handoff between deploys: the loop
+// executes only while holding the §4.4 lease, so min=1/max=1 plus the
+// lease — not either alone — is the guarantee.
 func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler {
-	return Handler{kind: "singleton"}
+	return register(Handler{
+		kind:   "singleton",
+		source: name,
+		name:   fnName(fn),
+		invoke: func(ctx Ctx, _ []byte) error { return fn(ctx) },
+	})
 }

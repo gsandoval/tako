@@ -110,6 +110,8 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
 	sitePackages := map[string]string{}       // package path → package name (service-from-site)
 	workersByQueue := map[string]*Handler{}   // queue name → its worker
+	jobVars := map[types.Object]string{}      // job var object → job name
+	jobsByName := map[string]*Handler{}       // job name → its handler
 	type varDecl struct {
 		name *ast.Ident
 		call *ast.CallExpr
@@ -193,17 +195,17 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 				}
+			case "Job":
+				if r := extractCarrier("job", "tako.Job", cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					jobVars[pkg.TypesInfo.Defs[d.name]] = r.Name
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "job"}
+				}
 			case "Lock":
 				if r := extractLock(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "lock"}
 				}
-			case "Job", "JobHandler", "Singleton":
-				errs = append(errs, &Error{
-					Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
-					Msg:  fmt.Sprintf("tako.%s is not available yet — jobs and singletons arrive with the batch slice (W10)", d.ctor),
-					Rule: "not-yet",
-				})
 			}
 		}
 		for _, d := range decls {
@@ -232,6 +234,16 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				}
 			case "Cron":
 				if h := extractCron(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+				}
+			case "JobHandler":
+				if h := extractJobHandler(cfg.Dir, pkg, d.name, d.call, jobVars, jobsByName, &errs); h != nil {
+					graph.Handlers = append(graph.Handlers, *h)
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+				}
+			case "Singleton":
+				if h := extractSingleton(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
@@ -296,6 +308,15 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		}
 		if !found {
 			graph.Services = append(graph.Services, Service{Name: name, Package: path, Profile: "default"})
+		}
+	}
+	for _, r := range graph.Resources {
+		if r.Kind == "job" && jobsByName[r.Name] == nil {
+			errs = append(errs, &Error{
+				Pos:  r.Pos,
+				Msg:  fmt.Sprintf("job %q has no body — bind one with tako.JobHandler", r.Name),
+				Rule: "job-binding",
+			})
 		}
 	}
 	// A service's ingress is one Cloud Run setting: a package cannot
@@ -415,7 +436,18 @@ func partition(handlers []Handler) []Service {
 	}
 	services := make([]Service, 0, len(order))
 	for _, name := range order {
-		services = append(services, *byService[name])
+		svc := *byService[name]
+		// A deployable whose one handler is a JobHandler provisions as
+		// a Cloud Run JOB; a Singleton's provisions min=1/max=1.
+		kinds := map[string]bool{}
+		for _, h := range handlers {
+			if h.Service == svc.Name {
+				kinds[h.Kind] = true
+			}
+		}
+		svc.Job = len(kinds) == 1 && kinds["job"]
+		svc.Singleton = len(kinds) == 1 && kinds["singleton"]
+		services = append(services, svc)
 	}
 	return services
 }

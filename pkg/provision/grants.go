@@ -19,6 +19,7 @@ const (
 	TargetBucket         = "bucket"
 	TargetTopic          = "topic"
 	TargetRunService     = "run"
+	TargetRunJob         = "runjob"
 	TargetServiceAccount = "serviceAccount"
 	TargetSubscription   = "subscription"
 	TargetSecret         = "secret"
@@ -105,6 +106,27 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	svcOf := map[string]string{} // handler var → service name
 	for _, h := range g.Handlers {
 		svcOf[h.Var] = h.Service
+	}
+
+	// Run edges (§2.7): triggering a job needs run.invoker ON THE JOB
+	// (Cloud Run jobs accept the same role for jobs.run).
+	jobSvcOf := map[string]string{} // job resource name → its deployable
+	for _, h := range g.Handlers {
+		if h.Kind == "job" {
+			jobSvcOf[h.Binding] = h.Service
+		}
+	}
+	for _, e := range g.Edges {
+		if e.Kind != "resource" || e.ToKind != "job" || e.Verb != "run" {
+			continue
+		}
+		svc, ok := svcOf2(g, e.From)
+		if !ok {
+			continue
+		}
+		if jobSvc := jobSvcOf[e.To]; jobSvc != "" {
+			add(target{TargetRunJob, cfg.Name(jobSvc)}, "roles/run.invoker", "serviceAccount:"+cfg.SAEmail(svc))
+		}
 	}
 
 	// Call edges (§2.12): the caller's SA may invoke the callee — the
@@ -240,4 +262,14 @@ func grantName(typ, id string) string {
 		return "project"
 	}
 	return fmt.Sprintf("%s %s", typ, id)
+}
+
+// svcOf2 finds a handler var's service.
+func svcOf2(g *analyzer.AppGraph, v string) (string, bool) {
+	for _, h := range g.Handlers {
+		if h.Var == v {
+			return h.Service, true
+		}
+	}
+	return "", false
 }

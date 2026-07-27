@@ -62,6 +62,9 @@ func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet
 	case provision.TargetRunService:
 		base := fmt.Sprintf("https://run.googleapis.com/v2/projects/%s/locations/%s/services/%s", g.C.Project, g.C.Region, id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
+	case provision.TargetRunJob:
+		base := fmt.Sprintf("https://run.googleapis.com/v2/projects/%s/locations/%s/jobs/%s", g.C.Project, g.C.Region, id)
+		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetServiceAccount:
 		base := "https://iam.googleapis.com/v1/projects/" + g.C.Project + "/serviceAccounts/" + id
 		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil

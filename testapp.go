@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
+	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
@@ -47,6 +48,10 @@ func NewTestApp(tb testing.TB) *TestApp {
 			app.Dispatcher.Consume(h.source, deliver(h.invoke, h.name))
 		case "subscribe":
 			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, h.name))
+		case "job":
+			// Jobs ride the dispatcher locally: DrainQueues waits for
+			// them, failures dead-letter inspectably.
+			app.Dispatcher.Consume(hooks.JobQueue(h.source), deliver(h.invoke, h.name))
 		}
 	}
 	tb.Cleanup(func() {

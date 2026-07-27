@@ -1,13 +1,35 @@
-shop: 2 services
+shop: 4 services
   service shop (package shop, profile default)
-    GET /api/products → ListProducts (app.go:56)
-    GET /api/products/{id} → GetProduct (app.go:57)
-    POST /api/products → AddProduct 🔒 (app.go:58)
-    POST /api/orders → PlaceOrder 🔒 (app.go:59)
-    GET /api/orders → ListOrders 🔒 (app.go:60)
+    GET /api/products → ListProducts (app.go:91)
+    GET /api/products/{id} → GetProduct (app.go:92)
+    POST /api/products → AddProduct 🔒 (app.go:93)
+    POST /api/orders → PlaceOrder 🔒 (app.go:94)
+    GET /api/orders → ListOrders 🔒 (app.go:95)
+    POST /api/settle → StartSettle 🔒 (app.go:96)
     entity products
-    entity orders (indexes: Owner, Created)
+    entity orders (indexes: Owner, Invoiced, Created)
     site ./web/dist
     auth (email)
+    job settle
+    entity reports
+    entity sequences
+  service shop-settle (package shop, profile default)
+    job Settle ← settle (app.go:98)
+    entity products
+    entity orders (indexes: Owner, Invoiced, Created)
+    site ./web/dist
+    auth (email)
+    job settle
+    entity reports
+    entity sequences
+  service shop-invoicer (package shop, profile default)
+    singleton Invoicer — invoicer, exactly one everywhere (app.go:99)
+    entity products
+    entity orders (indexes: Owner, Invoiced, Created)
+    site ./web/dist
+    auth (email)
+    job settle
+    entity reports
+    entity sequences
   service billing (package shop/billing, profile default)
     POST /charge → Charge (billing/billing.go:17)

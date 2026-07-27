@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/clientgen"
@@ -47,6 +48,14 @@ func serveAPI(t *testing.T) *httptest.Server {
 		return req, err
 	}, runtime.RequireAuth()))
 	mux.Handle("GET /api/orders", runtime.JSONHandler(ListOrders, nil, runtime.RequireAuth()))
+	mux.Handle("POST /api/settle", runtime.JSONHandler(StartSettle, func(r *http.Request) (SettleReq, error) {
+		var req SettleReq
+		err := runtime.DecodeJSON(r, &req)
+		return req, err
+	}, runtime.RequireAuth()))
+	// The job's local execution path, exactly as the generated main
+	// wires it.
+	runtime.RegisterJob("Settle", Settle)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -248,8 +257,8 @@ func TestGeneratedClientIsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Endpoints != 5 || len(sum.Excluded) != 1 {
-		t.Fatalf("summary = %+v, want 5 endpoints and billing.Charge excluded (private)", sum)
+	if sum.Endpoints != 6 || len(sum.Excluded) != 1 {
+		t.Fatalf("summary = %+v, want 6 endpoints and billing.Charge excluded (private)", sum)
 	}
 	if !strings.Contains(sum.Excluded[0].Reason, "private") {
 		t.Fatalf("exclusion reason = %q, want the private explanation", sum.Excluded[0].Reason)
@@ -260,5 +269,73 @@ func TestGeneratedClientIsFresh(t *testing.T) {
 	}
 	if !bytes.Equal(content, committed) {
 		t.Fatal("web/src/api.ts is stale — regenerate: tako gen client ts --out web/src/api.ts")
+	}
+}
+
+// --- W10: the batch story ------------------------------------------------
+
+func TestSettleJobRunsToCompletion(t *testing.T) {
+	srv := serveAPI(t)
+	alice := signIn(t, srv, "alice")
+	p, _ := postJSON[Product](t, alice, srv.URL+"/api/products", AddProductReq{Name: "tea", PriceCents: 400})
+	postJSON[Order](t, alice, srv.URL+"/api/orders", PlaceOrderReq{ProductID: p.ID, Qty: 2})
+	postJSON[Order](t, alice, srv.URL+"/api/orders", PlaceOrderReq{ProductID: p.ID, Qty: 1})
+
+	// The trigger hands off and returns; the queue-backed local
+	// execution then runs to completion (WaitIdle waits for it).
+	started, res := postJSON[SettleStarted](t, alice, srv.URL+"/api/settle", SettleReq{Day: "2026-07-27"})
+	if res.StatusCode != 200 || !started.Started {
+		t.Fatalf("settle trigger = %d %+v", res.StatusCode, started)
+	}
+	if err := runtime.WaitIdle(30 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	report, res2 := getJSONCtx[DailyReport](t, srv, "2026-07-27")
+	if res2 != nil {
+		t.Fatal(res2)
+	}
+	if report.Orders != 2 || report.TotalCents != 1200 {
+		t.Fatalf("report = %+v, want 2 orders / 1200¢", report)
+	}
+}
+
+// getJSONCtx reads a report through the entity store (no report api —
+// operators read reports in the console; tests read them directly).
+func getJSONCtx[T any](t *testing.T, _ *httptest.Server, id string) (DailyReport, error) {
+	t.Helper()
+	ctx := runtime.NewCtx(t.Context())
+	r, err := reports.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("report %s: %v", id, err)
+	}
+	return r, nil
+}
+
+func TestInvoiceNumbersAreStrictlySequential(t *testing.T) {
+	srv := serveAPI(t)
+	alice := signIn(t, srv, "alice")
+	p, _ := postJSON[Product](t, alice, srv.URL+"/api/products", AddProductReq{Name: "mug", PriceCents: 900})
+	var ids []string
+	for i := 0; i < 3; i++ {
+		o, _ := postJSON[Order](t, alice, srv.URL+"/api/orders", PlaceOrderReq{ProductID: p.ID, Qty: 1})
+		ids = append(ids, o.ID)
+		time.Sleep(2 * time.Millisecond) // distinct Created ordering
+	}
+
+	ctx := runtime.NewCtx(t.Context())
+	n, err := invoiceSweep(ctx)
+	if err != nil || n != 3 {
+		t.Fatalf("sweep = %d, %v", n, err)
+	}
+	for i, id := range ids {
+		o, err := orders.Get(ctx, id)
+		if err != nil || !o.Invoiced || o.InvoiceNo != int64(i+1) {
+			t.Fatalf("order %d = %+v, %v — want invoice %d in arrival order", i, o, err, i+1)
+		}
+	}
+	// A second sweep finds nothing: numbering is idempotent and the
+	// sequence never rewinds.
+	if n, err := invoiceSweep(ctx); err != nil || n != 0 {
+		t.Fatalf("second sweep = %d, %v", n, err)
 	}
 }

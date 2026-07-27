@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/internal/boot"
@@ -100,6 +101,15 @@ func BootGCP() error {
 	hooks.Lease = gcpb.NewLeaseStore(c)
 	hooks.LeaseOwner = leaseOwner()
 	hooks.CronSkipped = narrateCronSkip
+	// Jobs are REAL Cloud Run Job executions: the deploy injects each
+	// triggerable job's resource name as TAKO_JOB_<NAME>.
+	hooks.RunJob = func(ctx context.Context, name string, params []byte) error {
+		resource := os.Getenv("TAKO_JOB_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")))
+		if resource == "" {
+			return fmt.Errorf("job %q has no execution target — tako deploy injects TAKO_JOB_* from the graph's Run edges, so this is a tako bug (re-run tako deploy, and file it if it persists)", name)
+		}
+		return c.RunJob(ctx, resource, params)
+	}
 	// tako.Permanent short-circuits to this service's own dead topic:
 	// Pub/Sub cannot express "nack without retry", so PushHandler
 	// publishes and acks — one attempt, then dead-letter, like local.

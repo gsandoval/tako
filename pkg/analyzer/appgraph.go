@@ -31,13 +31,21 @@ type Service struct {
 	// Profile is the service's scaling profile: "default", "latency", or
 	// "batch".
 	Profile string `json:"profile"`
+	// Job marks a deployable that provisions as a Cloud Run JOB (a
+	// tako.JobHandler), not a service: no routes, no ingress, no
+	// request timeout.
+	Job bool `json:"job,omitempty"`
+	// Singleton marks a min=1/max=1 service running a lease-guarded
+	// loop (tako.Singleton).
+	Singleton bool `json:"singleton,omitempty"`
 }
 
 // Resource is one declared resource var.
 type Resource struct {
 	// Kind is the constructor: "bucket", "entity", "cache", "queue",
 	// "topic", "lock", "secret", "auth", "site", "job", "counter",
-	// "histogram".
+	// "histogram". ("job" is the declared tako.Job carrier — its
+	// deployable is the Service marked Job.)
 	Kind string `json:"kind"`
 	// Name is the constant name passed to the constructor — the resource's
 	// stable identity.
@@ -101,6 +109,8 @@ type Handler struct {
 	Route string `json:"route,omitempty"`
 	// Schedule is the schedule for Cron handlers.
 	Schedule string `json:"schedule,omitempty"`
+	// Parallel is a JobHandler's WithParallel task fan-out (0 = one task).
+	Parallel int `json:"parallel,omitempty"`
 	// Singleflight marks a Cron declared with tako.WithSingleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.

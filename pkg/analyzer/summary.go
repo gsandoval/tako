@@ -35,6 +35,14 @@ func HandlerLine(h Handler) string {
 		lock = " 🔒"
 	}
 	switch h.Kind {
+	case "job":
+		par := ""
+		if h.Parallel > 1 {
+			par = fmt.Sprintf(" ×%d tasks", h.Parallel)
+		}
+		return fmt.Sprintf("job %s ← %s%s (%s)", ShortVar(h), h.Binding, par, ShortPos(h.Pos))
+	case "singleton":
+		return fmt.Sprintf("singleton %s — %s, exactly one everywhere (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
 	case "worker":
 		return fmt.Sprintf("worker %s ← queue %s (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
 	case "subscribe":

@@ -4,9 +4,7 @@ import "github.com/gsandoval/tako"
 
 var auth = tako.Auth()
 
-var reindex = tako.Job[Params]("reindex")
-
-type Params struct{ Since string }
+var site = tako.Site("./web", tako.WithDomain("shop.example.com"))
 
 var Ping = tako.API("GET /api/ping", ping)
 
