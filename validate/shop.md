@@ -53,10 +53,15 @@ PORT=8090 go run ../../cmd/tako dev     # then open http://localhost:8090
   breakpoint in billing/billing.go and buy again: the debugger steps
   straight from placeOrder into charge — that is the §2.12 dev
   story).
-- The order shows an `invoiceNo` without any action of yours —
-  usually already on the first refresh (the invoicer sweeps every
-  2s; the judgment is that numbering happens BY ITSELF and the
-  numbers are sequential, not that you catch the delay).
+- The order shows an `invoiceNo` without any action of yours, and
+  the dev console prints `invoicer: assigned invoice numbers` — that
+  line IS the flow you're judging: the invoicer is a background
+  SINGLETON loop (its own min=1 service in the cloud) that sweeps
+  un-invoiced orders every 2s into strictly sequential numbers.
+  Serial by design (bookkeeping-grade sequences hate contention),
+  exactly-one by the lease. The judgment: numbering happens BY
+  ITSELF and the numbers are sequential — not that you catch the 2s
+  delay.
 - The settle trigger, with a concrete session (curl needs the
   `_session` cookie a sign-in sets — a jar is the easy way):
 

@@ -261,6 +261,7 @@ func invoiceSweep(ctx tako.Ctx) (int, error) {
 		return 0, err
 	}
 	sort.Slice(pending, func(i, j int) bool { return pending[i].Created.Before(pending[j].Created) })
+	var last int64
 	for _, o := range pending {
 		var no int64
 		err := sequences.Tx(ctx, func(tx tako.EntityTx[Sequence]) error {
@@ -278,6 +279,13 @@ func invoiceSweep(ctx tako.Ctx) (int, error) {
 		if err := orders.Update(ctx, o.ID, func(o *Order) { o.Invoiced, o.InvoiceNo = true, no }); err != nil {
 			return 0, err
 		}
+		last = no
+	}
+	if len(pending) > 0 {
+		// The loop is invisible by design when idle; a PRODUCTIVE sweep
+		// says so — this line in the dev console (or the shop-invoicer
+		// service logs) IS the singleton working.
+		ctx.Log().Info("invoicer: assigned invoice numbers", "orders", len(pending), "through", last)
 	}
 	return len(pending), nil
 }
