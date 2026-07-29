@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -93,6 +94,16 @@ func Serve(h http.Handler) {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
+	}
+	if os.Getenv("TAKO_DEV_GUARD") == "1" {
+		// tako dev holds this process's stdin: EOF means the dev loop
+		// died — however it died — and an orphaned service holding the
+		// port and the entity-store lock helps nobody. Exit with it.
+		go func() {
+			_, _ = io.Copy(io.Discard, os.Stdin)
+			fmt.Fprintln(os.Stderr, "tako: dev parent exited — shutting down")
+			os.Exit(0)
+		}()
 	}
 	err := http.ListenAndServe(":"+port, logRequests(h))
 	if err != nil && strings.Contains(err.Error(), "address already in use") {

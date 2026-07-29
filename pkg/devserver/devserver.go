@@ -80,7 +80,7 @@ func Run(ctx context.Context, opts Options) error {
 			// The loop must not retrigger itself: its own writes live
 			// under .tako, and each analyze pass READS the source files,
 			// which macOS surfaces as attribute-only (Chmod) events.
-			if hiddenPath(dir, ev.Name) || ev.Op == fsnotify.Chmod {
+			if hiddenPath(dir, ev.Name) || s.ownWrite(ev.Name) || ev.Op == fsnotify.Chmod {
 				continue
 			}
 			drain(watcher, 150*time.Millisecond)
@@ -100,6 +100,23 @@ type session struct {
 	opts Options
 	dir  string
 	app  *exec.Cmd
+	// buildOuts are the site build-output dirs (absolute) from the last
+	// analyze — the loop's OWN writes, like .tako, never reload
+	// triggers (a WithBuild that rewrites its output every cycle would
+	// otherwise spin dev forever).
+	buildOuts []string
+	// guard is the write end of the running child's stdin leash.
+	guard *os.File
+}
+
+// ownWrite reports whether path sits under a build-output dir.
+func (s *session) ownWrite(path string) bool {
+	for _, out := range s.buildOuts {
+		if path == out || strings.HasPrefix(path, out+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *session) out() io.Writer { return s.opts.Out }
@@ -116,6 +133,12 @@ func (s *session) cycle(first bool) error {
 	svc, err := appService(graph)
 	if err != nil {
 		return err
+	}
+	s.buildOuts = s.buildOuts[:0]
+	for _, r := range graph.Resources {
+		if r.Kind == "site" && r.BuildOut != "" {
+			s.buildOuts = append(s.buildOuts, filepath.Join(s.dir, filepath.FromSlash(r.BuildOut)))
+		}
 	}
 	if first {
 		fmt.Fprintf(s.out(), "  analyzing   %s\n", CountLine(graph))
@@ -191,15 +214,32 @@ func (s *session) cycle(first bool) error {
 func (s *session) startApp(bin string) error {
 	cmd := exec.Command(bin)
 	cmd.Dir = s.dir
-	cmd.Env = append(os.Environ(), "PORT="+s.opts.Port)
+	cmd.Env = append(os.Environ(), "PORT="+s.opts.Port, "TAKO_DEV_GUARD=1")
 	if s.opts.ChaosSeed != 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TAKO_CHAOS=%d", s.opts.ChaosSeed))
 	}
+	// The service's stdin is a pipe whose write end only THIS process
+	// holds: when tako dev dies — Ctrl-C, SIGKILL, closed terminal —
+	// the OS closes it, the child's stdin EOFs, and runtime.Serve
+	// exits. No more orphaned service binaries holding ports and
+	// entity-store locks across sessions.
+	guardR, guardW, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stdin = guardR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
+		guardR.Close()
+		guardW.Close()
 		return err
 	}
+	guardR.Close() // the child holds its copy
+	if s.guard != nil {
+		s.guard.Close() // release the PREVIOUS child's leash
+	}
+	s.guard = guardW
 	s.app = cmd
 	return nil
 }
@@ -210,6 +250,10 @@ func (s *session) stopApp() {
 	}
 	_ = s.app.Process.Kill()
 	_, _ = s.app.Process.Wait()
+	if s.guard != nil {
+		s.guard.Close()
+		s.guard = nil
+	}
 	s.app = nil
 }
 

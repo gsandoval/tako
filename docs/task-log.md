@@ -6141,3 +6141,20 @@ docs/tako-cloud-permissions.md and MUST land in the final developer
 documentation (a Stage 4 deliverable). Stage 4 decomposition
 (scheduler, custom domains, per-query composites, the operator era)
 follows the verdict.
+
+## W11 gate-walk fixes: dev's multi-service shape, reload loop, orphan leash (2026-07-29)
+
+Three dev-loop finds from the user's validate/shop.md walk:
+1. The walking-skeleton "exactly one app service" guard predated
+   §2.12 — dev now serves the one PUBLIC app service and collapses
+   jobs, singletons, and PRIVATE callees (billing) into its process;
+   Call is direct locally, so private route services need no server.
+2. WithBuild's output (web/dist) retriggered the watcher every cycle —
+   dev restarted forever. Build-output dirs are now the loop's own
+   writes, filtered like .tako.
+3. The recurring zombie class dies: dev's service child holds a stdin
+   leash (a pipe only the dev process writes); when tako dev exits —
+   Ctrl-C, SIGKILL, closed terminal — stdin EOFs and runtime.Serve
+   shuts the child down. Verified live: kill -9 on the parent took
+   the child with it, port freed. Four incidents of orphaned dev
+   binaries holding ports/locks across sessions motivated this.
