@@ -10,7 +10,8 @@
         "shop.AddProduct",
         "shop.PlaceOrder",
         "shop.ListOrders",
-        "shop.StartSettle"
+        "shop.StartSettle",
+        "shop.Me"
       ],
       "profile": "default"
     },
@@ -192,12 +193,22 @@
       "pos": "app.go:96:2"
     },
     {
+      "kind": "api",
+      "var": "shop.Me",
+      "package": "shop",
+      "service": "shop",
+      "route": "GET /api/me",
+      "req_ref": "struct{}",
+      "res_ref": "shop.MeRes",
+      "pos": "app.go:97:2"
+    },
+    {
       "kind": "job",
       "var": "shop.Settle",
       "package": "shop",
       "service": "shop-settle",
       "binding": "settle",
-      "pos": "app.go:98:2"
+      "pos": "app.go:99:2"
     },
     {
       "kind": "singleton",
@@ -205,7 +216,7 @@
       "package": "shop",
       "service": "shop-invoicer",
       "binding": "invoicer",
-      "pos": "app.go:99:2"
+      "pos": "app.go:100:2"
     },
     {
       "kind": "api",
