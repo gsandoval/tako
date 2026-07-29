@@ -301,30 +301,49 @@ func waitReady(port string, timeout time.Duration) error {
 	return fmt.Errorf("service did not start listening on :%s within %s", port, timeout)
 }
 
-// appService picks the one service with synchronous handlers — the one
-// tako dev builds and runs; local mode collapses workers and subscribers
-// into it.
+// appService picks the one PUBLIC app service — the one tako dev
+// builds and runs on PORT. Local mode collapses everything else into
+// that process: workers, subscribers, crons, jobs, and singletons
+// register in-process, and PRIVATE route services (§2.12 callees like
+// billing) need no server at all — Endpoint.Call is a direct function
+// call locally, breakpoints and all.
 func appService(g *analyzer.AppGraph) (analyzer.Service, error) {
 	var apps []analyzer.Service
 	for _, svc := range g.Services {
+		if svc.Job || svc.Singleton {
+			continue // in-process via RegisterJob/RegisterSingleton
+		}
+		public := false
 		for _, h := range g.Handlers {
-			if h.Service == svc.Name && h.Kind != "worker" && h.Kind != "subscribe" {
-				apps = append(apps, svc)
+			if h.Service != svc.Name {
+				continue
+			}
+			if (h.Kind == "api" || h.Kind == "page" || h.Kind == "cron") && !h.Private {
+				public = true
 				break
 			}
+		}
+		if public {
+			apps = append(apps, svc)
+			continue
 		}
 		// A site alone is an app too (W1: service-from-site).
 		for _, r := range g.Resources {
 			if r.Kind == "site" && r.Package == svc.Package && svc.Name == filepathBase(svc.Package) {
-				if len(apps) == 0 || apps[len(apps)-1].Name != svc.Name {
-					apps = append(apps, svc)
-				}
+				apps = append(apps, svc)
 				break
 			}
 		}
 	}
-	if len(apps) != 1 {
-		return analyzer.Service{}, fmt.Errorf("tako dev serves exactly one app service in the walking skeleton; found %d", len(apps))
+	if len(apps) == 0 {
+		return analyzer.Service{}, fmt.Errorf("tako dev found no public app service — every route is private or async; add a public API, Page, or Site")
+	}
+	if len(apps) > 1 {
+		names := make([]string, len(apps))
+		for i, a := range apps {
+			names[i] = a.Name
+		}
+		return analyzer.Service{}, fmt.Errorf("tako dev serves one public app service on one port; found %d (%s) — multi-service dev routing is a later slice", len(apps), strings.Join(names, ", "))
 	}
 	return apps[0], nil
 }
