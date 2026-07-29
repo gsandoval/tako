@@ -7,13 +7,18 @@
   <style>
     body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; }
     button { cursor: pointer; }
+    header { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
     .product { display: flex; justify-content: space-between; align-items: center; padding: .5rem 0; border-bottom: 1px solid #ddd; }
     #status { color: #b00; min-height: 1.5rem; }
+    #signout { display: none; }
   </style>
 </head>
 <body>
-  <h1>shop</h1>
-  <p><a href="/api/_session/signin?next=/">sign in</a> to buy.</p>
+  <header>
+    <h1>shop</h1>
+    <p id="session-state"><a id="signin" href="/api/_session/signin?next=/">sign in</a> to buy.
+      <span id="who"></span> <button id="signout">sign out</button></p>
+  </header>
   <div id="status"></div>
   <div id="products">loading…</div>
   <h2>your orders</h2>

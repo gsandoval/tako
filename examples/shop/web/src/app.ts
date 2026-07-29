@@ -47,7 +47,25 @@ async function buy(p: Product) {
   }
 }
 
+// renderSession makes the session VISIBLE: who is signed in, and a
+// working sign-out — state the page reflects instead of assuming.
+async function renderSession() {
+  const who = await api.me();
+  const signin = $("signin") as HTMLAnchorElement;
+  const signout = $("signout") as HTMLButtonElement;
+  if (who.signedIn) {
+    signin.style.display = "none";
+    $("who").textContent = `signed in as ${who.name} ·`;
+    signout.style.display = "inline";
+    signout.onclick = async () => {
+      await fetch("/api/_session", { method: "DELETE", credentials: "same-origin" });
+      location.reload();
+    };
+  }
+}
+
 async function main() {
+  await renderSession().catch(() => {});
   const products = await api.listProducts();
   const el = $("products");
   el.textContent = products.length ? "" : "the shelf is empty.";

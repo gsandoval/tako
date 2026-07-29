@@ -6158,3 +6158,20 @@ Three dev-loop finds from the user's validate/shop.md walk:
    shuts the child down. Verified live: kill -9 on the parent took
    the child with it, port freed. Four incidents of orphaned dev
    binaries holding ports/locks across sessions motivated this.
+
+## W11 gate-walk fixes, round 2: session state made visible (2026-07-29)
+
+User reports from the §3 walk, all addressed:
+1. "Signed off immediately / state not preserved" — shop's page never
+   REFLECTED the session: the header always read "sign in to buy",
+   whoever was signed in. shop gains `GET /api/me` (a public probe,
+   honest about anonymity) and the header now renders "signed in as
+   alice · sign out" with a working sign-out (DELETE /api/_session +
+   reload). The generated client picked up me() — 7 endpoints — and
+   the alice/bob difference is now visibly whose orders render.
+2. The settle 401 — validate/shop.md's `-b <session>` placeholder was
+   unusable as written; §3 now carries the concrete two-line
+   cookie-jar recipe (verified live: {"started":true} + the ⚙ line).
+3. Invoice timing — behaving as designed; the script now says the
+   judgment is that numbering happens BY ITSELF and sequentially, not
+   that the 2s sweep delay is observable.

@@ -257,8 +257,8 @@ func TestGeneratedClientIsFresh(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sum.Endpoints != 6 || len(sum.Excluded) != 1 {
-		t.Fatalf("summary = %+v, want 6 endpoints and billing.Charge excluded (private)", sum)
+	if sum.Endpoints != 7 || len(sum.Excluded) != 1 {
+		t.Fatalf("summary = %+v, want 7 endpoints and billing.Charge excluded (private)", sum)
 	}
 	if !strings.Contains(sum.Excluded[0].Reason, "private") {
 		t.Fatalf("exclusion reason = %q, want the private explanation", sum.Excluded[0].Reason)

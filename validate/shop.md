@@ -46,15 +46,27 @@ typed methods and `instanceof ApiError`.
 PORT=8090 go run ../../cmd/tako dev     # then open http://localhost:8090
 ```
 
-- Sign in (dev bar), buy something: the order lands with a
-  `receiptId` — billing.Charge ran IN-PROCESS (set a breakpoint in
-  billing/billing.go and buy again: the debugger steps straight from
-  placeOrder into charge — that is the §2.12 dev story).
-- Within ~2s the order shows `invoiceNo: 1` — the invoicer loop is
-  live locally too.
-- `curl -s -X POST localhost:8090/api/settle -H 'Content-Type: application/json' -b <session> -d '{"day":"dev"}'`
+- Sign in (dev bar or the header link): the header now SHOWS the
+  session — "signed in as alice · sign out" — and switching between
+  alice and bob swaps whose orders render. Buy something: the order
+  lands with a `receiptId` — billing.Charge ran IN-PROCESS (set a
+  breakpoint in billing/billing.go and buy again: the debugger steps
+  straight from placeOrder into charge — that is the §2.12 dev
+  story).
+- The order shows an `invoiceNo` without any action of yours —
+  usually already on the first refresh (the invoicer sweeps every
+  2s; the judgment is that numbering happens BY ITSELF and the
+  numbers are sequential, not that you catch the delay).
+- The settle trigger, with a concrete session (curl needs the
+  `_session` cookie a sign-in sets — a jar is the easy way):
+
+  ```
+  curl -s -c /tmp/dev.jar -o /dev/null -d dev_user=alice localhost:8090/api/_session
+  curl -s -b /tmp/dev.jar -X POST localhost:8090/api/settle -H 'Content-Type: application/json' -d '{"day":"dev"}'
+  ```
+
   → `{"started":true}` immediately; the ⚙ job line appears in the
-  dev console and a `reports` record materializes (`ls .tako/data`).
+  dev console and a `reports` record materializes.
 
 ## 4. The suite, the product way
 

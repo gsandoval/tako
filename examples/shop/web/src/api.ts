@@ -51,6 +51,12 @@ export interface SettleStarted {
   started: boolean;
 }
 
+/** shop.MeRes */
+export interface MeRes {
+  signedIn: boolean;
+  name: string;
+}
+
 /** A non-2xx response, message parsed from tako's {"error": ...} body. */
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -130,6 +136,10 @@ export function createClient(opts: ClientOptions = {}) {
     /** shop.StartSettle — POST /api/settle (sign-in required: 401 ApiError without a session) */
     async startSettle(req: SettleReq): Promise<SettleStarted> {
       return (await call("POST", `/api/settle`, null, req)).json();
+    },
+    /** shop.Me — GET /api/me */
+    async me(): Promise<MeRes> {
+      return (await call("GET", `/api/me`, null, undefined)).json();
     },
   };
 }

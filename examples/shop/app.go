@@ -94,6 +94,7 @@ var (
 	PlaceOrder   = tako.API("POST /api/orders", placeOrder, tako.WithAuth())
 	ListOrders   = tako.API("GET /api/orders", listOrders, tako.WithAuth())
 	StartSettle  = tako.API("POST /api/settle", startSettle, tako.WithAuth())
+	Me           = tako.API("GET /api/me", me)
 
 	Settle   = tako.JobHandler(settle, runSettle)
 	Invoicer = tako.Singleton("invoicer", assignInvoices)
@@ -279,4 +280,22 @@ func invoiceSweep(ctx tako.Ctx) (int, error) {
 		}
 	}
 	return len(pending), nil
+}
+
+// MeRes is the session state the frontend renders — a public probe,
+// honest about anonymity.
+type MeRes struct {
+	SignedIn bool   `json:"signedIn"`
+	Name     string `json:"name"`
+}
+
+func me(ctx tako.Ctx, _ struct{}) (MeRes, error) {
+	if u, ok := ctx.MaybeUser(); ok {
+		name := u.Name
+		if name == "" {
+			name = u.Email
+		}
+		return MeRes{SignedIn: true, Name: name}, nil
+	}
+	return MeRes{}, nil
 }
