@@ -132,14 +132,58 @@ run.invoker; found live); billing "ingress: IAM-only (callers:
 shop-sa)"; the call graph line; the ⚠ pricing the sync hop into
 scale-to-zero billing.
 
-Then, with a session from the email provider (see validate/journal.md
-§6 for the token dance, or the dev-bar-less curl transcript in the
-task log):
+### Authenticating to the deployed app (complete curl recipe)
 
-- **Private front door:** `curl -X POST <billing-url>/charge` → 403
-  from Google, not tako. With YOUR OWN identity token
-  (`gcloud auth print-identity-token`) + an `X-Tako-Session` header:
-  200, and `chargedBy` is the session's uid — operator access and
+The cloud has no dev bar — sign-in is the REAL email/password
+provider. Everything below is copy-pasteable; run it once and every
+later curl just uses the cookie jar.
+
+```
+# 1. The shop URL from the deploy's ✓ line, and the browser API key
+#    the deploy injected into the service:
+B=https://<shop-url-from-the-✓-line>
+APIKEY=$(gcloud run services describe shop --project <test-project>   --region us-central1 --format json | python3 -c 'import json,sys; env=json.load(sys.stdin)["spec"]["template"]["spec"]["containers"][0]["env"]; print([e["value"] for e in env if e["name"]=="TAKO_AUTH_APIKEY"][0])')
+
+# 2. Create a throwaway email user (signUp also returns a fresh ID
+#    token). Re-running later: swap signUp for signInWithPassword,
+#    same body, same response shape.
+curl -s "https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=$APIKEY"   -H 'Content-Type: application/json'   -d '{"email":"walker@example.com","password":"<pick-one>","returnSecureToken":true}'   > /tmp/idp.json
+IDTOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/idp.json"))["idToken"])')
+
+# 3. Exchange the ID token for a tako session — the Set-Cookie lands
+#    in the jar, and every following curl sends it with -b:
+curl -s -c /tmp/shop.jar -o /dev/null -X POST $B/api/_session   -H 'Content-Type: application/json' -d "{\"idToken\":\"$IDTOKEN\"}"
+curl -s -b /tmp/shop.jar $B/api/me     # → {"signedIn":true,...} proves it
+```
+
+(Browser alternative: once the user EXISTS — step 2 — the header's
+"sign in" link opens the framework's email/password form and sets the
+same cookie; the page then works signed in, stock-the-shelf included.
+The form signs IN only; creating the account is step 2's job.)
+
+Now the walk, all with `-b /tmp/shop.jar`:
+
+```
+# stock the shelf, buy, see the order + receipt + (soon) invoiceNo:
+curl -s -b /tmp/shop.jar -X POST $B/api/products -H 'Content-Type: application/json'   -d '{"name":"gate tea","priceCents":400}'
+curl -s -b /tmp/shop.jar -X POST $B/api/orders -H 'Content-Type: application/json'   -d '{"productId":"<id-from-above>","qty":2}'
+curl -s -b /tmp/shop.jar $B/api/orders
+```
+
+- **Private front door:** `curl -X POST <billing-url>/charge` (the
+  billing URL is its own ✓ line) → 403 from Google, not tako. Then
+  the operator probe — your own identity token plus the session ID
+  read out of the jar:
+
+  ```
+  SID=$(awk '$6=="_session" {print $7}' /tmp/shop.jar)
+  curl -s -X POST <billing-url>/charge \
+    -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+    -H "X-Tako-Session: $SID" -H 'Content-Type: application/json' \
+    -d '{"orderId":"probe","amountCents":123}'
+  ```
+
+  → 200, and `chargedBy` is the session's uid — operator access and
   user propagation in one probe.
 - **The revoke-grant judgment (W9's criterion):**
   `gcloud run services remove-iam-policy-binding billing --member serviceAccount:shop-sa@… --role roles/run.invoker`
@@ -148,7 +192,14 @@ task log):
   billing` → orders heal.
 - **The job outlives any request deadline (W10's criterion):** place
   ~6 orders, then
-  `POST /api/settle {"day":"<today>","throttleMs":60000}` — the
+
+  ```
+  curl -s -b /tmp/shop.jar -X POST $B/api/settle \
+    -H 'Content-Type: application/json' \
+    -d '{"day":"<today>","throttleMs":60000}'
+  ```
+
+  — the
   trigger returns instantly; the execution runs ~6 MINUTES (past the
   300s service request timeout) and Completes
   (`gcloud run jobs executions list --job shop-settle`); the
@@ -164,7 +215,17 @@ go run ../../cmd/tako destroy --project <test-project>
 ```
 
 **Judge:** DATA names products, orders, reports, sequences; the run
-JOB deletes with everything else; typed name; clean project.
+JOB deletes with everything else; typed name; clean project. The
+walker account survives by design (destroy never touches Identity
+Platform users); delete it when done:
+
+```
+LOCALID=$(python3 -c 'import json; print(json.load(open("/tmp/idp.json"))["localId"])')
+curl -s -X POST "https://identitytoolkit.googleapis.com/v1/projects/<test-project>/accounts:delete" \
+  -H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+  -H "x-goog-user-project: <test-project>" \
+  -H 'Content-Type: application/json' -d "{\"localId\":\"$LOCALID\"}"
+```
 
 Record ONE verdict in docs/validation-log.md — the row closes W7,
 W8, W9, and W10, and with them STAGE 3. What follows is Stage 4's
