@@ -40,7 +40,7 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 	var args []string
 	for _, a := range rawArgs {
 		if name, value, ok := strings.Cut(a, "="); ok &&
-			(name == "--project" || name == "--region" || name == "--env") {
+			(name == "--project" || name == "--region" || name == "--env" || name == "--canary") {
 			args = append(args, name, value)
 			continue
 		}
@@ -48,10 +48,14 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 	}
 	var rest []string
 	for i := 0; i < len(args); i++ {
-		if pct, ok := strings.CutPrefix(args[i], "--canary="); ok {
-			n, err := strconv.Atoi(pct)
+		if args[i] == "--canary" {
+			if i+1 >= len(args) {
+				return t, nil, fmt.Errorf("--canary needs a percent between 1 and 99")
+			}
+			i++
+			n, err := strconv.Atoi(args[i])
 			if err != nil || n < 1 || n > 99 {
-				return t, nil, fmt.Errorf("--canary wants a percent between 1 and 99, got %q", pct)
+				return t, nil, fmt.Errorf("--canary wants a percent between 1 and 99, got %q", args[i])
 			}
 			t.canary = n
 			continue

@@ -21,44 +21,55 @@ import (
 
 const usage = `tako — a Go framework over Google Cloud Run
 
-Usage:
-  tako dev [--chaos]   run the app in this directory locally, with reload
-                       (--chaos: seeded duplicate/reordered deliveries)
+Local — nothing outside this directory is touched:
+  tako dev [--chaos]   run the app locally with reload (--chaos: seeded
+                       duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code, then go test ./...
-  tako build [--push <repo>]
-                       build every service as a digest-pinned distroless
-                       image (no Docker daemon); --push uploads each to
-                       <repo>/<service> on Artifact Registry
-  tako deploy [--plan] [--canary=<pct>] [--yes] [--project <id>]
-              [--region <r>] [--env <e>]
-                       reconcile the app onto GCP: preflight, classified
-                       plan (--plan stops there; replaces and rename
-                       suspects prompt unless --yes), lease, apply, live
-                       URL; --canary holds new revisions at <pct>%
-                       public traffic (async staged at 0%)
-  tako promote         send 100% of every service's traffic to latest
-  tako rollback        return traffic to the previous revision set
-                       (instant, no rebuild; infra shape rolls back via
-                       git revert + tako deploy)
-  tako prune [--data]  delete labeled orphans: stateless immediately,
-                       data (buckets, undeclared datastore kinds) only
-                       with --data behind counts + typed confirmation
-  tako logs [service] [--since 15m]
-                       recent logs for the deployed services
-  tako dlq [service] [--ack]
-                       dead-lettered messages per async service (peek);
-                       --ack drains the printed messages for good
-  tako destroy [--project <id>] [--env <e>]
-                       delete everything labeled for this app (typed
-                       confirmation; never touches unlabeled resources)
   tako gen graph [--json | --mermaid]
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
   tako gen client ts [--out <path>]
                        generate a typed TypeScript client for the app's
                        api endpoints (default .tako/gen/client/ts/api.ts)
+  tako build [--push <repo>]
+                       build digest-pinned distroless images (no Docker
+                       daemon); --push CROSSES THE LINE below: uploads
+                       to <repo>/<service> on Artifact Registry
 
-Commands arriving in later slices: a migrating tako rename.
+Cloud, read-only:
+  tako logs [service] [--since 15m]
+                       recent logs for the deployed services
+  tako dlq [service]   peek dead-lettered messages per async service
+
+Cloud, mutating (see the confirmation ladder below):
+  tako deploy [--plan] [--canary <pct>] [--yes]
+                       reconcile the app onto GCP: preflight, classified
+                       plan (--plan stops there), lease, apply, live URL;
+                       --canary holds new revisions at <pct>% traffic
+  tako promote         send 100% of every service's traffic to latest
+  tako rollback        return traffic to the previous revision set
+                       (instant; infra shape rolls back via git revert +
+                       tako deploy)
+  tako prune [--data]  delete orphans tako once managed: stateless
+                       (compute, messaging, indexes) immediately; data
+                       (buckets, entity kinds) only behind --data's
+                       counts + typed confirmation
+  tako dlq [service] --ack
+                       drain the printed dead-letter messages for good
+  tako destroy         delete everything labeled for this app (typed app
+                       name, always; never touches unlabeled resources)
+
+The confirmation ladder — friction scales with irreversibility:
+  reversible/derivable  no ceremony (promote/rollback undo each other;
+                        a deploy re-derives what prune removed)
+  risky but recoverable deploy prompts y/N on replaces and rename
+                        suspects; --yes pre-answers THAT PROMPT ONLY (CI)
+  data, gone forever    typed confirmation (destroy, prune --data) or an
+                        explicit flag (dlq --ack) — --yes never applies
+
+Cloud commands resolve --project (else GOOGLE_CLOUD_PROJECT, else gcloud
+config), --region (else TAKO_REGION, else us-central1), and --env
+(default prod) identically; --flag value and --flag=value both work.
 `
 
 func main() {
@@ -127,7 +138,13 @@ func main() {
 			return
 		}
 		if len(os.Args) < 3 || os.Args[2] != "graph" {
-			fmt.Fprint(os.Stderr, usage)
+			// The gen NAMESPACE gets its own help — a bare or unknown
+			// gen should list the generators, not dump everything.
+			fmt.Fprint(os.Stderr, `tako gen — code and artifact generators (local, no cloud touched)
+
+  tako gen graph [--json | --mermaid]   the app's AppGraph
+  tako gen client ts [--out <path>]     typed TypeScript client
+`)
 			os.Exit(2)
 		}
 		mode := "summary"
