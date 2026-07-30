@@ -259,11 +259,40 @@ WithDelay (shop's order flow is the likely demand), Cloud Scheduler for
 cron (journal or shop publishing schedules), the migrating `tako
 rename`, shared cache, metrics backend.*
 
-## Stage 4 — Release
+## Stage 4 — Release (decomposed 2026-07-30, Stage 3 closed)
 
-Example-driven docs, quick-start README (< 5 minutes, validated by a human
-who is *not* the author following it verbatim), final API review vs. the six
-rules, publish `github.com/gsandoval/tako`.
+*Gating returns to the standing rule: ONE feature, ONE gate — the
+Stage 3 batching amendment expired with W11. Every slice: DX proposal
+→ approval → implement → agent-side scripted+live validation → human
+verdict in docs/validation-log.md.*
+
+**R0 — Fit & finish the gates demanded.** The Stage 3 walks left four
+example-demanded debts: per-QUERY composite derivation (the aggregate
+tuple under-indexed shop's split query shapes — listOrders gets its
+OrderBy back), orphaned-index detection (stale composites from schema
+churn are invisible to destroy; prune learns to delete them —
+indexes are derivable, never data), WithProfile extraction (accepted
+everywhere, honored nowhere — gallery's batch worker finally gets
+batch knobs), and honest security-summary ingress text for jobs and
+singletons. Gate R0: goldens + shop/gallery suites + one full cycle
+on a fresh project.
+
+**R1 — Example-driven docs.** Each example a tutorial chapter
+(hello → shortlink → gallery → journal → shop = the feature arc);
+the cloud story (permissions model, the Identity Platform manual
+step — the W6 standing requirement lands HERE, in user-facing docs);
+the local story (no emulators, .tako/data is the database, deleting
+it is the reset). Gate R1: the human reads as a newcomer.
+
+**R2 — Quick-start README.** < 5 minutes, hello local then deployed.
+Gate R2: a human who is NOT the author follows it VERBATIM.
+
+**R3 — API review 2 + publish.** Every exported symbol re-reviewed
+against the six rules (api-review-2.md; the F10 lock plus what Stage
+3 made real behind it); anything doubtful goes internal; module
+tagged and published at github.com/gsandoval/tako. Gate R3: the
+review verdict + a fresh-project full cycle against the PUBLISHED
+module path.
 
 ---
 

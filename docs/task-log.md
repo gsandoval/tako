@@ -6205,3 +6205,70 @@ validate/shop.md §6. **Discovered work (deferred while the user
 deploys):** bounded not-found retry in the run-service create/update
 wait, mirroring the C4 SA-429 pacing precedent, so first deploys on
 fresh projects never trip on this.
+
+## STAGE 3 COMPLETE — W11 verdict recorded (2026-07-30)
+
+The user validated validate/shop.md (destroy deferred to later today
+— the destroy judgment stands from three prior full cycles). Stage 4
+decomposed in tako-agent-plan.md: R0 fit & finish, R1 example-driven
+docs (the Identity Platform documentation requirement lands there),
+R2 quick-start README, R3 API review 2 + publish. Per-slice gating
+resumes — the batching amendment expired with W11.
+
+## R0 — DX proposal: fit & finish the gates demanded (2026-07-30)
+
+Four debts, all example-demanded by Stage 3's walks, no new SDK
+surface:
+
+### 1. Per-query composite derivation (the shop debt)
+
+The analyzer today derives ONE aggregate composite per entity; shop's
+split query shapes (owner+created in listOrders, invoiced-only in the
+invoicer) proved it can UNDER-index — the documented "never
+under-indexes" claim was false and listOrders lost its OrderBy to an
+in-memory sort. The fix: scanQueries records one tuple PER QUERY
+CHAIN (filters in struct order, then OrderBys), dedupes, drops
+single-property tuples (served by built-ins). `Resource.Composite`
+([]string) becomes `Composites` ([][]string); provisioning emits one
+index per tuple. shop's listOrders regains
+`.Where("Owner").OrderBy("-Created")`; gallery/shortlink derive
+exactly what they derive today (one chain each).
+
+### 2. Orphaned-index detection (the schema-churn debt)
+
+Three stale composites lingered in tako-test-01 after mid-walk schema
+changes — invisible to destroy (it deletes desired shapes only).
+Observed-but-undesired MANAGED-KIND indexes become plan lines
+(`orphaned (kept) datastore index …`) like every other orphan, and
+`tako prune` deletes them WITHOUT --data: indexes are derivable from
+code, never data. Kind-scoping keeps foreign indexes (kinds tako
+never managed) untouched.
+
+### 3. WithProfile extraction (the honesty debt)
+
+WithProfile(tako.Batch|Latency) is accepted by the analyzer and
+recorded NOWHERE — gallery's makeThumb has claimed batch since F5 and
+runs default knobs. The handler's profile lands in the graph, worker/
+subscriber services inherit it, deploy applies the knobs, and the
+summary shows it. Api/page handlers with WithProfile set their whole
+service's profile; conflicting declarations in one service are an
+analysis error with both positions.
+
+### 4. Summary ingress text for jobs and singletons (cosmetic)
+
+`shop-settle` and `shop-invoicer` currently print the async "OIDC
+push · redelivery" line. Jobs say "a Cloud Run Job — no ingress;
+executions run on demand"; singletons say "ingress: none serving —
+the loop runs while this instance holds the lease".
+
+**Not in scope:** query-grouping beyond chains (Or/In arrive never in
+v0); index MERGING optimizations; scheduler; domains.
+
+**Validation** (then a normal human gate): analyzer goldens (shop
+grows two composites; an under-index regression fixture pins the
+shop shape), suites, and one full cycle on a FRESH project
+(tako-test-02) judging: both shop composites in the plan, gallery's
+worker with batch knobs live, a deliberately-orphaned index surfacing
+in the plan and dying under prune, clean destroy.
+
+**STOP — awaiting R0 DX approval.**
