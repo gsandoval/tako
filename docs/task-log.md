@@ -6194,3 +6194,14 @@ User reports from the §3 walk, all addressed:
    own toolchain typechecks; the diff and npx lines are THIS GATE
    proving determinism and strict-mode type soundness behind that
    command — explicitly not user workflow.
+
+## W11 gate-walk find: fresh-repo image-propagation race (2026-07-30)
+
+The user's fresh-cycle deploy failed at the first service create with
+"Image '…' not found" seconds after the ⛅ push lines — Artifact
+Registry eventual consistency on a just-created repo's first writes.
+Remedy: re-run (stateless reconciliation converges). Documented in
+validate/shop.md §6. **Discovered work (deferred while the user
+deploys):** bounded not-found retry in the run-service create/update
+wait, mirroring the C4 SA-429 pacing precedent, so first deploys on
+fresh projects never trip on this.

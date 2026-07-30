@@ -125,6 +125,12 @@ replaces and rename suspects — for CI, where nobody can type `y`. A
 fresh deploy is all creates, so no prompt fires; if one ever DOES,
 that is the safety machinery worth reading, not skipping.)
 
+**Known transient on a FRESH project/repo:** the first service create
+can fail with `Image '…' not found` moments after the images pushed —
+Artifact Registry is eventually consistent right after a just-created
+repo's first writes. Re-run the deploy: reconciliation is stateless,
+so the repo and images skip and the walk continues where it stopped.
+
 **Judge the plan + summary:** `run job shop-settle` (a JOB kind, not
 a service); `iam grants runjob shop-settle` carrying run.developer
 (runWithOverrides — the params channel — lives there, not in
