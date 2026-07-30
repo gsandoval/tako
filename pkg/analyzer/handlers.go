@@ -64,6 +64,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 
 	requiresAuth := false
 	private := false
+	profile := ""
 	for _, opt := range call.Args[2:] {
 		optName, ok := sdkOptionCall(pkg, opt)
 		if ok && optName == "WithAuth" {
@@ -72,6 +73,10 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		}
 		if ok && optName == "WithPrivate" {
 			private = true
+			continue
+		}
+		if ok && optName == "WithProfile" {
+			profile = profileArg(pkg, opt)
 			continue
 		}
 		if ok && !apiOptions[optName] {
@@ -208,6 +213,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
 		RequiresAuth: requiresAuth,
 		Private:      private,
+		Profile:      profile,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

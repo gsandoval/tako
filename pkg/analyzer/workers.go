@@ -35,8 +35,14 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		return nil
 	}
 
+	profile := ""
 	for _, opt := range call.Args[2:] {
-		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && !workerOptions[optName] {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if isOpt && optName == "WithProfile" {
+			profile = profileArg(pkg, opt)
+			continue
+		}
+		if isOpt && !workerOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
 				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile)",
@@ -64,6 +70,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		Package: pkg.PkgPath,
 		Service: pkg.Name + "-" + strings.ToLower(name.Name),
 		Binding: queueName,
+		Profile: profile,
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
 	workersByQueue[queueName] = h
@@ -93,8 +100,14 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		return nil
 	}
 
+	profile := ""
 	for _, opt := range call.Args[2:] {
-		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && !subscribeOptions[optName] {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if isOpt && optName == "WithProfile" {
+			profile = profileArg(pkg, opt)
+			continue
+		}
+		if isOpt && !subscribeOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
 				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile)",
@@ -114,6 +127,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Service:     pkg.Name + "-" + strings.ToLower(name.Name),
 		Binding:     binding,
 		BindingKind: bindKind,
+		Profile:     profile,
 		Pos:         relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
@@ -325,4 +339,27 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Binding: singletonName,
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
+}
+
+// profileArg reads WithProfile's constant argument ("", "latency",
+// "batch") — tako.Default, tako.Latency, tako.Batch are typed int
+// constants in the SDK.
+func profileArg(pkg *packages.Package, opt ast.Expr) string {
+	call, ok := opt.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return ""
+	}
+	tv, ok := pkg.TypesInfo.Types[call.Args[0]]
+	if !ok || tv.Value == nil {
+		return ""
+	}
+	if n, ok := constant.Int64Val(tv.Value); ok {
+		switch n {
+		case 1:
+			return "latency"
+		case 2:
+			return "batch"
+		}
+	}
+	return ""
 }

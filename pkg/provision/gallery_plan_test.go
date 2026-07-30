@@ -25,7 +25,7 @@ func galleryGraph() *analyzer.AppGraph {
 		},
 		Resources: []analyzer.Resource{
 			{Kind: "bucket", Name: "photos"},
-			{Kind: "entity", Name: "photos", Type: "Photo", Composite: []string{"owner", "ready"}},
+			{Kind: "entity", Name: "photos", Type: "Photo", Composites: [][]string{{"owner", "ready"}}},
 			{Kind: "queue", Name: "thumbnails", Type: "ThumbJob"},
 			{Kind: "topic", Name: "photo-ready", Type: "PhotoReady"},
 			{Kind: "secret", Name: "notifier-key"},

@@ -6272,3 +6272,13 @@ worker with batch knobs live, a deliberately-orphaned index surfacing
 in the plan and dying under prune, clean destroy.
 
 **STOP — awaiting R0 DX approval.**
+
+## Stage 4 amendment (user-directed, 2026-07-30)
+
+Standing approval for the stage: proceed through R0–R3 without
+per-slice permission stops; verdicts collect in the validation log
+for the user's review sweep. NEW deliverable added to the stage: a
+CLI UNIFORMITY review (docs/cli-review-1.md, api-review style) —
+command discoverability, uniformity and explicitness of side
+effects, the confirmation ladder (--yes vs typed names vs nothing),
+the gen namespace — findings plus fixes.

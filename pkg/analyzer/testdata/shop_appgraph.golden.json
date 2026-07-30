@@ -59,11 +59,14 @@
       "type": "Order",
       "indexes": [
         "Owner",
-        "Invoiced"
+        "Invoiced",
+        "Created"
       ],
-      "composite": [
-        "owner",
-        "invoiced"
+      "composites": [
+        [
+          "owner",
+          "-created"
+        ]
       ],
       "pos": "app.go:25:2"
     },

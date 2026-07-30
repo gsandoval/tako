@@ -263,27 +263,53 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				fields++
 			}
 		}
-		// Two or more queried fields need a Datastore composite index:
-		// filters first (struct order), then OrderBy fields with their
-		// direction. One aggregate tuple per entity (v0). Property names
-		// are the MARSHALED names (json tag rule) — that is what the
-		// wire and Datastore see, not the Go field names.
-		if fields >= 2 {
+		_ = fields
+		// Composite indexes derive PER QUERY SHAPE (R0): one tuple per
+		// function that queries this entity — filters in struct order,
+		// then OrderBys in call order — deduped; single-field shapes
+		// need no composite (built-in indexes serve them). Property
+		// names are the MARSHALED names (json tag rule) — that is what
+		// the wire and Datastore see, not the Go field names.
+		seenTuple := map[string]bool{}
+		for _, c := range et.chains {
+			distinct := map[string]bool{}
+			for f := range c.filters {
+				distinct[f] = true
+			}
+			var tuple []string
 			for _, f := range et.declared {
-				if et.usedFilter[f] && et.usedOrder[f] == "" {
-					res.Composite = append(res.Composite, et.wire[f])
+				if c.filters[f] {
+					ordered := false
+					for _, o := range c.orders {
+						if o.field == f {
+							ordered = true
+						}
+					}
+					if !ordered {
+						tuple = append(tuple, et.wire[f])
+					}
 				}
 			}
-			for _, f := range et.declared {
-				if dir := et.usedOrder[f]; dir != "" {
-					prop := et.wire[f]
-					if dir == "desc" {
-						prop = "-" + prop
-					}
-					res.Composite = append(res.Composite, prop)
+			for _, o := range c.orders {
+				distinct[o.field] = true
+				prop := et.wire[o.field]
+				if o.dir == "desc" {
+					prop = "-" + prop
 				}
+				tuple = append(tuple, prop)
+			}
+			if len(distinct) < 2 {
+				continue
+			}
+			key := strings.Join(tuple, ",")
+			if !seenTuple[key] {
+				seenTuple[key] = true
+				res.Composites = append(res.Composites, tuple)
 			}
 		}
+		sort.Slice(res.Composites, func(i, j int) bool {
+			return strings.Join(res.Composites[i], ",") < strings.Join(res.Composites[j], ",")
+		})
 	}
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
@@ -322,6 +348,9 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// A service's ingress is one Cloud Run setting: a package cannot
 	// half-close its front door.
 	checkMixedIngress(graph.Handlers, &errs)
+	// WithProfile is honored (R0): a service inherits its handlers'
+	// claim; two different claims in one service cannot both win.
+	applyProfiles(graph, &errs)
 	var edgeErrs ErrorList
 	graph.Edges, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
 	errs = append(errs, edgeErrs...)
@@ -509,4 +538,30 @@ func splitPos(pos string) (file string, line, col int) {
 	j := strings.LastIndex(pos[:i], ":")
 	fmt.Sscanf(pos[j+1:], "%d:%d", &line, &col)
 	return pos[:j], line, col
+}
+
+// applyProfiles projects handler WithProfile claims onto services and
+// rejects conflicts (one service, one scaling profile).
+func applyProfiles(graph *AppGraph, errs *ErrorList) {
+	for i := range graph.Services {
+		svc := &graph.Services[i]
+		claim, claimedBy := "", ""
+		for _, h := range graph.Handlers {
+			if h.Service != svc.Name || h.Profile == "" {
+				continue
+			}
+			if claim != "" && claim != h.Profile {
+				*errs = append(*errs, &Error{
+					Pos:  h.Pos,
+					Msg:  fmt.Sprintf("service %s cannot be both %s (%s) and %s (%s) — one service scales one way; split the packages or align the profiles", svc.Name, claim, claimedBy, h.Profile, ShortVar(h)),
+					Rule: "mixed-profile",
+				})
+				continue
+			}
+			claim, claimedBy = h.Profile, ShortVar(h)
+		}
+		if claim != "" {
+			svc.Profile = claim
+		}
+	}
 }

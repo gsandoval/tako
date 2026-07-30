@@ -180,17 +180,10 @@ func placeOrder(ctx tako.Ctx, req PlaceOrderReq) (Order, error) {
 }
 
 func listOrders(ctx tako.Ctx, _ struct{}) ([]Order, error) {
-	// No OrderBy here: v0 derives ONE aggregate composite per entity,
-	// and orders' split query shapes (owner+created here,
-	// invoiced-only in the invoicer) would under-index it — hit live
-	// in W10, logged as discovered analyzer work. Sorting 50 orders in
-	// memory costs nothing.
-	mine, err := orders.Query(ctx).Where("Owner", "=", ctx.User().ID).Limit(50).All()
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(mine, func(i, j int) bool { return mine[i].Created.After(mine[j].Created) })
-	return mine, nil
+	// The OrderBy is back (R0): composites now derive per query
+	// shape, so this chain gets its own (owner, -created) index and
+	// the invoicer's invoiced-only filter rides a built-in.
+	return orders.Query(ctx).Where("Owner", "=", ctx.User().ID).OrderBy("-Created").Limit(50).All()
 }
 
 type SettleReq struct {

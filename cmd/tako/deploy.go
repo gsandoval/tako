@@ -187,7 +187,7 @@ func runDeploy(args []string) error {
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels(), Annotations: versionStamps(dir, graph)}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
-	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
+	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels(), Say: sayf}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
@@ -402,6 +402,12 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 		ingress := "public ingress"
 		if !public[cfg.Name(svc.Name)] {
 			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
+			if svc.Job {
+				ingress = "a Cloud Run Job — no ingress; executions run on demand (retries: 3, then the execution fails)"
+			}
+			if svc.Singleton {
+				ingress = "ingress: none serving — the loop runs while this instance holds the lease"
+			}
 			if privateRoutes[svc.Name] {
 				callers := "no granted callers yet"
 				if cs := callersOf[svc.Name]; len(cs) > 0 {
@@ -614,7 +620,7 @@ func runDestroy(args []string) error {
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
-	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
+	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
@@ -832,4 +838,16 @@ func jobBinding(graph *analyzer.AppGraph, svc string) string {
 		}
 	}
 	return "?"
+}
+
+// entityKinds are the app's declared entity kinds — the scope within
+// which orphaned composite indexes are tako's to report and prune.
+func entityKinds(graph *analyzer.AppGraph) []string {
+	var kinds []string
+	for _, r := range graph.Resources {
+		if r.Kind == "entity" {
+			kinds = append(kinds, r.Name)
+		}
+	}
+	return kinds
 }

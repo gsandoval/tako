@@ -32,7 +32,7 @@
       "handlers": [
         "gallery.MakeThumb"
       ],
-      "profile": "default"
+      "profile": "batch"
     },
     {
       "name": "gallery-notifyowner",
@@ -69,9 +69,11 @@
         "Owner",
         "Ready"
       ],
-      "composite": [
-        "owner",
-        "ready"
+      "composites": [
+        [
+          "owner",
+          "ready"
+        ]
       ],
       "pos": "app.go:22:2"
     },
@@ -286,6 +288,7 @@
       "var": "gallery.MakeThumb",
       "package": "gallery",
       "service": "gallery-makethumb",
+      "profile": "batch",
       "binding": "thumbnails",
       "pos": "app.go:75:2"
     },

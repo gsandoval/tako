@@ -20,7 +20,7 @@ func shortlinkGraph() *analyzer.AppGraph {
 		},
 		Resources: []analyzer.Resource{
 			{Kind: "entity", Name: "links", Type: "Link",
-				Indexes: []string{"Owner", "Created"}, Composite: []string{"owner", "-created"}},
+				Indexes: []string{"Owner", "Created"}, Composites: [][]string{{"owner", "-created"}}},
 			{Kind: "queue", Name: "clicks", Type: "Click"},
 			{Kind: "entity", Name: "clicks-seen", Type: "Click"},
 		},

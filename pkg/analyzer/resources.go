@@ -13,13 +13,28 @@ import (
 // fields are indexed (and may appear in Where/OrderBy) and which were
 // actually used by queries — the derived index set.
 type entityType struct {
-	display    string            // short type name, e.g. "Link"
-	declared   []string          // entity:"index" fields, struct order
-	indexed    map[string]bool   // membership set of declared
-	wire       map[string]string // Go field → marshaled property name (json tag rule)
-	used       map[string]bool   // fields seen in Where/OrderBy call sites
-	usedFilter map[string]bool   // fields seen in Where call sites
-	usedOrder  map[string]string // OrderBy fields → "asc" | "desc"
+	display  string            // short type name, e.g. "Link"
+	declared []string          // entity:"index" fields, struct order
+	indexed  map[string]bool   // membership set of declared
+	wire     map[string]string // Go field → marshaled property name (json tag rule)
+	used     map[string]bool   // fields seen in Where/OrderBy call sites
+	// chains are per-FUNCTION query shapes (R0): every Where/OrderBy
+	// on this entity inside one function forms one tuple. Chains built
+	// across functions merge conservatively per function — this can
+	// over-index a function with two separate queries, never
+	// under-index one (the aggregate-per-entity scheme it replaces
+	// DID under-index once query shapes split; shop proved it live).
+	chains []queryChain
+}
+
+// queryChain is one function's query shape on an entity.
+type queryChain struct {
+	filters map[string]bool
+	orders  []orderBy // in call order
+}
+
+type orderBy struct {
+	field, dir string
 }
 
 // extractEntity validates one tako.Entity declaration and returns its
@@ -111,7 +126,7 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 	}
 
 	et := &entityType{display: obj.Name(), indexed: map[string]bool{}, wire: map[string]string{},
-		used: map[string]bool{}, usedFilter: map[string]bool{}, usedOrder: map[string]string{}}
+		used: map[string]bool{}}
 	idCount := 0
 	bad := false
 	for i := range st.NumFields() {
@@ -160,56 +175,76 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 // used fields — the derived index set.
 func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityType, errs *ErrorList) {
 	for _, file := range pkg.Syntax {
-		ast.Inspect(file, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok || len(call.Args) < 1 {
-				return true
+		for _, decl := range file.Decls {
+			fd, ok := decl.(*ast.FuncDecl)
+			if !ok || fd.Body == nil {
+				continue
 			}
-			method, payloadKey := entityQueryMethod(pkg, call)
-			if method != "Where" && method != "OrderBy" {
-				return true
-			}
-			et := entities[payloadKey]
-			if et == nil {
-				return true
-			}
-
-			fieldArg := call.Args[0]
-			field, err := constString(pkg, fieldArg)
-			if err != nil {
-				*errs = append(*errs, &Error{
-					Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
-					Msg: fmt.Sprintf("query field must be a string constant — indexes are derived at analysis time; got %s",
-						describeExpr(fieldArg)),
-					Rule: "const-query-field",
-				})
-				return true
-			}
-			verb, suffix, direction := "filters on", "queryable", ""
-			if method == "OrderBy" {
-				verb, suffix, direction = "orders by", "orderable", "asc"
-				if len(field) > 0 && field[0] == '-' {
-					field = field[1:]
-					direction = "desc"
+			// One chain per (entity, function): see entityType.chains.
+			fnChains := map[*entityType]*queryChain{}
+			chainOf := func(et *entityType) *queryChain {
+				if fnChains[et] == nil {
+					fnChains[et] = &queryChain{filters: map[string]bool{}}
+					et.chains = append(et.chains, queryChain{})
 				}
+				return fnChains[et]
 			}
-			if !et.indexed[field] {
-				*errs = append(*errs, &Error{
-					Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
-					Msg: fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
-						verb, et.display, field, field, suffix),
-					Rule: "unindexed-query",
-				})
+			_ = chainOf
+			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok || len(call.Args) < 1 {
+					return true
+				}
+				method, payloadKey := entityQueryMethod(pkg, call)
+				if method != "Where" && method != "OrderBy" {
+					return true
+				}
+				et := entities[payloadKey]
+				if et == nil {
+					return true
+				}
+
+				fieldArg := call.Args[0]
+				field, err := constString(pkg, fieldArg)
+				if err != nil {
+					*errs = append(*errs, &Error{
+						Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
+						Msg: fmt.Sprintf("query field must be a string constant — indexes are derived at analysis time; got %s",
+							describeExpr(fieldArg)),
+						Rule: "const-query-field",
+					})
+					return true
+				}
+				verb, suffix, direction := "filters on", "queryable", ""
+				if method == "OrderBy" {
+					verb, suffix, direction = "orders by", "orderable", "asc"
+					if len(field) > 0 && field[0] == '-' {
+						field = field[1:]
+						direction = "desc"
+					}
+				}
+				if !et.indexed[field] {
+					*errs = append(*errs, &Error{
+						Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
+						Msg: fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
+							verb, et.display, field, field, suffix),
+						Rule: "unindexed-query",
+					})
+					return true
+				}
+				et.used[field] = true
+				c := chainOf(et)
+				if direction == "" {
+					c.filters[field] = true
+				} else {
+					c.orders = append(c.orders, orderBy{field: field, dir: direction})
+				}
 				return true
+			})
+			for et, c := range fnChains {
+				et.chains[len(et.chains)-1] = *c
 			}
-			et.used[field] = true
-			if direction == "" {
-				et.usedFilter[field] = true
-			} else {
-				et.usedOrder[field] = direction
-			}
-			return true
-		})
+		}
 	}
 }
 

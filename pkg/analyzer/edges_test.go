@@ -53,12 +53,12 @@ func TestShortlinkComposite(t *testing.T) {
 	for _, r := range g.Resources {
 		switch r.Name {
 		case "links":
-			if want := "owner,-created"; strings.Join(r.Composite, ",") != want {
-				t.Errorf("links composite = %v, want %s", r.Composite, want)
+			if len(r.Composites) != 1 || strings.Join(r.Composites[0], ",") != "owner,-created" {
+				t.Errorf("links composites = %v, want exactly [owner,-created]", r.Composites)
 			}
 		case "clicks-seen":
-			if len(r.Composite) != 0 {
-				t.Errorf("clicks-seen composite = %v, want none (never queried)", r.Composite)
+			if len(r.Composites) != 0 {
+				t.Errorf("clicks-seen composites = %v, want none (never queried)", r.Composites)
 			}
 		}
 	}

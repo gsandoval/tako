@@ -25,9 +25,11 @@
         "Published",
         "Created"
       ],
-      "composite": [
-        "published",
-        "-created"
+      "composites": [
+        [
+          "published",
+          "-created"
+        ]
       ],
       "pos": "app.go:15:2"
     },

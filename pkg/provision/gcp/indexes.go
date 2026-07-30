@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
@@ -18,7 +19,28 @@ import (
 type DatastoreIndexes struct {
 	C       *Client
 	Desired []provision.Object
-	Say     func(format string, args ...any)
+	// Kinds are the app's declared entity kinds: live indexes on them
+	// that match NO desired object are ORPHANS (schema churn leaves
+	// them behind — found live in the W11 walk). Indexes on foreign
+	// kinds stay invisible, as before.
+	Kinds []string
+	Say   func(format string, args ...any)
+
+	orphanIDs map[string]string // orphan name → live indexId, filled by List
+}
+
+// liveName renders a live index the way desired names read, so plans
+// and prune lines look identical for both.
+func liveName(li liveIndex) string {
+	props := make([]string, 0, len(li.Properties))
+	for _, p := range li.Properties {
+		name := p.Name
+		if p.Direction == "DESCENDING" {
+			name = "-" + name
+		}
+		props = append(props, name)
+	}
+	return li.Kind + " (" + strings.Join(props, ", ") + ")"
 }
 
 func (d *DatastoreIndexes) Kind() provision.Kind { return provision.KindDatastoreIndex }
@@ -73,24 +95,47 @@ func (d *DatastoreIndexes) live(ctx context.Context) ([]liveIndex, error) {
 }
 
 func (d *DatastoreIndexes) List(ctx context.Context) ([]provision.Observed, error) {
-	if len(d.Desired) == 0 {
+	if len(d.Desired) == 0 && len(d.Kinds) == 0 {
 		return nil, nil
 	}
 	live, err := d.live(ctx)
 	if err != nil {
 		return nil, err
 	}
+	managedKind := map[string]bool{}
+	for _, k := range d.Kinds {
+		managedKind[k] = true
+	}
+	d.orphanIDs = map[string]string{}
 	var observed []provision.Observed
-	for _, o := range d.Desired {
-		for _, li := range live {
-			if sameIndex(o, li) && li.State != "ERROR" && li.State != "DELETING" {  // a dying index is absent
+	for _, li := range live {
+		if li.State == "ERROR" || li.State == "DELETING" { // a dying index is absent
+			continue
+		}
+		matched := false
+		for _, o := range d.Desired {
+			if sameIndex(o, li) {
 				observed = append(observed, provision.Observed{
 					Kind:     provision.KindDatastoreIndex,
 					Name:     o.Name,
 					SpecHash: provision.SpecHash(o.Spec),
 				})
+				matched = true
 				break
 			}
+		}
+		if !matched && managedKind[li.Kind] {
+			// Schema churn's leftovers: an index on a kind tako manages
+			// that no current query shape wants — surfaced as an orphan
+			// (kept), deletable by prune (indexes are derivable, never
+			// data).
+			name := liveName(li)
+			d.orphanIDs[name] = li.IndexID
+			observed = append(observed, provision.Observed{
+				Kind:     provision.KindDatastoreIndex,
+				Name:     name,
+				SpecHash: "orphan",
+			})
 		}
 	}
 	return observed, nil
@@ -122,6 +167,13 @@ func (d *DatastoreIndexes) Update(ctx context.Context, o provision.Object) error
 }
 
 func (d *DatastoreIndexes) Delete(ctx context.Context, name string) error {
+	if id, ok := d.orphanIDs[name]; ok {
+		u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes/" + id
+		if err := d.C.do(ctx, http.MethodDelete, u, nil, nil); err != nil {
+			return Classify(err, d.C.Project, "delete the datastore index", "roles/datastore.indexAdmin")
+		}
+		return nil
+	}
 	for _, o := range d.Desired {
 		if o.Name != name {
 			continue

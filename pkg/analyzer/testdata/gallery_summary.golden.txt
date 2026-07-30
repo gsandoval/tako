@@ -32,7 +32,7 @@ gallery: 5 services
     histogram thumb_ms
     lock reindex
     entity reindex-runs
-  service gallery-makethumb (package gallery, profile default)
+  service gallery-makethumb (package gallery, profile batch)
     worker MakeThumb ← queue thumbnails (app.go:75)
     bucket photos
     entity photos (indexes: Owner, Ready)

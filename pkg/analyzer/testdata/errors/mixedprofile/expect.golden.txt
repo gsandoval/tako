@@ -1,0 +1,1 @@
+app.go:6:5: service mixedprofile cannot be both latency (Fast) and batch (Slow) — one service scales one way; split the packages or align the profiles (tako/mixed-profile)

@@ -141,7 +141,7 @@ func runPrune(args []string) error {
 	sas := &gcp.ServiceAccounts{C: client, App: app, Env: t.env}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
-	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Say: sayf}
+	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels(), Say: sayf}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}

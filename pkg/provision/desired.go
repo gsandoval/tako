@@ -280,9 +280,9 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": true},
 			})
 		case "entity":
-			if len(r.Composite) > 0 {
-				props := make([]any, 0, len(r.Composite))
-				for _, f := range r.Composite {
+			for _, tuple := range r.Composites {
+				props := make([]any, 0, len(tuple))
+				for _, f := range tuple {
 					dir := "ASCENDING"
 					if strings.HasPrefix(f, "-") {
 						f, dir = f[1:], "DESCENDING"
@@ -293,7 +293,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					Kind: KindDatastoreIndex,
 					// Indexes serve every namespace, so envs share them:
 					// no env prefix in the identity.
-					Name: r.Name + " (" + strings.Join(r.Composite, ", ") + ")",
+					Name: r.Name + " (" + strings.Join(tuple, ", ") + ")",
 					Spec: map[string]any{"entityKind": r.Name, "properties": props},
 				})
 			}

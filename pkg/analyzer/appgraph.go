@@ -61,14 +61,15 @@ type Resource struct {
 	// (Where/OrderBy call sites), in struct declaration order — the
 	// derived index set.
 	Indexes []string `json:"indexes,omitempty"`
-	// Composite is the derived Datastore composite index for entities
-	// whose queries combine two or more indexed fields: filter fields
-	// first (struct order, ascending), then OrderBy fields with a "-"
-	// prefix for descending. Empty when single-property indexes suffice.
-	// v0 derives one aggregate tuple per entity — query grouping is not
-	// tracked, so this can over-index but never under-indexes the
-	// queries the analyzer accepted.
-	Composite []string `json:"composite,omitempty"`
+	// Composites are the derived Datastore composite indexes, one
+	// tuple PER QUERY SHAPE (grouped per function): filter fields
+	// first (struct order, ascending), then OrderBy fields in call
+	// order with a "-" prefix for descending. Empty when
+	// single-property indexes suffice. Grouping per function can
+	// over-index a function running two separate queries; it never
+	// under-indexes a shape (the aggregate-per-entity scheme this
+	// replaced did — shop, R0).
+	Composites [][]string `json:"composites,omitempty"`
 	// Site configuration (Kind "site"): the served directory, optional
 	// frontend build (command + output dir), the dev-proxy URL, the SPA
 	// fallback, and permanent redirects.
@@ -111,6 +112,10 @@ type Handler struct {
 	Schedule string `json:"schedule,omitempty"`
 	// Parallel is a JobHandler's WithParallel task fan-out (0 = one task).
 	Parallel int `json:"parallel,omitempty"`
+	// Profile is the handler's WithProfile claim ("latency", "batch";
+	// empty = default). The service inherits it — mixed claims within
+	// one service are an analysis error.
+	Profile string `json:"profile,omitempty"`
 	// Singleflight marks a Cron declared with tako.WithSingleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.

@@ -31,9 +31,11 @@
         "Owner",
         "Created"
       ],
-      "composite": [
-        "owner",
-        "-created"
+      "composites": [
+        [
+          "owner",
+          "-created"
+        ]
       ],
       "pos": "app.go:11:2"
     },
