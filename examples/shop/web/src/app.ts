@@ -57,6 +57,24 @@ async function renderSession() {
     signin.style.display = "none";
     $("who").textContent = `signed in as ${who.name} ·`;
     signout.style.display = "inline";
+    // A fresh database is an EMPTY shop (deleting .tako/data is the
+    // local reset story): any signed-in user stocks the shelf — v0
+    // has no admin concept, and this form is addProduct through the
+    // generated client.
+    const stock = $("stock") as HTMLFormElement;
+    stock.style.display = "block";
+    stock.onsubmit = async (e) => {
+      e.preventDefault();
+      const name = ($("p-name") as HTMLInputElement).value;
+      const priceCents = parseInt(($("p-price") as HTMLInputElement).value, 10);
+      try {
+        await api.addProduct({ name, priceCents });
+        stock.reset();
+        await renderProducts();
+      } catch (err) {
+        status(err instanceof ApiError ? err.message : String(err));
+      }
+    };
     signout.onclick = async () => {
       await fetch("/api/_session", { method: "DELETE", credentials: "same-origin" });
       location.reload();
@@ -64,11 +82,10 @@ async function renderSession() {
   }
 }
 
-async function main() {
-  await renderSession().catch(() => {});
+async function renderProducts() {
   const products = await api.listProducts();
   const el = $("products");
-  el.textContent = products.length ? "" : "the shelf is empty.";
+  el.textContent = products.length ? "" : "the shelf is empty — sign in and stock it.";
   for (const p of products) {
     const row = document.createElement("div");
     row.className = "product";
@@ -80,6 +97,11 @@ async function main() {
     row.append(label, btn);
     el.append(row);
   }
+}
+
+async function main() {
+  await renderSession().catch(() => {});
+  await renderProducts();
   await refreshOrders();
 }
 

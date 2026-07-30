@@ -20,6 +20,11 @@
       <span id="who"></span> <button id="signout">sign out</button></p>
   </header>
   <div id="status"></div>
+  <form id="stock" style="display:none; margin:.5rem 0;">
+    <input id="p-name" placeholder="product name" required>
+    <input id="p-price" type="number" placeholder="price in cents" min="1" required style="width:8rem;">
+    <button>stock the shelf</button>
+  </form>
   <div id="products">loading…</div>
   <h2>your orders</h2>
   <div id="orders">sign in to see orders.</div>

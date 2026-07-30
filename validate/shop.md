@@ -27,18 +27,32 @@ sit on every write; `entity orders` carries the invoicer's fields.
 
 ## 2. The generated client IS the frontend contract
 
+What the FINAL USER does is one command when their api changes:
+
+```
+tako gen client ts --out web/src/api.ts
+```
+
+— then imports it like any source file; their own frontend toolchain
+(vite, tsc, esbuild) typechecks it as part of their normal build.
+Nothing below is part of their workflow — it is THIS GATE proving the
+promises behind that one command:
+
 ```
 go run ../../cmd/tako gen client ts
 diff .tako/gen/client/ts/api.ts web/src/api.ts
 npx --yes -p typescript tsc --noEmit --strict --target es2020 --lib es2020,dom web/src/api.ts web/src/app.ts
 ```
 
-**Judge:** the committed client is byte-identical to a fresh
-generation (a TEST also pins this — drift fails the suite); it
-excludes billing.Charge WITH the reason ("private — browsers cannot
-mint OIDC"); tsc --strict is clean including app.ts, the real
-consumer. Then read web/src/app.ts: the whole backend conversation is
-typed methods and `instanceof ApiError`.
+**Judge:** the `diff` proves determinism — a committed client is
+byte-identical to a fresh generation (shop also pins this with a
+test, the recommended pattern so frontend builds never need tako
+installed); the `npx tsc --strict` stands in for the user's own
+toolchain and proves the emitted types hold up under the strictest
+settings, including app.ts — the real consumer. Also judge: the
+client EXCLUDES billing.Charge with its reason ("private — browsers
+cannot mint OIDC"), and app.ts reads as typed methods +
+`instanceof ApiError`, no hand-written fetch anywhere.
 
 ## 3. Dev: the whole story on one port
 
@@ -46,9 +60,14 @@ typed methods and `instanceof ApiError`.
 PORT=8090 go run ../../cmd/tako dev     # then open http://localhost:8090
 ```
 
-- Sign in (dev bar or the header link): the header now SHOWS the
-  session — "signed in as alice · sign out" — and switching between
-  alice and bob swaps whose orders render. Buy something: the order
+- FIRST: a fresh checkout (or a deleted .tako/) is an EMPTY database
+  — .tako/data IS the local store, and deleting it is the documented
+  reset story. So stock the shelf: sign in (dev bar or the header
+  link — the bar and the header both reflect the session, and the
+  bar's controls follow it: "sign in as …" when anonymous, "switch
+  to …" + "sign out" when signed in) and use the "stock the shelf"
+  form. That form is addProduct through the generated client.
+  Buy something: the order
   lands with a `receiptId` — billing.Charge ran IN-PROCESS (set a
   breakpoint in billing/billing.go and buy again: the debugger steps
   straight from placeOrder into charge — that is the §2.12 dev

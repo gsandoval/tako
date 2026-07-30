@@ -359,17 +359,28 @@ func (b *barWriter) flush() {
 		b.commitHeader()
 		return
 	}
+	// The bar REFLECTS the session instead of listing every control:
+	// consistent labels, and only the actions that make sense now.
+	rec := loadSession(b.req)
 	who := "anonymous"
-	if rec := loadSession(b.req); rec != nil {
-		who = rec.Name
+	var controls strings.Builder
+	controls.WriteString(`<form method="post" action="/api/_session" style="display:inline-flex;gap:6px;margin:0">`)
+	for _, u := range []string{"alice", "bob"} {
+		switch {
+		case rec == nil:
+			fmt.Fprintf(&controls, `<button name="dev_user" value="%s">sign in as %s</button>`, u, u)
+		case rec.Name != u:
+			fmt.Fprintf(&controls, `<button name="dev_user" value="%s">switch to %s</button>`, u, u)
+		}
+	}
+	controls.WriteString(`</form>`)
+	if rec != nil {
+		who = "signed in as " + rec.Name
+		controls.WriteString(`<form method="post" action="/api/_session/signout" style="margin:0"><button>sign out</button></form>`)
 	}
 	bar := `<div style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#eee;font:13px sans-serif;padding:6px 12px;display:flex;gap:12px;align-items:center;z-index:9999">` +
 		`<span>tako dev · ` + who + `</span>` +
-		`<form method="post" action="/api/_session" style="display:inline-flex;gap:6px;margin:0">` +
-		`<button name="dev_user" value="alice">sign in as alice</button>` +
-		`<button name="dev_user" value="bob">bob</button>` +
-		`</form>` +
-		`<form method="post" action="/api/_session/signout" style="margin:0"><button>sign out</button></form>` +
+		controls.String() +
 		`</div>`
 	out := b.buf
 	if i := strings.LastIndex(string(out), "</body>"); i >= 0 {

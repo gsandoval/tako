@@ -6175,3 +6175,22 @@ User reports from the §3 walk, all addressed:
 3. Invoice timing — behaving as designed; the script now says the
    judgment is that numbering happens BY ITSELF and sequentially, not
    that the 2s sweep delay is observable.
+
+## W11 gate-walk fixes, round 3: reset story, dev bar state, §2 framing (2026-07-30)
+
+1. Deleting .tako/ left an unstockable empty shop — the page had no
+   add-product affordance. It now grows a "stock the shelf" form
+   (signed-in users; addProduct through the generated client — more
+   showcase, not less), and validate/shop.md §3 states the reset
+   story: .tako/data IS the local database, deleting it is the
+   documented wipe, and an empty shelf is the walk's real starting
+   point.
+2. The dev bar showed every control always, with inconsistent labels
+   ("sign in as alice" next to bare "bob", sign-out while anonymous).
+   It now follows the session: anonymous → "sign in as alice / as
+   bob"; signed in → "signed in as X · switch to Y · sign out".
+3. §2's purpose was unclear (why diff? why npx? is any of this the
+   user's job?). Rewritten: the FINAL USER runs one command and their
+   own toolchain typechecks; the diff and npx lines are THIS GATE
+   proving determinism and strict-mode type soundness behind that
+   command — explicitly not user workflow.
