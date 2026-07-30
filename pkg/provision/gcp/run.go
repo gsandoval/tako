@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -181,7 +182,17 @@ func (r *RunServices) Create(ctx context.Context, o provision.Object) error {
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), &op); err != nil {
 		return Classify(err, r.C.Project, "create the run service", "roles/run.admin")
 	}
-	if err := r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong); err != nil {
+	err := r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	// A repo created moments ago is eventually consistent: the first
+	// pull can answer "Image … not found" for an image the push just
+	// confirmed (hit live in the W11 walk). The service now exists
+	// with a failed revision, so the retry is an update — same spec,
+	// fresh revision — paced like the C4 SA-429 fix.
+	for attempt := 0; attempt < 3 && err != nil && strings.Contains(err.Error(), "not found"); attempt++ {
+		time.Sleep(15 * time.Second)
+		err = r.Update(ctx, o)
+	}
+	if err != nil {
 		return fmt.Errorf("run service %s did not become ready: %w", o.Name, err)
 	}
 	return r.allowPublic(ctx, o)
