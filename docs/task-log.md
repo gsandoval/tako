@@ -6315,3 +6315,18 @@ side-effect tier with build --push called out at the boundary; bare
 `tako gen` prints its namespace; --canary accepts both flag forms.
 Deliberate non-uniformities (typed app name vs typed word) kept and
 justified. R0 + the CLI review await the user's verdict sweep.
+
+## R1–R3 — docs, README, API review 2 (2026-07-30)
+
+R1 (45f22d6): docs/guide/ — five tutorial chapters grounded in the
+real examples plus the local and cloud stories; the Identity Platform
+manual step now lives in USER-FACING docs (docs/guide/cloud.md),
+closing the W6 standing requirement. R2 (same commit): README.md —
+five minutes from go install to a live URL and back down. R3
+(docs/api-review-2.md): the freeze held wholesale — zero exported
+symbols added/renamed/re-shaped since F10, everything behind it made
+real and gate-proven; six rules re-checked and holding; no demotions.
+Publication blockers that are the OWNER's: a LICENSE choice, the
+push, the v0.1.0 tag, and the clean-machine README run (which IS the
+R2+R3 gate). Stage 4's work is complete pending the user's verdict
+sweep (R0/CLI, R1, R2, R3) and those owner actions.
