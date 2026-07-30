@@ -117,8 +117,13 @@ Break things on purpose, read the texts, put them back:
 ## 6. Cloud — four deployables, every trust edge live
 
 ```
-go run ../../cmd/tako deploy --project <test-project> --yes
+go run ../../cmd/tako deploy --project <test-project>
 ```
+
+(No `--yes`: that flag only pre-answers the destructive-plan prompt —
+replaces and rename suspects — for CI, where nobody can type `y`. A
+fresh deploy is all creates, so no prompt fires; if one ever DOES,
+that is the safety machinery worth reading, not skipping.)
 
 **Judge the plan + summary:** `run job shop-settle` (a JOB kind, not
 a service); `iam grants runjob shop-settle` carrying run.developer
