@@ -6282,3 +6282,36 @@ CLI UNIFORMITY review (docs/cli-review-1.md, api-review style) —
 command discoverability, uniformity and explicitness of side
 effects, the confirmation ladder (--yes vs typed names vs nothing),
 the gen namespace — findings plus fixes.
+
+## R0 + CLI review — implementation + validation transcript (2026-07-30)
+
+R0 landed (6849c62) and validated live on FRESH tako-test-02:
+- **Per-shape composites:** shop derives exactly ONE tuple —
+  (owner, -created) for listOrders, whose OrderBy is back — while the
+  invoicer's single-field filter correctly rides a built-in (the
+  proposal guessed two tuples; the derivation is smarter than the
+  proposal). Gallery/shortlink derive today's shapes unchanged.
+  An analyzer test pins shortlink's exact tuple set.
+- **WithProfile honored:** gallery-makethumb carries profile "batch"
+  in the graph and LIVE knobs 2 cpu / 2Gi / concurrency 10 versus the
+  app service's 1 / 512Mi / 80 — after claiming batch since F5 and
+  running defaults ever since. Mixed claims in one service are
+  tako/mixed-profile with both positions.
+- **Orphan indexes:** planted a stray composite on kind photos; the
+  plan surfaced `? orphaned (kept) datastore index photos (…)` while
+  the legit index skipped; `tako prune` deleted it (stateless tier —
+  indexes are derivable, never data) and left (owner, ready) READY.
+- **Summaries:** jobs say "a Cloud Run Job — no ingress; executions
+  run on demand"; singletons say "the loop runs while this instance
+  holds the lease".
+- Destroy left tako-test-02 empty; the R0 secret was removed too.
+
+CLI review (683a634, docs/cli-review-1.md): the confirmation LADDER
+was real but unstated — now stated in help and pinned in the review
+doc: reversible/derivable = no ceremony; risky-recoverable = deploy's
+y/N with --yes as the CI pre-answer for THAT PROMPT ONLY; data-gone-
+forever = typed confirmations --yes never touches. Help regrouped by
+side-effect tier with build --push called out at the boundary; bare
+`tako gen` prints its namespace; --canary accepts both flag forms.
+Deliberate non-uniformities (typed app name vs typed word) kept and
+justified. R0 + the CLI review await the user's verdict sweep.
