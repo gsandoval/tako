@@ -209,6 +209,7 @@ func runDeploy(args []string) error {
 	fmt.Printf("  plan\n%s", indentPlan(plan.Render()))
 	warnInertCrons(graph)
 	warnCallEdges(graph)
+	warnFootprints(graph)
 
 	if t.planOnly {
 		return nil
@@ -440,10 +441,6 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 				fmt.Printf("    compute: %d cpu / %s / concurrency %d / instances %d–%d (profile %s + footprint %s)\n",
 					r.CPU, r.Memory, r.Concurrency, r.MinInstances, r.MaxInstances, profile, svc.Footprint)
 			}
-			if svc.Footprint.MinInstances > analyzer.ProfileKnobs[profile].MinInstances {
-				fmt.Printf("    ⚠ the footprint keeps %d instance(s) always on — they bill continuously whether traffic comes or not\n",
-					r.MinInstances)
-			}
 		}
 		if public[cfg.Name(svc.Name)] {
 			var open []string
@@ -549,6 +546,29 @@ func warnCallEdges(graph *analyzer.AppGraph) {
 				fmt.Printf("  ⚠ sync call chain %s → %s → %s — waiting callers hold their own request slots and couple the services' autoscaling; prefer events past one hop\n",
 					p[0], p[1], q[1])
 			}
+		}
+	}
+}
+
+// warnFootprints prices explicit compute at DECISION time — a footprint
+// that raises min-instances above its profile's buys always-on capacity,
+// and the plan is where that must be legible, not the post-apply summary.
+func warnFootprints(graph *analyzer.AppGraph) {
+	for _, svc := range graph.Services {
+		if svc.Footprint == nil {
+			continue
+		}
+		profile := svc.Profile
+		if svc.Singleton {
+			profile = "singleton"
+		}
+		if svc.Job {
+			profile = "batch"
+		}
+		if svc.Footprint.MinInstances > analyzer.ProfileKnobs[profile].MinInstances {
+			r := svc.Footprint.Over(analyzer.ProfileKnobs[profile])
+			fmt.Printf("  ⚠ footprint on %s keeps %d instance(s) always on — they bill continuously whether traffic comes or not\n",
+				svc.Name, r.MinInstances)
 		}
 	}
 }

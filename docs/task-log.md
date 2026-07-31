@@ -6430,3 +6430,32 @@ htmx SSR example, so ONE new example `blog` — a Hugo-generated site
 htmx dynamic islands (a comments fragment) — shows the two compose.
 Stage 5 order becomes: S1 footprint → S2 blog example → S3 feature
 reference (the reference then documents both).
+
+## S1 — implementation + validation transcript (2026-07-31)
+
+Landed (58c8d8f) and validated live on tako-test-02:
+- **The declaration:** gallery's resizer pins ONLY what the batch
+  profile can't know — `Footprint{Memory: "4Gi", Concurrency: 4,
+  MaxInstances: 5}` — and both summaries carry it: gen graph prints
+  `profile batch + footprint (memory 4Gi, concurrency 4, max 5)`.
+- **Build-time judgments (all golden):** field errors name the legal
+  set (CPU ∈ {1,2,4,8}; Mi/Gi form, 128Mi–32Gi; concurrency/max
+  1–1000); RESOLVED errors judge the combination against the profile
+  base (`CPU: 8` alone → "resolves to 8 vCPUs with 512Mi memory — 8
+  vCPUs need at least 4Gi; pin Memory too"); mixed-footprint names
+  both claimants; jobs/singletons refuse Min/Max/Concurrency with
+  the honest scoping texts.
+- **Live:** gallery-makethumb deployed with exactly
+  {cpu 2, memory 4Gi} / containerConcurrency 4 / maxScale 5 /
+  minScale 0 — the three pins landed, cpu and min INHERITED from
+  batch; the app service beside it kept 1/512Mi/80. Second
+  `deploy --plan`: 0 updates (footprint is spec-hash).
+- **Cost at decision time:** a scratch module pinning
+  `MinInstances: 2` printed at PLAN time `⚠ footprint on warmfp
+  keeps 2 instance(s) always on — they bill continuously whether
+  traffic comes or not` (follow-up: the warning moved from the
+  post-apply summary to the plan — the plan is where you decide).
+- Destroy left tako-test-02 empty; secret deleted.
+
+validate/footprint.md is the gate script. Awaiting the user's
+verdict row for S1.
