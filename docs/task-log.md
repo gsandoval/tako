@@ -6520,3 +6520,44 @@ Surfaced by the queue.md agent; queue.md documents it under Not yet.
 
 Awaiting the user's verdict row for S3 (gate: enter three pages cold
 and follow them verbatim).
+
+## Gap audit — what remains unimplemented (2026-07-31, user-requested)
+
+Four-way sweep: SDK surface vs consumption, implementation plan vs
+repo, tech spec vs code, and the project's own logged deferrals.
+
+**In-plan promises not delivered:** Cloud Scheduler for cron (Phase
+H; crons NEVER fire in the cloud — deploy warns, runtime sets
+cronInert; also gates cron expressions and makes gcp singleflight
+moot); Cloud Tasks (Phase F; WithDelay local-only, gcp Publish
+errors); WithRateLimit (Phase F; fully inert); custom domains
+(Phase G; tako/not-yet); migrating tako rename (Phase I; detection
+shipped, the command didn't).
+
+**Silent traps found (worse than deferred — no error, no effect):**
+WithRateLimit is accepted and dropped; in fact ANY option on
+Queue()/Topic() declarations is silently swallowed — extractCarrier
+never reads declaration options. Unlike WithDomain/WithCDN nothing
+fails loudly. Also: gcp SignedPut does not enforce WithMaxSize at
+all and silently drops wildcard WithContentType (local enforces
+both; conformance skips); metrics are logs-only even in cloud (gcp
+boot wires the LOCAL metrics logger); Cache in cloud is per-instance
+(documented, at least).
+
+**Usefulness gaps:** WithParallel provisions N tasks but there is no
+task-index/count API — every task gets identical params, shard-blind
+(and local runs ONE task regardless); TestApp cannot exercise the
+WithAuth shim or routing (direct Call bypasses it) and testCtx
+.IsHTMX() is hardcoded false.
+
+**Doc debt:** spec Part 3's gallery listing still uses tako.Static /
+tako.Templates — superseded by Site, never fixed up; wouldn't
+compile.
+
+**Deliberate not-yets confirmed honest:** WithDomain, WithCDN,
+shared cache, VPC, Postgres, websockets, external topics, styled
+error pages, multi-service dev routing, dlq replay, session cache,
+email account-creation UI. Canary/promote/rollback, dlq inspection,
+prune/destroy confirmations: verified COMPLETE.
+
+Awaiting the user's pick of what to plan next.
