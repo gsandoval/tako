@@ -4,3 +4,4 @@
 # built binaries
 /tako
 examples/shop/web/dist/
+examples/blog/site/public/

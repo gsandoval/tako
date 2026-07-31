@@ -6,7 +6,7 @@ logic — APIs, workers, websites — as ordinary Go packages, and the
 no Dockerfiles, no YAML: the analyzer reads your declarations and
 derives the infrastructure, the IAM, and the wiring.
 
-The guide is the five examples, in the order the framework grows:
+The guide is the six examples, in the order the framework grows:
 
 1. **[hello](01-hello.md)** — APIs, request binding, the dev loop,
    your first deploy.
@@ -19,6 +19,9 @@ The guide is the five examples, in the order the framework grows:
 5. **[shop](05-shop.md)** — many services from one repo: a generated
    TypeScript client, private services and typed calls, background
    jobs, an exactly-one singleton.
+6. **[blog](06-blog.md)** — a Hugo-built static site with htmx
+   islands: the generator owns the pages, tako runs the build and
+   serves the dynamic fragments.
 
 Two references frame everything:
 

@@ -1,0 +1,19 @@
+<section id="comments">
+  <h2>comments</h2>
+  {{ if .Comments }}
+  <ul>
+    {{ range .Comments }}
+    <li><strong>{{ .Name }}</strong> <time>{{ .Created.Format "2006-01-02 15:04" }}</time><p>{{ .Body }}</p></li>
+    {{ end }}
+  </ul>
+  {{ else }}
+  <p class="empty">No comments yet.</p>
+  {{ end }}
+  <form hx-post="/frag/comments" hx-target="#comments" hx-swap="outerHTML" method="post" action="/frag/comments">
+    {{ csrf }}
+    <input type="hidden" name="post" value="{{ .Post }}">
+    <p><input name="name" placeholder="Your name" required></p>
+    <p><textarea name="body" rows="3" placeholder="Say something…" required></textarea></p>
+    <p><button>Comment</button></p>
+  </form>
+</section>

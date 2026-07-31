@@ -67,10 +67,17 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 		siteSetupError = errors.New("the site has no templates/ directory — site.Render needs web/templates/layout.html plus one file per page")
 		return
 	}
-	layout, layoutErr := template.New("layout.html").Funcs(siteFuncs()).ParseFS(fsys, "templates/layout.html")
-	if layoutErr != nil {
-		siteSetupError = fmt.Errorf("site templates: %v (layout.html is the shell every page renders inside)", layoutErr)
-		return
+	// layout.html is OPTIONAL: a site whose shell comes from a static
+	// generator (Hugo, etc.) renders only FRAGMENTS — site.Render is
+	// what needs the shell, and says so at call time.
+	layout := template.New("layout.html").Funcs(siteFuncs())
+	siteHasLayout = false
+	if _, statErr := fs.Stat(fsys, "templates/layout.html"); statErr == nil {
+		if _, layoutErr := layout.ParseFS(fsys, "templates/layout.html"); layoutErr != nil {
+			siteSetupError = fmt.Errorf("site templates: %v (layout.html is the shell every page renders inside)", layoutErr)
+			return
+		}
+		siteHasLayout = true
 	}
 	siteSetupError = nil
 
@@ -125,12 +132,17 @@ func definesContent(src string) bool { return definesContentRe.MatchString(src) 
 var (
 	siteParseErrors = map[string]error{}
 	siteSetupError  error
+	// siteHasLayout gates site.Render: fragments never need the shell.
+	siteHasLayout bool
 	// siteTrustedHTML is the site's declared markdown posture
 	// (WithTrustedHTML): sanitized by default, raw when opted out.
 	siteTrustedHTML bool
 )
 
 func renderSite(ctx context.Context, name string, data any) ([]byte, error) {
+	if siteSetupError == nil && !siteHasLayout {
+		return nil, errors.New("site.Render needs templates/layout.html (the shell every page renders inside) — a site whose shell is generated (Hugo, etc.) renders fragments via site.Fragment instead")
+	}
 	return renderNamed(ctx, name, "layout.html", data)
 }
 

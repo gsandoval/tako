@@ -6459,3 +6459,37 @@ Landed (58c8d8f) and validated live on tako-test-02:
 
 validate/footprint.md is the gate script. Awaiting the user's
 verdict row for S1.
+
+## S2 — the blog example (Hugo + htmx), implementation + validation (2026-07-31)
+
+User-requested website examples: hugo and htmx, "same if that makes
+sense". Same: journal stays the deep htmx SSR chapter; blog is the
+STATIC-GENERATOR story — Hugo owns the pages, tako owns the build
+(WithBuild finally exercised by a real generator) and the dynamic
+islands (comments fragments + entity).
+
+Design points that survived contact:
+- Fragment templates ride Hugo's static/ into public/templates — the
+  subtree a Site never serves raw (verified live: GET
+  /templates/comments.html → 404). Tests read the SAME files from
+  site/static, so go test never needs hugo.
+- The example DEMANDED a runtime fix: templates/layout.html was
+  hard-required, but a generator-owned site renders only fragments.
+  layout.html is now optional; site.Render without one says
+  "fragments-only sites use site.Fragment" at call time. Journal
+  (the layout path) stayed green.
+- Comment identity = RelPermalink; the value round-trips into the
+  no-JS redirect, so only site-local paths pass (422 otherwise —
+  an open redirect is not a feature). Composite (post, created)
+  derived from the one query.
+
+Validated: unit suite green without hugo; dev loop reran hugo on a
+content save (⛅ line, reloaded in 1.1s) and served the edit; both
+comment paths live on tako-test-02 (htmx re-render with the comment;
+no-JS 303 to the real static URL); deploy printed the honest
+⚠ mutating-route-without-auth for anonymous comments; destroy named
+`datastore kinds comments` under DATA and left the project empty
+(one IAM-propagation wait on the fresh datastore.user grant, the
+known window). validate/blog.md is the gate script; guide chapter
+06-blog.md + README/guide indexes updated. Awaiting the user's
+verdict row for S2.

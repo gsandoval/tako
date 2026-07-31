@@ -99,7 +99,7 @@ asks you to type the app's name.
 
 ## Where to next
 
-The framework grows through five worked examples — each one is a
+The framework grows through six worked examples — each one is a
 tutorial chapter and part of the test suite:
 
 | | Adds |
@@ -109,6 +109,7 @@ tutorial chapter and part of the test suite:
 | [gallery](docs/guide/03-gallery.md) | buckets, signed URLs, event fan-out, dead letters, cron, locks |
 | [journal](docs/guide/04-journal.md) | server-rendered site, htmx fragments, sanitized markdown, Google sign-in |
 | [shop](docs/guide/05-shop.md) | generated TypeScript client, private services + typed calls, jobs, singletons |
+| [blog](docs/guide/06-blog.md) | Hugo-built static site, htmx islands calling tako fragments |
 
 Plus the two references: [the local story](docs/guide/local.md)
 (what dev/test actually run) and [the cloud story](docs/guide/cloud.md)

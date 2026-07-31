@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ if not .IsHome }}{{ .Title }} · {{ end }}{{ .Site.Title }}</title>
+  <link rel="stylesheet" href="/assets/site.css">
+  <script src="/assets/htmx.min.js" defer></script>
+</head>
+<body>
+  <header><a href="/">{{ .Site.Title }}</a></header>
+  <main>{{ block "main" . }}{{ end }}</main>
+</body>
+</html>
