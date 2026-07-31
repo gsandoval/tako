@@ -52,16 +52,18 @@ acceptable, it is the return-type of constructors only.
 - Examples are separate modules with `replace => ../..` — correct for
   in-repo development; consumers `go get` the published module.
 - Generated code, `.tako/`, and build outputs are gitignored ✓.
-- **LICENSE: none exists.** Publishing without one leaves the module
-  legally unusable; the CHOICE is the owner's (not made here).
+- **LICENSE: Apache-2.0** — chosen by the owner (2026-07-31) and
+  committed at the repo root.
 
-## Release checklist (owner actions — nothing below is automated)
+## Release checklist
 
-1. Pick and commit a LICENSE.
-2. `git push origin main`.
-3. `git tag v0.1.0 && git push origin v0.1.0`.
-4. From a machine that has never seen the repo:
-   `go install github.com/gsandoval/tako/cmd/tako@v0.1.0`, then run
-   the README quick start VERBATIM against a fresh project — that is
-   simultaneously the R2 gate and the R3 published-path validation.
-5. Record the R1–R3 verdicts in docs/validation-log.md.
+**REVIEW COMPLETE — verdict recorded by the owner 2026-07-31**
+(validation-log R3 row). Done: ~~LICENSE~~ (Apache-2.0, committed),
+~~verdict rows~~ (R0–R3, S1–S3, T1–T4 all recorded). Post-review
+surface additions — S1 `Footprint`/`WithFootprint`, T4 `Ctx.Task` —
+each landed as its own reviewed task with sdk_lock regenerated, per
+the freeze rule. Remaining owner EXECUTION steps (whenever ready):
+`git push origin main`; `git tag v0.1.0 && git push origin v0.1.0`;
+optionally the clean-machine
+`go install github.com/gsandoval/tako/cmd/tako@v0.1.0` + verbatim
+README run as the published-path smoke test.
