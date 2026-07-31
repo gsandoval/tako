@@ -6782,3 +6782,43 @@ whoever sees all shards writes the identical report — no leader, no
 lock, retry-safe (pinned by TestSettleShardsAreDisjointAndMergeOnce:
 disjoint cover, exact totals, re-run doesn't double-count).
 validate/sharding.md is the gate script.
+
+## T3 — validation transcript (2026-07-31)
+
+Live on tako-test-02 (validate/tasks.md), after TWO gate catches:
+- **Ordering bug (mine, fixed):** tasks queues applied AFTER the
+  grants pass, so the enqueuer grant found no target and converged to
+  nothing — first publish 403'd with the honest grants-are-derived
+  text. KindTasksQueue now applies with the pre-service
+  infrastructure; the redeploy planned exactly
+  `~ update iam grants tasksQueue …` and healed.
+- **Preflight-as-UX:** the first deploy stopped with "the
+  cloudtasks.googleapis.com API is disabled — enable it: …" — one
+  gap, one copy-pasteable fix.
+- **The delay, observed:** link fuse23201 created 13:41:38 with
+  ttlSeconds 90 → the task's scheduleTime read 13:43:08Z (create+90s
+  exactly) → GET went 404 at 13:43:11 — Cloud Tasks held the
+  message, the service didn't. Both hops logged: shortlink-expire
+  push 204 at :43:08, then shortlink-archive (through the
+  rate-limited queue) 204 the same second.
+- **The cap, live:** archive-tako describe → maxDispatchesPerSecond
+  2.0, maxAttempts 5 (the mirrored redelivery count); local pacing
+  pinned by TestSetRatePacesDelivery. Destroy listed and deleted
+  both tasks queues; DATA named the kinds.
+
+## T4 — validation transcript (2026-07-31)
+
+Live on tako-test-02 (validate/sharding.md): email walker minted via
+the shop recipe; 6 orders totaling 5250¢; POST /api/settle
+{day:"t4"} → ONE execution, spec.taskCount 4, succeededCount 4, four
+"job Settle ok" task logs (165–817ms). Datastore: reports/t4 =
+{orders 6, totalCents 5250} — EXACTLY the placed orders — and all
+four settle-shards (t4#0…t4#3) present, the disjoint subtotals the
+merge summed. Local: TestSettleShardsAreDisjointAndMergeOnce pins
+disjoint cover + idempotent re-run; Task() is (0,1) outside a job.
+Destroy clean; walker account deleted; tako-test-02 pristine (0
+services, 0 tasks queues, 0 scheduler jobs).
+
+STAGE 6 agent-side work complete: T1 96aee41, T2 d23b059, T3
+98ff235, T4 7b89082 (+ this validation commit). Awaiting the user's
+verdict rows for T1–T4.

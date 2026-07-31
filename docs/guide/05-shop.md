@@ -52,6 +52,15 @@ In the cloud that's a Cloud Run JOB — no request timeout exists; a
 six-minute settlement just finishes. Locally executions ride the
 queue dispatcher, so `DrainQueues` waits for them in tests.
 
+### Sharding (T4)
+
+`Settle` declares `tako.WithParallel(4)`: four tasks per execution,
+each asking `ctx.Task()` for its `(index, count)` and taking the
+orders whose ID hashes to its shard. Each task writes an idempotent
+per-shard subtotal; every task then attempts the merge, and whoever
+finds all four present writes the identical final report — no
+leader, no lock, retry-safe.
+
 ## Singleton — exactly one, everywhere
 
 ```go

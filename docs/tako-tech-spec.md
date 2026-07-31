@@ -171,7 +171,7 @@ func reindex(ctx tako.Ctx, p ReindexParams) error { ... }   // same async shape 
 reidx.Run(ctx, ReindexParams{Since: t})
 ```
 
-Runs as a Cloud Run **Job** — no request timeout, `tako.WithParallel(n)` maps to task-count fan-out.
+Runs as a Cloud Run **Job** — no request timeout, `tako.WithParallel(n)` maps to task-count fan-out; inside the body `ctx.Task()` reports `(index, count)` for sharding (T4 — Cloud Run's task envs in the cloud, a real joined fan-out locally).
 
 ### 2.8 Handler constructors — the complete set
 
@@ -638,7 +638,7 @@ Derived IAM mapping:
 | Cross-service call (§2.12) | caller's SA gets `run.invoker` on callee; `private` = IAM-only, no unauthenticated access (network-internal ingress is a later `WithVPC` opt-in) |
 | Job.Run used | `run.jobsExecutor` on that job |
 
-Queue backend selection: plain queues → Pub/Sub push; queues using `WithDelay`/`WithRateLimit` → Cloud Tasks (same user API, same push endpoint).
+Queue backend selection: plain queues → Pub/Sub push; queues using `WithDelay`/`WithRateLimit` → Cloud Tasks in front of the same push endpoint (T3 — the task carries the standard envelope with the worker's own OIDC identity; note Tasks has no dead letter: 5 attempts, then gone).
 
 Scaling profiles → Cloud Run knobs:
 

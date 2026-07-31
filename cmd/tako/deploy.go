@@ -241,7 +241,7 @@ func runDeploy(args []string) error {
 	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
-		provision.KindPullSubscription), desired, applier); err != nil {
+		provision.KindPullSubscription, provision.KindTasksQueue), desired, applier); err != nil {
 		return err
 	}
 	// SAs may have just been created: the grant passes below key their
@@ -300,9 +300,6 @@ func runDeploy(args []string) error {
 		return err
 	}
 	if err := provision.Apply(ctx, plan.Filter(provision.KindSchedulerJob), desired, applier); err != nil {
-		return err
-	}
-	if err := provision.Apply(ctx, plan.Filter(provision.KindTasksQueue), desired, applier); err != nil {
 		return err
 	}
 
