@@ -1,0 +1,6 @@
+app.go:8:58: footprint CPU must be 1, 2, 4, or 8 vCPUs; got 3 (tako/footprint)
+app.go:9:58: footprint Memory must be like "512Mi" or "4Gi", between 128Mi and 32Gi; got "1GB" (tako/footprint)
+app.go:10:58: footprint Concurrency must be between 1 and 1000; got 2000 (tako/footprint)
+app.go:11:58: footprint MinInstances 5 exceeds MaxInstances 2 (tako/footprint)
+app.go:12:81: footprint Memory must be a constant — footprints are read at analysis time, not run time (tako/footprint)
+app.go:13:58: footprint sets nothing — drop tako.WithFootprint or pin at least one field (tako/footprint)

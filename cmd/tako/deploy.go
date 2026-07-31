@@ -422,6 +422,29 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			}
 		}
 		fmt.Printf("  %s runs as %s —\n    %s; %s\n", cfg.Name(svc.Name), email, grantText, ingress)
+		// A footprint is explicit spend — show what it RESOLVES to, so
+		// the plan carries the price, not just the override.
+		if svc.Footprint != nil {
+			profile := svc.Profile
+			if svc.Singleton {
+				profile = "singleton"
+			}
+			if svc.Job {
+				profile = "batch"
+			}
+			r := svc.Footprint.Over(analyzer.ProfileKnobs[profile])
+			if svc.Job {
+				fmt.Printf("    task compute: %d cpu / %s (profile %s + footprint %s)\n",
+					r.CPU, r.Memory, profile, svc.Footprint)
+			} else {
+				fmt.Printf("    compute: %d cpu / %s / concurrency %d / instances %d–%d (profile %s + footprint %s)\n",
+					r.CPU, r.Memory, r.Concurrency, r.MinInstances, r.MaxInstances, profile, svc.Footprint)
+			}
+			if svc.Footprint.MinInstances > analyzer.ProfileKnobs[profile].MinInstances {
+				fmt.Printf("    ⚠ the footprint keeps %d instance(s) always on — they bill continuously whether traffic comes or not\n",
+					r.MinInstances)
+			}
+		}
 		if public[cfg.Name(svc.Name)] {
 			var open []string
 			for _, h := range graph.Handlers {

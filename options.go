@@ -64,6 +64,34 @@ func WithPrivate() Option { return option("private") }
 // WithProfile sets the scaling profile of the service a handler runs in.
 func WithProfile(p Profile) Option { return option("profile", p) }
 
+// Footprint pins explicit compute values for the service a handler runs
+// in — the escape hatch under the named profiles. Zero fields inherit
+// from the scaling profile (WithProfile, or the default profile); set
+// fields override it. Every field is read and validated at analysis
+// time against Cloud Run's limits, so an impossible combination fails
+// the build, not the deploy.
+type Footprint struct {
+	// CPU is the vCPU count per instance: 1, 2, 4, or 8.
+	CPU int
+	// Memory is the per-instance memory limit, like "512Mi" or "4Gi".
+	Memory string
+	// Concurrency caps concurrent requests per instance (1–1000).
+	Concurrency int
+	// MinInstances keeps that many instances always warm — warm
+	// instances bill continuously. Zero inherits the profile's minimum;
+	// an explicit always-scale-to-zero floor is expressed by choosing a
+	// min=0 profile, not by this field.
+	MinInstances int
+	// MaxInstances caps the scale-out (1–1000).
+	MaxInstances int
+}
+
+// WithFootprint overrides the scaling profile field-by-field with
+// explicit compute values. Prefer a profile (named intent, framework
+// values); reach for a footprint when a workload's needs are known and
+// specific. On job handlers and singletons only CPU and Memory apply.
+func WithFootprint(f Footprint) Option { return option("footprint", f) }
+
 // WithSingleflight wraps a Cron handler in a lease so overlapping or
 // double-fired runs collapse to one execution.
 func WithSingleflight() Option { return option("singleflight") }

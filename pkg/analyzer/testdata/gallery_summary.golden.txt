@@ -9,7 +9,7 @@ gallery: 5 services
     GET /api/objects → Objects (app.go:68)
     POST /api/reindex → Reindex (app.go:69)
     GET /api/reindex/runs → ReindexRuns (app.go:70)
-    cron Cleanup — every 24h (singleflight) (app.go:78)
+    cron Cleanup — every 24h (singleflight) (app.go:83)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -32,8 +32,8 @@ gallery: 5 services
     histogram thumb_ms
     lock reindex
     entity reindex-runs
-  service gallery-makethumb (package gallery, profile batch)
-    worker MakeThumb ← queue thumbnails (app.go:75)
+  service gallery-makethumb (package gallery, profile batch + footprint (memory 4Gi, concurrency 4, max 5))
+    worker MakeThumb ← queue thumbnails (app.go:78)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -45,7 +45,7 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:76)
+    subscriber NotifyOwner ← topic photo-ready (app.go:81)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails
@@ -57,7 +57,7 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:77)
+    subscriber WarmFeed ← topic photo-ready (app.go:82)
     bucket photos
     entity photos (indexes: Owner, Ready)
     queue thumbnails

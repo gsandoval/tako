@@ -11,7 +11,11 @@ func Summary(g *AppGraph) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %d service%s\n", g.Module, len(g.Services), plural(len(g.Services)))
 	for _, svc := range g.Services {
-		fmt.Fprintf(&b, "  service %s (package %s, profile %s)\n", svc.Name, svc.Package, svc.Profile)
+		foot := ""
+		if svc.Footprint != nil {
+			foot = " + footprint (" + svc.Footprint.String() + ")"
+		}
+		fmt.Fprintf(&b, "  service %s (package %s, profile %s%s)\n", svc.Name, svc.Package, svc.Profile, foot)
 		for _, h := range g.Handlers {
 			if h.Service != svc.Name {
 				continue

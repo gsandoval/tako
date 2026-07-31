@@ -6330,3 +6330,103 @@ Publication blockers that are the OWNER's: a LICENSE choice, the
 push, the v0.1.0 tag, and the clean-machine README run (which IS the
 R2+R3 gate). Stage 4's work is complete pending the user's verdict
 sweep (R0/CLI, R1, R2, R3) and those owner actions.
+
+## Stage 5 proposal — footprint escape hatch + the feature reference (2026-07-30) — AWAITING APPROVAL
+
+User-requested, two asks: (a) an escape hatch where the user DEFINES
+the compute footprint values instead of picking a named profile;
+(b) alongside the quick README, a full step-by-step document per
+feature. Proposed as two slices, S1 then S2 (S2 documents S1).
+
+### S1 — `WithFootprint`: explicit compute, DX proposal
+
+Profiles stay the recommended path (named intent, framework-owned
+values, spec §4.6). Footprint is the escape hatch: pin exactly the
+knobs you mean, inherit the rest.
+
+```go
+var Thumbs = tako.Subscribe(photos.Uploaded, makeThumb,
+	tako.WithProfile(tako.Batch),          // optional base; else default
+	tako.WithFootprint(tako.Footprint{     // overrides, field by field
+		CPU:          4,                   // 1, 2, 4, 8
+		Memory:       "8Gi",
+		Concurrency:  4,
+		MaxInstances: 25,
+	}),
+)
+```
+
+Semantics:
+- **Layering:** resolved knobs = profile base (or "default"), then
+  each NON-ZERO Footprint field overrides. Zero field = inherit.
+  (Consequence: an explicit min=0 over a min=1 base is expressed by
+  choosing a min=0 base profile, not by MinInstances: 0 — the zero
+  value is "inherit". Recorded as a known trade; alternatives are
+  pointers or sentinels, both worse to write.)
+- **Projection:** like WithProfile — footprint claims project onto
+  the SERVICE; conflicting claims in one service are
+  `tako/mixed-footprint` with both positions (mirror of
+  mixed-profile). Same footprint declared twice is fine.
+- **Analyzer validation at build time** (`tako/footprint`, errors
+  are product): CPU ∈ {1,2,4,8}; Memory parses and meets Cloud Run's
+  CPU minimums (4 cpu needs ≥ 2Gi); 1 ≤ Concurrency ≤ 1000;
+  0 ≤ Min ≤ Max ≤ 1000. Exact texts golden-tested.
+- **Singletons:** CPU/Memory only; Min/Max/Concurrency are the
+  lease's correctness knobs → positioned error explaining exactly-one.
+- **Jobs:** CPU/Memory apply to tasks; Min/Max/Concurrency invalid
+  (executions are not services) → positioned error.
+- **Costs visible (rule 6):** deploy plan prints resolved knobs when
+  they differ from the profile default; min>0 keeps the standing ⚠
+  always-on-instances pricing line.
+- Footprint values are part of the spec hash → changing them plans
+  `~ update run service`.
+- Non-goals: request timeout, execution environment, GPU — later
+  explicit slices if an example demands them.
+- Surface note: first exported-symbol addition since the F10 freeze
+  (Footprint struct + WithFootprint). Legal as its own task, but if
+  the owner wants v0.1.0 tagged from today's head, this lands as
+  v0.2.0; tag order is the owner's call.
+- Example demanding it (no feature without one): gallery's makeThumb
+  gets the real values above — batch profile alone under-provisions
+  image resize.
+
+Gate S1: goldens (valid + all error shapes) + gallery live on a test
+project showing the resolved knobs in the plan and on the service.
+
+### S2 — The feature reference: step-by-step per feature
+
+The guide (R1) is example-driven chapters; the README (R2) is five
+minutes. Missing: a per-feature reference you can enter sideways.
+Proposed: `docs/reference/` — ONE page per feature, every page the
+same rubric so the shape teaches: **Declare** (the var, the
+options) → **Use** (handler-side calls) → **Local** (what dev/test
+actually do) → **Cloud** (what deploy creates, IAM derived, what it
+costs) → **Test it** (TestApp pattern) → **Errors you'll meet**
+(the analyzer/runtime texts verbatim) → **Not yet** (honest limits).
+
+Pages (18): api, page+fragments, site, entity (queries,
+transactions, composite derivation), queue+worker, topic+subscribe,
+bucket+signed-urls+events, cron+singleflight, lock, job, singleton,
+auth+sessions, cross-service calls+private, ts-client, cache,
+secret+metrics, profiles+footprint (documents S1), cli (the ladder).
+Index in docs/reference/README.md; guide and README link into it.
+Every snippet lifted from a real example or compiled in a scratch
+module — no pseudocode.
+
+Gate S2: human enters three pages cold and follows them verbatim.
+
+**STOP — awaiting Stage 5 approval (S1 DX + S2 scope + slice order).**
+
+## Stage 5 approved + amended (user, 2026-07-31)
+
+User: "proceed with everything here" — S1 + S2 approved, per-slice
+permission stops pre-answered for the stage. The deferred shop
+destroy on tako-test-01 is DONE and verified by the user
+("everything worked there"). NEW slice added by the user: a website
+example using HUGO and one using HTMX — same or different examples
+delegated to the agent. Design call: journal already IS the deep
+htmx SSR example, so ONE new example `blog` — a Hugo-generated site
+(WithBuild with a real generator, unexercised until now) carrying
+htmx dynamic islands (a comments fragment) — shows the two compose.
+Stage 5 order becomes: S1 footprint → S2 blog example → S3 feature
+reference (the reference then documents both).

@@ -14,9 +14,10 @@ import (
 // apiOptions is the option set tako.API accepts; anything else is
 // tako/invalid-option.
 var apiOptions = map[string]bool{
-	"WithAuth":    true,
-	"WithPrivate": true,
-	"WithProfile": true,
+	"WithAuth":      true,
+	"WithPrivate":   true,
+	"WithProfile":   true,
+	"WithFootprint": true,
 }
 
 // bindableTypes are the field types path:/query:/form: tags may bind in
@@ -65,6 +66,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	requiresAuth := false
 	private := false
 	profile := ""
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, ok := sdkOptionCall(pkg, opt)
 		if ok && optName == "WithAuth" {
@@ -79,10 +81,14 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 			profile = profileArg(pkg, opt)
 			continue
 		}
+		if ok && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			continue
+		}
 		if ok && !apiOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate, WithProfile)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate, WithProfile, WithFootprint)",
 					optName, ctor, ctor),
 				Rule: "invalid-option",
 			})
@@ -214,6 +220,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		RequiresAuth: requiresAuth,
 		Private:      private,
 		Profile:      profile,
+		Footprint:    footprint,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

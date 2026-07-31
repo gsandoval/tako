@@ -92,6 +92,7 @@ func WithDelay(d time.Duration) Option
 func WithDevProxy(url string) Option
 func WithDomain(domain string) Option
 func WithEmail() Option
+func WithFootprint(f Footprint) Option
 func WithGoogle() Option
 func WithMaxSize(bytes int64) Option
 func WithParallel(n int) Option
@@ -115,6 +116,7 @@ type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type EventSource[T any] interface{eventSource(T); sourceName() string}
+type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int}
 type HTML struct{}
 type Handler struct{}
 type HistogramHandle struct{}

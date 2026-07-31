@@ -1,0 +1,1 @@
+app.go:6:5: service mixedfootprint cannot carry both footprint (cpu 2) from Fast and footprint (cpu 4, memory 2Gi) from Slow — one service scales one way; split the packages or align the footprints (tako/mixed-footprint)

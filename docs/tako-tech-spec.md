@@ -644,7 +644,18 @@ Scaling profiles → Cloud Run knobs:
 | latency | 1 | 100 | 40 | 2 / 1Gi | off |
 | batch | 0 | 10 | 10 | 2 / 2Gi | on |
 
-Escape hatches: `overrides:` block in `tako.yaml` patching raw service specs; `handle.Raw()` returning the underlying GCP client; readable generated code in `.tako/gen/`.
+The escape hatch under the profiles is `tako.WithFootprint(tako.Footprint{…})`
+(S1 — fix-up: the earlier `tako.yaml overrides:` sketch is dead; declarations
+are code, there is no YAML): explicit CPU / Memory / Concurrency /
+MinInstances / MaxInstances, layered field-by-field over the profile — zero
+fields inherit. The analyzer validates both the fields and the RESOLVED
+combination against Cloud Run's limits at build time (`tako/footprint`), and
+projects the claim onto the service like a profile (`tako/mixed-footprint` on
+conflict). Job handlers and singletons take CPU/Memory only — a job's tasks
+aren't serving instances, and a singleton's min/max/concurrency are the
+exactly-one machinery. The deploy summary prints what a footprint resolves to
+and warns when it keeps instances always on. The remaining escape hatch is
+the readable generated code in `.tako/gen/`.
 
 ### 4.6a Deployment lifecycle — diffs, updates, rollback, destruction
 

@@ -351,6 +351,10 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// WithProfile is honored (R0): a service inherits its handlers'
 	// claim; two different claims in one service cannot both win.
 	applyProfiles(graph, &errs)
+	// WithFootprint layers on the profile — projected the same way,
+	// then the RESOLVED knobs are validated (runs after applyProfiles
+	// because the base comes from the service's profile).
+	applyFootprints(graph, &errs)
 	var edgeErrs ErrorList
 	graph.Edges, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
 	errs = append(errs, edgeErrs...)

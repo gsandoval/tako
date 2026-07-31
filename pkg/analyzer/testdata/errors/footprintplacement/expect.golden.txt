@@ -1,0 +1,2 @@
+app.go:9:3: a job footprint sets CPU and Memory only — executions are tasks, not serving instances; WithParallel sets the fan-out (tako/footprint)
+app.go:11:3: a singleton footprint sets CPU and Memory only — min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one (tako/footprint)

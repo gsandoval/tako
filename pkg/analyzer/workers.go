@@ -13,7 +13,7 @@ import (
 )
 
 // workerOptions is the option set tako.Worker accepts.
-var workerOptions = map[string]bool{"WithProfile": true}
+var workerOptions = map[string]bool{"WithProfile": true, "WithFootprint": true}
 
 // extractWorker validates one tako.Worker declaration. Workers partition
 // into their own service (package = service, but each worker scales and
@@ -36,16 +36,21 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	}
 
 	profile := ""
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithProfile" {
 			profile = profileArg(pkg, opt)
 			continue
 		}
+		if isOpt && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			continue
+		}
 		if isOpt && !workerOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -65,20 +70,21 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	}
 
 	h := &Handler{
-		Kind:    "worker",
-		Var:     pkg.Name + "." + name.Name,
-		Package: pkg.PkgPath,
-		Service: pkg.Name + "-" + strings.ToLower(name.Name),
-		Binding: queueName,
-		Profile: profile,
-		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+		Kind:      "worker",
+		Var:       pkg.Name + "." + name.Name,
+		Package:   pkg.PkgPath,
+		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
+		Binding:   queueName,
+		Profile:   profile,
+		Footprint: footprint,
+		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	workersByQueue[queueName] = h
 	return h
 }
 
 // subscribeOptions is the option set tako.Subscribe accepts.
-var subscribeOptions = map[string]bool{"WithProfile": true}
+var subscribeOptions = map[string]bool{"WithProfile": true, "WithFootprint": true}
 
 // extractSubscribe validates one tako.Subscribe declaration. Subscribers
 // partition into their own service, and any number may bind one source —
@@ -101,16 +107,21 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 	}
 
 	profile := ""
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithProfile" {
 			profile = profileArg(pkg, opt)
 			continue
 		}
+		if isOpt && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			continue
+		}
 		if isOpt && !subscribeOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -128,6 +139,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Binding:     binding,
 		BindingKind: bindKind,
 		Profile:     profile,
+		Footprint:   footprint,
 		Pos:         relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
@@ -236,7 +248,7 @@ func resolveQueueVar(pkg *packages.Package, arg ast.Expr, queueVars map[types.Ob
 }
 
 // jobOptions is the option set tako.JobHandler accepts.
-var jobOptions = map[string]bool{"WithParallel": true}
+var jobOptions = map[string]bool{"WithParallel": true, "WithFootprint": true}
 
 // extractJobHandler validates one tako.JobHandler declaration: its own
 // deployable (a Cloud Run JOB — no routes, no request timeout), bound
@@ -258,6 +270,7 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		return nil
 	}
 	parallel := 0
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithParallel" {
@@ -270,10 +283,21 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 			}
 			continue
 		}
+		if isOpt && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0) {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "a job footprint sets CPU and Memory only — executions are tasks, not serving instances; WithParallel sets the fan-out",
+					Rule: "footprint",
+				})
+			}
+			continue
+		}
 		if isOpt && !jobOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -291,13 +315,14 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		return nil
 	}
 	h := &Handler{
-		Kind:     "job",
-		Var:      pkg.Name + "." + name.Name,
-		Package:  pkg.PkgPath,
-		Service:  pkg.Name + "-" + strings.ToLower(name.Name),
-		Binding:  jobName,
-		Parallel: parallel,
-		Pos:      relPos(dir, pkg.Fset, name.Pos()),
+		Kind:      "job",
+		Var:       pkg.Name + "." + name.Name,
+		Package:   pkg.PkgPath,
+		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
+		Binding:   jobName,
+		Parallel:  parallel,
+		Footprint: footprint,
+		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	jobsByName[jobName] = h
 	return h
@@ -320,10 +345,23 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		return nil
 	}
 	bad := false
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
+		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0) {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "a singleton footprint sets CPU and Memory only — min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one",
+					Rule: "footprint",
+				})
+				bad = true
+			}
+			continue
+		}
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-			Msg:  "tako.Singleton accepts no options in v0 — min=1/max=1 plus the lease is the whole contract",
+			Msg:  "tako.Singleton accepts only WithFootprint — min=1/max=1 plus the lease is the rest of the contract",
 			Rule: "invalid-option",
 		})
 		bad = true
@@ -332,12 +370,13 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		return nil
 	}
 	return &Handler{
-		Kind:    "singleton",
-		Var:     pkg.Name + "." + name.Name,
-		Package: pkg.PkgPath,
-		Service: pkg.Name + "-" + strings.ToLower(name.Name),
-		Binding: singletonName,
-		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+		Kind:      "singleton",
+		Var:       pkg.Name + "." + name.Name,
+		Package:   pkg.PkgPath,
+		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
+		Binding:   singletonName,
+		Footprint: footprint,
+		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

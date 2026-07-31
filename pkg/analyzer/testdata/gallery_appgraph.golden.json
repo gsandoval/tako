@@ -32,7 +32,12 @@
       "handlers": [
         "gallery.MakeThumb"
       ],
-      "profile": "batch"
+      "profile": "batch",
+      "footprint": {
+        "memory": "4Gi",
+        "concurrency": 4,
+        "max_instances": 5
+      }
     },
     {
       "name": "gallery-notifyowner",
@@ -289,8 +294,13 @@
       "package": "gallery",
       "service": "gallery-makethumb",
       "profile": "batch",
+      "footprint": {
+        "memory": "4Gi",
+        "concurrency": 4,
+        "max_instances": 5
+      },
       "binding": "thumbnails",
-      "pos": "app.go:75:2"
+      "pos": "app.go:78:2"
     },
     {
       "kind": "subscribe",
@@ -299,7 +309,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:76:2"
+      "pos": "app.go:81:2"
     },
     {
       "kind": "subscribe",
@@ -308,7 +318,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:77:2"
+      "pos": "app.go:82:2"
     },
     {
       "kind": "cron",
@@ -317,7 +327,7 @@
       "service": "gallery",
       "schedule": "every 24h",
       "singleflight": true,
-      "pos": "app.go:78:2"
+      "pos": "app.go:83:2"
     }
   ],
   "edges": [

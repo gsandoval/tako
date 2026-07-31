@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -39,6 +40,9 @@ type runJob struct {
 					Name  string `json:"name"`
 					Value string `json:"value"`
 				} `json:"env,omitempty"`
+				Resources struct {
+					Limits map[string]string `json:"limits"`
+				} `json:"resources"`
 			} `json:"containers"`
 		} `json:"template"`
 	} `json:"template"`
@@ -80,11 +84,16 @@ func jobLiveHash(j runJob) string {
 	if taskCount == 0 {
 		taskCount = 1
 	}
+	// Same normalization the services applier does: the API reports
+	// cpu "1000m"-style even when set as "1".
+	cpu := strings.TrimSuffix(c.Resources.Limits["cpu"], "000m")
 	return provision.SpecHash(map[string]any{
 		"image":          c.Image,
 		"serviceAccount": j.Template.Template.ServiceAccount,
 		"env":            env,
 		"taskCount":      taskCount,
+		"cpu":            cpu,
+		"memory":         c.Resources.Limits["memory"],
 	})
 }
 
@@ -105,7 +114,16 @@ func (r *RunJobs) body(o provision.Object) map[string]any {
 				// task up to maxRetries; there is no dead-letter here.
 				"maxRetries": 3,
 				"timeout":    "3600s",
-				"containers": []map[string]any{{"image": spec["image"], "env": env}},
+				"containers": []map[string]any{{
+					"image": spec["image"],
+					"env":   env,
+					"resources": map[string]any{
+						"limits": map[string]any{
+							"cpu":    fmt.Sprint(spec["cpu"]),
+							"memory": fmt.Sprint(spec["memory"]),
+						},
+					},
+				}},
 			},
 		},
 	}

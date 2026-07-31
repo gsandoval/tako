@@ -38,6 +38,21 @@ type Service struct {
 	// Singleton marks a min=1/max=1 service running a lease-guarded
 	// loop (tako.Singleton).
 	Singleton bool `json:"singleton,omitempty"`
+	// Footprint is the service's explicit compute override
+	// (WithFootprint), inherited from its handlers like Profile. Zero
+	// fields inherit the profile's value; the provisioner resolves the
+	// pair via ProfileKnobs.
+	Footprint *Footprint `json:"footprint,omitempty"`
+}
+
+// Footprint mirrors tako.Footprint into the graph: the fields a handler
+// pinned explicitly. Zero means "inherit from the profile".
+type Footprint struct {
+	CPU          int    `json:"cpu,omitempty"`
+	Memory       string `json:"memory,omitempty"`
+	Concurrency  int    `json:"concurrency,omitempty"`
+	MinInstances int    `json:"min_instances,omitempty"`
+	MaxInstances int    `json:"max_instances,omitempty"`
 }
 
 // Resource is one declared resource var.
@@ -116,6 +131,10 @@ type Handler struct {
 	// empty = default). The service inherits it — mixed claims within
 	// one service are an analysis error.
 	Profile string `json:"profile,omitempty"`
+	// Footprint is the handler's WithFootprint claim; the service
+	// inherits it — differing claims within one service are an
+	// analysis error (tako/mixed-footprint).
+	Footprint *Footprint `json:"footprint,omitempty"`
 	// Singleflight marks a Cron declared with tako.WithSingleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.

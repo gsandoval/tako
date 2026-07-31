@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
@@ -96,14 +97,18 @@ func (c Config) Labels() map[string]string {
 	return map[string]string{"tako-app": c.App, "tako-env": c.Env}
 }
 
-// profileKnobs maps a scaling profile to Cloud Run settings (spec §4.6).
-var profileKnobs = map[string]map[string]any{
-	"default": {"min": 0, "max": 20, "concurrency": 80, "cpu": "1", "memory": "512Mi"},
-	"latency": {"min": 1, "max": 100, "concurrency": 40, "cpu": "2", "memory": "1Gi"},
-	"batch":   {"min": 0, "max": 10, "concurrency": 10, "cpu": "2", "memory": "2Gi"},
-	// Singleton: min=1/max=1 keeps the loop's host alive; the LEASE is
-	// what makes it exactly-one (spec §4.4).
-	"singleton": {"min": 1, "max": 1, "concurrency": 1, "cpu": "1", "memory": "512Mi"},
+// Profile → knob values live in analyzer.ProfileKnobs (spec §4.6): one
+// table serves footprint validation there and spec derivation here.
+// resolveKnobs layers a service's footprint (if any) over its profile.
+func resolveKnobs(svc analyzer.Service, profile string) (analyzer.Footprint, error) {
+	base, ok := analyzer.ProfileKnobs[profile]
+	if !ok {
+		return analyzer.Footprint{}, fmt.Errorf("service %s has unknown profile %q", svc.Name, profile)
+	}
+	if svc.Footprint != nil {
+		return svc.Footprint.Over(base), nil
+	}
+	return base, nil
 }
 
 // Desired derives the managed-object set from the AppGraph. images maps
@@ -199,9 +204,16 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		if svc.Job {
 			profile = "batch"
 		}
-		knobs := profileKnobs[profile]
-		if knobs == nil {
-			return nil, fmt.Errorf("service %s has unknown profile %q", svc.Name, profile)
+		resolved, err := resolveKnobs(svc, profile)
+		if err != nil {
+			return nil, err
+		}
+		knobs := map[string]any{
+			"min":         resolved.MinInstances,
+			"max":         resolved.MaxInstances,
+			"concurrency": resolved.Concurrency,
+			"cpu":         strconv.Itoa(resolved.CPU),
+			"memory":      resolved.Memory,
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
@@ -249,6 +261,10 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					"serviceAccount": cfg.SAEmail(svc.Name),
 					"env":            env,
 					"taskCount":      taskCount,
+					// Task compute: the footprint's CPU/Memory when
+					// pinned, batch-profile values otherwise.
+					"cpu":    strconv.Itoa(resolved.CPU),
+					"memory": resolved.Memory,
 				},
 			})
 			continue

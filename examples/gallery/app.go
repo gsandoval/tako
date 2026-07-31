@@ -71,8 +71,13 @@ var (
 
 	// The pipeline is event-driven end to end:
 	// upload → bucket event → queue → worker → topic → 2 subscribers.
-	OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
-	MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
+	OnUploaded = tako.Subscribe(photos.Uploaded, onUploaded)
+	// Batch gives the resizer throughput knobs; the footprint pins what
+	// the profile can't know: image decodes are memory-hungry per
+	// request, so more headroom, fewer per instance, capped fan-out.
+	MakeThumb = tako.Worker(thumbs, makeThumb,
+		tako.WithProfile(tako.Batch),
+		tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5}))
 	NotifyOwner = tako.Subscribe(ready, notifyOwner)
 	WarmFeed    = tako.Subscribe(ready, warmFeed)
 	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())

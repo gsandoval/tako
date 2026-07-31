@@ -1,0 +1,3 @@
+app.go:14:2: service footprintresolve-bigcpu resolves to 8 vCPUs with 512Mi memory — 8 vCPUs need at least 4Gi; pin Memory too (tako/footprint)
+app.go:16:2: service footprintresolve-bigmem resolves to 8Gi memory with 1 vCPU — over 4Gi needs at least 2 vCPUs; pin CPU too (tako/footprint)
+app.go:18:2: service footprintresolve-bigmin resolves to MinInstances 30 over MaxInstances 20 (profile default) — pin MaxInstances too (tako/footprint)
