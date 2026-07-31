@@ -2,6 +2,7 @@ package shortlink
 
 import (
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako"
 )
@@ -130,5 +131,54 @@ func TestValidation(t *testing.T) {
 	he, ok := err.(interface{ HTTPStatus() int })
 	if !ok || he.HTTPStatus() != 422 {
 		t.Fatalf("err = %v, want 422", err)
+	}
+}
+
+// TestExpiryDeletesTheLinkItWasPublishedFor: a TTL'd link self-destructs
+// when its delayed expiry comes due (the test clock owns time), lands in
+// the archive ledger through the rate-limited queue — and a slug
+// re-claimed in the meantime is NOT the expiry's to delete.
+func TestExpiryDeletesTheLinkItWasPublishedFor(t *testing.T) {
+	app := tako.NewTestApp(t)
+	ctx := app.Ctx(app.SignIn("memo"))
+
+	if _, err := Create.Call(ctx, CreateReq{Slug: "tmp", URL: "https://a.example", TTLSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	// Not due yet: the link lives.
+	app.Advance(30 * time.Second)
+	app.DrainQueues()
+	if _, err := Resolve.Call(ctx, ResolveReq{Slug: "tmp"}); err != nil {
+		t.Fatalf("link expired early: %v", err)
+	}
+	// Due: gone, and archived through the paced queue.
+	app.Advance(31 * time.Second)
+	app.DrainQueues()
+	if _, err := Resolve.Call(ctx, ResolveReq{Slug: "tmp"}); !tako.IsNotFound(err) {
+		t.Fatalf("expired link should be gone; got %v", err)
+	}
+	tombs, err := archived.Query(ctx).Limit(10).All()
+	if err != nil || len(tombs) != 1 || tombs[0].Slug != "tmp" {
+		t.Fatalf("archive ledger = %v, %v; want the one tombstone", tombs, err)
+	}
+
+	// Re-claim guard: expire the OLD link only.
+	if _, err := Create.Call(ctx, CreateReq{Slug: "keep", URL: "https://old.example", TTLSeconds: 60}); err != nil {
+		t.Fatal(err)
+	}
+	app.Advance(61 * time.Second)
+	app.DrainQueues() // old one expired
+	if _, err := Create.Call(ctx, CreateReq{Slug: "keep", URL: "https://new.example", TTLSeconds: 3600}); err != nil {
+		t.Fatal(err)
+	}
+	// A stale expiry for the FIRST "keep" arriving now must not delete
+	// the new claimant — simulate by publishing it directly, due now.
+	if err := expiries.Publish(ctx, Expiry{ID: tako.NewID(), Slug: "keep", Created: time.Now().Add(-time.Hour)}, tako.WithDelay(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	app.Advance(2 * time.Second)
+	app.DrainQueues()
+	if l, err := Resolve.Call(ctx, ResolveReq{Slug: "keep"}); err != nil || l.URL != "https://new.example" {
+		t.Fatalf("re-claimed slug should survive a stale expiry; got %+v, %v", l, err)
 	}
 }

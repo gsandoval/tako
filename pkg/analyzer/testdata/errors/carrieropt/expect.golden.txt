@@ -1,4 +1,4 @@
-app.go:10:36: tako.WithTTL is not a tako.Queue option (tako.Queue accepts no options) (tako/invalid-option)
-app.go:11:36: rate-limited queues arrive with the Cloud Tasks feature — declare the queue without it for now (tako/not-yet)
+app.go:10:36: tako.WithTTL is not a tako.Queue option (tako.Queue accepts WithRateLimit) (tako/invalid-option)
+app.go:11:36: tako.WithRateLimit takes a constant 1–500 messages per second (Cloud Tasks' dispatch ceiling) (tako/rate-limit)
 app.go:12:38: tako.WithDelay is not a tako.Topic option (tako.Topic accepts no options) (tako/invalid-option)
 app.go:13:29: tako.WithTTL is not a tako.Counter option (tako.Counter accepts no options) (tako/invalid-option)

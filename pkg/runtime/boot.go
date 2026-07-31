@@ -215,3 +215,12 @@ func SignedURLHandler() http.Handler {
 	}
 	return local.SignedURLEndpoint(booted.Signer, booted.Buckets)
 }
+
+// SetQueueRate mirrors a WithRateLimit queue's dispatch cap onto the
+// local dispatcher (T3). In the cloud the cap lives in the Cloud Tasks
+// queue itself, so this is a no-op when nothing local is booted.
+func SetQueueRate(queue string, perSec int) {
+	if booted != nil {
+		booted.Dispatcher.SetRate(queue, perSec)
+	}
+}

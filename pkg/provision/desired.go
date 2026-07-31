@@ -163,6 +163,23 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			jobSvcOf[h.Binding] = h.Service
 		}
 	}
+	// Tasks-routed queues (T3) and the worker service behind each: a
+	// publisher needs the queue resource, the worker's push URL, and
+	// the worker's SA (the task's OIDC identity) — all deterministic.
+	tasksQueues := map[string]string{} // queue name → worker service
+	for _, r := range g.Resources {
+		if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+			tasksQueues[r.Name] = ""
+		}
+	}
+	for _, h := range g.Handlers {
+		if h.Kind == "worker" {
+			if _, ok := tasksQueues[h.Binding]; ok {
+				tasksQueues[h.Binding] = h.Service
+			}
+		}
+	}
+
 	jobTriggers := map[string]map[string]string{} // service → job name → resource
 	for _, e := range g.Edges {
 		if e.Kind != "resource" || e.ToKind != "job" || e.Verb != "run" {
@@ -239,6 +256,19 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 		for jobName, resource := range jobTriggers[svc.Name] {
 			env["TAKO_JOB_"+strings.ToUpper(strings.ReplaceAll(jobName, "-", "_"))] = resource
+		}
+		// Tasks-routed publishes (T3): everything the gcp queue backend
+		// needs to enqueue, pipe-joined, injected per queue.
+		for _, e := range g.Edges {
+			if e.Kind == "resource" && e.Verb == "publish" && e.ToKind == "queue" && svcOf[e.From] == svc.Name {
+				worker, ok := tasksQueues[e.To]
+				if !ok || worker == "" {
+					continue
+				}
+				env["TAKO_TASKS_"+strings.ToUpper(strings.ReplaceAll(e.To, "-", "_"))] = fmt.Sprintf(
+					"projects/%s/locations/%s/queues/%s|%s/_tako/push|%s",
+					cfg.Project, cfg.Region, cfg.Name(e.To)+"-tako", cfg.RunURL(worker), cfg.SAEmail(worker))
+			}
 		}
 		// Cron trigger identity (T2): the dispatch route verifies a
 		// Google-signed OIDC token with exactly this audience and
@@ -354,6 +384,20 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Name: cfg.Name(r.Name),
 				Spec: map[string]any{},
 			})
+			// Tasks-routed queues (T3): WithRateLimit or a WithDelay
+			// publish site adds a Cloud Tasks queue in FRONT of the
+			// worker — Pub/Sub push stays the plain path.
+			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+				rate := r.RateLimit
+				if rate == 0 {
+					rate = 500 // delay-only queues: Tasks' dispatch ceiling
+				}
+				objs = append(objs, Object{
+					Kind: KindTasksQueue,
+					Name: cfg.Name(r.Name) + "-tako",
+					Spec: map[string]any{"rate": rate},
+				})
+			}
 		}
 	}
 

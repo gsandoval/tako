@@ -9,14 +9,27 @@ import (
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
-// TestWithDelayErrorsOnGCP pins the not-yet text: Pub/Sub cannot delay,
-// so erroring beats silently delivering early. Cloud Tasks waits for
-// the example that demands WithDelay in deployed code (C5 scope call).
-func TestWithDelayErrorsOnGCP(t *testing.T) {
+// TestWithDelayNeedsRoute pins the misconfiguration text (T3): a
+// delayed publish without the deploy-injected Cloud Tasks route means
+// the binary and the deploy disagree — say so, never deliver early.
+func TestWithDelayNeedsRoute(t *testing.T) {
 	s := NewQueueStore(&Client{Opts: Options{Project: "p", Env: "prod"}})
 	err := s.Publish(context.Background(), "q", []byte("{}"), backends.PublishOptions{Delay: time.Hour})
-	if err == nil || !strings.Contains(err.Error(), "Cloud Tasks — that arrives with the delayed-delivery feature") {
+	if err == nil || !strings.Contains(err.Error(), "no Cloud Tasks route") {
 		t.Fatalf("WithDelay error = %v", err)
+	}
+}
+
+// TestTasksRouteParses pins the env route format the deploy injects.
+func TestTasksRouteParses(t *testing.T) {
+	t.Setenv("TAKO_TASKS_Q", "projects/p/locations/r/queues/q-tako|https://w.example/_tako/push|w-sa@p.iam.gserviceaccount.com")
+	s := NewQueueStore(&Client{Opts: Options{Project: "p", Env: "prod"}})
+	// The enqueue itself would hit the network; a malformed route must
+	// fail BEFORE that with its own text.
+	t.Setenv("TAKO_TASKS_Q", "only-one-part")
+	err := s.Publish(context.Background(), "q", []byte("{}"), backends.PublishOptions{})
+	if err == nil || !strings.Contains(err.Error(), "malformed TAKO_TASKS route") {
+		t.Fatalf("malformed route error = %v", err)
 	}
 }
 

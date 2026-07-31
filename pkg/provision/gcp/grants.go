@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -71,6 +72,9 @@ func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet
 	case provision.TargetSubscription:
 		base := "https://pubsub.googleapis.com/v1/projects/" + g.C.Project + "/subscriptions/" + id
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
+	case provision.TargetTasksQueue:
+		base := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/projects/%s/locations/%s/queues/%s", g.C.Project, g.C.Region, id)
+		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetSecret:
 		base := "https://secretmanager.googleapis.com/v1/projects/" + g.C.Project + "/secrets/" + id
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
@@ -179,21 +183,43 @@ func (g *Grants) List(ctx context.Context) ([]provision.Observed, error) {
 }
 
 func (g *Grants) apply(ctx context.Context, o provision.Object) error {
+	// A policy write can 400 on a MEMBER the IAM backend hasn't seen
+	// yet — a service account created seconds earlier in this same
+	// deploy (the T2 ticktock gate caught the grant silently vanishing
+	// into the destroy-convergence carve-out). Retry through the
+	// propagation window; only a target that is REALLY gone converges.
+	var err error
+	for attempt := 0; attempt < 4; attempt++ {
+		if attempt > 0 {
+			time.Sleep(15 * time.Second)
+		}
+		var retry bool
+		retry, err = g.applyOnce(ctx, o)
+		if !retry {
+			return err
+		}
+	}
+	return err
+}
+
+// applyOnce runs one read-modify-write; retry reports a rejection that
+// a fresh-member propagation wait may cure.
+func (g *Grants) applyOnce(ctx context.Context, o provision.Object) (bool, error) {
 	typ, id := grantTarget(o)
 	_, _, setURL, bareSet, err := g.urls(typ, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	p, ok, err := g.read(ctx, typ, id)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if !ok {
 		// The target does not exist (yet, or anymore): nothing holds
 		// bindings to rewrite. Deploy sequences subscription-target
 		// grants after their subscriptions exist; destroy hits this
 		// after the target's own deletion — both converge.
-		return nil
+		return false, nil
 	}
 	// Strip every managed member, then re-add the desired set.
 	next := map[string][]string{} // role → members
@@ -229,17 +255,26 @@ func (g *Grants) apply(ctx context.Context, o provision.Object) error {
 		body, method = newPolicy, http.MethodPut
 	}
 	if err := g.C.do(ctx, method, setURL, body, nil); err != nil {
-		// The target can die between read and write — or, on partial
-		// destroys, before either (deleted resources' policy reads can
-		// answer 200 tombstones while writes 404). A gone non-project
-		// target has nothing left to revoke: converge.
-		if ae, ok := err.(*apiError); ok && typ != provision.TargetProject &&
-			(ae.Status == http.StatusNotFound || ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
-			return nil
+		ae, isAPI := err.(*apiError)
+		if isAPI && typ != provision.TargetProject && ae.Status == http.StatusNotFound {
+			// The target died between read and write (destroy): converge.
+			return false, nil
 		}
-		return Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")
+		if isAPI && typ != provision.TargetProject &&
+			(ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
+			// Gone target (partial destroys answer 403/400 tombstones) —
+			// or a REAL rejection, like a just-created member the IAM
+			// backend hasn't propagated. Only convergence on a target
+			// that no longer reads back; everything else retries, then
+			// fails loudly instead of silently dropping the grant.
+			if _, stillThere, rerr := g.read(ctx, typ, id); rerr == nil && !stillThere {
+				return false, nil
+			}
+			return true, Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")
+		}
+		return false, Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")
 	}
-	return nil
+	return false, nil
 }
 
 func (g *Grants) Create(ctx context.Context, o provision.Object) error { return g.apply(ctx, o) }

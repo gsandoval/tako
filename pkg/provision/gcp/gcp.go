@@ -111,6 +111,16 @@ func parseAPIError(status int, url string, raw []byte) error {
 	return &apiError{Status: status, Reason: reason, Message: msg, API: host}
 }
 
+// disabledAPI reports the SERVICE_DISABLED shape: an API that is off
+// hosts nothing, so OBSERVATION treats it as an empty inventory —
+// destroy must never demand an API the app never enabled (the T3 gate
+// hit exactly this: a pre-Tasks app's destroy failing on cloudtasks).
+func disabledAPI(err error) bool {
+	ae, ok := err.(*apiError)
+	return ok && ae.Status == http.StatusForbidden &&
+		(ae.Reason == "SERVICE_DISABLED" || strings.Contains(ae.Message, "API has not been used") || strings.Contains(ae.Message, "it is disabled"))
+}
+
 // Classify maps an API failure onto the four-way taxonomy with a
 // copy-pasteable remediation (the permission model's friction rule).
 // verb names what tako was doing; role is the narrowest role that

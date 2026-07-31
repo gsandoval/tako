@@ -48,9 +48,16 @@ idempotency is the worker's job. Shortlink claims each click's ID in a
 transaction before counting; see the
 [shortlink chapter](../guide/02-shortlink.md).
 
-`Publish` takes one option, `WithDelay(d)`, deferring first delivery
-(local only for now — see Not yet). Payloads that fail to decode are
-`Permanent` automatically: redelivering malformed JSON can't help.
+`Publish` takes one option, `WithDelay(d)`, deferring first delivery —
+a timer (or the test clock) locally, a Cloud Tasks `scheduleTime` in
+the cloud (T3). Declaring `WithRateLimit(n)` on the queue caps
+dispatch at n/second everywhere. Either one routes the queue's cloud
+traffic through a Cloud Tasks queue in front of the worker — same
+API, provisioner's choice — with one trade to know: Tasks has no
+dead letter (see Not yet). Shortlink's TTL'd links publish their own
+expiry with `WithDelay`, and its archive walks at `WithRateLimit(2)`.
+Payloads that fail to decode are `Permanent` automatically:
+redelivering malformed JSON can't help.
 
 ## Local
 
@@ -109,14 +116,17 @@ to replay a failure exactly.
 - `tako.WithTTL is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint) (tako/invalid-option)`
 - `tako.Queue name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
 - `tako.WithMaxSize is not a Publish option (Publish accepts WithDelay)` — at runtime, from `Publish`.
-- `tako.WithDelay on the gcp backend needs Cloud Tasks — that arrives with the delayed-delivery feature (no shipped example demands it yet); remove the delay or run locally`
+- `queue "x" has no Cloud Tasks route — a WithDelay publish site the analyzer did not see? redeploy so the deploy can provision it` — a binary older than its deploy.
+- `tako.WithRateLimit takes a constant 1–500 messages per second (Cloud Tasks' dispatch ceiling) (tako/rate-limit)`
 
 ## Not yet
 
-- **`WithDelay` in the cloud.** It works locally (and in tests, on a
-  fake clock `Advance` moves); on the gcp backend `Publish` errors
-  with the text above until the Cloud Tasks-backed feature ships.
-- **`WithRateLimit`.** Refused at analysis time with
-  `rate-limited queues arrive with the Cloud Tasks feature — declare
-  the queue without it for now (tako/not-yet)` — it limits nothing
-  until that feature ships, and says so instead of pretending.
+- **Tasks-routed queues have no dead letter.** Cloud Tasks retries 5
+  attempts (mirroring the Pub/Sub contract) and then the task is
+  GONE — there is no `tako dlq` for a rate-limited or delayed
+  message that exhausts its retries. Put irreplaceable work on a
+  plain queue; use Tasks routing for work whose source can re-emit.
+- Delay ceiling: Cloud Tasks schedules at most 30 days out.
+- `WithRateLimit` caps at 500/s (Cloud Tasks' dispatch ceiling); the
+  local dispatcher paces to the same number under `tako dev`, but
+  `NewTestApp` does not pace (tests assert semantics, not timing).

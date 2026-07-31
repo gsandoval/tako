@@ -81,7 +81,7 @@ func funcArg(pkg *packages.Package, call *ast.CallExpr, idx int) *types.Func {
 // resource var; a `.Call` on another handler's Endpoint var is a call
 // edge (§2.12). Raw cross-package handler-function calls — the hidden
 // RPC boundary — are diagnosed here, where the scan already looks.
-func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, handlers []Handler) ([]Edge, ErrorList) {
+func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
 	type ref struct {
 		res  resRef
 		verb string
@@ -89,6 +89,7 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 	refs := map[*types.Func][]ref{}          // direct resource touches per function
 	epRefs := map[*types.Func][]string{}     // Endpoint .Call targets per function
 	calls := map[*types.Func][]*types.Func{} // same-module call graph
+	delayed := map[string]bool{}             // queues with WithDelay publish sites (T3: Tasks-routed)
 	var errs ErrorList
 
 	// Handler root functions, for the raw-cross-package-call error.
@@ -135,6 +136,16 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 							if r, ok := vars[pkg.TypesInfo.Uses[id]]; ok {
 								if v := verbOf(r.kind, sel.Sel.Name); v != "" {
 									refs[fn] = append(refs[fn], ref{r, v})
+									// A delayed publish routes the queue
+									// through Cloud Tasks in the cloud —
+									// detected HERE, at the option site.
+									if r.kind == "queue" && sel.Sel.Name == "Publish" {
+										for _, a := range call.Args {
+											if optName, isOpt := sdkOptionCall(pkg, a); isOpt && optName == "WithDelay" {
+												delayed[r.name] = true
+											}
+										}
+									}
 								}
 								return true
 							}
@@ -240,5 +251,5 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 		})
 		edges = append(edges, hs...)
 	}
-	return edges, errs
+	return edges, delayed, errs
 }

@@ -10,6 +10,7 @@ export interface CreateReq {
   slug: string;
   url: string;
   owner: string;
+  ttlSeconds: number;
 }
 
 /** shortlink.Link */

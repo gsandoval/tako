@@ -356,7 +356,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// because the base comes from the service's profile).
 	applyFootprints(graph, &errs)
 	var edgeErrs ErrorList
-	graph.Edges, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
+	var delayedQueues map[string]bool
+	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
+	for i := range graph.Resources {
+		if graph.Resources[i].Kind == "queue" && delayedQueues[graph.Resources[i].Name] {
+			graph.Resources[i].Delayed = true
+		}
+	}
 	errs = append(errs, edgeErrs...)
 	// Call CYCLES need no rule: a service cycle is an import cycle
 	// (calling b.Step requires importing b; package = service), which

@@ -38,6 +38,8 @@ type QueueDispatcher struct {
 	onAck        func(source, consumer string, took time.Duration)
 	onChaos      func(source, consumer, action string)
 	onDelayed    func(queue string, delay time.Duration)
+	rateNext     map[string]time.Time
+	rateEvery    map[string]time.Duration
 	chaos        *chaosState
 	inflight     sync.WaitGroup
 
@@ -119,6 +121,42 @@ func (d *QueueDispatcher) Consume(queue string, deliver func(ctx context.Context
 	d.consumers[queue] = deliver
 }
 
+// SetRate caps a queue's local delivery at perSec messages per second —
+// the dev-loop mirror of a WithRateLimit queue's Cloud Tasks dispatch
+// rate. Pacing is a simple next-slot schedule: each dispatch claims the
+// next 1/perSec slot and waits for it. TestApp does not set rates
+// (tests assert semantics, not pacing).
+func (d *QueueDispatcher) SetRate(queue string, perSec int) {
+	if perSec <= 0 {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.rateNext == nil {
+		d.rateNext = map[string]time.Time{}
+		d.rateEvery = map[string]time.Duration{}
+	}
+	d.rateEvery[queue] = time.Second / time.Duration(perSec)
+}
+
+// ratePace blocks until the queue's next dispatch slot, if it is rated.
+func (d *QueueDispatcher) ratePace(queue string) {
+	d.mu.Lock()
+	every, ok := d.rateEvery[queue]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	now := time.Now()
+	slot := d.rateNext[queue]
+	if slot.Before(now) {
+		slot = now
+	}
+	d.rateNext[queue] = slot.Add(every)
+	d.mu.Unlock()
+	time.Sleep(time.Until(slot))
+}
+
 func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []byte, opts backends.PublishOptions) error {
 	d.mu.Lock()
 	deliver, ok := d.consumers[queue]
@@ -193,7 +231,10 @@ func (d *QueueDispatcher) OnDelayed(fn func(queue string, delay time.Duration)) 
 func (d *QueueDispatcher) dispatch(to delivery, deliver func(context.Context, []byte) error, payload []byte) {
 	plan := d.chaosPlanFor(to)
 	d.inflight.Add(1)
-	go d.deliverLoop(to, deliver, payload, plan)
+	go func() {
+		d.ratePace(to.source)
+		d.deliverLoop(to, deliver, payload, plan)
+	}()
 	if plan.duplicate {
 		d.notifyChaos(to, "duplicate")
 		d.inflight.Add(1)

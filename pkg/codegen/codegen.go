@@ -317,6 +317,12 @@ import (
 		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
 	}
 	b.WriteString(callBlock)
+	for _, r := range g.Resources {
+		if r.Package == svc.Package && r.Kind == "queue" && r.RateLimit > 0 {
+			fmt.Fprintf(&b, "\t// queue %s: WithRateLimit(%d) — Cloud Tasks caps dispatch in the\n\t// cloud; locally the dispatcher paces to the same rate.\n", r.Name, r.RateLimit)
+			fmt.Fprintf(&b, "\truntime.SetQueueRate(%q, %d)\n\n", r.Name, r.RateLimit)
+		}
+	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
 	if hasAuth(g) {
 		b.WriteString("\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")

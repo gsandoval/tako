@@ -22,6 +22,7 @@ const (
 	TargetRunJob         = "runjob"
 	TargetServiceAccount = "serviceAccount"
 	TargetSubscription   = "subscription"
+	TargetTasksQueue     = "tasksQueue"
 	TargetSecret         = "secret"
 )
 
@@ -61,6 +62,9 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			}
 		case "queue", "topic":
 			ensure(target{TargetTopic, cfg.Name(r.Name)})
+			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+				ensure(target{TargetTasksQueue, cfg.Name(r.Name) + "-tako"})
+			}
 		case "entity":
 			hasEntity = true
 		case "auth":
@@ -102,6 +106,21 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// locks converges to zero lease bindings instead of keeping stale
 	// objectAdmin.
 	ensure(target{TargetBucket, cfg.Project + "-tako"})
+
+	// Tasks-routed queues (T3): the worker service behind each.
+	tasksWorker := map[string]string{}
+	for _, r := range g.Resources {
+		if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+			tasksWorker[r.Name] = ""
+		}
+	}
+	for _, h := range g.Handlers {
+		if h.Kind == "worker" {
+			if _, ok := tasksWorker[h.Binding]; ok {
+				tasksWorker[h.Binding] = h.Service
+			}
+		}
+	}
 
 	svcOf := map[string]string{} // handler var → service name
 	for _, h := range g.Handlers {
@@ -176,6 +195,12 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		case "queue", "topic":
 			if e.Verb == "publish" {
 				add(target{TargetTopic, cfg.Name(e.To)}, "roles/pubsub.publisher", member)
+				// Tasks-routed queues (T3): enqueue on the queue, and
+				// actAs the worker's SA (the task's OIDC identity).
+				if worker, ok := tasksWorker[e.To]; ok && worker != "" && e.ToKind == "queue" {
+					add(target{TargetTasksQueue, cfg.Name(e.To) + "-tako"}, "roles/cloudtasks.enqueuer", member)
+					add(target{TargetServiceAccount, cfg.SAEmail(worker)}, "roles/iam.serviceAccountUser", member)
+				}
 			}
 		case "lock":
 			// Leases are objects in the framework bucket (spec §4.4) —

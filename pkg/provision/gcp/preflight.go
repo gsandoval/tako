@@ -40,6 +40,7 @@ type Needs struct {
 	Datastore bool // any entity declared
 	PubSub    bool // any queue, topic, or async handler declared
 	Scheduler bool // any cron declared (Cloud Scheduler triggers, T2)
+	Tasks     bool // any rate-limited or delay-published queue (Cloud Tasks, T3)
 	// Secrets are the declared secrets' PHYSICAL (env-prefixed) names.
 	// tako never creates secrets (values are data the user owns):
 	// preflight verifies each exists and prints the exact create
@@ -70,6 +71,9 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	}
 	if needs.Scheduler {
 		apis = append(apis, "cloudscheduler.googleapis.com")
+	}
+	if needs.Tasks {
+		apis = append(apis, "cloudtasks.googleapis.com")
 	}
 	if needs.PubSub {
 		apis = append(apis, "pubsub.googleapis.com")

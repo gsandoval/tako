@@ -191,6 +191,7 @@ func runDeploy(args []string) error {
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels(), Annotations: versionStamps(dir, graph)}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
+	tasks := &gcp.TasksQueues{C: client}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -202,7 +203,7 @@ func runDeploy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
 	if err != nil {
 		return err
 	}
@@ -237,7 +238,7 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription), desired, applier); err != nil {
@@ -299,6 +300,9 @@ func runDeploy(args []string) error {
 		return err
 	}
 	if err := provision.Apply(ctx, plan.Filter(provision.KindSchedulerJob), desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindTasksQueue), desired, applier); err != nil {
 		return err
 	}
 
@@ -483,6 +487,9 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 			n.AuthProviders = r.Providers
 		case "queue", "topic":
 			n.PubSub = true
+			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+				n.Tasks = true
+			}
 		case "secret":
 			n.Secrets = append(n.Secrets, gcpb.SecretName(env, r.Name))
 		}
@@ -662,6 +669,7 @@ func runDestroy(args []string) error {
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
+	tasks := &gcp.TasksQueues{C: client}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -673,7 +681,7 @@ func runDestroy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
 	if err != nil {
 		return err
 	}
@@ -758,6 +766,7 @@ func runDestroy(args []string) error {
 		Delete(ctx context.Context, name string) error
 	}{
 		provision.KindSchedulerJob:       scheds,
+		provision.KindTasksQueue:         tasks,
 		provision.KindPushSubscription:   subs,
 		provision.KindIamGrants:          grants,
 		provision.KindRunService:         runs,

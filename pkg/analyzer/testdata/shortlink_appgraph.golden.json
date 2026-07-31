@@ -18,6 +18,22 @@
         "shortlink.CountClick"
       ],
       "profile": "default"
+    },
+    {
+      "name": "shortlink-expire",
+      "package": "shortlink",
+      "handlers": [
+        "shortlink.Expire"
+      ],
+      "profile": "default"
+    },
+    {
+      "name": "shortlink-archive",
+      "package": "shortlink",
+      "handlers": [
+        "shortlink.Archive"
+      ],
+      "profile": "default"
     }
   ],
   "resources": [
@@ -54,6 +70,32 @@
       "package": "shortlink",
       "type": "Click",
       "pos": "app.go:13:2"
+    },
+    {
+      "kind": "queue",
+      "name": "expiries",
+      "var": "shortlink.expiries",
+      "package": "shortlink",
+      "type": "Expiry",
+      "delayed": true,
+      "pos": "app.go:18:2"
+    },
+    {
+      "kind": "queue",
+      "name": "archive",
+      "var": "shortlink.archive",
+      "package": "shortlink",
+      "type": "Expiry",
+      "rate_limit": 2,
+      "pos": "app.go:23:2"
+    },
+    {
+      "kind": "entity",
+      "name": "archived",
+      "var": "shortlink.archived",
+      "package": "shortlink",
+      "type": "Expiry",
+      "pos": "app.go:162:5"
     }
   ],
   "handlers": [
@@ -67,7 +109,7 @@
       "req_ref": "shortlink.CreateReq",
       "res_ref": "shortlink.Link",
       "has_body": true,
-      "pos": "app.go:33:2"
+      "pos": "app.go:43:2"
     },
     {
       "kind": "api",
@@ -86,7 +128,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:34:2"
+      "pos": "app.go:44:2"
     },
     {
       "kind": "api",
@@ -105,7 +147,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:35:2"
+      "pos": "app.go:45:2"
     },
     {
       "kind": "worker",
@@ -113,10 +155,33 @@
       "package": "shortlink",
       "service": "shortlink-countclick",
       "binding": "clicks",
-      "pos": "app.go:37:2"
+      "pos": "app.go:47:2"
+    },
+    {
+      "kind": "worker",
+      "var": "shortlink.Expire",
+      "package": "shortlink",
+      "service": "shortlink-expire",
+      "binding": "expiries",
+      "pos": "app.go:48:2"
+    },
+    {
+      "kind": "worker",
+      "var": "shortlink.Archive",
+      "package": "shortlink",
+      "service": "shortlink-archive",
+      "binding": "archive",
+      "pos": "app.go:49:2"
     }
   ],
   "edges": [
+    {
+      "from": "shortlink.Create",
+      "to": "expiries",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    },
     {
       "from": "shortlink.Create",
       "to": "links",
@@ -155,6 +220,34 @@
     {
       "from": "shortlink.CountClick",
       "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shortlink.Expire",
+      "to": "archive",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    },
+    {
+      "from": "shortlink.Expire",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shortlink.Expire",
+      "to": "links",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shortlink.Archive",
+      "to": "archived",
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"

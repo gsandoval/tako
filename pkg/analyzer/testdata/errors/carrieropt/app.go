@@ -8,7 +8,7 @@ import (
 
 var (
 	q    = tako.Queue[string]("jobs", tako.WithTTL(time.Minute))
-	slow = tako.Queue[string]("slow", tako.WithRateLimit(5))
+	slow = tako.Queue[string]("slow", tako.WithRateLimit(0))
 	tp   = tako.Topic[string]("events", tako.WithDelay(time.Second))
 	ups  = tako.Counter("ups", tako.WithTTL(time.Minute))
 )

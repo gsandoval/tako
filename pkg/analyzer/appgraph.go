@@ -85,6 +85,12 @@ type Resource struct {
 	// under-indexes a shape (the aggregate-per-entity scheme this
 	// replaced did — shop, R0).
 	Composites [][]string `json:"composites,omitempty"`
+	// RateLimit is a queue's WithRateLimit cap (messages/second);
+	// 0 = unlimited. Rate-limited queues route through Cloud Tasks.
+	RateLimit int `json:"rate_limit,omitempty"`
+	// Delayed marks a queue with at least one WithDelay publish site —
+	// delayed delivery routes through Cloud Tasks in the cloud.
+	Delayed bool `json:"delayed,omitempty"`
 	// Site configuration (Kind "site"): the served directory, optional
 	// frontend build (command + output dir), the dev-proxy URL, the SPA
 	// fallback, and permanent redirects.

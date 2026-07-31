@@ -50,6 +50,9 @@ func (r *SchedulerJobs) List(ctx context.Context) ([]provision.Observed, error) 
 		Jobs []schedulerJob `json:"jobs"`
 	}
 	if err := r.C.do(ctx, http.MethodGet, url, nil, &out); err != nil {
+		if disabledAPI(err) {
+			return nil, nil // API off ⇒ nothing of ours can exist
+		}
 		return nil, Classify(err, r.C.Project, "list scheduler jobs", "roles/cloudscheduler.viewer")
 	}
 	var observed []provision.Observed

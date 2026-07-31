@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"go/ast"
+	"go/constant"
 	"go/types"
 	"strings"
 
@@ -291,6 +292,20 @@ func extractTopic(dir string, pkg *packages.Package, name *ast.Ident, call *ast.
 	return extractCarrier("topic", "tako.Topic", dir, pkg, name, call, errs)
 }
 
+// intOptionArg reads a one-int-argument option's constant value.
+func intOptionArg(pkg *packages.Package, opt ast.Expr) (int, bool) {
+	call, ok := opt.(*ast.CallExpr)
+	if !ok || len(call.Args) != 1 {
+		return 0, false
+	}
+	tv, ok := pkg.TypesInfo.Types[call.Args[0]]
+	if !ok || tv.Value == nil {
+		return 0, false
+	}
+	n, ok := constant.Int64Val(tv.Value)
+	return int(n), ok
+}
+
 // extractCarrier validates one simple named-resource declaration — the
 // message carriers (Queue, Topic) and the F8 primitives (Cache, Secret,
 // Counter, Histogram). Same shape: constant name, payload type recorded
@@ -316,24 +331,33 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		"cache": {"WithTTL": true},
 	}
 	bad := false
+	rateLimit := 0
 	for _, opt := range call.Args[1:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if !isOpt {
 			continue
 		}
 		if kind == "queue" && optName == "WithRateLimit" {
-			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  "rate-limited queues arrive with the Cloud Tasks feature — declare the queue without it for now",
-				Rule: "not-yet",
-			})
-			bad = true
+			n, ok := intOptionArg(pkg, opt)
+			if !ok || n <= 0 || n > 500 {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "tako.WithRateLimit takes a constant 1–500 messages per second (Cloud Tasks' dispatch ceiling)",
+					Rule: "rate-limit",
+				})
+				bad = true
+				continue
+			}
+			rateLimit = n
 			continue
 		}
 		if !carrierOptions[kind][optName] {
 			accepts := "no options"
-			if kind == "cache" {
+			switch kind {
+			case "cache":
 				accepts = "WithTTL"
+			case "queue":
+				accepts = "WithRateLimit"
 			}
 			*errs = append(*errs, &Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
@@ -347,11 +371,12 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		return nil
 	}
 	res := &Resource{
-		Kind:    kind,
-		Name:    resName,
-		Var:     pkg.Name + "." + name.Name,
-		Package: pkg.PkgPath,
-		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+		Kind:      kind,
+		Name:      resName,
+		Var:       pkg.Name + "." + name.Name,
+		Package:   pkg.PkgPath,
+		RateLimit: rateLimit,
+		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	if tv, ok := pkg.TypesInfo.Types[call]; ok {
 		if ptr, ok := tv.Type.(*types.Pointer); ok {

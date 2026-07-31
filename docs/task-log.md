@@ -6716,3 +6716,52 @@ its service. Fixtures: cronschedule repurposed (a cron EXPRESSION is
 now legal — the old fixture passed!) to the two new judgments;
 cronopt text lists the grown option set. cron.md rewritten; stale
 inert-cron references swept from job.md/validate-gallery.
+
+## T2 — validation transcript (2026-07-31)
+
+Live on tako-test-02 (validate/scheduler.md):
+- **Gallery:** plan `+ create scheduler job gallery-cron-cleanup`; NO
+  inert-cron ⚠ anywhere; the live job: `0 0 * * *`, Etc/UTC, POST
+  …/_tako/cron/Cleanup, oidcToken as gallery-sa. The route trusts
+  nobody: bare POST → 401, bogus bearer → 403 (same texts unit-pinned).
+  Forced run: `gcloud scheduler jobs run` → `POST /_tako/cron/Cleanup
+  → 200 (491.9ms)`, `cron ok cron=Cleanup took=475ms`.
+- **Self-firing + exactly-one (scratch ticktock):** `every 1m` cron
+  writing a tick then sleeping 90s. Ticks landed at :55:04 and :57:04
+  — STRICTLY alternate minutes under an every-minute schedule, nobody
+  curling anything: the schedule fires itself, and overlap collapses
+  (Scheduler serializes attempts per job; the §4.4 lease guards
+  every other trigger — W8's cross-instance proof stands behind it).
+- **Two REAL fixes the gate caught:**
+  (1) ticktock's framework-bucket lease grant VANISHED on first
+  deploy — a policy write 400s when its member SA was created seconds
+  earlier (IAM propagation), and the destroy-convergence carve-out
+  swallowed it. grants.apply now retries through the window and only
+  converges when the target truly reads back gone; otherwise it fails
+  LOUDLY. (2) destroy of a pre-Tasks app failed observing cloudtasks
+  (API never enabled): observation now treats a disabled API as an
+  empty inventory (disabledAPI helper; scheduler+tasks Lists).
+- Both destroys clean: scheduler jobs listed and deleted with
+  everything else; 0 services, 0 scheduler jobs left.
+
+## T3 — Cloud Tasks, implementation (2026-07-31)
+
+One declaration, one broker choice: a queue that declares
+WithRateLimit OR has a WithDelay publish site (detected AT THE CALL
+SITE by the analyzer — Resource.Delayed) gets a Cloud Tasks queue in
+front of its worker (`<env-name>-tako`, maxDispatchesPerSecond,
+maxAttempts 5 mirroring the redelivery contract). The gcp backend
+routes ALL of that queue's publishes through Tasks (the cap must see
+every message): the task POSTs the standard push envelope to the
+worker's /_tako/push with the WORKER's own OIDC identity — the same
+trust edge as Pub/Sub push, one broker over. Deploy injects
+TAKO_TASKS_<QUEUE>=resource|pushURL|workerSA; grants give publishers
+cloudtasks.enqueuer on the queue + serviceAccountUser on the worker
+SA (a new tasksQueue grant target). Locally the dispatcher paces
+(SetRate slot schedule; generated mains emit SetQueueRate from the
+declaration); TestApp does not pace. WithRateLimit validates 1–500
+(tako/rate-limit). Shortlink is the demanding example: TTL'd links
+publish their own expiry WithDelay (with a re-claim guard — expiry is
+a claim about ONE link), and the archive walks at WithRateLimit(2).
+HONESTY: Tasks has no dead letter — 5 attempts then GONE, stated in
+queue.md's Not yet. validate/tasks.md is the gate script.

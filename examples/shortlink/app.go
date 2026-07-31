@@ -11,6 +11,16 @@ var (
 	links  = tako.Entity[Link]("links")
 	clicks = tako.Queue[Click]("clicks")
 	seen   = tako.Entity[Click]("clicks-seen") // processed-event log: the idempotency ledger
+
+	// Expiries ride WithDelay (T3): creating a link with a TTL publishes
+	// its own expiry, delivered when it comes due — Cloud Tasks in the
+	// cloud, a timer (or the test clock) locally.
+	expiries = tako.Queue[Expiry]("expiries")
+
+	// The archive walks dead links at a POLITE pace: WithRateLimit caps
+	// dispatch at 2/s everywhere — Cloud Tasks enforces it in the cloud,
+	// the local dispatcher paces to the same number.
+	archive = tako.Queue[Expiry]("archive", tako.WithRateLimit(2))
 )
 
 // Link's schema comes from the struct: entity:"id" is the key,
@@ -35,12 +45,24 @@ var (
 	List    = tako.API("GET /api/links", list)
 
 	CountClick = tako.Worker(clicks, countClick)
+	Expire     = tako.Worker(expiries, expire)
+	Archive    = tako.Worker(archive, archiveLink)
 )
+
+// Expiry names one link due for deletion; Created guards against a
+// slug being re-claimed between publish and delivery.
+type Expiry struct {
+	ID      string    `entity:"id" json:"id"`
+	Slug    string    `json:"slug"`
+	Created time.Time `json:"created"`
+}
 
 type CreateReq struct {
 	Slug  string `json:"slug"`
 	URL   string `json:"url"`
 	Owner string `json:"owner"` // fallback until auth lands; a signed-in user wins
+	// TTLSeconds > 0 makes the link self-destruct after that long.
+	TTLSeconds int `json:"ttlSeconds"`
 }
 
 func create(ctx tako.Ctx, req CreateReq) (Link, error) {
@@ -65,6 +87,14 @@ func create(ctx tako.Ctx, req CreateReq) (Link, error) {
 	})
 	if err != nil {
 		return Link{}, err
+	}
+	if req.TTLSeconds > 0 {
+		ttl := time.Duration(req.TTLSeconds) * time.Second
+		if err := expiries.Publish(ctx,
+			Expiry{ID: tako.NewID(), Slug: link.Slug, Created: link.Created},
+			tako.WithDelay(ttl)); err != nil {
+			return Link{}, err
+		}
 	}
 	return link, nil
 }
@@ -105,6 +135,34 @@ func countClick(ctx tako.Ctx, c Click) error {
 		return err
 	}
 	return links.Update(ctx, c.Slug, func(l *Link) { l.Hits++ })
+}
+
+// expire deletes a due link — unless the slug was deleted and
+// re-claimed meanwhile (Created differs): expiry is a claim about ONE
+// link, not about whoever holds the slug now. The dead link then walks
+// to the rate-limited archive.
+func expire(ctx tako.Ctx, e Expiry) error {
+	l, err := links.Get(ctx, e.Slug)
+	if tako.IsNotFound(err) {
+		return nil // already gone: expiry is idempotent
+	}
+	if err != nil {
+		return err
+	}
+	if !l.Created.Equal(e.Created) {
+		return nil // the slug was re-claimed; the new link owns it
+	}
+	if err := links.Delete(ctx, e.Slug); err != nil {
+		return err
+	}
+	return archive.Publish(ctx, e)
+}
+
+// archived is the tombstone ledger the paced archive worker fills.
+var archived = tako.Entity[Expiry]("archived")
+
+func archiveLink(ctx tako.Ctx, e Expiry) error {
+	return archived.Put(ctx, e)
 }
 
 type ListReq struct {
