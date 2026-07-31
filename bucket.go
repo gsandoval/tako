@@ -93,6 +93,22 @@ func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string
 	return signerBackend(ctx).SignGet(ctx, b.name, key, ttl)
 }
 
+// UploadHeaders returns the headers a client MUST send with its PUT to a
+// SignedPut URL minted with the same options. A URL carrying WithMaxSize
+// signs a size-range condition into the request — a PUT without the
+// header (or exceeding the range) is refused by the storage backend
+// itself, local and cloud alike. Hand the map to the uploader alongside
+// the URL; empty when the options need none.
+func UploadHeaders(opts ...Option) map[string]string {
+	h := map[string]string{}
+	for _, opt := range opts {
+		if opt.name == "max_size" {
+			h["x-goog-content-length-range"] = fmt.Sprintf("0,%d", opt.args[0].(int64))
+		}
+	}
+	return h
+}
+
 // BucketEvent is a bucket's event source, usable as a Subscribe binding.
 // Its payload type is ObjectInfo.
 type BucketEvent struct {

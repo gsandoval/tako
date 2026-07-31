@@ -19,13 +19,14 @@ import (
 
 // Signer mints V4 GCS signed URLs via the IAM Credentials signBlob API:
 // the service's own SA signs as itself, so no key file exists anywhere
-// (the derived self-tokenCreator grant authorizes it). Enforcement is
-// whatever a bare PUT URL lets GCS enforce: identity, expiry, and an
-// EXACT content type (signed into the URL — clients send Content-Type
-// naturally). A wildcard type and MaxSize would need client-cooperating
-// headers or POST policies, so in the cloud they fall through to the
-// pipeline's safety net (decode failures dead-letter, the cron reaps
-// orphans) — the conformance params pin this platform gap explicitly.
+// (the derived self-tokenCreator grant authorizes it). Enforcement:
+// identity, expiry, an EXACT content type (signed into the URL —
+// clients send Content-Type naturally), and MaxSize via the signed
+// x-goog-content-length-range header (tako.UploadHeaders hands clients
+// the required value; T1). A WILDCARD content type is the one remaining
+// platform gap — GCS cannot condition on a prefix, so it falls through
+// to the pipeline's safety net (decode failures dead-letter, the cron
+// reaps orphans) — pinned explicitly by the conformance params.
 type Signer struct {
 	c *Client
 
@@ -151,10 +152,17 @@ func encodePath(key string) string {
 func (s *Signer) SignPut(ctx context.Context, bucket, key string, ttl time.Duration, c backends.SignConstraints) (string, error) {
 	headers := map[string]string{}
 	// An exact content type is signed into the URL and enforced by GCS
-	// (clients send Content-Type naturally); wildcards and MaxSize are
-	// the documented platform gap — see the type comment.
+	// (clients send Content-Type naturally); a wildcard type is the one
+	// remaining documented gap — GCS cannot condition on a prefix.
 	if c.ContentType != "" && !strings.Contains(c.ContentType, "*") {
 		headers["content-type"] = c.ContentType
+	}
+	// MaxSize signs GCS's size-range condition. Signing the header makes
+	// it REQUIRED: a PUT that omits it fails the signature, one that
+	// sends it is capped by GCS itself. tako.UploadHeaders gives clients
+	// the exact value.
+	if c.MaxSize > 0 {
+		headers["x-goog-content-length-range"] = fmt.Sprintf("0,%d", c.MaxSize)
 	}
 	return s.signV4(ctx, http.MethodPut, bucket, key, ttl, headers)
 }

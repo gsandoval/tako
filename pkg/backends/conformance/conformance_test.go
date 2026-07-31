@@ -146,11 +146,11 @@ func TestSignedURL(t *testing.T) {
 				t.Fatal(err)
 			}
 			return SignedURLEnv{Signer: signer, Client: srv.Client(), Bucket: store, Topic: d.Topics()}
-		}, SignedURLParams{UploadEvents: true, EnforcesMaxSize: true, WildcardAtUpload: true})
+		}, SignedURLParams{UploadEvents: true, WildcardAtUpload: true})
 	case "gcp":
-		// A bare GCS PUT URL enforces identity, expiry, and exact signed
-		// content types; MaxSize + wildcards fall through to the pipeline
-		// safety net (see SignedURLParams) — the platform gap, pinned.
+		// GCS enforces identity, expiry, exact signed content types, and
+		// (T1) MaxSize via the signed size-range header; WILDCARD types
+		// remain the platform gap, pinned by WildcardAtUpload=false.
 		RunSignedURL(t, gcpSignedEnv, SignedURLParams{})
 	default:
 		t.Fatalf("unknown -backend %q", *backend)

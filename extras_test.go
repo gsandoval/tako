@@ -136,3 +136,18 @@ func TestMetricsRecordWithoutError(t *testing.T) {
 	Counter("test-ups").Add(ctx, 1)
 	Histogram("test-ms").Observe(ctx, 12.5)
 }
+
+// TestHTMXCtx pins the T1 contract: app.HTMX drives a handler's htmx
+// branch; the plain Ctx stays on the no-JS path.
+func TestHTMXCtx(t *testing.T) {
+	app := NewTestApp(t)
+	if app.Ctx().IsHTMX() {
+		t.Fatal("plain Ctx must not report htmx")
+	}
+	if !app.HTMX().IsHTMX() {
+		t.Fatal("app.HTMX ctx must report htmx")
+	}
+	if !app.HTMX(app.SignIn("alice")).IsHTMX() {
+		t.Fatal("HTMX with a user must keep the flag")
+	}
+}

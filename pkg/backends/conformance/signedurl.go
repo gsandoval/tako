@@ -34,8 +34,6 @@ type SignedURLParams struct {
 	// observably through env.Topic (local's in-process dispatcher). On
 	// gcp events are GCS notifications, validated in their own chapter.
 	UploadEvents bool
-	// EnforcesMaxSize: MaxSize rejects oversized transfers.
-	EnforcesMaxSize bool
 	// WildcardAtUpload: a wildcard ContentType ("image/*") rejects
 	// mismatches at upload time.
 	WildcardAtUpload bool
@@ -51,13 +49,18 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv, params Sig
 	ctx := context.Background()
 	const wait = 10 * time.Second
 
-	put := func(t *testing.T, env SignedURLEnv, url, contentType, body string, length int64) int {
+	put := func(t *testing.T, env SignedURLEnv, url, contentType, body string, length int64, hdr ...map[string]string) int {
 		t.Helper()
 		req, err := http.NewRequest(http.MethodPut, url, strings.NewReader(body))
 		if err != nil {
 			t.Fatal(err)
 		}
 		req.Header.Set("Content-Type", contentType)
+		for _, h := range hdr {
+			for k, v := range h {
+				req.Header.Set(k, v)
+			}
+		}
 		req.ContentLength = length
 		res, err := env.Client.Do(req)
 		if err != nil {
@@ -119,25 +122,35 @@ func RunSignedURL(t *testing.T, open func(t *testing.T) SignedURLEnv, params Sig
 		}
 	})
 
-	t.Run("size cap rejects declared length", func(t *testing.T) {
-		if !params.EnforcesMaxSize {
-			t.Skip("MaxSize is not upload-time-enforceable on a bare PUT URL here — the pipeline safety net owns it (see SignedURLParams)")
+	// The size-range header both backends require on MaxSize URLs (T1):
+	// signed into the URL on gcp, demanded for parity locally.
+	sizeHdr := map[string]string{"x-goog-content-length-range": "0,8"}
+
+	t.Run("size cap requires the signed header", func(t *testing.T) {
+		env := open(t)
+		url, _ := env.Signer.SignPut(ctx, "photos", "bare", time.Minute, backends.SignConstraints{MaxSize: 8})
+		if status := put(t, env, url, "image/jpeg", "ok", 2); status/100 == 2 {
+			t.Fatal("MaxSize PUT without x-goog-content-length-range accepted — the signed condition is not being enforced")
 		}
+		mustAbsent(t, env, "bare")
+	})
+
+	t.Run("size cap rejects declared length", func(t *testing.T) {
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "big", time.Minute, backends.SignConstraints{MaxSize: 8})
-		if status := put(t, env, url, "image/jpeg", "0123456789", 10); status/100 == 2 {
+		if status := put(t, env, url, "image/jpeg", "0123456789", 10, sizeHdr); status/100 == 2 {
 			t.Fatal("oversized upload accepted")
 		}
 		mustAbsent(t, env, "big")
+		if status := put(t, env, url, "image/jpeg", "small", 5, sizeHdr); status/100 != 2 {
+			t.Fatalf("within-cap upload rejected: %d", status)
+		}
 	})
 
 	t.Run("size cap rejects a lying stream", func(t *testing.T) {
-		if !params.EnforcesMaxSize {
-			t.Skip("MaxSize is not upload-time-enforceable on a bare PUT URL here — the pipeline safety net owns it (see SignedURLParams)")
-		}
 		env := open(t)
 		url, _ := env.Signer.SignPut(ctx, "photos", "liar", time.Minute, backends.SignConstraints{MaxSize: 8})
-		if status := put(t, env, url, "image/jpeg", "0123456789", -1); status/100 == 2 {
+		if status := put(t, env, url, "image/jpeg", "0123456789", -1, sizeHdr); status/100 == 2 {
 			t.Fatal("oversized stream accepted")
 		}
 		mustAbsent(t, env, "liar")

@@ -90,6 +90,15 @@ func (a *TestApp) Ctx(as ...User) Ctx {
 	return c
 }
 
+// HTMX returns a Ctx like Ctx(as...) whose IsHTMX() reports true — for
+// driving a dual-mode Page handler down its htmx branch (fragment swap)
+// instead of the no-JS redirect. Everything else matches Ctx.
+func (a *TestApp) HTMX(as ...User) Ctx {
+	c := a.Ctx(as...).(*testCtx)
+	c.htmx = true
+	return c
+}
+
 // handlerCtx is the ctx async deliveries run under: the app's backends
 // plus a logger naming the handler.
 func (a *TestApp) handlerCtx(ctx context.Context, name string) Ctx {
@@ -179,6 +188,7 @@ type testCtx struct {
 	context.Context
 	user *User
 	log  *slog.Logger
+	htmx bool
 }
 
 func (c *testCtx) User() User {
@@ -197,4 +207,4 @@ func (c *testCtx) MaybeUser() (User, bool) {
 
 func (c *testCtx) Log() *slog.Logger { return c.log }
 
-func (c *testCtx) IsHTMX() bool { return false }
+func (c *testCtx) IsHTMX() bool { return c.htmx }

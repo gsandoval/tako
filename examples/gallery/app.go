@@ -114,16 +114,22 @@ type StartUploadReq struct {
 type UploadTicket struct {
 	Photo     Photo  `json:"photo"`
 	UploadURL string `json:"uploadURL"`
+	// UploadHeaders must ride the PUT: a WithMaxSize URL signs a size
+	// condition the storage backend enforces, local and cloud alike.
+	UploadHeaders map[string]string `json:"uploadHeaders"`
 }
+
+// uploadLimits guard the direct-upload URL; UploadHeaders derives the
+// headers the client must send from the same list.
+var uploadLimits = []tako.Option{tako.WithContentType("image/*"), tako.WithMaxSize(20 << 20)}
 
 func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
 	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return UploadTicket{}, err
 	}
-	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
-		tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
-	return UploadTicket{Photo: p, UploadURL: url}, err
+	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits...)
+	return UploadTicket{Photo: p, UploadURL: url, UploadHeaders: tako.UploadHeaders(uploadLimits...)}, err
 }
 
 type DownloadReq struct {

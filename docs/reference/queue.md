@@ -116,5 +116,7 @@ to replay a failure exactly.
 - **`WithDelay` in the cloud.** It works locally (and in tests, on a
   fake clock `Advance` moves); on the gcp backend `Publish` errors
   with the text above until the Cloud Tasks-backed feature ships.
-- **`WithRateLimit`.** Declared in the SDK, but no backend or analyzer
-  consumes it yet — it does not limit anything today.
+- **`WithRateLimit`.** Refused at analysis time with
+  `rate-limited queues arrive with the Cloud Tasks feature — declare
+  the queue without it for now (tako/not-yet)` — it limits nothing
+  until that feature ships, and says so instead of pretending.

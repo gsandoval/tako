@@ -25,6 +25,7 @@ export interface Photo {
 export interface UploadTicket {
   photo: Photo;
   uploadURL: string;
+  uploadHeaders: Record<string, string>;
 }
 
 /** gallery.DownloadRes */

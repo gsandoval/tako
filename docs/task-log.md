@@ -6561,3 +6561,136 @@ email account-creation UI. Canary/promote/rollback, dlq inspection,
 prune/destroy confirmations: verified COMPLETE.
 
 Awaiting the user's pick of what to plan next.
+
+## Stage 6 proposal — close the gaps (2026-07-31) — AWAITING APPROVAL
+
+User picked ALL FOUR audit candidates. Proposed order: honesty
+first (it fixes the surfaces the rest build on), then the three
+feature slices. Each is one gate.
+
+### T1 — Honesty batch (no new features; loud where silent)
+
+- **Queue()/Topic() declaration options:** extractCarrier learns to
+  read them; anything unknown → tako/invalid-option like every other
+  constructor. WithRateLimit specifically → a positioned
+  tako/not-yet ("rate-limited queues arrive with the Cloud Tasks
+  feature — T3") so the trap closes TODAY even before T3 lands.
+- **gcp WithMaxSize gets REAL:** V4 signed URLs support the
+  x-goog-content-length-range condition — sign it, and the gcp
+  backend enforces size like local does. The TS client and docs
+  gain the required header on upload PUTs; conformance unskips.
+- **Wildcard WithContentType stays local-only-enforced** (GCS cannot
+  condition on a wildcard): documented in bucket.md + doc comment,
+  exact types keep working on both.
+- **TestApp.IsHTMX:** testCtx grows an opt-in — proposal:
+  `app.Ctx(user).AsHTMX()` returning a ctx whose IsHTMX() is true
+  (one new method on the TestApp ctx, not on tako.Ctx).
+- **Spec Part 3 fix-up:** the gallery listing drops dead
+  tako.Static/tako.Templates for the real tako.Site.
+- (TestApp cannot exercise the WithAuth shim — RECORDED as a
+  limitation in testapp docs; the fix is a routing-level test
+  harness, its own future slice, not snuck in here.)
+- Gate T1: goldens for the new errors; conformance green with the
+  gcp size cap enforced live once (scripted curl over the limit →
+  GCS 400).
+
+### T2 — Cloud Scheduler: crons fire in the cloud
+
+- No new user surface. Every Cron declaration provisions a Cloud
+  Scheduler job (`+ create scheduler job <svc>-<var>`) targeting
+  POST /_tako/cron/<name> on the service with OIDC as the service's
+  own SA (the async-push pattern); runtime route verifies the
+  identity and invokes the handler (singleflight lease already
+  collapses overlap — now real across instances).
+- Schedule syntax GROWS: "every <duration>" (mapped: every Nm →
+  `*/N * * * *`-style; every 24h → `0 0 * * *`) plus raw 5-field
+  cron expressions, both validated at analysis time with positioned
+  errors. The warnInertCrons ⚠ dies; destroy deletes scheduler jobs.
+- Preflight: cloudscheduler API; grants: scheduler's OIDC → run
+  .invoker handled via the service SA (no new roles for the
+  deployer beyond the API).
+- Example demanding: gallery's Cleanup (every 24h, singleflight) —
+  finally true in the cloud.
+- Gate T2: gallery deploy shows the scheduler job; a fast test cron
+  ("every 1m" on a scratch app) observed firing twice in the cloud
+  with singleflight collapsing a forced overlap; destroy clean.
+
+### T3 — Cloud Tasks: WithDelay in gcp + WithRateLimit for real
+
+- Publish(..., WithDelay(d)) works on gcp: delayed messages route
+  through a Cloud Tasks queue (HTTP task → the worker's push
+  endpoint, OIDC, scheduleTime = now+d). Queue(name,
+  WithRateLimit(n)) provisions the Tasks queue with
+  maxDispatchesPerSecond=n and routes ALL its traffic through Tasks
+  (spec §2.4: same API, provisioner's choice).
+- Analyzer: declaration options now real (T1's extractor); a queue
+  is Tasks-backed iff it declares WithRateLimit or any publish site
+  uses WithDelay (edge-detected). Plan prints which backend each
+  queue got.
+- Local: delay already honored; rate limit → token-bucket throttle
+  in the local dispatcher; conformance cases for both.
+- Example demanding: shortlink grows link EXPIRY — creating a link
+  with a TTL publishes an expire message WithDelay; a rate-limited
+  webhook-notify queue caps outbound calls. (Shortlink is the queue
+  chapter; expiry is a real product behavior.)
+- Gate T3: conformance both backends; live: an expire lands ~d
+  later on gcp (observed), rate cap visible in Tasks queue config.
+
+### T4 — Job task sharding (WithParallel useful)
+
+- New surface (the ONE addition): `ctx.Task() (index, count int)` on
+  tako.Ctx — (0,1) everywhere except inside a parallel job task,
+  where it reports CLOUD_RUN_TASK_INDEX/COUNT (gcp) or the local
+  fan-out's index. Local RunJob runs N tasks (goroutines) honoring
+  WithParallel instead of ignoring it.
+- Example demanding: shop's settle gains WithParallel(4) and shards
+  orders by ID hash across tasks — the report merges (idempotent by
+  task-disjoint writes + the existing sequence lease for invoices
+  stays serial).
+- Gate T4: shop suite proves disjoint shard coverage locally;
+  live: one settle execution shows 4 tasks, each logging its
+  (index/count), report totals identical to the serial run.
+
+Cost note: T2+T3 add two Google APIs (cloudscheduler, cloudtasks)
+to preflight; both bill per-job/per-task at trivial volumes.
+
+**STOP — awaiting Stage 6 approval (order T1→T2→T3→T4; say if you
+want a different order or to trim any slice).**
+
+## Stage 6 approved + amended (user, 2026-07-31)
+
+"proceed; make sure that there's a escape hatch as well for
+controlling the footprint in all of these just like with the APIs
+and other computes." Amendment folded into T2: tako.Cron accepts
+WithProfile and WithFootprint (projected onto the hosting service
+like API/Page — a cron-only package finally has a way to shape its
+service); T3's workers and T4's jobs already carry the S1 escape
+hatch (workers full footprint; job tasks CPU/Memory). Scheduler/
+Tasks queues themselves are not compute — nothing to shape there.
+
+## T1 — honesty batch, implementation (2026-07-31)
+
+- **Carrier declaration options validated:** Queue/Topic/Cache/Secret/
+  Counter/Histogram declarations now read their options — unknown →
+  tako/invalid-option naming what the constructor accepts (Cache
+  keeps WithTTL); WithRateLimit on a Queue → positioned tako/not-yet
+  pointing at the Cloud Tasks feature (T3 replaces it with the real
+  thing). The silent-swallow trap is closed.
+- **gcp WithMaxSize is REAL:** SignPut signs GCS's
+  x-goog-content-length-range condition — signing it makes the header
+  REQUIRED (a PUT without it fails the signature; with it, GCS caps
+  the bytes). New tako.UploadHeaders(opts...) hands clients the
+  value; the LOCAL proxy now demands the same header when MaxSize is
+  set (403 with a pointer at UploadHeaders), so forgetting it fails
+  in dev, not production. Conformance: EnforcesMaxSize param DELETED
+  — both backends run the size-cap cases (+ a new
+  missing-header-refused case); wildcard content-type remains the
+  one pinned platform gap. Gallery's UploadTicket carries
+  uploadHeaders (TS client golden gained the field).
+- **TestApp.HTMX(as...):** a Ctx whose IsHTMX() is true — dual-mode
+  handlers testable down both branches; contract pinned in
+  extras_test.
+- **Spec Part 3 fix-up:** tako.Static/tako.Templates (dead API — 
+  wouldn't compile) replaced with the real tako.Site + site.Render.
+- Docs: bucket.md upload-header contract; queue.md WithRateLimit now
+  documented as LOUD.

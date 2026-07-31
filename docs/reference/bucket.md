@@ -41,9 +41,16 @@ constrained by `WithMaxSize` and `WithContentType` (trailing wildcard
 allowed), enforced when the client uploads, not when the URL is
 minted. `SignedGet` shapes downloads the same way.
 
+A `WithMaxSize` URL signs a size-range condition into the request, so
+the PUT **must carry the matching header** — `tako.UploadHeaders`
+builds it from the same options, and both backends refuse a PUT
+without it (local says so with a pointer; GCS fails the signature):
+
 ```go
-url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
-    tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
+var uploadLimits = []tako.Option{tako.WithContentType("image/*"), tako.WithMaxSize(20 << 20)}
+
+url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits...)
+ticket := UploadTicket{UploadURL: url, UploadHeaders: tako.UploadHeaders(uploadLimits...)}
 ```
 
 **Every successful write fires `Uploaded`** — through-service `Put` or

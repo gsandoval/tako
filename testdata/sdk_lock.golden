@@ -40,6 +40,7 @@
     func (*TestApp).Chaos()
     func (*TestApp).Ctx(as ...User) Ctx
     func (*TestApp).DrainQueues()
+    func (*TestApp).HTMX(as ...User) Ctx
     func (*TestApp).SetSecret(name string, value string)
     func (*TestApp).SignIn(name string) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
@@ -84,6 +85,7 @@ func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler
 func Site(dir string, opts ...Option) *SiteHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler
 func Topic[T any](name string, opts ...Option) *TopicHandle[T]
+func UploadHeaders(opts ...Option) map[string]string
 func WithAuth() Option
 func WithBuild(command string, outDir string) Option
 func WithCDN() Option

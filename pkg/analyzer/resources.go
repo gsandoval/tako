@@ -309,6 +309,43 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		})
 		return nil
 	}
+	// Declaration options are validated per kind — an option that is
+	// accepted and silently dropped is worse than an error (the S6
+	// audit found WithRateLimit doing exactly that).
+	carrierOptions := map[string]map[string]bool{
+		"cache": {"WithTTL": true},
+	}
+	bad := false
+	for _, opt := range call.Args[1:] {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if !isOpt {
+			continue
+		}
+		if kind == "queue" && optName == "WithRateLimit" {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+				Msg:  "rate-limited queues arrive with the Cloud Tasks feature — declare the queue without it for now",
+				Rule: "not-yet",
+			})
+			bad = true
+			continue
+		}
+		if !carrierOptions[kind][optName] {
+			accepts := "no options"
+			if kind == "cache" {
+				accepts = "WithTTL"
+			}
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+				Msg:  fmt.Sprintf("tako.%s is not a %s option (%s accepts %s)", optName, ctor, ctor, accepts),
+				Rule: "invalid-option",
+			})
+			bad = true
+		}
+	}
+	if bad {
+		return nil
+	}
 	res := &Resource{
 		Kind:    kind,
 		Name:    resName,

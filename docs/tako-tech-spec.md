@@ -45,8 +45,10 @@ var (
 
     // Web
     auth   = tako.Auth(tako.WithGoogle(), tako.WithEmail())
-    site   = tako.Static("./web", tako.SPA())
-    tmpl   = tako.Templates("./templates")
+    // Fix-up (S6): tako.Static/tako.Templates were superseded by the
+    // one Site constructor (§2.11) — dir serving, SPA fallback, and
+    // dir/templates rendering in a single declaration.
+    site   = tako.Site("./web", tako.SPA())
 
     // Long-running compute
     reidx  = tako.Job[ReindexParams]("reindex")
@@ -358,8 +360,10 @@ var (
     thumbs = tako.Queue[ThumbJob]("thumbnails")
     ready  = tako.Topic[PhotoReady]("photo-ready")
     auth   = tako.Auth(tako.WithGoogle(), tako.WithEmail())
-    site   = tako.Static("./web", tako.SPA())
-    tmpl   = tako.Templates("./templates")
+    // Fix-up (S6): tako.Static/tako.Templates were superseded by the
+    // one Site constructor (§2.11) — dir serving, SPA fallback, and
+    // dir/templates rendering in a single declaration.
+    site   = tako.Site("./web", tako.SPA())
     ups    = tako.Counter("uploads")
 )
 
@@ -441,7 +445,7 @@ type PhotoPageReq struct{ ID string `path:"id"` }
 func photoPage(ctx tako.Ctx, req PhotoPageReq) (tako.HTML, error) {
     p, err := photoStore.Get(ctx, req.ID)
     if tako.IsNotFound(err) { return tako.HTML{}, tako.NotFound() }
-    return tmpl.Render("photo.html", p)
+    return site.Render(ctx, "photo.html", p)
 }
 
 func cleanupOrphans(ctx tako.Ctx) error { /* delete never-completed uploads */ return nil }

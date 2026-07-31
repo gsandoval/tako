@@ -397,6 +397,9 @@ func TestSignedUploadPipeline(t *testing.T) {
 
 	put, _ := http.NewRequest(http.MethodPut, signedPath(t, srv, ticket.UploadURL), bytes.NewReader(src))
 	put.Header.Set("Content-Type", "image/png")
+	for k, v := range ticket.UploadHeaders {
+		put.Header.Set(k, v)
+	}
 	if status, body := doReq(t, put); status != 200 {
 		t.Fatalf("signed put = %d %s", status, body)
 	}
@@ -439,6 +442,16 @@ func TestSignedUploadRejections(t *testing.T) {
 		t.Fatal(err)
 	}
 	target := signedPath(t, srv, signed)
+	sizeHeader := tako.UploadHeaders(tako.WithMaxSize(16))
+
+	t.Run("missing size header is 403 with the pointer", func(t *testing.T) {
+		req, _ := http.NewRequest(http.MethodPut, target, strings.NewReader("ok"))
+		req.Header.Set("Content-Type", "image/jpeg")
+		status, body := doReq(t, req)
+		if status != 403 || !strings.Contains(body, "tako.UploadHeaders builds it") {
+			t.Fatalf("res = %d %s", status, body)
+		}
+	})
 
 	t.Run("wrong content type is 415", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPut, target, strings.NewReader("notes"))
@@ -452,6 +465,9 @@ func TestSignedUploadRejections(t *testing.T) {
 	t.Run("declared oversize is 413", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPut, target, strings.NewReader("01234567890123456789"))
 		req.Header.Set("Content-Type", "image/jpeg")
+		for k, v := range sizeHeader {
+			req.Header.Set(k, v)
+		}
 		status, body := doReq(t, req)
 		if status != 413 || body != `{"error":"upload is 20 bytes; the signed URL allows at most 16"}` {
 			t.Fatalf("res = %d %s", status, body)
@@ -463,6 +479,9 @@ func TestSignedUploadRejections(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPut, target,
 			io.MultiReader(strings.NewReader("0123456789"), strings.NewReader("0123456789")))
 		req.Header.Set("Content-Type", "image/jpeg")
+		for k, v := range sizeHeader {
+			req.Header.Set(k, v)
+		}
 		req.ContentLength = -1
 		status, body := doReq(t, req)
 		if status != 413 || body != `{"error":"upload exceeds the signed URL's 16-byte limit"}` {
