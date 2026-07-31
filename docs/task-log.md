@@ -6765,3 +6765,20 @@ publish their own expiry WithDelay (with a re-claim guard — expiry is
 a claim about ONE link), and the archive walks at WithRateLimit(2).
 HONESTY: Tasks has no dead letter — 5 attempts then GONE, stated in
 queue.md's Not yet. validate/tasks.md is the gate script.
+
+## T4 — job task sharding, implementation (2026-07-31)
+
+The ONE surface addition of the stage: `ctx.Task() (index, count)` on
+tako.Ctx — (0,1) everywhere except inside a parallel job task, where
+Cloud Run's CLOUD_RUN_TASK_INDEX/COUNT flow through RunJobMain, and
+LOCALLY the runtime finally honors WithParallel: N joined tasks per
+execution with real shard indices (RegisterJob and the TestApp job
+wiring both; hooks.HandlerParallel reads the declaration). sdk_lock
+regenerated for the interface method (implementations: requestCtx,
+testCtx, rerootedCtx forward). Shop's settle is the demanding
+example: WithParallel(4), orders shard by fnv(ID)%count, each task
+Puts an idempotent ShardReport, every task attempts the merge and
+whoever sees all shards writes the identical report — no leader, no
+lock, retry-safe (pinned by TestSettleShardsAreDisjointAndMergeOnce:
+disjoint cover, exact totals, re-run doesn't double-count).
+validate/sharding.md is the gate script.

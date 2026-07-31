@@ -73,6 +73,10 @@ var DeclaredSecrets func() []string
 // passed as any to avoid an import cycle).
 var HandlerInfo func(h any) (kind, source string, invoke any)
 
+// HandlerParallel reads a job handler's WithParallel fan-out (1 when
+// none) — the local runtime runs that many tasks per execution.
+var HandlerParallel func(h any) int
+
 // RenderSite renders a site template inside the layout — pkg/runtime
 // sets it (RegisterSiteTemplates); site.Render calls through. The ctx
 // is the request's context.Context (carries the CSRF token).

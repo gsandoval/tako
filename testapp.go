@@ -50,8 +50,32 @@ func NewTestApp(tb testing.TB) *TestApp {
 			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, h.name))
 		case "job":
 			// Jobs ride the dispatcher locally: DrainQueues waits for
-			// them, failures dead-letter inspectably.
-			app.Dispatcher.Consume(hooks.JobQueue(h.source), deliver(h.invoke, h.name))
+			// them, failures dead-letter inspectably. WithParallel runs
+			// its N tasks (ctx.Task() shards) joined per execution.
+			par, invoke, name := h.parallel, h.invoke, h.name
+			if par < 1 {
+				par = 1
+			}
+			app.Dispatcher.Consume(hooks.JobQueue(h.source), func(ctx context.Context, payload []byte) error {
+				if par == 1 {
+					return invoke(ta.handlerCtx(ctx, name), payload)
+				}
+				errs := make(chan error, par)
+				for i := range par {
+					go func(i int) {
+						c := ta.handlerCtx(ctx, name).(*testCtx)
+						c.taskIndex, c.taskCount = i, par
+						errs <- invoke(c, payload)
+					}(i)
+				}
+				var first error
+				for range par {
+					if err := <-errs; err != nil && first == nil {
+						first = err
+					}
+				}
+				return first
+			})
 		}
 	}
 	tb.Cleanup(func() {
@@ -186,9 +210,10 @@ func (a *TestApp) Chaos() {
 // testCtx is the Ctx implementation behind TestApp.Ctx.
 type testCtx struct {
 	context.Context
-	user *User
-	log  *slog.Logger
-	htmx bool
+	user                 *User
+	log                  *slog.Logger
+	htmx                 bool
+	taskIndex, taskCount int
 }
 
 func (c *testCtx) User() User {
@@ -208,3 +233,10 @@ func (c *testCtx) MaybeUser() (User, bool) {
 func (c *testCtx) Log() *slog.Logger { return c.log }
 
 func (c *testCtx) IsHTMX() bool { return c.htmx }
+
+func (c *testCtx) Task() (int, int) {
+	if c.taskCount > 1 {
+		return c.taskIndex, c.taskCount
+	}
+	return 0, 1
+}

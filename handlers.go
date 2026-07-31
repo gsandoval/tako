@@ -49,10 +49,11 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 // Handler is a declared asynchronous or scheduled handler binding, returned
 // by Worker, Subscribe, JobHandler, Cron, and Singleton.
 type Handler struct {
-	kind   string
-	source string
-	name   string // handler function's name; NewTestApp's wiring identity
-	invoke func(Ctx, []byte) error
+	kind     string
+	source   string
+	name     string // handler function's name; NewTestApp's wiring identity
+	parallel int    // WithParallel fan-out for jobs; 0/1 = one task
+	invoke   func(Ctx, []byte) error
 }
 
 // Async handler constructors also append their record to this registry so

@@ -49,7 +49,7 @@
       "var": "shop.products",
       "package": "shop",
       "type": "Product",
-      "pos": "app.go:24:2"
+      "pos": "app.go:26:2"
     },
     {
       "kind": "entity",
@@ -68,7 +68,7 @@
           "-created"
         ]
       ],
-      "pos": "app.go:25:2"
+      "pos": "app.go:27:2"
     },
     {
       "kind": "site",
@@ -78,7 +78,7 @@
       "dir": "web/dist",
       "build": "cd web \u0026\u0026 npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js \u0026\u0026 cp index.html dist/",
       "build_out": "web/dist",
-      "pos": "app.go:30:2"
+      "pos": "app.go:32:2"
     },
     {
       "kind": "auth",
@@ -88,7 +88,7 @@
       "providers": [
         "email"
       ],
-      "pos": "app.go:36:2"
+      "pos": "app.go:38:2"
     },
     {
       "kind": "job",
@@ -96,7 +96,7 @@
       "var": "shop.settle",
       "package": "shop",
       "type": "SettleParams",
-      "pos": "app.go:41:2"
+      "pos": "app.go:43:2"
     },
     {
       "kind": "entity",
@@ -104,7 +104,7 @@
       "var": "shop.reports",
       "package": "shop",
       "type": "DailyReport",
-      "pos": "app.go:42:2"
+      "pos": "app.go:44:2"
     },
     {
       "kind": "entity",
@@ -112,7 +112,15 @@
       "var": "shop.sequences",
       "package": "shop",
       "type": "Sequence",
-      "pos": "app.go:47:2"
+      "pos": "app.go:49:2"
+    },
+    {
+      "kind": "entity",
+      "name": "settle-shards",
+      "var": "shop.shardReports",
+      "package": "shop",
+      "type": "ShardReport",
+      "pos": "app.go:211:5"
     }
   ],
   "handlers": [
@@ -124,7 +132,7 @@
       "route": "GET /api/products",
       "req_ref": "struct{}",
       "res_ref": "[]shop.Product",
-      "pos": "app.go:91:2"
+      "pos": "app.go:93:2"
     },
     {
       "kind": "api",
@@ -143,7 +151,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:92:2"
+      "pos": "app.go:94:2"
     },
     {
       "kind": "api",
@@ -156,7 +164,7 @@
       "req_ref": "shop.AddProductReq",
       "res_ref": "shop.Product",
       "has_body": true,
-      "pos": "app.go:93:2"
+      "pos": "app.go:95:2"
     },
     {
       "kind": "api",
@@ -169,7 +177,7 @@
       "req_ref": "shop.PlaceOrderReq",
       "res_ref": "shop.Order",
       "has_body": true,
-      "pos": "app.go:94:2"
+      "pos": "app.go:96:2"
     },
     {
       "kind": "api",
@@ -180,7 +188,7 @@
       "requires_auth": true,
       "req_ref": "struct{}",
       "res_ref": "[]shop.Order",
-      "pos": "app.go:95:2"
+      "pos": "app.go:97:2"
     },
     {
       "kind": "api",
@@ -193,7 +201,7 @@
       "req_ref": "shop.SettleReq",
       "res_ref": "shop.SettleStarted",
       "has_body": true,
-      "pos": "app.go:96:2"
+      "pos": "app.go:98:2"
     },
     {
       "kind": "api",
@@ -203,15 +211,16 @@
       "route": "GET /api/me",
       "req_ref": "struct{}",
       "res_ref": "shop.MeRes",
-      "pos": "app.go:97:2"
+      "pos": "app.go:99:2"
     },
     {
       "kind": "job",
       "var": "shop.Settle",
       "package": "shop",
       "service": "shop-settle",
+      "parallel": 4,
       "binding": "settle",
-      "pos": "app.go:99:2"
+      "pos": "app.go:101:2"
     },
     {
       "kind": "singleton",
@@ -219,7 +228,7 @@
       "package": "shop",
       "service": "shop-invoicer",
       "binding": "invoicer",
-      "pos": "app.go:100:2"
+      "pos": "app.go:102:2"
     },
     {
       "kind": "api",
@@ -301,6 +310,20 @@
     {
       "from": "shop.Settle",
       "to": "reports",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.Settle",
+      "to": "settle-shards",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.Settle",
+      "to": "settle-shards",
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"

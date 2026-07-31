@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -30,9 +31,31 @@ func RegisterJob(name string, h tako.Handler) {
 	if !ok || hooks.Queue == nil {
 		panic("tako: RegisterJob before Boot")
 	}
+	par := 1
+	if hooks.HandlerParallel != nil {
+		par = hooks.HandlerParallel(h)
+	}
 	hooks.Queue.Consume(hooks.JobQueue(jobName), func(ctx context.Context, payload []byte) error {
-		jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name)}
-		return fn(jctx, payload)
+		// WithParallel locally: N tasks per execution, joined — the
+		// same shard indices Cloud Run hands out, one process over.
+		if par == 1 {
+			jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name)}
+			return fn(jctx, payload)
+		}
+		errs := make(chan error, par)
+		for i := range par {
+			go func(i int) {
+				jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name, "task", i), taskIndex: i, taskCount: par}
+				errs <- fn(jctx, payload)
+			}(i)
+		}
+		var first error
+		for range par {
+			if err := <-errs; err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
 	})
 }
 
@@ -52,8 +75,15 @@ func RunJobMain(name string, h tako.Handler) {
 			raw = []byte(os.Args[i+1])
 		}
 	}
+	// Cloud Run hands each parallel task its shard through the
+	// canonical envs; ctx.Task() forwards them to the handler.
+	taskIndex, _ := strconv.Atoi(os.Getenv("CLOUD_RUN_TASK_INDEX"))
+	taskCount, _ := strconv.Atoi(os.Getenv("CLOUD_RUN_TASK_COUNT"))
+	if taskCount < 1 {
+		taskCount = 1
+	}
 	start := time.Now()
-	ctx := &requestCtx{Context: context.Background(), log: slog.Default().With("job", name)}
+	ctx := &requestCtx{Context: context.Background(), log: slog.Default().With("job", name), taskIndex: taskIndex, taskCount: taskCount}
 	if err := fn(ctx, raw); err != nil {
 		fmt.Fprintf(os.Stderr, "tako: job %s failed after %s: %v\n", name, time.Since(start).Round(time.Millisecond), err)
 		os.Exit(1)

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/clientgen"
 	"github.com/gsandoval/tako/pkg/runtime"
@@ -337,5 +338,55 @@ func TestInvoiceNumbersAreStrictlySequential(t *testing.T) {
 	// sequence never rewinds.
 	if n, err := invoiceSweep(ctx); err != nil || n != 0 {
 		t.Fatalf("second sweep = %d, %v", n, err)
+	}
+}
+
+// TestSettleShardsAreDisjointAndMergeOnce (T4): the parallel tasks
+// split orders by ID hash — every shard subtotal exists, they sum to
+// the report exactly, and re-running just rewrites the same shards.
+func TestSettleShardsAreDisjointAndMergeOnce(t *testing.T) {
+	app := tako.NewTestApp(t)
+	ctx := app.Ctx(app.SignIn("alice"))
+	if i, n := ctx.Task(); i != 0 || n != 1 {
+		t.Fatalf("outside a job, Task() = (%d,%d), want (0,1)", i, n)
+	}
+	p, err := AddProduct.Call(ctx, AddProductReq{Name: "tea", PriceCents: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 9 {
+		if _, err := PlaceOrder.Call(ctx, PlaceOrderReq{ProductID: p.ID, Qty: 1}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.DrainQueues()
+	if _, err := StartSettle.Call(ctx, SettleReq{Day: "t4"}); err != nil {
+		t.Fatal(err)
+	}
+	app.DrainQueues()
+
+	rep, err := reports.Get(ctx, "t4")
+	if err != nil || rep.Orders != 9 || rep.TotalCents != 900 {
+		t.Fatalf("report = %+v, %v; want 9 orders / 900", rep, err)
+	}
+	sum := 0
+	for i := range 4 {
+		s, err := shardReports.Get(ctx, shardKey("t4", i))
+		if err != nil {
+			t.Fatalf("shard %d missing: %v", i, err)
+		}
+		sum += s.Orders
+	}
+	if sum != 9 {
+		t.Fatalf("shards sum to %d orders, want 9 (disjoint cover)", sum)
+	}
+	// Idempotent re-run: same totals, no double count.
+	if _, err := StartSettle.Call(ctx, SettleReq{Day: "t4"}); err != nil {
+		t.Fatal(err)
+	}
+	app.DrainQueues()
+	rep2, _ := reports.Get(ctx, "t4")
+	if rep2.Orders != 9 || rep2.TotalCents != 900 {
+		t.Fatalf("re-run report = %+v; must not double-count", rep2)
 	}
 }

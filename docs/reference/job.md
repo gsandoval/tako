@@ -25,7 +25,10 @@ the body — like every async handler it is `func(Ctx, T) error`, and a
 job has exactly one body. Options on `JobHandler`:
 
 - `tako.WithParallel(n)` — fans an execution out across n parallel
-  tasks (Cloud Run's `taskCount`).
+  tasks (Cloud Run's `taskCount`; the same n tasks run joined
+  locally). Inside the body, `ctx.Task()` reports `(index, count)` —
+  shard by them (hash the key, take your share); everywhere else it
+  is `(0, 1)`.
 - `tako.WithFootprint(tako.Footprint{CPU: …, Memory: …})` — task
   compute; only CPU and Memory apply (see [footprint.md](footprint.md)).
 
@@ -107,8 +110,10 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 
 - `Run` never waits and there is no status API from code — watch an
   execution with `gcloud run jobs executions list --job shop-settle`.
-- `WithParallel` tasks all receive the same params; there is no
-  task-index helper to shard work by yet.
+- (T4 removed the old shard gap: `ctx.Task()` reports (index, count)
+  inside a parallel task — `(0, 1)` everywhere else — and the local
+  runtime runs the full fan-out; shop's settle shards orders by ID
+  hash and merges shard subtotals idempotently.)
 - `maxRetries` (3) and the 3600s task timeout are framework-owned, not
   knobs. For a scheduled job, trigger `handle.Run` from a
   [cron](cron.md) handler — scheduled everywhere since T2.

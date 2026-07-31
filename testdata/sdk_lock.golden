@@ -47,6 +47,7 @@
     func (Ctx).IsHTMX() bool
     func (Ctx).Log() *log/slog.Logger
     func (Ctx).MaybeUser() (User, bool)
+    func (Ctx).Task() (index int, count int)
     func (Ctx).User() User
     func (Endpoint[Req, Res]).Call(ctx Ctx, req Req) (Res, error)
     func (EntityTx[T any]).Delete(id string) error
@@ -112,7 +113,7 @@ type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}
 type CacheHandle[T any] struct{}
 type CounterHandle struct{}
-type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); User() User; context.Context}
+type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
 type Endpoint[Req any, Res any] struct{}
 type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}

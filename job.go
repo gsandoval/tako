@@ -46,10 +46,19 @@ func (j *JobHandle[T]) Run(ctx Ctx, params T) error {
 // JobHandler binds fn as the body of job. Like every async handler it is
 // func(Ctx, T) error; WithParallel fans the execution out across tasks.
 func JobHandler[T any](job *JobHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
+	parallel := 1
+	for _, o := range opts {
+		if o.name == "parallel" {
+			if n, ok := o.args[0].(int); ok && n > 1 {
+				parallel = n
+			}
+		}
+	}
 	return register(Handler{
-		kind:   "job",
-		source: job.name,
-		name:   fnName(fn),
+		kind:     "job",
+		source:   job.name,
+		parallel: parallel,
+		name:     fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
 			var params T
 			if err := json.Unmarshal(raw, &params); err != nil {

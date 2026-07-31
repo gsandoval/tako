@@ -26,6 +26,12 @@ type Ctx interface {
 	// IsHTMX reports whether the request was issued by htmx, letting one
 	// route serve both full pages and fragments.
 	IsHTMX() bool
+
+	// Task reports this execution's shard: (index, count). Everywhere
+	// except inside a parallel job task it is (0, 1); inside one, index
+	// is this task's 0-based number and count the WithParallel fan-out —
+	// shard work by them (hash the key, take index's share).
+	Task() (index, count int)
 }
 
 // User is an authenticated identity as established by the app's Auth

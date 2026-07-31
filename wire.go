@@ -13,6 +13,12 @@ func init() {
 		}
 		return hd.kind, hd.source, hd.invoke
 	}
+	hooks.HandlerParallel = func(h any) int {
+		if hd, ok := h.(Handler); ok && hd.parallel > 1 {
+			return hd.parallel
+		}
+		return 1
+	}
 	hooks.DeclaredSecrets = declaredSecrets
 	hooks.HTMLParts = func(h any) ([]byte, string, bool) {
 		html, ok := h.(HTML)

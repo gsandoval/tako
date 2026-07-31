@@ -11,9 +11,11 @@ import (
 // slice: User panics honestly and MaybeUser reports no user.
 type requestCtx struct {
 	context.Context
-	log    *slog.Logger
-	isHTMX bool
-	user   *tako.User
+	log       *slog.Logger
+	isHTMX    bool
+	user      *tako.User
+	taskIndex int
+	taskCount int
 }
 
 // NewCtx wraps a context as a tako.Ctx. Generated services and tests are
@@ -39,3 +41,12 @@ func (c *requestCtx) MaybeUser() (tako.User, bool) {
 func (c *requestCtx) Log() *slog.Logger { return c.log }
 
 func (c *requestCtx) IsHTMX() bool { return c.isHTMX }
+
+// Task reports the parallel-job shard (tako.Ctx contract): (0, 1)
+// everywhere except inside a parallel job task.
+func (c *requestCtx) Task() (int, int) {
+	if c.taskCount > 1 {
+		return c.taskIndex, c.taskCount
+	}
+	return 0, 1
+}

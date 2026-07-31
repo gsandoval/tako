@@ -1,12 +1,12 @@
 shop: 4 services
   service shop (package shop, profile default)
-    GET /api/products → ListProducts (app.go:91)
-    GET /api/products/{id} → GetProduct (app.go:92)
-    POST /api/products → AddProduct 🔒 (app.go:93)
-    POST /api/orders → PlaceOrder 🔒 (app.go:94)
-    GET /api/orders → ListOrders 🔒 (app.go:95)
-    POST /api/settle → StartSettle 🔒 (app.go:96)
-    GET /api/me → Me (app.go:97)
+    GET /api/products → ListProducts (app.go:93)
+    GET /api/products/{id} → GetProduct (app.go:94)
+    POST /api/products → AddProduct 🔒 (app.go:95)
+    POST /api/orders → PlaceOrder 🔒 (app.go:96)
+    GET /api/orders → ListOrders 🔒 (app.go:97)
+    POST /api/settle → StartSettle 🔒 (app.go:98)
+    GET /api/me → Me (app.go:99)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)
     site ./web/dist
@@ -14,8 +14,9 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity settle-shards
   service shop-settle (package shop, profile default)
-    job Settle ← settle (app.go:99)
+    job Settle ← settle ×4 tasks (app.go:101)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)
     site ./web/dist
@@ -23,8 +24,9 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity settle-shards
   service shop-invoicer (package shop, profile default)
-    singleton Invoicer — invoicer, exactly one everywhere (app.go:100)
+    singleton Invoicer — invoicer, exactly one everywhere (app.go:102)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)
     site ./web/dist
@@ -32,5 +34,6 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity settle-shards
   service billing (package shop/billing, profile default)
     POST /charge → Charge (billing/billing.go:17)

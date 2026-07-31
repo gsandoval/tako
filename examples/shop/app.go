@@ -12,7 +12,9 @@
 package shop
 
 import (
+	"hash/fnv"
 	"sort"
+	"strconv"
 	"time"
 
 	"shop/billing"
@@ -96,7 +98,7 @@ var (
 	StartSettle  = tako.API("POST /api/settle", startSettle, tako.WithAuth())
 	Me           = tako.API("GET /api/me", me)
 
-	Settle   = tako.JobHandler(settle, runSettle)
+	Settle   = tako.JobHandler(settle, runSettle, tako.WithParallel(4))
 	Invoicer = tako.Singleton("invoicer", assignInvoices)
 )
 
@@ -204,23 +206,65 @@ func startSettle(ctx tako.Ctx, req SettleReq) (SettleStarted, error) {
 	return SettleStarted{Started: true}, nil
 }
 
-// runSettle is the job body: sum every order into the day's report,
-// however long that takes — there is no request deadline here.
+// shardReports collects each parallel task's subtotal — Put is
+// idempotent, so a retried task just rewrites its own shard.
+var shardReports = tako.Entity[ShardReport]("settle-shards")
+
+type ShardReport struct {
+	ID         string `entity:"id" json:"id"`
+	Orders     int    `json:"orders"`
+	TotalCents int    `json:"totalCents"`
+}
+
+// runSettle is the job body, SHARDED (T4): WithParallel(4) fans the
+// execution across tasks; ctx.Task() names this task's shard and each
+// order belongs to exactly one (hash of its ID). Every task writes its
+// own subtotal, then attempts the merge — whoever finds all shards
+// present writes the (identical) final report, so no coordinator,
+// no double-count, retry-safe throughout.
 func runSettle(ctx tako.Ctx, p SettleParams) error {
+	idx, count := ctx.Task()
 	all, err := orders.Query(ctx).All()
 	if err != nil {
 		return err
 	}
-	report := DailyReport{ID: reportKey(p.Day)}
+	shard := ShardReport{ID: shardKey(p.Day, idx)}
 	for _, o := range all {
+		if shardOf(o.ID, count) != idx {
+			continue
+		}
 		if p.ThrottleMs > 0 {
 			time.Sleep(time.Duration(p.ThrottleMs) * time.Millisecond)
 		}
-		report.Orders++
-		report.TotalCents += o.TotalCents
+		shard.Orders++
+		shard.TotalCents += o.TotalCents
+	}
+	if err := shardReports.Put(ctx, shard); err != nil {
+		return err
+	}
+	report := DailyReport{ID: reportKey(p.Day)}
+	for i := range count {
+		s, err := shardReports.Get(ctx, shardKey(p.Day, i))
+		if tako.IsNotFound(err) {
+			return nil // a sibling shard is still running; it merges
+		}
+		if err != nil {
+			return err
+		}
+		report.Orders += s.Orders
+		report.TotalCents += s.TotalCents
 	}
 	report.SettledAt = time.Now()
 	return reports.Put(ctx, report)
+}
+
+func shardKey(day string, i int) string { return reportKey(day) + "#" + strconv.Itoa(i) }
+
+// shardOf assigns an order to exactly one task: stable hash mod count.
+func shardOf(id string, count int) int {
+	h := fnv.New32a()
+	h.Write([]byte(id))
+	return int(h.Sum32() % uint32(count))
 }
 
 func reportKey(day string) string {
