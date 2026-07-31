@@ -190,6 +190,7 @@ func runDeploy(args []string) error {
 	sas := &gcp.ServiceAccounts{C: client, App: app, Env: t.env}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels(), Annotations: versionStamps(dir, graph)}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
+	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -201,13 +202,12 @@ func runDeploy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
 	if err != nil {
 		return err
 	}
 	plan := provision.Compute(app, t.env, desired, observed)
 	fmt.Printf("  plan\n%s", indentPlan(plan.Render()))
-	warnInertCrons(graph)
 	warnCallEdges(graph)
 	warnFootprints(graph)
 
@@ -237,7 +237,7 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription), desired, applier); err != nil {
@@ -296,6 +296,9 @@ func runDeploy(args []string) error {
 		return err
 	}
 	if err := provision.Apply(ctx, onSubs, desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindSchedulerJob), desired, applier); err != nil {
 		return err
 	}
 
@@ -490,6 +493,9 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 		if h.Kind == "worker" || h.Kind == "subscribe" {
 			n.PubSub = true
 		}
+		if h.Kind == "cron" {
+			n.Scheduler = true
+		}
 	}
 	// Sign edges mean the runtime mints signed URLs via signBlob.
 	for _, e := range graph.Edges {
@@ -498,17 +504,6 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 		}
 	}
 	return n
-}
-
-// warnInertCrons tells the truth about cron in the cloud: nothing
-// schedules it yet (a scheduler feature follows C-phase), so nobody
-// should believe a daily job is running.
-func warnInertCrons(graph *analyzer.AppGraph) {
-	for _, h := range graph.Handlers {
-		if h.Kind == "cron" {
-			fmt.Printf("  ⚠ cron %s is not scheduled in the cloud yet (a scheduler feature follows); it still runs under tako dev\n", h.Var)
-		}
-	}
 }
 
 // warnCallEdges surfaces Cloud Run's sync-call costs at deploy time
@@ -666,6 +661,7 @@ func runDestroy(args []string) error {
 	sas := &gcp.ServiceAccounts{C: client, App: app, Env: t.env}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
+	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -677,7 +673,7 @@ func runDestroy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds)
 	if err != nil {
 		return err
 	}
@@ -761,6 +757,7 @@ func runDestroy(args []string) error {
 	deleters := map[provision.Kind]interface {
 		Delete(ctx context.Context, name string) error
 	}{
+		provision.KindSchedulerJob:       scheds,
 		provision.KindPushSubscription:   subs,
 		provision.KindIamGrants:          grants,
 		provision.KindRunService:         runs,

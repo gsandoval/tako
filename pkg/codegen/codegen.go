@@ -334,6 +334,10 @@ import (
 		b.WriteString("\t// Signed upload/download URLs land here (SignedPut/SignedGet).\n")
 		b.WriteString("\tmux.Handle(\"/_tako/signed/\", runtime.SignedURLHandler())\n\n")
 	}
+	if hasCron(g, svc) {
+		b.WriteString("\t// Cloud Scheduler triggers crons here (T2); the request proves\n\t// itself with a Google-signed OIDC token — locally the in-process\n\t// ticker drives them and this route just refuses strangers.\n")
+		b.WriteString("\tmux.Handle(\"POST /_tako/cron/{cron}\", runtime.CronDispatch())\n\n")
+	}
 
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
@@ -445,6 +449,17 @@ func helperName(b analyzer.Binding) string {
 
 // hasBucket reports whether the service's package declares a bucket —
 // the signal to mount the local signed-URL endpoint.
+// hasCron reports whether any cron handler runs in this service — it
+// then carries the /_tako/cron dispatch route Cloud Scheduler targets.
+func hasCron(g *analyzer.AppGraph, svc analyzer.Service) bool {
+	for _, h := range g.Handlers {
+		if h.Service == svc.Name && h.Kind == "cron" {
+			return true
+		}
+	}
+	return false
+}
+
 func hasBucket(g *analyzer.AppGraph, svc analyzer.Service) bool {
 	for _, r := range g.Resources {
 		if r.Package == svc.Package && r.Kind == "bucket" {

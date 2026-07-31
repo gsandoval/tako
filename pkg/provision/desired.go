@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/schedule"
 	"github.com/gsandoval/tako/pkg/analyzer"
 	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 )
@@ -239,6 +240,16 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		for jobName, resource := range jobTriggers[svc.Name] {
 			env["TAKO_JOB_"+strings.ToUpper(strings.ReplaceAll(jobName, "-", "_"))] = resource
 		}
+		// Cron trigger identity (T2): the dispatch route verifies a
+		// Google-signed OIDC token with exactly this audience and
+		// invoker — deterministic, so plannable before anything exists.
+		for _, h := range g.Handlers {
+			if h.Service == svc.Name && h.Kind == "cron" {
+				env["TAKO_CRON_AUDIENCE"] = cfg.RunURL(svc.Name)
+				env["TAKO_CRON_INVOKER"] = cfg.SAEmail(svc.Name)
+				break
+			}
+		}
 		objs = append(objs, Object{
 			Kind: KindServiceAccount,
 			Name: cfg.SAName(svc.Name),
@@ -281,6 +292,30 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				// WithPrivate services admit only granted callers;
 				// singleton loops admit nobody's traffic but health.
 				"public": !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
+			},
+		})
+	}
+
+	// Cloud Scheduler jobs (T2): one per cron handler, firing the
+	// service's dispatch route with an OIDC token as the service's own
+	// SA. The schedule is the declaration's, rendered as unix-cron.
+	for _, h := range g.Handlers {
+		if h.Kind != "cron" {
+			continue
+		}
+		sched, err := schedule.Parse(h.Schedule)
+		if err != nil {
+			return nil, fmt.Errorf("cron %s: %v", h.Var, err)
+		}
+		short := h.Var[strings.LastIndex(h.Var, ".")+1:]
+		objs = append(objs, Object{
+			Kind: KindSchedulerJob,
+			Name: cfg.Name(h.Service) + "-cron-" + strings.ToLower(short),
+			Spec: map[string]any{
+				"schedule":       sched.UnixCron(),
+				"uri":            cfg.RunURL(h.Service) + "/_tako/cron/" + short,
+				"serviceAccount": cfg.SAEmail(h.Service),
+				"audience":       cfg.RunURL(h.Service),
 			},
 		})
 	}

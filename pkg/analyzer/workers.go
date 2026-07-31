@@ -144,8 +144,10 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 	}
 }
 
-// cronOptions is the option set tako.Cron accepts.
-var cronOptions = map[string]bool{"WithSingleflight": true}
+// cronOptions is the option set tako.Cron accepts. Profile/footprint
+// (S6 amendment) shape the HOSTING service — the one a cron-only
+// package would otherwise have no way to control.
+var cronOptions = map[string]bool{"WithSingleflight": true, "WithProfile": true, "WithFootprint": true}
 
 // extractCron validates one tako.Cron declaration. Cron handlers run in
 // the package's app service (spec §4.1 partitioning), not their own.
@@ -175,16 +177,26 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	}
 
 	singleflight := false
+	profile := ""
+	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithSingleflight" {
 			singleflight = true
 			continue
 		}
+		if isOpt && optName == "WithProfile" {
+			profile = profileArg(pkg, opt)
+			continue
+		}
+		if isOpt && optName == "WithFootprint" {
+			footprint = footprintArg(dir, pkg, opt, errs)
+			continue
+		}
 		if isOpt && !cronOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -201,6 +213,8 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		Service:      pkg.Name,
 		Schedule:     sched,
 		Singleflight: singleflight,
+		Profile:      profile,
+		Footprint:    footprint,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

@@ -21,6 +21,11 @@ func main() {
 	// Signed upload/download URLs land here (SignedPut/SignedGet).
 	mux.Handle("/_tako/signed/", runtime.SignedURLHandler())
 
+	// Cloud Scheduler triggers crons here (T2); the request proves
+	// itself with a Google-signed OIDC token — locally the in-process
+	// ticker drives them and this route just refuses strangers.
+	mux.Handle("POST /_tako/cron/{cron}", runtime.CronDispatch())
+
 	// POST /api/photos → Upload (app.go:62)
 	mux.Handle("POST /api/photos", runtime.JSONHandler(gallery.Upload, decodeUpload))
 

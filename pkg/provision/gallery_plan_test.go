@@ -34,7 +34,7 @@ func galleryGraph() *analyzer.AppGraph {
 			{Kind: "api", Var: "gallery.Upload", Service: "gallery"},
 			{Kind: "api", Var: "gallery.StartUpload", Service: "gallery"},
 			{Kind: "api", Var: "gallery.List", Service: "gallery"},
-			{Kind: "cron", Var: "gallery.Cleanup", Service: "gallery"},
+			{Kind: "cron", Var: "gallery.Cleanup", Service: "gallery", Schedule: "every 24h"},
 			{Kind: "subscribe", Var: "gallery.OnUploaded", Service: "gallery-onuploaded",
 				Binding: "photos.Uploaded", BindingKind: "bucket"},
 			{Kind: "worker", Var: "gallery.MakeThumb", Service: "gallery-makethumb", Binding: "thumbnails"},
@@ -135,7 +135,8 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  push subscription gallery-makethumb
   + create  push subscription gallery-notifyowner
   + create  push subscription gallery-warmfeed
-  54 creates, 0 updates, 0 skips, 0 orphans
+  + create  scheduler job gallery-cron-cleanup
+  55 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)

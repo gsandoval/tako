@@ -26,6 +26,7 @@ const (
 	KindRunJob             Kind = "run job"
 	KindIamGrants          Kind = "iam grants"
 	KindPushSubscription   Kind = "push subscription"
+	KindSchedulerJob       Kind = "scheduler job"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
@@ -38,7 +39,7 @@ const (
 var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
 	KindBucketNotification, KindPullSubscription, KindRunService, KindRunJob,
-	KindIamGrants, KindPushSubscription,
+	KindIamGrants, KindPushSubscription, KindSchedulerJob,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.

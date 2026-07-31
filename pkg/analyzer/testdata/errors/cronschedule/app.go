@@ -2,10 +2,12 @@ package cronschedule
 
 import "github.com/gsandoval/tako"
 
-var Nightly = tako.Cron("0 3 * * *", nightly)
+// A field out of range, and an interval unix-cron cannot express —
+// both refused at analysis time, both naming the judgment.
+var Nightly = tako.Cron("0 25 * * *", nightly)
 
 func nightly(ctx tako.Ctx) error { return nil }
 
-var Ping = tako.API("GET /api/ping", ping)
+var Odd = tako.Cron("every 7m", odd)
 
-func ping(ctx tako.Ctx, _ struct{}) (string, error) { return "pong", nil }
+func odd(ctx tako.Ctx) error { return nil }

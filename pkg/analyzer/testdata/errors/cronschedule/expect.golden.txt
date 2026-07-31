@@ -1,1 +1,2 @@
-app.go:5:25: tako.Cron schedule must be "every <duration>" for now (cron expressions arrive with cloud scheduling); got "0 3 * * *" (tako/cron-schedule)
+app.go:7:25: tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23 (tako/cron-schedule)
+app.go:11:21: "every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression (tako/cron-schedule)

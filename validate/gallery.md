@@ -9,7 +9,7 @@ against a cloud deployment — one script, both worlds, from here on.
 **Cloud runs (C5+):** deploy first (`tako deploy --project
 <test-project>`, plan reviewed), set `BASE=<the ✓ gallery URL>` instead
 of localhost:8090, and skip §1 and §5 (tako test and AdvanceCron are
-local by nature — cloud cron is inert until the scheduler feature, and
+local by nature — cloud cron now runs via Cloud Scheduler (T2; validate/scheduler.md is its gate), and
 the deploy says so). Dead letters appear in `tako dlq <service>`
 instead of `.tako/data/deadletter/`; pipeline logs in `tako logs`.
 Finish with §7. Conformance bar: `-backend=gcp -project <test-project>`

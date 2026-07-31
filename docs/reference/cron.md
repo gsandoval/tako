@@ -1,8 +1,8 @@
 # `tako.Cron` — scheduled handlers
 
 A cron is a `func(Ctx) error` run on a schedule, declared like
-everything else. Read the Cloud section before trusting one in
-production — this page tells the truth.
+everything else — a ticker locally, a Cloud Scheduler job in the
+cloud (T2), one declaration for both.
 
 ## Declare
 
@@ -10,17 +10,22 @@ production — this page tells the truth.
 var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
 ```
 
-The schedule must be a string constant (analyzer-enforced), and v0
-accepts exactly one form: `"every <Go duration>"` — `every 30s`,
-`every 1h`, `every 24h`. Cron expressions are rejected at analysis
-time (see Errors); they arrive with cloud scheduling. The analyzer and
-the runtime share the parser, so a schedule that analyzes always runs.
+The schedule must be a string constant (analyzer-enforced), in either
+form: `"every <Go duration>"` (`every 10m`, `every 6h`, `every 24h`)
+or a 5-field unix-cron expression (`"0 3 * * *"`, `"0 9-17 * * 1-5"`).
+Both must map onto Cloud Scheduler's grammar — an `every` interval
+that unix-cron cannot express (`every 7m`, `every 90s`) is refused at
+analysis time with the mapping rule. The analyzer, the runtime, and
+the provisioner share one parser, so a schedule that analyzes runs
+locally AND provisions.
 
-The only option is `WithSingleflight`: it wraps the handler in the
-§4.4 lease ([lock.md](lock.md)), so overlapping or double-fired runs
-collapse to one execution — across all instances, not just one
-process. The wrap happens at declaration, so every trigger — dev
-ticker, `AdvanceCron`, a future scheduler — inherits it.
+`WithSingleflight` wraps the handler in the §4.4 lease
+([lock.md](lock.md)), so overlapping or double-fired runs collapse to
+one execution — across all instances, not just one process. The wrap
+happens at declaration, so every trigger — dev ticker, `AdvanceCron`,
+Cloud Scheduler — inherits it. `WithProfile` and `WithFootprint`
+([footprint.md](footprint.md)) shape the HOSTING service, the escape
+hatch a cron-only package would otherwise lack.
 
 ## Use
 
@@ -52,19 +57,19 @@ with its own narration — the feature working, never an error:
 
 ## Cloud
 
-**The honest limit: nothing schedules crons in the cloud yet.** A
-per-instance ticker under autoscaling would fire once per live
-instance and never when scaled to zero — worse than nothing — so
-deployed crons are deliberately inert until the scheduler feature
-lands. `tako deploy` says so, per cron:
-
-```
-⚠ cron gallery.Cleanup is not scheduled in the cloud yet (a scheduler feature follows); it still runs under tako dev
-```
-
-The deployed service also logs `cron not scheduled in the cloud yet (a
-scheduler feature follows)` at startup. Do not believe a daily job is
-running in production; it isn't.
+Every cron provisions a **Cloud Scheduler job**
+(`+ create scheduler job <svc>-cron-<name>`) firing
+`POST /_tako/cron/<name>` on the service with an OIDC token minted as
+the service's own SA. The route trusts nobody: it verifies the
+Google-signed token's audience (this service) and identity (that SA) —
+injected at deploy as `TAKO_CRON_AUDIENCE`/`TAKO_CRON_INVOKER` — so
+the route is safe even on a public service, and locally it just
+refuses strangers (the ticker drives dev). In-process tickers stay off
+in the cloud: one schedule, not one per instance. A failed run answers
+500 and the schedule itself is the retry; Scheduler's attempt deadline
+(180s) bounds a run — put longer work behind a [job](job.md) the cron
+triggers. Scheduler bills per job at trivial rates; `destroy` deletes
+the jobs with everything else.
 
 ## Test it
 
@@ -88,13 +93,16 @@ app.AdvanceCron("cleanupOrphans") // collapses into the held run
 
 ## Errors you'll meet
 
-- `tako.Cron schedule must be "every <duration>" for now (cron expressions arrive with cloud scheduling); got "0 3 * * *" (tako/cron-schedule)`
-- `tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight) (tako/invalid-option)`
+- `tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23 (tako/cron-schedule)`
+- `"every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression (tako/cron-schedule)`
+- `tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint) (tako/invalid-option)`
 - `tako: AdvanceCron("x"): no such cron — declared crons: cleanupOrphans` — a test naming a cron that isn't declared.
 
 ## Not yet
 
-- **Cloud scheduling.** Deployed crons do not run — the ⚠ deploy
-  warning above is the contract until the scheduler feature ships.
-- **Cron expressions** (`"0 3 * * *"`): they arrive with cloud
-  scheduling; only `"every <duration>"` parses today.
+- Schedules run in UTC (`Etc/UTC`); no per-cron timezone knob.
+- No retryConfig surface — a failed attempt waits for the next tick;
+  idempotency is the handler's job (singleflight guards overlap, not
+  replay).
+- unix-cron subset: `*`, `*/N`, values, ranges, and comma lists — no
+  names (`MON`), no `L/W/#` extensions.

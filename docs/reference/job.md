@@ -110,5 +110,5 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 - `WithParallel` tasks all receive the same params; there is no
   task-index helper to shard work by yet.
 - `maxRetries` (3) and the 3600s task timeout are framework-owned, not
-  knobs. Scheduled jobs wait on the scheduler feature — trigger from a
-  [cron](cron.md) handler under `tako dev` meanwhile.
+  knobs. For a scheduled job, trigger `handle.Run` from a
+  [cron](cron.md) handler — scheduled everywhere since T2.

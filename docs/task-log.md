@@ -6694,3 +6694,25 @@ Tasks queues themselves are not compute — nothing to shape there.
   wouldn't compile) replaced with the real tako.Site + site.Render.
 - Docs: bucket.md upload-header contract; queue.md WithRateLimit now
   documented as LOUD.
+
+## T2 — Cloud Scheduler for cron, implementation (2026-07-31)
+
+Crons are real everywhere. internal/schedule grew both grammars —
+"every <duration>" (validated to MAP onto unix-cron: minutes dividing
+60, hours dividing 24, exactly 24h) and 5-field cron expressions
+(*, */N, values, ranges, lists; Next() drives the local ticker) —
+one parser for analyzer, runtime, and provisioner. Every cron
+provisions `scheduler job <svc>-cron-<name>` (Cloud Scheduler v1;
+no labels on Scheduler, so identity+spec-hash ride the description)
+firing POST /_tako/cron/<name> with an OIDC token as the service's
+own SA; the dispatch route verifies the Google-signed token
+(pure-stdlib RS256, same discipline as the session path) against
+deploy-injected TAKO_CRON_AUDIENCE/INVOKER — safe on public
+services, default-deny locally (unit-pinned 401/403). warnInertCrons
+is DELETED — the warning's condition no longer exists. Preflight
+gains cloudscheduler.googleapis.com. Cron accepts WithProfile/
+WithFootprint (the stage amendment): a cron-only package can shape
+its service. Fixtures: cronschedule repurposed (a cron EXPRESSION is
+now legal — the old fixture passed!) to the two new judgments;
+cronopt text lists the grown option set. cron.md rewritten; stale
+inert-cron references swept from job.md/validate-gallery.
