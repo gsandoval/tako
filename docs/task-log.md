@@ -6493,3 +6493,30 @@ no-JS 303 to the real static URL); deploy printed the honest
 known window). validate/blog.md is the gate script; guide chapter
 06-blog.md + README/guide indexes updated. Awaiting the user's
 verdict row for S2.
+
+## S3 — the feature reference (2026-07-31)
+
+docs/reference/: 18 pages + index, ONE page per feature, every page
+the same rubric (Declare · Use · Local · Cloud · Test it · Errors
+you'll meet · Not yet; cli.md bends it and says so). Written by five
+parallel agents each grounded in the actual code — snippets lifted
+from the examples, error texts verbatim from the analyzer goldens
+and runtime sources, the TS client's determinism claim re-proven by
+running the generator twice — then reviewed: rubric uniform across
+all pages, every relative link resolves, spot-checked verbatim texts
+match their sources. README and the guide index link in; the
+reference links back.
+
+Fix-ups riding along: validate/footprint.md quoted the pre-move
+wording of the always-on warning (it now prints WITH the plan and
+names the service); footprint.md's warning example no longer
+implies gallery triggers it.
+
+**Discovered work (logged, not done):** WithRateLimit is declared in
+options.go but consumed nowhere — no backend, no analyzer error, no
+not-yet text. It should either gain the Cloud Tasks wiring the spec
+sketches or refuse with a positioned not-yet like WithDomain/WithCDN.
+Surfaced by the queue.md agent; queue.md documents it under Not yet.
+
+Awaiting the user's verdict row for S3 (gate: enter three pages cold
+and follow them verbatim).

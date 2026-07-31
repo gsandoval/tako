@@ -5,3 +5,4 @@
 /tako
 examples/shop/web/dist/
 examples/blog/site/public/
+.hugo_build.lock

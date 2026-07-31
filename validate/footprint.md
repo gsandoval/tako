@@ -83,8 +83,10 @@ In a scratch module (or by temporarily adding `MinInstances: 2` to
 any footprint), run `deploy --plan`:
 
 ```
-⚠ the footprint keeps 2 instance(s) always on — they bill continuously whether traffic comes or not
+⚠ footprint on <service> keeps 2 instance(s) always on — they bill continuously whether traffic comes or not
 ```
+
+(It prints with the PLAN — the decision point — not after apply.)
 
 **Judge:** the escape hatch never silently buys always-on instances.
 

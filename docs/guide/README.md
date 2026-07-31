@@ -23,10 +23,14 @@ The guide is the six examples, in the order the framework grows:
    islands: the generator owns the pages, tako runs the build and
    serves the dynamic fragments.
 
-Two references frame everything:
+Two stories frame everything:
 
 - **[The local story](local.md)** — what `tako dev` and `tako test`
   actually run (spoiler: your process, no emulators, no Docker).
 - **[The cloud story](cloud.md)** — what `tako deploy` creates, the
   permissions model, the ONE manual setup step, and what `destroy`
   deliberately leaves behind.
+
+And the **[feature reference](../reference/README.md)** answers by
+feature instead of by example: one page per feature, every page the
+same shape (declare · use · local · cloud · test · errors · not yet).

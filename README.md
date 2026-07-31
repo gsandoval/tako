@@ -111,10 +111,13 @@ tutorial chapter and part of the test suite:
 | [shop](docs/guide/05-shop.md) | generated TypeScript client, private services + typed calls, jobs, singletons |
 | [blog](docs/guide/06-blog.md) | Hugo-built static site, htmx islands calling tako fragments |
 
-Plus the two references: [the local story](docs/guide/local.md)
-(what dev/test actually run) and [the cloud story](docs/guide/cloud.md)
-(what deploy creates, the permissions model, the one manual setup
-step, what destroy leaves).
+Plus the two stories: [local](docs/guide/local.md) (what dev/test
+actually run) and [cloud](docs/guide/cloud.md) (what deploy creates,
+the permissions model, the one manual setup step, what destroy
+leaves). And when you need one feature's whole answer — declare, use,
+local, cloud, test, errors — enter the
+[feature reference](docs/reference/README.md) sideways: one page per
+feature, every page the same shape.
 
 ## The opinions, briefly
 
