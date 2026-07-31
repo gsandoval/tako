@@ -6822,3 +6822,82 @@ services, 0 tasks queues, 0 scheduler jobs).
 STAGE 6 agent-side work complete: T1 96aee41, T2 d23b059, T3
 98ff235, T4 7b89082 (+ this validation commit). Awaiting the user's
 verdict rows for T1–T4.
+
+## Stage 7 proposal — the operator era (2026-07-31) — AWAITING APPROVAL
+
+User priorities, in order: domains/CDN, metrics export, dlq replay;
+plus a shared-cache PLAN (recipe or design, implementation optional).
+
+### U1 — WithDomain + WithCDN: one load balancer, both stories
+
+Cloud Run's legacy domain-mappings are regional and second-class; the
+real architecture — and the reason domains and CDN are ONE slice — is
+a global external Application Load Balancer with a serverless NEG:
+
+- `tako.Site(..., tako.WithDomain("blog.example.com"))` provisions:
+  global static IP, managed SSL cert, serverless NEG → the app
+  service, url-map + HTTPS proxy + forwarding rule (plus the auth
+  authorized-domain registration). HTTP→HTTPS redirect included.
+- `tako.WithCDN()` (requires WithDomain — analyzer-enforced with a
+  positioned error) flips Cloud CDN on the SAME balancer's backend:
+  static assets cached at the edge, dynamic routes pass through.
+- **The manual step is DNS, and it is preflight-as-UX:** the plan
+  prints the A/AAAA records to create at the registrar; deploy
+  converges once the cert provisions (can take ~15–60min on first
+  DNS propagation — narrated, resumable, stateless like everything).
+- **Cost honesty:** an ALB is standing money (~$18/mo + egress).
+  The plan prices it with a ⚠ the way min-instances are priced.
+- Example demanding: blog (a blog IS the thing that wants a domain
+  and edge caching). New provision kinds: address, cert, NEG,
+  backend-service, url-map, target-proxy, forwarding-rule.
+- **Gate caveat:** the live walk needs a REAL domain the owner
+  controls; agent-side validation covers derived objects, plan
+  rendering, and refusal texts — the DNS-to-green-cert walk is the
+  human gate (validate/domain.md will script it for your domain).
+
+### U2 — Metrics export: Counter/Histogram → Cloud Monitoring
+
+- The gcp backend finally implements backends.Metrics: custom
+  metrics `custom.googleapis.com/tako/<name>` via monitoring v3,
+  batched in-process and flushed every 60s (and at shutdown);
+  histograms as distribution values, counters as cumulative.
+- Grants: roles/monitoring.metricWriter (project) for every service
+  that touches a metric edge — derived, like everything.
+- Local stays logs (unchanged contract); observability.md points at
+  Metrics Explorer with the exact metric names.
+- Example demanding: gallery (uploads counter, thumb_ms histogram —
+  declared since F8, cloud-visible at last).
+
+### U3 — dlq replay
+
+- `tako dlq <service> --replay <id>` and `--replay --all`:
+  re-publish the dead-lettered payload to the worker's delivery path
+  (Pub/Sub publish to the source topic with the original attributes),
+  then ack it off the DLQ — replay is a MOVE, not a copy. Local
+  mirror: re-dispatch from .tako/data/deadletter and remove the file.
+- Ladder position: tier 2 (recoverable — the message returns to
+  at-least-once delivery; a failing replay dead-letters again).
+  --replay never composes with --ack in one invocation.
+- Example demanding: gallery's dead-letter path (the boom caption).
+
+### U4 — Shared cache: a PLAN, not (yet) a feature
+
+Deliverable is docs/shared-cache-plan.md + a recipe:
+- **Recommendation: recipe-first.** A Memorystore-class dependency
+  (VPC connector, standing $$) contradicts the zero-infra defaults;
+  the honest v0 answer is a documented RECIPE — cache-aside on an
+  Entity with a TTL field and lazy expiry (works today, no new
+  surface, consistent cross-instance for read-heavy small values) —
+  plus guidance on when per-instance Cache is simply right.
+- The plan documents the FUTURE in-framework shape if scale demands
+  it: `tako.Cache(..., tako.WithShared())` backed by Memorystore,
+  what it would provision (connector, instance, grants), its costs,
+  and the trigger conditions ("revisit when…").
+- reference/cache.md links the recipe; no SDK change.
+
+Order: U1 → U2 → U3 → U4 (U4 is a writing slice; it can interleave).
+
+**STOP — awaiting Stage 7 approval. One flag: U1's live gate needs a
+domain you control — tell me which domain to script the walk
+against (or approve with the agent-side gate only and walk DNS at
+your own pace).**
