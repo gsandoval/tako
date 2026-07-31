@@ -89,7 +89,6 @@ func Topic[T any](name string, opts ...Option) *TopicHandle[T]
 func UploadHeaders(opts ...Option) map[string]string
 func WithAuth() Option
 func WithBuild(command string, outDir string) Option
-func WithCDN() Option
 func WithContentType(pattern string) Option
 func WithDelay(d time.Duration) Option
 func WithDevProxy(url string) Option

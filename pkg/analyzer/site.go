@@ -14,7 +14,6 @@ import (
 // §2.11's surface names its future slice instead of failing blind.
 var siteNotYet = map[string]string{
 	"WithDomain": "custom domains (mapping + TLS + HSTS) are their own slice",
-	"WithCDN":    "bucket + Cloud CDN serving is its own when-scale-justifies slice",
 }
 
 // extractSite validates one tako.Site declaration: the served directory

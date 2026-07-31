@@ -245,7 +245,6 @@ var site = tako.Site("./web",
     tako.SPA(),                                    // unknown paths → index.html (omit for plain static)
     tako.WithDomain("gallery.example.com"),        // domain mapping + managed TLS
     tako.WithRedirect("/old-gallery", "/"),
-    tako.WithCDN(),                                // opt-in: LB + Cloud CDN (deploy cost stated honestly)
 )
 ```
 
@@ -254,7 +253,7 @@ What `Site` does without being asked:
 - **Frontend builds are part of `tako deploy` and `tako dev`** — `WithBuild` runs the command with the app's env available, serves the output, and in dev mode re-runs it on file changes (or proxies to a dev server via `WithDevProxy("http://localhost:5173")` for Vite-style HMR). No separate frontend pipeline to wire.
 - **Correct caching by default**: fingerprinted assets (`app.3f2a1c.js`) get `Cache-Control: immutable`, HTML gets `no-cache`, ETags everywhere. Nobody configures this by hand correctly.
 - **Sensible security headers by default** (CSP in report-only to start, HSTS on custom domains), overridable per-site.
-- **v0 serving embeds the site in the app service's binary** (Go `embed`) — one service, one URL, no LB; `WithCDN` upgrades to bucket + Cloud CDN + load balancer when scale justifies the provisioning cost and latency.
+- **Serving embeds the site in the app service's binary** (Go `embed`) — one service, one URL, no load balancer, so a site's static assets and its dynamic handlers always answer on the same origin. `WithDomain` puts that origin on a custom domain via a Cloud Run domain mapping (no standing infrastructure cost); the edge-caching upgrades tako has designed but not shipped are compared in `docs/domain-options.md`.
 
 Server-rendered pages become part of the same story rather than a parallel one:
 

@@ -111,16 +111,14 @@ func WithBuild(command, outDir string) Option { return option("build", command, 
 // during tako dev instead of rebuilding on change.
 func WithDevProxy(url string) Option { return option("dev_proxy", url) }
 
-// WithDomain maps a custom domain (with managed TLS) to the site.
+// WithDomain answers on a custom domain (with managed TLS) instead of only
+// the generated run.app URL. It is a SERVICE-level option: declare it on any
+// one of a service's handlers — Site, API, or Page — and the whole service
+// answers there. One service, one domain.
 func WithDomain(domain string) Option { return option("domain", domain) }
 
 // WithRedirect adds a permanent redirect from one site path to another.
 func WithRedirect(from, to string) Option { return option("redirect", from, to) }
-
-// WithCDN serves the site through a load balancer and CDN instead of
-// embedding it in the app service. Opt-in: it provisions billable
-// infrastructure.
-func WithCDN() Option { return option("cdn") }
 
 // WithTrustedHTML disables markdown sanitization for content that is fully
 // trusted (never user-supplied). Sanitized output is the default because

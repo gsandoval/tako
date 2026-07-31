@@ -99,13 +99,22 @@ site.Render needs templates/layout.html (the shell every page renders inside) �
 
 ## Not yet
 
-Two options exist to be honest about the edge, and fail analysis
-until their slices land:
+One option exists to be honest about the edge, and fails analysis
+until its slice lands:
 
 ```
 tako.WithDomain is not available yet — custom domains (mapping + TLS + HSTS) are their own slice (tako/not-yet)
-tako.WithCDN is not available yet — bucket + Cloud CDN serving is its own when-scale-justifies slice (tako/not-yet)
 ```
 
-v0 embeds every site in the app service's binary; `WithCDN` is the
-planned upgrade when scale justifies billable serving infrastructure.
+Every site is embedded in the app service's binary — one service, one
+URL — so a site's static assets and its dynamic handlers always answer
+on the same origin.
+
+There is no `WithCDN`. It was removed in U1a once the custom-domain
+research settled on Cloud Run domain mappings rather than a load
+balancer: with no balancer there is nothing to switch on, and an option
+that cannot be implemented is worse than one that does not exist. If
+you need edge caching, `docs/domain-options.md` compares the two paths
+tako has designed but not shipped (a global external Application Load
+Balancer, and Firebase Hosting) and names the conditions that would
+trigger either.

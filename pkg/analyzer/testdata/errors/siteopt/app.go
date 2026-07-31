@@ -6,4 +6,4 @@ import (
 	"github.com/gsandoval/tako"
 )
 
-var site = tako.Site("./web", tako.WithTTL(time.Minute), tako.WithCDN())
+var site = tako.Site("./web", tako.WithTTL(time.Minute), tako.WithSingleflight())

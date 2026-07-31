@@ -8,9 +8,10 @@ import (
 
 // Site declares the app's web-serving story rooted at dir: static assets,
 // templates (in dir/templates), frontend builds (WithBuild, WithDevProxy),
-// caching and security headers, domains, and redirects. v0 embeds the site
-// in the app service's binary; WithCDN upgrades serving when scale
-// justifies it.
+// caching and security headers, and redirects. The site is embedded in the
+// app service's binary — one service, one URL — so a site's static assets
+// and its dynamic handlers always answer on the same origin. WithDomain puts
+// that origin on a custom domain.
 func Site(dir string, opts ...Option) *SiteHandle {
 	return &SiteHandle{dir: dir, opts: opts}
 }

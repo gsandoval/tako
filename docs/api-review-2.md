@@ -18,9 +18,21 @@ publication.
 | `Job`/`JobHandler`/`Run`, `WithParallel`, `Singleton` | W10 | shop |
 | `WithProfile` | R0 (honored at last) | gallery |
 
-Still deliberate not-yets, shipping as positioned errors with slice
-pointers (honest-by-design, reviewed and kept): `WithDomain`,
-`WithCDN`.
+Still a deliberate not-yet, shipping as a positioned error with a slice
+pointer (honest-by-design, reviewed and kept): `WithDomain`.
+
+**Post-review removal (U1a, 2026-07-31): `WithCDN` is RETIRED.** U1's
+research settled that tako's custom-domain story rides Cloud Run domain
+mappings, not a load balancer (docs/domain-options.md has the full
+comparison). With no balancer there is nothing for `WithCDN` to switch,
+and carrying a permanent not-yet on a reviewed symbol would be a
+standing lie. Removing an exported symbol is an API change, so it took
+its own task and its own `sdk_lock` regeneration. User code calling it
+now fails to compile with Go's own `undefined: tako.WithCDN` — the
+honest signal for a symbol that no longer exists; no analyzer rule
+pretends otherwise. `WithDomain` in the same pass is re-documented from
+a site-level option to a SERVICE-level one (its signature is unchanged,
+so the lock's row is untouched).
 
 ## Six-rules spot re-check
 

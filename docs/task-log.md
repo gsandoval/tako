@@ -6901,3 +6901,271 @@ Order: U1 → U2 → U3 → U4 (U4 is a writing slice; it can interleave).
 domain you control — tell me which domain to script the walk
 against (or approve with the agent-side gate only and walk DNS at
 your own pace).**
+
+## U1 — revised DX proposal: WithDomain on Cloud Run domain mappings (2026-07-31) — AWAITING APPROVAL
+
+Stage 7 was approved with U1 specified as a global external
+Application Load Balancer. **The user asked, before any code, what the
+$18/mo actually buys and what the alternatives are.** The research
+that followed changed the answer, so this supersedes the U1 section of
+the Stage 7 proposal. The stage's own rule — "STOP between slices only
+if something contradicts the approved proposal" — is why this stops.
+
+### What the research found
+
+Four options front a Cloud Run service. All four serve static AND
+dynamic, because in tako a Site is EMBEDDED IN THE SERVICE BINARY
+(W1): `examples/blog` is one package, one service, Hugo static in
+`site/public` plus Page handlers at `/frag/comments`. There is no
+separate static origin to route to.
+
+| option | standing | per GB | CDN | verdict |
+|---|---|---|---|---|
+| global external ALB + serverless NEG | **$18.25/mo** | $0.008/GiB processing + egress; CDN $0.08/GiB + $0.0075/10k lookups | real switch | Google's recommendation; only path to Cloud Armor / IAP / path routing / static IP |
+| Firebase Hosting rewrite | $0 | 360 MB/day free, then **$0.15/GB** | included, always on | GA, but ~6 REST calls, globally-unique site IDs, v1beta1 customDomains, Firebase ToS |
+| **Cloud Run domain mappings** | **$0** | Cloud Run egress **~$0.085–0.12/GB** | none | one REST call, auto certs — Google labels it preview |
+| Cloudflare in front | $0 | free tier | yes | outside GCP; unprovisionable by a GCP-only reconciler. Recipe only |
+
+Corrections to the approved proposal's premises, in order of how much
+they moved the decision:
+
+1. **The $18.25 is real and is a floor.** GCP charges a FLAT
+   $0.025/hour covering the FIRST 5 forwarding rules, not per rule —
+   so the HTTP→HTTPS redirect rule rides free, and the figure is
+   $18.25/mo whether the blog serves one request or none.
+2. **Firebase Hosting does not save money; it costs slightly more.**
+   Hosting bills transfer at $0.15/GB whether the response was an edge
+   cache hit or a Cloud Run passthrough. Cloud Run's own egress is
+   ~$0.085–0.12/GB and its free tier (2M requests, 180k vCPU-s, 360k
+   GiB-s/month) absorbs v0-scale compute entirely. Hosting buys
+   latency and fewer instance-seconds, NOT a smaller bill. This
+   inverted the original recommendation.
+3. **Neither the ALB nor Firebase can lock down Cloud Run ingress.**
+   Serverless NEG backends and Hosting rewrites BOTH require the
+   service to allow unauthenticated invocations. Handoff item 3 (the
+   `internal-and-cloud-load-balancing` hardening) is therefore moot in
+   every option — deleted from scope, not deferred.
+4. **Firebase works fine on a project tako deployed itself.** "A
+   Firebase project IS a Google Cloud project with additional
+   Firebase-specific configurations enabled"; adding Firebase is
+   additive (a `firebase:enabled` label, shared IAM/billing). Not a
+   blocker — just not a reason.
+
+### Decisions (user, 2026-07-31)
+
+- **Backend: Cloud Run domain mappings.** Cheapest per GB, one
+  provision kind, certs auto-issued and auto-renewed, and one mapping
+  per service is exactly the shape the chosen scope wants.
+- **Scope: any service** — sites and API-only alike.
+- **`WithCDN` is RETIRED from the SDK**, not deferred. With no load
+  balancer there is nothing for it to switch, and a permanent not-yet
+  on a reviewed symbol is a lie we would carry forever.
+
+### The preview risk, and why it is contained
+
+Google says domain mappings are *"not production-ready and are not
+supported at General Availability… not recommended for production
+services"* (latency), limited to ~10 regions (asia-east1,
+asia-northeast1, asia-southeast1, europe-north1, europe-west1,
+europe-west4, us-central1, us-east1, us-east4, us-west1 — tako's
+default us-central1 is in), root path only, 64-char limit, no
+wildcard, TLS 1.0/1.1 not disableable.
+
+`tako.WithDomain("blog.example.com")` is a DECLARATION OF INTENT.
+Whether tako satisfies it with a domain mapping, a Hosting site, or a
+balancer is tako's business. If Google retires domain mappings, the
+applier is swapped and users redeploy — their code never changes.
+That is the analyzer-plus-reconciler design doing its job, and it is
+the whole reason the cheap option is not a trap.
+
+**Honesty inversion:** the approved proposal called for a cost ⚠. There
+is no standing money here, so a money ⚠ would be noise. The real cost
+is MATURITY, so that is what the plan prints (text below).
+
+### Two tasks, in order
+
+**U1a — API task (its own commit, reopens api-review-2).** Retire
+`WithCDN` from options.go; re-document `WithDomain` as a SERVICE-level
+option rather than a site-level one. Regenerate testdata/sdk_lock.golden.
+Update docs/api-review-2.md (the not-yet-pointer row), reference/site.md,
+spec §2.11 + the §246–257 sample, and the `siteopt` fixture (which
+currently uses WithCDN as its bad input). Existing user code calling
+`tako.WithCDN()` stops compiling with Go's own `undefined:
+tako.WithCDN` — the honest signal for a deleted symbol; no analyzer
+rule pretends otherwise.
+
+**U1 — the feature.** `WithDomain` accepted on `tako.Site`,
+`tako.API`, and `tako.Page`, attaching to the OWNING SERVICE — the
+same propagation `WithProfile` already uses (examples/gallery/app.go:79
+declares it on a Worker and it lands on the service). **No new
+exported symbol is required by the widened scope.**
+
+### User code
+
+```go
+// examples/blog — a site's service gets the domain
+var site = tako.Site("./site/public",
+    tako.WithBuild("hugo --minify", "./site/public"),
+    tako.WithDomain("blog.example.com"))
+
+// examples/shortlink — an API-only service, no Site anywhere
+var Create = tako.API("POST /links", create, tako.WithDomain("api.example.com"))
+```
+
+### CLI transcript
+
+```
+tako deploy · blog → tako-test-02 (us-central1)
+
+  analyzing    1 service, 1 site, 3 handlers, 1 entity
+  generating   .tako/gen
+  preflight    ok (run, iam, artifactregistry, storage, datastore)
+  building     1 service image(s), digest-pinned
+  plan
+    + create  domain mapping        blog.example.com → blog
+    ~ update  run service           blog
+  ⚠ blog.example.com uses a Cloud Run domain mapping — Google ships
+    these as preview and does not recommend them for production
+    (latency); no standing charge. Moving to a load balancer later is
+    a tako change, not a change to your code.
+
+  lease        acquired (memo@host on tako-test-02/blog/prod)
+  ⛅ image      us-central1-docker.pkg.dev/…/blog@sha256:…
+  ✓ blog → https://blog-1234567890.us-central1.run.app
+
+  domain  blog.example.com  awaiting DNS
+    create these records at your registrar:
+      blog.example.com  A     216.239.32.21
+      blog.example.com  A     216.239.34.21
+      blog.example.com  A     216.239.36.21
+      blog.example.com  A     216.239.38.21
+    then re-run tako deploy — the certificate provisions once the
+    records resolve (usually ~15 minutes, up to 24 hours).
+```
+
+Second run, records in place:
+
+```
+  domain  blog.example.com  certificate ACTIVE → https://blog.example.com
+```
+
+Deploys stay stateless and resumable: every run re-reads
+`status.conditions` and narrates where the certificate actually is.
+
+### Error texts
+
+Analyzer (`path:line:col: message (tako/rule-id)`):
+
+```
+app.go:12:24: tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)
+app.go:12:24: tako.WithDomain needs a fully-qualified domain — "blog" has no dot (tako/domain)
+app.go:19:31: package blog already declares the domain "blog.example.com" (app.go:12) — one service answers on one domain (tako/domain-conflict)
+```
+
+Deploy-time (region is a flag, not a declaration, so preflight owns it):
+
+```
+  ✗ Cloud Run domain mappings are not available in europe-west2.
+    Supported: asia-east1, asia-northeast1, asia-southeast1,
+    europe-north1, europe-west1, europe-west4, us-central1, us-east1,
+    us-east4, us-west1. Deploy to one of these, or drop
+    tako.WithDomain and use the run.app URL.
+```
+
+### Cloud errors & permissions
+
+**Manual steps (two, both preflight-as-UX).** Domain OWNERSHIP
+verification is required once per base domain per project, and it is
+genuinely interactive (Search Console) — tako never fakes it:
+
+```
+  ✗ blog.example.com is not verified for tako-test-02.
+    Verify the base domain once: gcloud domains verify example.com
+    (opens Search Console), then re-run tako deploy.
+```
+
+Then DNS, as transcribed above. Both are narrated, both are resumable.
+
+**Failure modes, distinct texts** (per the C-phase rule):
+- **401** → the standing ADC text from `Classify`.
+- **403 on `run.domainmappings.create`** → `you lack permission to
+  create the domain mapping on <project> — grant: … --role
+  roles/run.admin` (no new API: domain mappings live on
+  `run.googleapis.com`, already in `preflightAPIs`, and `run.admin`
+  is already a preflight perm — **no preflight gap to add**).
+- **403 SERVICE_DISABLED** → the existing `disabledAPI` path; `List`
+  gets the same treatment as every other observer so a destroy of an
+  unrelated app never breaks.
+- **409 already exists / mapped elsewhere** → `blog.example.com is
+  already mapped in this project to <other> — a domain answers for one
+  service; remove the other mapping or pick another name`. tako never
+  sets `forceOverride`: silently stealing another service's domain is
+  exactly the kind of destruction §4.6a forbids.
+- **404 on the route** → cannot happen by construction: the mapping
+  kind applies AFTER `KindRunService` (see apply order below).
+
+**Runtime grants: none.** A domain mapping grants nothing and is
+granted nothing — no `grants.go` change, no new target type.
+
+### Provisioner shape
+
+One kind, `KindDomainMapping`, appended to `reconcileOrder` after
+`KindSchedulerJob`; destroy reverses. In deploy.go's explicit Apply
+chain it lands AFTER `KindRunService` (the mapping names a live route;
+this is the T3 ordering lesson applied) and needs no grant pass.
+
+`pkg/provision/gcp/domains.go` — List/Create/Update/Delete + Kind()
+against
+`https://<region>-run.googleapis.com/apis/domains.cloudrun.com/v1/namespaces/<project>/domainmappings`.
+`metadata.labels` IS supported on this resource, so the managed marker
+is REAL tako labels — no description marker, no name-suffix hack.
+Body: `{apiVersion: domains.cloudrun.com/v1, kind: DomainMapping,
+metadata: {name: <domain>, namespace: <project>, labels: …},
+spec: {routeName: <service>, certificateMode: AUTOMATIC}}`. LiveHash
+reproduces `{"routeName": …, "certificateMode": …}` exactly.
+`spec.routeName` is immutable in practice → re-pointing a domain at a
+different service classifies as **ClassReplace**, so the plan says so
+before anything happens. Not a long-running operation: no compute
+operations waiter is needed, which deletes a whole chunk of the
+approved plan's machinery.
+
+### Examples and the gate
+
+**Deviation, stated:** examples stay domain-free in the tree. A domain
+is not inert — it demands a real DNS record and a verified base domain,
+and `go test ./...` plus every routine deploy would drag both. The
+declaration is covered by analyzer goldens and a plan-rendering test;
+`validate/domain.md` adds `tako.WithDomain` to blog for the walk and
+removes it after, the way validate scripts already parameterize on
+`BASE=<cloud URL>`. This trades a literal reading of "no feature
+without an example demanding it" for not wiring a manual DNS step into
+the acceptance suite.
+
+`validate/domain.md`, parameterized on `<your-domain>`:
+1. Agent-side: goldens (both new rules), plan rendering with the new
+   kind, the maturity ⚠, the unsupported-region refusal, the
+   unverified-domain refusal, ClassReplace on re-pointing, destroy
+   order and clean removal.
+2. Live: verify → deploy → the A records printed → user creates them →
+   re-run → certificate ACTIVE → `curl https://<your-domain>` →
+   destroy leaves tako-test-02 pristine.
+
+**Everything except certificate-ACTIVE is validatable agent-side with
+a placeholder domain** (the mapping sits `awaiting DNS`; document that
+a never-verified mapping still deletes cleanly).
+
+### Recorded as designed-but-unshipped (Discovered work)
+
+- **The load balancer path** — full object list, $18.25/mo floor, and
+  what it uniquely buys (Cloud Armor, IAP, path routing across
+  services, static IP, wildcard certs). Trigger: an example needs a
+  WAF, or one domain fanning across several services.
+- **Firebase Hosting path** — GA rather than preview, edge CDN
+  included; trigger: domain mappings are retired, or an example needs
+  edge caching that Cloud Run headers cannot deliver.
+- Both go in `docs/domain-options.md`, linked from reference/site.md,
+  so the swap is a decision with a written basis, not a rediscovery.
+
+**STOP — awaiting approval of this revised U1 (backend, WithCDN
+retirement, and the examples deviation), plus the domain to script
+validate/domain.md against.**
