@@ -1,4 +1,4 @@
-module notyet
+module authprovider
 
 go 1.26
 

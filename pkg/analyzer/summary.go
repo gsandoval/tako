@@ -15,7 +15,11 @@ func Summary(g *AppGraph) string {
 		if svc.Footprint != nil {
 			foot = " + footprint (" + svc.Footprint.String() + ")"
 		}
-		fmt.Fprintf(&b, "  service %s (package %s, profile %s%s)\n", svc.Name, svc.Package, svc.Profile, foot)
+		domain := ""
+		if svc.Domain != "" {
+			domain = ", domain " + svc.Domain
+		}
+		fmt.Fprintf(&b, "  service %s (package %s, profile %s%s%s)\n", svc.Name, svc.Package, svc.Profile, foot, domain)
 		for _, h := range g.Handlers {
 			if h.Service != svc.Name {
 				continue

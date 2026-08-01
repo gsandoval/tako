@@ -10,15 +10,9 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// siteOptions is the option set tako.Site accepts in W1; the rest of
-// §2.11's surface names its future slice instead of failing blind.
-var siteNotYet = map[string]string{
-	"WithDomain": "custom domains (mapping + TLS + HSTS) are their own slice",
-}
-
 // extractSite validates one tako.Site declaration: the served directory
-// (a string constant), and the W1 options — SPA(), WithBuild(cmd, out),
-// WithDevProxy(url), WithRedirect(from, to).
+// (a string constant), and its options — SPA(), WithBuild(cmd, out),
+// WithDevProxy(url), WithRedirect(from, to), WithDomain(fqdn).
 func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" || len(call.Args) < 1 {
 		return nil
@@ -54,16 +48,8 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		if !isOpt || optCall == nil {
 			fail(&Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML; got %s", describeExpr(opt)),
+				Msg:  fmt.Sprintf("tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain; got %s", describeExpr(opt)),
 				Rule: "invalid-option",
-			})
-			continue
-		}
-		if why, ok := siteNotYet[optName]; ok {
-			fail(&Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not available yet — %s", optName, why),
-				Rule: "not-yet",
 			})
 			continue
 		}
@@ -100,6 +86,14 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 			if u, ok := constArg(0); ok {
 				r.DevProxy = u
 			}
+		case "WithDomain":
+			// The claim rides the site resource; applyDomains projects it
+			// onto the service that mounts the site.
+			if d := domainArg(dir, pkg, opt, errs); d != "" {
+				r.Domain = d
+			} else {
+				bad = true
+			}
 		case "WithRedirect":
 			from, ok1 := constArg(0)
 			to, ok2 := constArg(1)
@@ -109,7 +103,7 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		default:
 			fail(&Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML)", optName),
+				Msg:  fmt.Sprintf("tako.%s is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain)", optName),
 				Rule: "invalid-option",
 			})
 		}

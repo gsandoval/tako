@@ -1,0 +1,1 @@
+app.go:9:2: the site declares the domain "blog.example.com", but no service in this package serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API or Page route here, or move the domain to the package that has one (tako/domain-unreachable)

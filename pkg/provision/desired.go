@@ -326,6 +326,29 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		})
 	}
 
+	// Custom domains (U1): one Cloud Run domain mapping per service that
+	// declared WithDomain. The domain is the object's identity — it is
+	// globally unique by construction, so it takes no env prefix; two
+	// environments wanting the same name is a contradiction the user must
+	// resolve, not one tako should paper over by inventing a name.
+	for _, svc := range g.Services {
+		if svc.Domain == "" {
+			continue
+		}
+		objs = append(objs, Object{
+			Kind: KindDomainMapping,
+			Name: svc.Domain,
+			Spec: map[string]any{
+				"routeName": cfg.Name(svc.Name),
+				// AUTOMATIC is the only mode tako offers: a managed
+				// certificate issued and renewed by Google. Bringing your
+				// own certificate is a key-management story tako does not
+				// have (spec §4.6a — tako never holds user secrets).
+				"certificateMode": "AUTOMATIC",
+			},
+		})
+	}
+
 	// Cloud Scheduler jobs (T2): one per cron handler, firing the
 	// service's dispatch route with an OIDC token as the service's own
 	// SA. The schedule is the declaration's, rendered as unix-cron.

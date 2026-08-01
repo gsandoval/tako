@@ -164,6 +164,11 @@ func runDeploy(args []string) error {
 		for _, svc := range graph.Services {
 			u := cfg.RunURL(svc.Name)
 			hosts = append(hosts, strings.TrimPrefix(u, "https://"))
+			// A custom domain is the host the browser actually shows, so
+			// it is the origin the sign-in popup authorizes against.
+			if svc.Domain != "" {
+				hosts = append(hosts, svc.Domain)
+			}
 		}
 		authClient, err := client.EnsureAuthClient(ctx, hosts, providers, !t.planOnly, sayf)
 		if err != nil {
@@ -192,6 +197,7 @@ func runDeploy(args []string) error {
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	tasks := &gcp.TasksQueues{C: client}
+	domains := &gcp.DomainMappings{C: client, Labels: cfg.Labels(), Say: sayf}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -203,7 +209,7 @@ func runDeploy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
 	if err != nil {
 		return err
 	}
@@ -211,13 +217,18 @@ func runDeploy(args []string) error {
 	fmt.Printf("  plan\n%s", indentPlan(plan.Render()))
 	warnCallEdges(graph)
 	warnFootprints(graph)
+	warnDomains(graph)
 
 	if t.planOnly {
 		return nil
 	}
 	if !plan.Changed() {
 		fmt.Printf("\n✓ no changes (%s)\n", time.Since(start).Round(time.Second))
-		return nil
+		// A converged deploy is exactly the run the DNS instructions tell
+		// you to make ("re-run tako deploy"), so it must still report
+		// where the certificate got to — the mapping is unchanged, its
+		// STATUS is not.
+		return narrateDomains(ctx, graph, domains)
 	}
 	// §4.6a "plan before apply": anything beyond additive/in-place —
 	// replaces, rename suspects — waits for a human unless --yes (CI).
@@ -238,7 +249,7 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription, provision.KindTasksQueue), desired, applier); err != nil {
@@ -302,6 +313,12 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindSchedulerJob), desired, applier); err != nil {
 		return err
 	}
+	// Domain mappings last: a mapping names a live run service as its
+	// route, and a route that does not exist yet is a 404 with a
+	// misleading shape (the T3 ordering lesson, one kind over).
+	if err := provision.Apply(ctx, plan.Filter(provision.KindDomainMapping), desired, applier); err != nil {
+		return err
+	}
 
 	fmt.Println()
 	var liveHosts []string
@@ -326,6 +343,9 @@ func runDeploy(args []string) error {
 		if _, err := client.EnsureAuthClient(ctx, liveHosts, nil, true, sayf); err != nil {
 			return err
 		}
+	}
+	if err := narrateDomains(ctx, graph, domains); err != nil {
+		return err
 	}
 	if t.canary > 0 {
 		fmt.Println()
@@ -409,6 +429,12 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			grantText = strings.Join(grants, ", ")
 		}
 		ingress := "public ingress"
+		if svc.Domain != "" {
+			// A domain mapping does not close the run.app door — it adds a
+			// second one. Saying "public at blog.example.com" alone would
+			// read as a restriction that is not there.
+			ingress = "public ingress on " + svc.Domain + " AND its run.app URL (a domain mapping adds an address, it does not close one)"
+		}
 		if !public[cfg.Name(svc.Name)] {
 			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
 			if svc.Job {
@@ -501,6 +527,13 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 			n.Scheduler = true
 		}
 	}
+	// Custom domains (U1): the region must support mappings and each
+	// name must be verified — preflight names both before anything runs.
+	for _, svc := range graph.Services {
+		if svc.Domain != "" {
+			n.Domains = append(n.Domains, svc.Domain)
+		}
+	}
 	// Sign edges mean the runtime mints signed URLs via signBlob.
 	for _, e := range graph.Edges {
 		if e.Kind == "resource" && e.Verb == "sign" {
@@ -570,6 +603,74 @@ func warnFootprints(graph *analyzer.AppGraph) {
 				svc.Name, r.MinInstances)
 		}
 	}
+}
+
+// warnDomains states the cost of a custom domain at DECISION time. The
+// cost is not money — a Cloud Run domain mapping has no standing charge,
+// which is why tako uses one (docs/domain-options.md prices the
+// alternatives) — it is MATURITY: Google ships mappings as preview and
+// does not recommend them for production. Saying nothing would be the
+// dishonest choice; a money ⚠ would be a false one.
+func warnDomains(graph *analyzer.AppGraph) {
+	for _, svc := range graph.Services {
+		if svc.Domain == "" {
+			continue
+		}
+		fmt.Printf("  ⚠ %s answers on a Cloud Run domain mapping — Google ships these as preview and does not recommend them for production (latency); no standing charge. Moving %s to a load balancer later is a tako change, not a change to your code\n",
+			svc.Domain, svc.Name)
+	}
+}
+
+// narrateDomains reports where each custom domain actually is, every
+// deploy: the records still to create, or the live URL once the
+// certificate is issued. Deploys are stateless and resumable, so this
+// re-reads live status rather than remembering anything — a re-run after
+// DNS propagates picks up exactly where the certificate got to.
+func narrateDomains(ctx context.Context, graph *analyzer.AppGraph, domains *gcp.DomainMappings) error {
+	for _, svc := range graph.Services {
+		if svc.Domain == "" {
+			continue
+		}
+		// Cloud Run fills status.resourceRecords a beat AFTER the create
+		// returns, so a straight read right after applying comes back
+		// empty — on the very first deploy, the one run that most needs
+		// the records printed. Wait briefly for them.
+		var st *gcp.Status
+		deadline := time.Now().Add(30 * time.Second)
+		for {
+			var err error
+			if st, err = domains.Status(ctx, svc.Domain); err != nil {
+				return err
+			}
+			if st.Ready || len(st.Records) > 0 || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(2 * time.Second)
+		}
+		switch {
+		case st.Ready:
+			fmt.Printf("\n  domain  %-24s certificate ACTIVE → https://%s\n", svc.Domain, svc.Domain)
+		case len(st.Records) > 0:
+			fmt.Printf("\n  domain  %-24s awaiting DNS\n", svc.Domain)
+			// Record names come back RELATIVE to the zone ("blog", not
+			// "blog.ker.gs"), which is what a registrar's host field wants
+			// — printing the FQDN would get "blog.ker.gs.ker.gs" created.
+			// So name the zone instead of rewriting the records.
+			fmt.Printf("    create these records in the DNS zone for %s:\n", gcp.ZoneOf(svc.Domain))
+			for _, r := range st.Records {
+				fmt.Printf("      %-28s %-6s %s\n", r.Name, r.Type, r.Data)
+			}
+			fmt.Printf("    then re-run tako deploy — the certificate provisions once the\n")
+			fmt.Printf("    records resolve (usually ~15 minutes, up to 24 hours).\n")
+		default:
+			reason := st.Reason
+			if reason == "" {
+				reason = "provisioning"
+			}
+			fmt.Printf("\n  domain  %-24s certificate %s — re-run tako deploy to check again\n", svc.Domain, reason)
+		}
+	}
+	return nil
 }
 
 // runLogs is `tako logs [service] [--since 15m] [--project …]`.
@@ -667,6 +768,7 @@ func runDestroy(args []string) error {
 	jobs := &gcp.RunJobs{C: client, Labels: cfg.Labels()}
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	tasks := &gcp.TasksQueues{C: client}
+	domains := &gcp.DomainMappings{C: client, Labels: cfg.Labels(), Say: sayf}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -678,7 +780,7 @@ func runDestroy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
 	if err != nil {
 		return err
 	}
@@ -753,6 +855,9 @@ func runDestroy(args []string) error {
 	if len(needsOf(graph, t.env).AuthProviders) > 0 {
 		for _, svc := range graph.Services {
 			authHosts = append(authHosts, strings.TrimPrefix(cfg.RunURL(svc.Name), "https://"))
+			if svc.Domain != "" {
+				authHosts = append(authHosts, svc.Domain)
+			}
 			if u, err := runs.URL(ctx, cfg.Name(svc.Name)); err == nil {
 				authHosts = append(authHosts, strings.TrimPrefix(u, "https://"))
 			}
@@ -762,6 +867,7 @@ func runDestroy(args []string) error {
 	deleters := map[provision.Kind]interface {
 		Delete(ctx context.Context, name string) error
 	}{
+		provision.KindDomainMapping:      domains,
 		provision.KindSchedulerJob:       scheds,
 		provision.KindTasksQueue:         tasks,
 		provision.KindPushSubscription:   subs,

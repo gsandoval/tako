@@ -49,7 +49,7 @@ Most setup is automated: APIs probed by preflight, Identity Platform
 initialized, the email provider enabled when declared, sign-in
 domains registered per deploy.
 
-**The one genuinely manual step** — only when your app declares
+**A genuinely manual step** — only when your app declares
 `tako.WithGoogle()` — is enabling the Google provider, because Google
 has no public API for creating external OAuth clients:
 
@@ -63,6 +63,26 @@ placeholder client IDs before your users ever see `invalid_client`.
 Secrets are the other human input: `tako.Secret("name")` must exist
 in Secret Manager; preflight prints the exact command.
 
+**Custom domains add two more**, and only when you declare
+`tako.WithDomain(...)` — both because they are yours to prove and yours
+to publish, not tako's to fake:
+
+1. **Ownership**, once per project. Preflight refuses until it's done:
+   `gcloud domains verify example.com` (it opens Search Console).
+   Verifying the parent covers its subdomains.
+2. **DNS.** The deploy prints the exact records, relative to your zone
+   the way a registrar's host field wants them, then tells you to re-run.
+   Certificates issue once the records resolve — usually ~15 minutes,
+   occasionally up to 24 hours. Deploys are stateless and resumable, so
+   re-running just reports where the certificate got to; nothing is lost
+   by checking, and no state is kept between runs.
+
+A domain mapping ADDS an address — the `run.app` URL keeps working, and
+the security summary says so plainly. What tako deliberately does NOT
+provision here (a load balancer, edge CDN), what it would cost, and what
+would make tako change mechanisms are all in
+[domain-options.md](../domain-options.md).
+
 ## What destroy deletes — and deliberately leaves
 
 `tako destroy` (typed app name) deletes everything it created for the
@@ -73,3 +93,11 @@ user accounts, Secret Manager secrets, enabled APIs, the Datastore
 database, and the browser API key. Preview environments
 (`--env pr-42`) destroy only their own slice and never shared
 machinery.
+
+Custom domains follow the same line. Destroy removes the domain MAPPING
+— first of all, before the service it points at stops existing — but
+never touches your **DNS records** or your **domain verification**: both
+live at your registrar and in your Google account, not in the project
+tako manages. A mapping that never resolved still deletes cleanly, so an
+abandoned domain leaves nothing behind on the cloud side; the dangling
+record at your registrar is yours to remove.

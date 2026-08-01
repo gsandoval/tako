@@ -1,10 +1,8 @@
-package notyet
+package authprovider
 
 import "github.com/gsandoval/tako"
 
 var auth = tako.Auth()
-
-var site = tako.Site("./web", tako.WithDomain("shop.example.com"))
 
 var Ping = tako.API("GET /api/ping", ping)
 

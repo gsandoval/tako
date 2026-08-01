@@ -28,6 +28,7 @@ const (
 	KindIamGrants          Kind = "iam grants"
 	KindPushSubscription   Kind = "push subscription"
 	KindSchedulerJob       Kind = "scheduler job"
+	KindDomainMapping      Kind = "domain mapping"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
@@ -36,11 +37,12 @@ const (
 // published into a subscriber-less topic (Pub/Sub drops those); grants
 // after services (their targets must exist) and push subscriptions last
 // (they deliver into services whose IAM must already admit the push
-// identity). Destroy walks it backwards.
+// identity); domain mappings last of all, because a mapping names a live
+// run service as its route. Destroy walks it backwards.
 var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
 	KindBucketNotification, KindPullSubscription, KindTasksQueue, KindRunService, KindRunJob,
-	KindIamGrants, KindPushSubscription, KindSchedulerJob,
+	KindIamGrants, KindPushSubscription, KindSchedulerJob, KindDomainMapping,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.
@@ -211,6 +213,12 @@ func classify(d Object, live Observed) (Class, string) {
 		if want := fmt.Sprint(d.Spec["topic"]); live.Detail["topic"] != "" && live.Detail["topic"] != want {
 			return ClassReplace, fmt.Sprintf("topic is immutable (%s → %s) — delete+create; in-flight messages on the old subscription are lost",
 				live.Detail["topic"], want)
+		}
+	}
+	if d.Kind == KindDomainMapping {
+		if want := fmt.Sprint(d.Spec["routeName"]); live.Detail["routeName"] != "" && live.Detail["routeName"] != want {
+			return ClassReplace, fmt.Sprintf("the mapped service is immutable (%s → %s) — delete+create; the domain stops answering until the new certificate provisions, which can take up to 24 hours",
+				live.Detail["routeName"], want)
 		}
 	}
 	return ClassInPlace, ""

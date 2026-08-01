@@ -49,6 +49,11 @@ type Needs struct {
 	// SignBlob is set when any handler mints signed URLs (sign edges):
 	// the runtime calls the IAM Credentials API, which must be enabled.
 	SignBlob bool
+	// Domains are the custom domains the app declares (WithDomain).
+	// Cloud Run domain mappings exist in a subset of regions, and a
+	// domain must be verified as YOURS once per project before it can be
+	// mapped — both are gaps preflight names before anything is built.
+	Domains []string
 	// AuthProviders are the sign-in providers the app declares
 	// (tako.Auth options): preflight verifies Identity Platform is
 	// initialized and each declared provider configured, printing the
@@ -150,6 +155,29 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":lookup", probe, nil)
 		if ae, ok := err.(*apiError); ok && (ae.Status == http.StatusNotFound || strings.Contains(ae.Message, "database")) {
 			gaps = append(gaps, fmt.Sprintf("no Datastore database in %s — create it: gcloud firestore databases create --location=%s --type=datastore-mode --project %s", c.Project, c.Region, c.Project))
+		}
+	}
+
+	// Custom domains: the region must support mappings at all, and each
+	// domain must already be verified as yours. Both fail late and
+	// obscurely at the API otherwise — after images are built and
+	// services are live — so they are named here, before anything runs.
+	if len(needs.Domains) > 0 {
+		if !RegionMaps(c.Region) {
+			gaps = append(gaps, fmt.Sprintf("Cloud Run domain mappings are not available in %s — deploy to one of %s (tako deploy --region <region>), or drop tako.WithDomain and use the run.app URL",
+				c.Region, strings.Join(MappableRegions, ", ")))
+		}
+		// Ownership is proven once per project, in Search Console. If the
+		// listing itself fails we do NOT gate on it: the authoritative
+		// check is at create time, and that error names the same fix.
+		if verified, err := c.verifiedDomains(ctx); err == nil {
+			for _, d := range needs.Domains {
+				if verifiedFor(verified, d) {
+					continue
+				}
+				gaps = append(gaps, fmt.Sprintf("%s is not verified for %s — prove you own it once: gcloud domains verify %s (this opens Search Console), then re-run tako deploy",
+					d, c.Project, verifiableBase(d)))
+			}
 		}
 	}
 

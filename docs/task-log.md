@@ -7169,3 +7169,152 @@ a never-verified mapping still deletes cleanly).
 **STOP — awaiting approval of this revised U1 (backend, WithCDN
 retirement, and the examples deviation), plus the domain to script
 validate/domain.md against.**
+
+## U1a + U1 — implementation and agent-side validation (2026-07-31)
+
+Approved 2026-07-31 with "use a placeholder domain for now".
+
+### U1a (010648d) — WithCDN retired
+
+Symbol deleted from options.go; `WithDomain` re-documented site-level →
+SERVICE-level (signature unchanged, so its sdk_lock row is untouched;
+`WithCDN`'s row is gone). api-review-2 records the post-review removal.
+The `siteopt` fixture used `WithCDN()` as one of its bad inputs and now
+uses `WithSingleflight()`.
+
+**Dead machinery removed with it:** `siteNotYet` held exactly two
+entries, and U1 flips the other one on. An empty map plus its check is a
+`tako/not-yet` rule that can never fire, so the whole mechanism went —
+the T1 honesty standard applied to the analyzer's own code. The `notyet`
+fixture was the ONLY coverage of `tako/auth-provider`, so it was renamed
+to `authprovider` and reduced to that one case rather than deleted.
+
+### U1 — the shape that shipped
+
+`WithDomain` is accepted on `tako.Site`, `tako.API` and `tako.Page`, and
+projected onto the owning SERVICE by `applyDomains` — the same pass
+`applyProfiles` makes for `WithProfile`. That is what lets an API-only
+service have a domain, which was the user's chosen scope, and it needed
+NO new exported symbol.
+
+Four rules, all golden-pinned, all reachable:
+- `tako/domain` — shape only (scheme, port, path, trailing dot, no dot,
+  wildcard, uppercase, empty/malformed label, illegal character, >253).
+  Backend limits (the 64-char cap, the region list) are deploy's, so the
+  analyzer stays backend-agnostic.
+- `tako/domain-conflict` — one service, one domain.
+- `tako/domain-unreachable` — a site's domain in a package where nothing
+  serves public traffic.
+- `tako/const-name` — a non-constant argument.
+
+**A rule was redesigned mid-implementation because it was dead code.**
+The first cut refused domains on job and async-only SERVICES — but
+`WithDomain` is only accepted on API/Page/Site, so a worker or job can
+never carry a claim (it fails as `tako/invalid-option` first) and those
+branches could not fire. The genuinely reachable case is a SITE whose
+package has no public service, so `applyDomains` now resolves the site's
+MOUNTING service (codegen's `siteOf` choice) and errors when there is
+none. Shipping an unreachable validator would have been the same
+dishonesty T1 was about.
+
+Provisioning is one kind, `KindDomainMapping`, last in `reconcileOrder`
+(destroy reverses, so it comes off first). `pkg/provision/gcp/domains.go`
+speaks `domains.cloudrun.com/v1` on the REGIONAL run host. Domain
+mappings are Knative-shaped, so the managed marker is REAL LABELS and the
+spec hash a real annotation — no description marker (scheduler.go) and no
+name suffix (tasks.go). `spec.routeName` is immutable and there is no
+update verb, so `Update` is delete+create, classified `ClassReplace` with
+the consequence stated first. tako never sets `forceOverride` (a unit
+test pins that): taking a domain another service holds is the silent
+destruction §4.6a forbids — the 409 explains instead.
+
+### Agent-side validation, live on tako-test-02
+
+`ker.gs` was already verified on the project, so `blog.ker.gs` — a
+subdomain with no DNS behind it — served as the placeholder and exercised
+everything except a green certificate.
+
+**Both preflight gates, live, before anything was built:**
+
+```
+preflight found 2 gap(s):
+  Cloud Run domain mappings are not available in europe-west2 — deploy to one of asia-east1, asia-northeast1, asia-southeast1, europe-north1, europe-west1, europe-west4, us-central1, us-east1, us-east4, us-west1 (tako deploy --region <region>), or drop tako.WithDomain and use the run.app URL
+  blog.example.com is not verified for tako-test-02 — prove you own it once: gcloud domains verify example.com (this opens Search Console), then re-run tako deploy
+```
+
+The verification check reads `run.googleapis.com/v1/projects/<p>/authorizeddomains`
+and is advisory: if the LISTING fails we do not gate on it, because the
+authoritative check is at create time and names the same fix. Verifying a
+parent covers its subdomains.
+
+**Plan** — the mapping plans last, after the run service, with the
+maturity ⚠ and no money ⚠:
+
+```
+    + create  run service blog
+    …
+    + create  domain mapping blog.ker.gs
+    7 creates, 1 updates, 1 skips, 0 orphans
+  ⚠ blog.ker.gs answers on a Cloud Run domain mapping — Google ships these as preview and does not recommend them for production (latency); no standing charge. Moving blog to a load balancer later is a tako change, not a change to your code
+```
+
+**Deployed** (6m44s). Live object read back: labels `tako-app=blog
+tako-env=prod`, annotation `tako-spec-hash=bd1e450d461fea87`, spec
+`{routeName: blog, certificateMode: AUTOMATIC}`, status
+`DomainRoutable=True`, `Ready=Unknown/CertificatePending`, and one
+resource record. Re-deploy: **`skip domain mapping` — no drift**, so
+LiveHash reproduces SpecHash against a real object.
+
+**Security summary, judged:** `public ingress on blog.ker.gs AND its
+run.app URL (a domain mapping adds an address, it does not close one)`.
+Confirmed live: the run.app URL answered 200 throughout; `blog.ker.gs`
+resolved to nothing (000), as a domain with no records must.
+
+**Destroy** listed the mapping, deleted it FIRST, and left the project
+pristine (0 mappings, 0 services). A never-resolved mapping deletes
+cleanly — the documented claim, checked.
+
+### Two UX bugs the walk caught and fixed
+
+1. **The first deploy did not print the DNS records** — the one run that
+   most needs them. Cloud Run populates `status.resourceRecords` a beat
+   AFTER create returns, so the immediate read came back empty and fell
+   through to a bare "certificate provisioning". `narrateDomains` now
+   waits up to 30s for records or readiness.
+2. **A converged re-run printed nothing at all.** `✓ no changes` returned
+   before the narration — breaking the exact instruction the previous run
+   had given ("re-run tako deploy"). The no-change path now narrates too:
+   the mapping is unchanged, its STATUS is not.
+
+A third finding, smaller: Cloud Run returns record names RELATIVE to the
+zone (`blog`, not `blog.ker.gs`), which is what a registrar's host field
+wants — printing the FQDN would get `blog.ker.gs.ker.gs` created. The UI
+names the zone instead of rewriting the records, and an apex domain's
+unlabeled records render as `@`.
+
+### Deviations and decisions recorded
+
+- **Examples stay domain-free** (approved deviation from "no feature
+  without an example demanding it"): a domain demands a real DNS record
+  and a verified base domain, which would drag both through `go test
+  ./...` and every routine deploy. `validate/domain.md` adds the option
+  for the walk and removes it after. Declaration coverage is golden and
+  unit tests, not an example.
+- **Ingress hardening deleted from scope, not deferred**: no option
+  (mapping, Firebase Hosting, or serverless NEG) can restrict Cloud Run
+  ingress — all three require unauthenticated invocations.
+- The custom domain joins the auth authorized-domains set on deploy and
+  is unregistered on destroy, alongside the run.app hosts.
+- `tako gen graph` now names the domain on the service line.
+
+### Discovered work
+
+- **Load balancer and Firebase Hosting: designed, not shipped.**
+  `docs/domain-options.md` carries the full four-way comparison with
+  live pricing, the object list each would provision, their frictions
+  (Firebase's globally-unique 30-char site IDs, its v1beta1
+  customDomains API, its separate ToS; the LB's $18.25/mo floor and
+  compute operations waiter), and the TRIGGER conditions for each.
+- Domain mappings are preview; if Google retires them, the applier is
+  swapped and users redeploy — no user code changes. That indirection is
+  why the cheap option is not a trap, and it is written down.

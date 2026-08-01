@@ -1,2 +1,0 @@
-app.go:5:12: tako.Auth needs at least one provider (WithGoogle, WithEmail) (tako/auth-provider)
-app.go:7:31: tako.WithDomain is not available yet — custom domains (mapping + TLS + HSTS) are their own slice (tako/not-yet)

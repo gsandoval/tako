@@ -43,6 +43,10 @@ type Service struct {
 	// fields inherit the profile's value; the provisioner resolves the
 	// pair via ProfileKnobs.
 	Footprint *Footprint `json:"footprint,omitempty"`
+	// Domain is the custom domain the service answers on (WithDomain),
+	// inherited from its handlers or its site the way Profile is. Empty
+	// means the generated run.app URL is the only address.
+	Domain string `json:"domain,omitempty"`
 }
 
 // Footprint mirrors tako.Footprint into the graph: the fields a handler
@@ -102,6 +106,9 @@ type Resource struct {
 	// TrustedHTML is the markdown posture opt-out (WithTrustedHTML):
 	// raw HTML in markdown passes through unsanitized.
 	TrustedHTML bool `json:"trusted_html,omitempty"`
+	// Domain is a site's WithDomain claim; applyDomains projects it onto
+	// the service that mounts the site.
+	Domain string `json:"domain,omitempty"`
 	// Providers are the sign-in providers of an auth declaration
 	// ("google", "email").
 	Providers []string       `json:"providers,omitempty"`
@@ -141,6 +148,10 @@ type Handler struct {
 	// inherits it — differing claims within one service are an
 	// analysis error (tako/mixed-footprint).
 	Footprint *Footprint `json:"footprint,omitempty"`
+	// Domain is the handler's WithDomain claim; the service inherits it —
+	// differing claims within one service are an analysis error
+	// (tako/domain-conflict).
+	Domain string `json:"domain,omitempty"`
 	// Singleflight marks a Cron declared with tako.WithSingleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.

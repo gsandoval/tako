@@ -355,6 +355,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// then the RESOLVED knobs are validated (runs after applyProfiles
 	// because the base comes from the service's profile).
 	applyFootprints(graph, &errs)
+	// WithDomain is projected the same way (U1): declared on any one of
+	// a service's handlers, or on its site, it addresses the whole
+	// service — which is why a service that nothing public can reach
+	// refuses the claim rather than provisioning a dead name.
+	applyDomains(graph, &errs)
 	var edgeErrs ErrorList
 	var delayedQueues map[string]bool
 	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
