@@ -310,12 +310,6 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			})
 			continue
 		}
-		// The drain share of Cloud Run's fixed 10s shutdown window. The
-		// instance cannot read this anywhere — unlike its region or id, it
-		// is a tako decision — so it rides the env. SERVICES ONLY: a job
-		// has no listener to close and no in-flight request to finish, so
-		// injecting it there would be a knob with nothing behind it.
-		env["TAKO_DRAIN"] = strconv.Itoa(resolved.DrainSeconds)
 		objs = append(objs, Object{
 			Kind: KindRunService,
 			Name: cfg.Name(svc.Name),

@@ -125,20 +125,34 @@ field for it and no `gcloud` flag — so tako divides it instead:
 
 1. The listener closes. New requests go to the new revision; this
    instance accepts nothing more.
-2. Requests **already executing run to completion** — up to `Drain`,
-   7 seconds by default ([footprint.md](footprint.md)).
+2. Requests **already executing run to completion** — the drain ends
+   the moment the last one returns, with a 7-second ceiling for the
+   ones that take their time.
 3. Shutdown hooks flush, which is where the final metrics write goes.
 4. The process exits.
 
-Locally, Ctrl-C does the same with a 2-second drain, and a second
+**Step 2 is adaptive, and there is no setting.** tako watches the
+in-flight count rather than spending a budget: an instance that is idle
+at SIGTERM — the common case, because Cloud Run stops routing to it
+*before* signalling — drains in milliseconds and hands nearly the whole
+window to the flush. A busy one takes what it needs, up to the ceiling,
+and the flush keeps a one-second floor regardless. Time the drain does
+not use is repaid, not lost.
+
+Locally, Ctrl-C does the same with a 2-second ceiling, and a second
 Ctrl-C exits immediately.
 
-A handler that outlives the drain budget is cut off, and says so rather
-than leaving you to find it as a mystery 502:
+A handler that outlives the ceiling is cut off, and says so rather than
+leaving you to find it as a mystery 502:
 
 ```
 tako: 1 request did not finish within 7s — cutting it off (SIGKILL follows in ~3s)
 ```
+
+The count covers HTTP/2 as well as HTTP/1.1. That is not free:
+`http.Server.Shutdown` stops tracking a connection once h2c hijacks it,
+so the drain waits on tako's own counter, which sits above the
+protocol.
 
 Jobs flush on exit too, on both the success and the failure path — a
 failing task's metrics are usually the ones worth having.

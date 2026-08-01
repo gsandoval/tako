@@ -124,6 +124,10 @@ func Serve(h http.Handler) {
 	handler := h2c.NewHandler(track(&live, logRequests(h)), &http2.Server{})
 	srv := &http.Server{Addr: ":" + port, Handler: handler}
 
+	// signalled is when SIGTERM landed — the moment Cloud Run's 10s clock
+	// started. Every budget after this is measured from it, so a drain
+	// that finishes early is repaid to the flush instead of being lost.
+	var signalled time.Time
 	stopping := make(chan os.Signal, 2)
 	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)
 	if os.Getenv("TAKO_DEV_GUARD") == "1" {
@@ -143,6 +147,7 @@ func Serve(h http.Handler) {
 	go func() {
 		defer close(drained)
 		<-stopping
+		signalled = time.Now()
 		go func() {
 			<-stopping
 			fmt.Fprintln(os.Stderr, "tako: second signal — exiting now")
@@ -154,10 +159,8 @@ func Serve(h http.Handler) {
 	err := srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		<-drained // in-flight requests are done; now the hooks may flush
-		budget := flushBudget(drainBudget())
-		start := time.Now()
-		runShutdownHooks(budget)
-		say("⏻ stopped (%s)", "stopped (%s)", time.Since(start).Round(10*time.Millisecond))
+		runShutdownHooks(flushBudget(signalled))
+		say("⏻ stopped (%s)", "stopped (%s)", time.Since(signalled).Round(10*time.Millisecond))
 		return
 	}
 	if err != nil && strings.Contains(err.Error(), "address already in use") {

@@ -8384,3 +8384,127 @@ Cloud Run knob bag": `SessionAffinity` is routing and `HTTP2` is
 protocol, neither of which is compute. The layering still reads fine
 (profile + overrides) and splitting it would be an API change of its
 own, so this is a naming observation, not a proposal.
+
+## Drain removed; shutdown is adaptive — 2026-08-01
+
+User: *"I'm also not interested on having the drain setting. It feels
+very meaningless. Instead, detect when the last connection was closed,
+when the last request was served, give it up to six to seven seconds …
+and then flush metrics in the last two seconds. But if the connections
+have already been completed before that six to seven seconds mark, then
+flush immediately and shut down."*
+
+Right, and the knob was worse than meaningless — it was a number a user
+had to reason about to get behavior tako can just observe.
+
+`Footprint.Drain` is gone: SDK field, `DrainSeconds` in the graph, the
+profile column, the `TAKO_DRAIN` env var, the `drainrange` fixture, and
+`Drain` from the job/singleton refusal texts.
+
+**What replaces it is a watch, not a budget.** `drain` returns the
+moment the in-flight count hits zero — it always did, via `Shutdown`
+plus `waitIdle`; the ceiling was only ever a cap on the wait. So the
+early-exit behavior was already there and the knob was decoration on
+top of it.
+
+What genuinely changed is the **flush budget**, which used to be
+`10s − configured drain − 1s` — a constant derived from a setting
+rather than from what happened. It is now measured from the moment
+SIGTERM landed:
+
+```go
+flushBudget(signalled) = shutdownWindow − time.Since(signalled) − killMargin   (floor 1s)
+```
+
+So an instance that drains in 40ms — the common case, because Cloud Run
+stops routing to an instance BEFORE it signals — hands ~9s to the
+flush instead of the 2s a fixed split would have allowed. Time the
+drain does not use is repaid rather than lost. A drain that runs to the
+7s ceiling still leaves the floor.
+
+Two tests dropped with their subject rather than being kept alive:
+`TestJobsCarryNoServiceOnlyEnv` (there is no service-only env var
+anymore) and `TestProfilesDrainInsideTheWindow` (no per-profile drain).
+Replaced by `TestIdleInstanceDrainsImmediately` and
+`TestFlushGetsWhateverTheDrainDidNotUse`, which test the behavior the
+user actually described.
+
+## PROPOSAL (not scheduled): splitting Footprint by what it configures
+
+Raised by the user after `SessionAffinity` and `HTTP2` landed in
+`Footprint`. Worth doing; needs its own task, because it is an SDK
+change and CLAUDE.md says those are never a side effect.
+
+### The problem
+
+`Footprint`'s doc says it "pins explicit compute values." Today:
+
+| field | what it really is |
+|---|---|
+| `CPU`, `Memory` | compute |
+| `Concurrency`, `MinInstances`, `MaxInstances` | scaling |
+| `CPUAlwaysOn`, `StartupBoost` | compute behavior |
+| `Timeout` | request lifecycle |
+| `SessionAffinity` | routing |
+| `HTTP2` | wire protocol |
+
+The last three are not compute in any reading. The name stopped
+describing the type two slices ago, and the refusal texts show the
+strain — "a job footprint sets CPU, Memory and Timeout only" now has to
+enumerate five separate reasons why the rest do not apply.
+
+### Option A — rename only (cheapest)
+
+`Footprint` → `Shape`, `WithFootprint` → `WithShape`. One type, honest
+name, mechanical migration.
+*Against:* "shape" is vague, and the type keeps growing without a
+principle for what belongs in it. Treats the symptom.
+
+### Option B — split in two (RECOMMENDED)
+
+Two option constructors, mirroring two questions a user actually asks
+separately:
+
+```go
+// How much machine, and how many of them.
+tako.Service(tako.WithFootprint(tako.Footprint{
+    CPU: 2, Memory: "1Gi", Concurrency: 40,
+    MinInstances: 1, MaxInstances: 100,
+    CPUAlwaysOn: tako.On, StartupBoost: tako.On,
+}))
+
+// How requests reach it, and how long they may stay.
+tako.Service(tako.WithTraffic(tako.Traffic{
+    Timeout:         30 * time.Second,
+    SessionAffinity: tako.On,
+    HTTP2:           tako.On,
+}))
+```
+
+`Footprint` keeps its original meaning and its name — no migration for
+the fields people actually set. `Traffic` takes the three that never
+belonged. `Concurrency` stays in `Footprint`: it is how many requests
+fit in one instance, which is sizing, not routing.
+
+*For:* every field's home is derivable from the type name; the
+refusal texts split into two short ones ("a job has no traffic
+settings — nothing serves") instead of one five-clause sentence;
+profiles keep supplying both, so `ProfileKnobs` gains a second table
+and loses nothing.
+*Against:* two options where there was one, and `Timeout` moving is the
+one genuinely breaking change for existing code.
+
+### Option C — three-way (compute / scaling / traffic)
+
+Splits `MinInstances`/`MaxInstances`/`Concurrency` out again into
+`Scaling`. *Against:* CPU and concurrency are chosen together in
+practice — gallery's `Memory: "4Gi", Concurrency: 4` is one decision,
+and splitting it across two options makes the common case worse. Too
+fine.
+
+### Recommendation
+
+**Option B.** Do it as its own task, with `sdk_lock.golden`
+regenerated deliberately, the analyzer's `Footprint` split to match,
+and one gate covering both option constructors. No production apps, so
+`Timeout` can move outright rather than being aliased.

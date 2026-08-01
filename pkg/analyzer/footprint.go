@@ -17,42 +17,21 @@ import (
 // so impossible combinations fail analysis, not deploy.
 var ProfileKnobs = map[string]Footprint{
 	"default": {CPU: 1, Memory: "512Mi", Concurrency: 80, MinInstances: 0, MaxInstances: 20,
-		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOff, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
+		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOff, StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	// Latency buys tail latency three ways: a warm floor, CPU that never
 	// throttles, and a boost on the cold start that a warm floor cannot
 	// prevent. Leaving any of the three unset makes the profile's name a
 	// claim it does not deliver.
 	"latency": {CPU: 2, Memory: "1Gi", Concurrency: 40, MinInstances: 1, MaxInstances: 100,
-		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOn, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOn, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
+		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOn, StartupBoost: ToggleOn, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	"batch": {CPU: 2, Memory: "2Gi", Concurrency: 10, MinInstances: 0, MaxInstances: 10,
-		TimeoutSeconds: 900, CPUAlwaysOn: ToggleOff, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
+		TimeoutSeconds: 900, CPUAlwaysOn: ToggleOff, StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	// Singleton: min=1/max=1 keeps the loop's host alive; the LEASE is
 	// what makes it exactly-one (spec §4.4). Its loop runs between
 	// requests, so CPU stays allocated.
 	"singleton": {CPU: 1, Memory: "512Mi", Concurrency: 1, MinInstances: 1, MaxInstances: 1,
-		TimeoutSeconds: 3600, CPUAlwaysOn: ToggleOn, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
+		TimeoutSeconds: 3600, CPUAlwaysOn: ToggleOn, StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 }
-
-// The shutdown window is Cloud Run's, not tako's: SIGTERM, then SIGKILL
-// 10 seconds later. Neither the v1 RevisionSpec nor the v2
-// RevisionTemplate has a field for it and gcloud has no flag — checked
-// against both discovery documents, not remembered. So a footprint
-// divides the window instead of setting it.
-const (
-	// ShutdownWindowSeconds is what Cloud Run gives us, total.
-	ShutdownWindowSeconds = 10
-	// DefaultDrainSeconds is the share that goes to finishing in-flight
-	// requests. The rest pays for flushing metrics and closing cleanly,
-	// with a second in hand for the kill to land late.
-	DefaultDrainSeconds = 7
-	// MaxDrainSeconds is the most a drain may claim. Above this there is
-	// no room left to flush, and at 10 the kill arrives mid-sentence.
-	MaxDrainSeconds = 9
-)
 
 // Toggle states, mirroring tako.Toggle.
 const (
@@ -85,9 +64,6 @@ func (f Footprint) Over(base Footprint) Footprint {
 	}
 	if f.CPUAlwaysOn != ToggleInherit {
 		out.CPUAlwaysOn = f.CPUAlwaysOn
-	}
-	if f.DrainSeconds != 0 {
-		out.DrainSeconds = f.DrainSeconds
 	}
 	if f.StartupBoost != ToggleInherit {
 		out.StartupBoost = f.StartupBoost
@@ -128,9 +104,6 @@ func (f Footprint) String() string {
 		parts = append(parts, "cpu always on")
 	case ToggleOff:
 		parts = append(parts, "cpu throttled")
-	}
-	if f.DrainSeconds != 0 {
-		parts = append(parts, fmt.Sprintf("drain %ds", f.DrainSeconds))
 	}
 	switch f.StartupBoost {
 	case ToggleOn:
@@ -232,13 +205,6 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 				f.TimeoutSeconds = int(n / int64(time.Second))
 			case "CPUAlwaysOn":
 				f.CPUAlwaysOn = int(n)
-			case "Drain":
-				// Nanoseconds, like Timeout: a sub-second drain is a unit
-				// mistake, not a request to shut down instantly.
-				if n > 0 && n < int64(time.Second) {
-					fail(kv.Value, fmt.Sprintf("footprint Drain must be at least one second; got %s", time.Duration(n)))
-				}
-				f.DrainSeconds = int(n / int64(time.Second))
 			case "StartupBoost":
 				f.StartupBoost = int(n)
 			case "SessionAffinity":
@@ -266,13 +232,6 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 	}
 	if f.HTTP2 < 0 || f.HTTP2 > 2 {
 		fail(lit, "footprint HTTP2 must be tako.Inherit, tako.On, or tako.Off")
-	}
-	// The shutdown window is Cloud Run's and it is fixed at 10s. Clamping
-	// a bigger number would leave the declaration reading like a promise
-	// tako keeps, so refuse it instead and say who set the ceiling.
-	if f.DrainSeconds < 0 || f.DrainSeconds > MaxDrainSeconds {
-		fail(lit, fmt.Sprintf("footprint Drain must be between 1s and %ds; got %s — Cloud Run kills the instance %ds after SIGTERM and that window is not configurable, so a longer drain is a promise tako cannot keep",
-			MaxDrainSeconds, time.Duration(f.DrainSeconds)*time.Second, ShutdownWindowSeconds))
 	}
 	switch f.CPU {
 	case 0, 1, 2, 4, 8:

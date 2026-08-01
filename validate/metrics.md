@@ -23,7 +23,6 @@ Section 6 is that walk.
 ```
 go test ./... 
 go test -race ./pkg/backends/gcp ./pkg/runtime ./pkg/backends/conformance
-go test ./pkg/analyzer -run 'TestErrors/drainrange'
 go test ./pkg/backends/conformance -backend=local -run TestMetrics
 ```
 
@@ -39,11 +38,14 @@ go test ./pkg/backends/conformance -backend=local -run TestMetrics
   — the lame duck, both halves.
 - `TestDrainGivesUpAtItsBudget` — a wedged handler does not hold the
   process past SIGKILL.
-- `drainrange` golden — the refusal above 9s, verbatim:
-
-```
-app.go:14:43: footprint Drain must be between 1s and 9s; got 30s — Cloud Run kills the instance 10s after SIGTERM and that window is not configurable, so a longer drain is a promise tako cannot keep (tako/footprint)
-```
+- `TestIdleInstanceDrainsImmediately` and
+  `TestFlushGetsWhateverTheDrainDidNotUse` — the drain ends with the
+  last request rather than spending a budget, and the time it did not
+  use is repaid to the flush.
+- `TestServerSpeaksHTTP2`, `TestHTTP11StillWorksAlongsideH2C`, and
+  `TestDrainWaitsForHTTP2Requests` — the server answers h2c, still
+  answers HTTP/1.1, and the drain covers hijacked HTTP/2 connections
+  that `http.Server.Shutdown` stops tracking.
 
 ## 2. The drain, locally
 
@@ -51,9 +53,17 @@ app.go:14:43: footprint Drain must be between 1s and 9s; got 30s — Cloud Run k
 go run ../../cmd/tako dev
 ```
 
-Upload a photo so a handler is live, then `Ctrl-C` **while a request is
-in flight** (the gallery upload is slow enough; if not, hit a page and
-interrupt immediately).
+First confirm the server answers HTTP/2 — the check Google's docs
+prescribe, and the one that has to pass before `HTTP2` is safe to turn
+on:
+
+```
+curl -i --http2-prior-knowledge http://localhost:8080/
+```
+
+Then upload a photo so a handler is live, and `Ctrl-C` **while a
+request is in flight** (the gallery upload is slow enough; if not, hit
+a page and interrupt immediately).
 
 Expect the request to **complete**, then:
 
@@ -62,8 +72,9 @@ Expect the request to **complete**, then:
 ⏻ stopped (0.0s)
 ```
 
-Then `Ctrl-C` on an idle server: `⏻ draining` / `⏻ stopped`, promptly —
-the dev drain is 2s, and an idle server does not spend it.
+Then `Ctrl-C` on an idle server: `⏻ draining` / `⏻ stopped` **at once**
+— the drain watches the in-flight count, so an idle instance does not
+sit out its ceiling.
 
 Press `Ctrl-C` twice fast on a busy server → `tako: second signal —
 exiting now`.

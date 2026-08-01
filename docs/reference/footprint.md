@@ -18,8 +18,6 @@ knobs (`ProfileKnobs`, spec §4.6):
 | `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            | no            |
 | *(singleton)*     | 1   | 512Mi  | 1           | 1   | 1   | 3600s   | **always allocated** | no            |
 
-Every profile drains for 7s (see [Drain](#drain)).
-
 Default scales to zero; Latency keeps an instance warm — min=1 bills
 continuously; Batch favors throughput per instance for background work.
 
@@ -54,7 +52,6 @@ type Footprint struct {
 	MaxInstances int    // scale-out cap (1–1000)
 	Timeout      time.Duration // one unit of work: a request, or a job task
 	CPUAlwaysOn  Toggle // Inherit | On | Off — CPU between requests
-	Drain        time.Duration // finishing in-flight requests at shutdown
 	StartupBoost Toggle // Inherit | On | Off — extra CPU until serving
 	SessionAffinity Toggle // Inherit | On | Off — sticky routing
 	HTTP2 Toggle // Inherit | On | Off — HTTP/2 to the instance
@@ -122,40 +119,19 @@ curl -i --http2-prior-knowledge http://localhost:8080/
 Refused on jobs (nothing serves) and on singletons (a health endpoint
 has no connection worth multiplexing).
 
-### Drain
-
-`Drain` is how long a shutting-down instance may spend finishing the
-requests already in flight. **It divides a window it does not set.**
-Cloud Run sends `SIGTERM` and kills the instance 10 seconds later, and
-that 10 seconds is fixed — no API field, no `gcloud` flag. `Drain`
-buys the requests; what is left pays for flushing metrics and closing
-cleanly.
-
-So `Timeout` and `Drain` are not the same clock and the gap between
-them is the point: a service may hold a request for 300s, but at
-shutdown it gets 7. A request still running when the drain expires is
-cut off. If that matters for your workload, the answer is a
-[job](job.md), not a bigger number here.
-
-Values above 9s are **refused, not clamped** — above the ceiling the
-kill lands first, so a longer drain would be a promise tako cannot
-keep:
-
-```
-app.go:14:43: footprint Drain must be between 1s and 9s; got 30s — Cloud Run kills the instance 10s after SIGTERM and that window is not configurable, so a longer drain is a promise tako cannot keep (tako/footprint)
-```
-
-The whole shutdown sequence is in
-[observability.md](observability.md#shutdown).
+Shutdown is not a knob and deliberately so — see
+[observability.md](observability.md#shutdown). Cloud Run's 10s window is
+fixed, and tako divides it by watching rather than by budgeting: the
+drain ends when the last request does, and whatever is left goes to the
+flush. There is no number a service could usefully set.
 
 Zero fields inherit from the profile; set fields override it. The
 min=0 nuance: a zero field means *inherit*, so an explicit
 always-scale-to-zero floor is expressed by choosing a min=0 base
 profile (Default or Batch), not by `MinInstances: 0`. On job handlers
 only CPU, Memory and Timeout apply — an execution has no concurrency,
-no scaling, no idle CPU, no cold start to boost and no in-flight
-requests to drain. Singletons take `Drain` too (they serve), but not
-the shape that defines the primitive.
+no scaling, no idle CPU and no cold start to boost. Singletons take
+`StartupBoost`, but not the shape that defines the primitive.
 
 ## Use
 
@@ -230,9 +206,9 @@ The claims live in golden tests —
 - Scoping: `a job footprint sets CPU, Memory and Timeout only —
   executions are tasks, not serving instances, so there is no
   concurrency, no scaling, no idle CPU to throttle, no cold start to
-  boost, no in-flight requests to drain, no clients to keep affinity
-  with and no connections to negotiate HTTP/2 over; WithParallel sets the
-  fan-out and WithRetries the attempts (tako/footprint)`, and for a
+  boost, no clients to keep affinity with and no connections to
+  negotiate HTTP/2 over; WithParallel sets the fan-out and WithRetries
+  the attempts (tako/footprint)`, and for a
   singleton `a singleton footprint cannot set MaxInstances — the lease
   is what makes a singleton exactly-one … (tako/singleton-max)`
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud

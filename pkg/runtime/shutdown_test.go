@@ -55,7 +55,7 @@ func TestDrainLetsInFlightRequestsFinish(t *testing.T) {
 	}()
 
 	<-started
-	t.Setenv("TAKO_DRAIN", "7")
+	t.Setenv("TAKO_BACKEND", "gcp")
 	drain(srv, live)
 
 	if !finished.Load() {
@@ -75,7 +75,7 @@ func TestDrainLetsInFlightRequestsFinish(t *testing.T) {
 // empties. A request arriving after the drain begins must not be served.
 func TestDrainStopsAcceptingNewRequests(t *testing.T) {
 	srv, addr, live := serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	t.Setenv("TAKO_DRAIN", "7")
+	t.Setenv("TAKO_BACKEND", "gcp")
 	drain(srv, live)
 
 	if _, err := http.Get(addr + "/after"); err == nil {
@@ -101,7 +101,7 @@ func TestDrainGivesUpAtItsBudget(t *testing.T) {
 	}()
 	<-started
 
-	t.Setenv("TAKO_DRAIN", "1")
+	// Dev ceiling: a wedged handler must not hold the process open.
 	done := make(chan time.Duration, 1)
 	go func() {
 		start := time.Now()
@@ -139,31 +139,51 @@ func TestSlowShutdownHookIsAbandoned(t *testing.T) {
 	}
 }
 
-// The budget split has to fit inside the window Cloud Run actually
-// gives, with room for the kill to land late.
-func TestBudgetsFitTheShutdownWindow(t *testing.T) {
-	t.Setenv("TAKO_DRAIN", "7")
-	d := drainBudget()
-	f := flushBudget(d)
-	if d+f >= shutdownWindow {
-		t.Errorf("drain %s + flush %s does not fit in Cloud Run's %s window", d, f, shutdownWindow)
+// Draining fast must be REPAID to the flush, not lost: an instance that
+// is idle at SIGTERM — the common case, since Cloud Run stops routing to
+// it before signalling — should flush with almost the whole window.
+func TestFlushGetsWhateverTheDrainDidNotUse(t *testing.T) {
+	t.Setenv("TAKO_BACKEND", "gcp")
+
+	quick := flushBudget(time.Now())
+	if quick < 8*time.Second {
+		t.Errorf("an instant drain left the flush only %s — unused drain time must be repaid", quick)
 	}
-	if f < flushFloor {
-		t.Errorf("flush budget %s is below the floor %s — the last metrics flush needs room", f, flushFloor)
+	if quick+killMargin > shutdownWindow {
+		t.Errorf("flush budget %s leaves no margin inside the %s window", quick, shutdownWindow)
 	}
 
-	// A footprint that claims nearly the whole window still leaves the
-	// floor for flushing, because analysis capped it at 9s.
-	t.Setenv("TAKO_DRAIN", "9")
-	if got := flushBudget(drainBudget()); got < flushFloor {
-		t.Errorf("flush budget %s under a 9s drain, want at least %s", got, flushFloor)
+	// A drain that ran to the ceiling still leaves the floor.
+	slow := flushBudget(time.Now().Add(-drainCeiling))
+	if slow < flushFloor {
+		t.Errorf("after a full %s drain the flush got %s, want at least %s", drainCeiling, slow, flushFloor)
 	}
 
-	// No TAKO_DRAIN means nobody deployed this: a dev run, where Ctrl-C
-	// should feel immediate rather than safe.
-	t.Setenv("TAKO_DRAIN", "")
-	if got := drainBudget(); got != devDrain {
-		t.Errorf("undeployed drain = %s, want the dev default %s", got, devDrain)
+	// And an overrun cannot produce a negative budget.
+	over := flushBudget(time.Now().Add(-2 * shutdownWindow))
+	if over < flushFloor {
+		t.Errorf("an overrun produced %s, want the floor %s", over, flushFloor)
+	}
+
+	// The ceiling is the framework's, not a per-service setting.
+	if drainBudget() != drainCeiling {
+		t.Errorf("cloud drain ceiling = %s, want %s", drainBudget(), drainCeiling)
+	}
+	t.Setenv("TAKO_BACKEND", "")
+	if drainBudget() != devCeiling {
+		t.Errorf("dev drain ceiling = %s, want %s", drainBudget(), devCeiling)
+	}
+}
+
+// The drain must END when the last request does, not sit out its
+// ceiling: on an idle instance shutdown is milliseconds, not seconds.
+func TestIdleInstanceDrainsImmediately(t *testing.T) {
+	t.Setenv("TAKO_BACKEND", "gcp")
+	srv, _, live := serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	start := time.Now()
+	drain(srv, live)
+	if took := time.Since(start); took > time.Second {
+		t.Errorf("draining an idle instance took %s — it should return at once, not spend its ceiling", took)
 	}
 }
 
@@ -188,7 +208,7 @@ func TestServerSpeaksHTTP2(t *testing.T) {
 		gotProto = r.Proto
 		fmt.Fprint(w, "ok")
 	}))
-	defer func() { t.Setenv("TAKO_DRAIN", "1"); drain(srv, live) }()
+	defer func() { drain(srv, live) }()
 
 	resp, err := h2cClient().Get(addr + "/h2")
 	if err != nil {
@@ -212,7 +232,7 @@ func TestHTTP11StillWorksAlongsideH2C(t *testing.T) {
 		gotProto = r.Proto
 		fmt.Fprint(w, "ok")
 	}))
-	defer func() { t.Setenv("TAKO_DRAIN", "1"); drain(srv, live) }()
+	defer func() { drain(srv, live) }()
 
 	resp, err := http.Get(addr + "/plain")
 	if err != nil {
@@ -250,7 +270,7 @@ func TestDrainWaitsForHTTP2Requests(t *testing.T) {
 	}()
 
 	<-started
-	t.Setenv("TAKO_DRAIN", "7")
+	t.Setenv("TAKO_BACKEND", "gcp")
 	drain(srv, live)
 
 	if !finished.Load() {

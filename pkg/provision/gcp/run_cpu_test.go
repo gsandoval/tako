@@ -41,20 +41,6 @@ func TestLatencyBoostsColdStart(t *testing.T) {
 	}
 }
 
-// Every profile divides Cloud Run's fixed shutdown window, and none may
-// claim more of it than exists.
-func TestProfilesDrainInsideTheWindow(t *testing.T) {
-	for name, k := range analyzer.ProfileKnobs {
-		if k.DrainSeconds <= 0 {
-			t.Errorf("%s has no drain budget — in-flight requests would be cut off at SIGTERM", name)
-		}
-		if k.DrainSeconds > analyzer.MaxDrainSeconds {
-			t.Errorf("%s drains %ds of a %ds window — the kill lands first",
-				name, k.DrainSeconds, analyzer.ShutdownWindowSeconds)
-		}
-	}
-}
-
 func TestRunServiceEmitsCPUIdle(t *testing.T) {
 	r := &RunServices{C: &Client{Project: "p", Region: "us-central1"}}
 	for _, tc := range []struct {

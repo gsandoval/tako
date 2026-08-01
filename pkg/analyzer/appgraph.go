@@ -62,11 +62,6 @@ type Footprint struct {
 	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	// CPUAlwaysOn mirrors tako.Toggle: 0 inherit, 1 on, 2 off.
 	CPUAlwaysOn int `json:"cpu_always_on,omitempty"`
-	// DrainSeconds is how long a shutting-down instance may spend
-	// finishing in-flight requests. Zero inherits the profile's. It
-	// divides Cloud Run's fixed 10s SIGTERM→SIGKILL window rather than
-	// setting it — there is no API field for the window itself.
-	DrainSeconds int `json:"drain_seconds,omitempty"`
 	// StartupBoost mirrors tako.Toggle: extra CPU until the instance is
 	// serving (Cloud Run v2 startupCpuBoost).
 	StartupBoost int `json:"startup_boost,omitempty"`
