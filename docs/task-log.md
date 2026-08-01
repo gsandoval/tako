@@ -8587,3 +8587,55 @@ services describe metrics-gallery` (env prefix included), three
 `curl -F` uploads of the §2 PNG, and a `read_metric` helper — plus what
 each field in the response has to show and why an empty `location` is a
 bug rather than a partial success.
+
+## Gate catch — a named port with no number — 2026-08-01
+
+First live deploy of U2 (gallery → tako-test-01, `--env metrics`) got
+through preflight, plan, images, and a 3m9s index build, then died at
+the first run service:
+
+```
+create run service metrics-gallery: create the run service: Violation in
+CreateServiceRequest.service.template.containers[0].ports[0].container_port:
+must be 0 < port_number < 65536. (HTTP 400 from run.googleapis.com)
+```
+
+**Cause:** the HTTP/2 slice sends the container port to carry its NAME
+(`h2c` or `http1` — the v2 API's whole vocabulary for the protocol),
+and I sent the name alone:
+
+```go
+"ports": []map[string]any{{"name": portName(...)}},
+```
+
+`containerPort` is not optional next to it. Omitted, it marshals as
+absent and the API reads 0, which is a *violation*, not a default.
+Every service in every app would have failed to create — the feature
+was completely broken on the cloud path and completely green in tests.
+
+**Fix:** send `containerPort: 8080` alongside the name, from a named
+`defaultPort` const whose comment ties it to `pkg/runtime`'s `Serve`
+fallback (Cloud Run injects PORT from this number, so the two must not
+drift). `run_cpu_test.go` now asserts the port is inside Cloud Run's
+stated range, which is the API's rule written down where a test can
+enforce it.
+
+### Why the tests were green
+
+`TestRunServiceEmitsCPUIdle` marshals `body()` and unmarshals it into
+the live-shape struct. That catches round-trip drift — which is what it
+was built for, and it did catch three real ones — but it cannot catch a
+payload the API REJECTS, because no API is involved. The test asserted
+`ports[0].Name` and never looked at the number.
+
+This is the **third** time the missing HTTP seam in `pkg/provision/gcp`
+has cost a live failure (after `waitGone` and the domain verbs), and
+the first where the bug was a straightforward schema violation a fake
+server would have caught instantly. Promoting that from "discovered
+work" to a scheduled slice now looks overdue: an injectable host on
+`gcp.Client` plus a fake that validates required fields would have
+turned a failed cloud deploy into a red unit test.
+
+Recovery needed nothing special — deploy is stateless and resumable, so
+a re-run picks up from the partial env (the index was already built and
+read back READY).

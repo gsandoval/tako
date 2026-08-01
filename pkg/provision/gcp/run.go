@@ -60,7 +60,8 @@ type runService struct {
 				Value string `json:"value"`
 			} `json:"env,omitempty"`
 			Ports []struct {
-				Name string `json:"name,omitempty"`
+				Name          string `json:"name,omitempty"`
+				ContainerPort int    `json:"containerPort,omitempty"`
 			} `json:"ports,omitempty"`
 			Resources struct {
 				Limits  map[string]string `json:"limits,omitempty"`
@@ -134,6 +135,11 @@ func secondsOf(d string) int {
 	}
 	return n
 }
+
+// defaultPort is the port every tako service listens on: pkg/runtime's
+// Serve falls back to 8080 when PORT is unset, and Cloud Run sets PORT
+// from this number. The two must not drift apart.
+const defaultPort = 8080
 
 // portName maps the knob to Cloud Run's two allowed port names. Named
 // rather than inlined because liveHash has to reverse it, and the pair
@@ -213,7 +219,17 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 				// to the instance, "http1" lets the edge downgrade. TLS is
 				// terminated at the frontend either way — a container never
 				// sees it — so h2c is the only shape HTTP/2 can take here.
-				"ports": []map[string]any{{"name": portName(scaling["http2"] == true)}},
+				//
+				// containerPort is NOT optional alongside it. Naming a port
+				// without a number fails the create outright ("must be
+				// 0 < port_number < 65536" — the zero value is not a
+				// default, it is a violation). It is also what Cloud Run
+				// injects as PORT, so it has to match what Serve listens
+				// on when PORT is unset.
+				"ports": []map[string]any{{
+					"name":          portName(scaling["http2"] == true),
+					"containerPort": defaultPort,
+				}},
 				"resources": map[string]any{
 					"limits": map[string]string{
 						"cpu":    fmt.Sprint(scaling["cpu"]),

@@ -102,6 +102,14 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 		if len(ports) != 1 || ports[0].Name != wantPort {
 			t.Errorf("%s: ports = %+v, want one named %q", tc.name, ports, wantPort)
 		}
+		// A named port with no number is not a partial spec, it is a
+		// rejected one: Cloud Run answers the create with "must be
+		// 0 < port_number < 65536" and nothing deploys. The zero value is
+		// a violation, not a default.
+		if len(ports) == 1 && (ports[0].ContainerPort <= 0 || ports[0].ContainerPort >= 65536) {
+			t.Errorf("%s: containerPort = %d, outside Cloud Run's 0 < n < 65536",
+				tc.name, ports[0].ContainerPort)
+		}
 		// The drift trap: liveHash re-derives the spec from the response,
 		// so a field emitted but not read back reports drift forever.
 		if h := liveHash(live, true); h != provision.SpecHash(obj.Spec) {
