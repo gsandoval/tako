@@ -7818,3 +7818,60 @@ plan) keep the old name — they are records of what was true then.
 example: archiving is idempotent and never urgent, so it declares slower,
 fewer retries than the framework default — a real reason to override,
 not a demo of the syntax.
+
+## Stage 8 complete — agent-side (2026-08-01)
+
+V0 51c6c18, V1+V4 0ec5659, V2 2f85be1 (+48b3860), V3 b787317. Full
+suite green; all six examples green. tako-test-02 pristine (0 services,
+0 scheduler jobs, 0 tasks queues, 0 domain mappings, scratch secret
+deleted).
+
+### What the stage was actually about
+
+The user's question was "should WithFootprint be first class?" The
+inventory that answered it found something narrower and worse: tako had
+three service-level options declared at ROUTE level, and about a dozen
+decisions the user could not reach at all. Both halves are now closed.
+
+### Four things the stage kept finding
+
+1. **Options in the wrong place breed rules that police the wrong
+   place.** Retiring `WithCDN` emptied `siteNotYet` and killed the whole
+   `tako/not-yet` mechanism. Moving `WithDomain` to `tako.Service`
+   killed `tako/domain-conflict` and `Handler.Domain`. An earlier cut of
+   `tako/domain-unreachable` was itself unreachable and had to be
+   redesigned. Three dead rules, none of which could ever have fired.
+2. **Every constant promoted to a knob leaves a sentence that used to be
+   true.** "retries: 3" (V2) and "redelivery: 5 attempts" (V3) both
+   became lies the moment their values became declarable. Now pinned by
+   `TestSummaryReadsDeclaredCountsNotDefaults`.
+3. **Accepted-and-ignored is the worst failure mode**, and it existed:
+   `WithProfile` on a job or singleton was overwritten at provision
+   time. The goldens carried the lie — `shop-settle` read `profile
+   default` while batch was deployed. It reads `profile batch` now.
+4. **Round-trips are where drift hides.** Cloud Run's v2 GET returns
+   `cpuIdle: true` but OMITS it when false; a naive read-back would have
+   reported permanent drift on every default service. Checked live in
+   both directions.
+
+### Ready for the U1 gate
+
+`validate/domain.md` is updated for the post-Stage-8 shape (declarations
+go through `tako.Service`; expect `blog-web`). Its agent-side sections
+were re-walked live during V1 — blog deployed as `blog-web` with the
+mapping on the renamed route, destroy clean.
+
+**§4 (DNS → certificate ACTIVE) and §6 (a live re-point replace) need a
+domain whose records you can publish.** Everything else is walked.
+
+### Discovered work (unscheduled)
+
+- **Cloud Tasks name reuse blocks redeploy for ~7 days.** Redeploying
+  shortlink to prod failed with `a queue with this name existed too
+  recently` after the T3 walk deleted those queues. tako surfaces the
+  raw API message; it should name the wait and suggest `--env`. Worked
+  around with `--env u1` throughout.
+- `pkg/analyzer/analyzer.go` and `edges.go` are not gofmt-clean
+  (pre-existing, unrelated to this stage).
+- The agent plan (`docs/tako-agent-plan.md`) stops at Stage 4; Stages
+  5–8 live only in this log and the Stage 7 handoff.
