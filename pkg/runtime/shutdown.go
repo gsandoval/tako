@@ -26,13 +26,6 @@ import (
 const (
 	// shutdownWindow is what Cloud Run gives us, total.
 	shutdownWindow = 10 * time.Second
-	// drainCeiling caps the wait for in-flight requests. Reached only
-	// when a handler genuinely runs that long; the drain ends the moment
-	// the last one returns.
-	drainCeiling = 7 * time.Second
-	// devCeiling is the local cap. Nothing kills a dev server, so this is
-	// chosen for how long Ctrl-C should feel, not for safety.
-	devCeiling = 2 * time.Second
 	// killMargin is held back so the process exits before SIGKILL rather
 	// than being cut off by it.
 	killMargin = 1 * time.Second
@@ -46,23 +39,30 @@ const (
 	jobFlush = 5 * time.Second
 )
 
+// drainCeiling caps the wait for in-flight requests. Reached only when a
+// handler genuinely runs that long — the drain ends the moment the last
+// one returns.
+//
+// The SAME ceiling applies locally. Dev used to cut off at 2s, chosen
+// for how quickly Ctrl-C should feel, which made local and cloud differ
+// exactly where the difference matters most: when a request is actually
+// hanging. An idle instance drains instantly either way, so the shorter
+// local number bought nothing except a surprise at deploy time. A second
+// signal is the escape hatch for a wedged handler, not a lower ceiling.
+//
+// A var, not a const, only so tests can shorten it — there is no way to
+// set it from user code, and deliberately so.
+var drainCeiling = 7 * time.Second
+
 // drainBudget caps the wait for in-flight requests — a ceiling, not an
 // allowance: the drain returns as soon as the last handler does.
-func drainBudget() time.Duration {
-	if inCloud() {
-		return drainCeiling
-	}
-	return devCeiling
-}
+func drainBudget() time.Duration { return drainCeiling }
 
 // flushBudget is what is left of the window once the drain has actually
 // finished, which is why it takes the moment shutdown began rather than
 // a configured number. Draining fast is repaid as flush time; draining
 // to the ceiling still leaves the floor.
 func flushBudget(since time.Time) time.Duration {
-	if !inCloud() {
-		return devCeiling
-	}
 	left := shutdownWindow - time.Since(since) - killMargin
 	if left < flushFloor {
 		return flushFloor
@@ -142,7 +142,11 @@ func drain(srv *http.Server, live *inflight) {
 			fmt.Printf("tako: %s did not finish within %s — cutting it off (SIGKILL follows in ~%s)\n",
 				plural(left), budget, (shutdownWindow - budget).Round(time.Second))
 		} else {
+			// The number is not arbitrary and not local: it is the same
+			// ceiling a deployed instance uses, so say where it comes from
+			// rather than leaving the reader to guess at a bare "7s".
 			fmt.Printf("⏻ %s did not finish within %s — cutting it off\n", plural(left), budget)
+			fmt.Printf("  (Cloud Run allows %s from SIGTERM; the rest flushes metrics)\n", shutdownWindow)
 		}
 		_ = srv.Close()
 	}

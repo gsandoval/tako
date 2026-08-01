@@ -101,7 +101,10 @@ func TestDrainGivesUpAtItsBudget(t *testing.T) {
 	}()
 	<-started
 
-	// Dev ceiling: a wedged handler must not hold the process open.
+	// Shorten the ceiling rather than waiting it out; the assertion is
+	// that drain RETURNS, not how long the real ceiling is.
+	defer func(d time.Duration) { drainCeiling = d }(drainCeiling)
+	drainCeiling = 300 * time.Millisecond
 	done := make(chan time.Duration, 1)
 	go func() {
 		start := time.Now()
@@ -165,13 +168,16 @@ func TestFlushGetsWhateverTheDrainDidNotUse(t *testing.T) {
 		t.Errorf("an overrun produced %s, want the floor %s", over, flushFloor)
 	}
 
-	// The ceiling is the framework's, not a per-service setting.
+	// The ceiling is the framework's, not a per-service setting — and it
+	// is the SAME one locally, so a hanging request behaves in dev the way
+	// it will in Cloud Run.
 	if drainBudget() != drainCeiling {
 		t.Errorf("cloud drain ceiling = %s, want %s", drainBudget(), drainCeiling)
 	}
 	t.Setenv("TAKO_BACKEND", "")
-	if drainBudget() != devCeiling {
-		t.Errorf("dev drain ceiling = %s, want %s", drainBudget(), devCeiling)
+	if drainBudget() != drainCeiling {
+		t.Errorf("local drain ceiling = %s, want the same %s the cloud uses — a shorter local cap hides the deployed behavior exactly when a request is hanging",
+			drainBudget(), drainCeiling)
 	}
 }
 

@@ -73,24 +73,40 @@ layer or the connection resets.
 ### 2a. An in-flight request finishes
 
 Timing a Ctrl-C by hand is a coin flip, so **make the request slow on
-purpose** with `curl --limit-rate` and signal the service directly. Two
-terminals, or background the curl as below.
+purpose** with `curl --limit-rate` and signal the service directly.
 
-Make a payload once (contents do not matter — upload stores the blob;
-decoding happens later in the worker):
+Make a payload once — a REAL image, so the thumbnail worker succeeds
+and the walk does not fill up with dead letters:
 
 ```
-dd if=/dev/urandom of=/tmp/big.jpg bs=1024 count=600
+cat > /tmp/mkimg.go <<'EOF'
+package main
+
+import ("image"; "image/color"; "image/png"; "math/rand"; "os")
+
+func main() {
+	m := image.NewRGBA(image.Rect(0, 0, 500, 500))
+	for y := 0; y < 500; y++ {
+		for x := 0; x < 500; x++ {
+			m.Set(x, y, color.RGBA{uint8(rand.Intn(256)), uint8(rand.Intn(256)), uint8(rand.Intn(256)), 255})
+		}
+	}
+	f, _ := os.Create("/tmp/big.png")
+	png.Encode(f, m)
+	f.Close()
+}
+EOF
+go run /tmp/mkimg.go     # ~750KB of noise, which PNG cannot compress
 ```
 
-The dev drain ceiling is **2s**, so for a request that FINISHES, the
-upload must have under 2s left when the signal lands. 600KB at 400k/s
-is ~1.5s total; signalling at 0.4s leaves ~1.1s:
+The drain ceiling is **7s**, locally and deployed alike. 750KB at
+400k/s is ~1.9s, so signalling at 0.4s leaves ~1.5s — comfortably
+inside it:
 
 ```
 PID=$(pgrep -f ".tako/bin/gallery" | head -1)
 curl -s -o /dev/null -w "curl: %{http_code} in %{time_total}s\n" --limit-rate 400k \
-  -F caption=drain -F img=@/tmp/big.jpg http://localhost:8080/api/photos &
+  -F caption=drain -F img=@/tmp/big.png http://localhost:8080/api/photos &
 sleep 0.4 && kill -TERM $PID
 ```
 
@@ -98,41 +114,47 @@ Expect, in the dev console:
 
 ```
 ⏻ draining — 1 request in flight
-POST /api/photos → 200 (1463.1ms)
+POST /api/photos → 200 (1775.2ms)
 📈 uploads +1 (total 1)
+⚙ photos.Uploaded → OnUploaded ok (0s)
+📈 thumb_ms 26 (n=1)
+⚙ thumbnails → MakeThumb ok (27ms)
 ⏻ stopped (1.06s)
 ```
 
-and from curl: `curl: 200 in 1.503986s`.
+and from curl: `curl: 200 in 1.838039s`.
 
-**Three things in that transcript, all load-bearing.** The request was
-answered **200** after SIGTERM — before U2a it would have been cut off
-mid-write. The `📈 uploads` line lands *after* the drain began, so a
-metric recorded by a draining instance is still counted. And `stopped
-(1.06s)` is well under the ceiling: the drain ended when the request
-did, not when a budget expired.
+**Everything after the first line happened AFTER SIGTERM**, which is
+the whole point. The request was answered **200** rather than cut off
+mid-write. Both metrics — the `uploads` counter and the `thumb_ms`
+histogram — were recorded by an instance that was already shutting
+down, so they are exactly the recordings the final flush has to carry.
+And `stopped (1.06s)` is far under the 7s ceiling: the drain ended when
+the work did, not when a budget expired.
 
 ### 2b. A request that overruns is cut off, and says so
 
-Same payload, four times slower — 600KB at 100k/s is ~6s, far past the
-2s ceiling:
+Same payload, eight times slower — 750KB at 50k/s is ~15s, well past
+the ceiling:
 
 ```
 PID=$(pgrep -f ".tako/bin/gallery" | head -1)
-curl -s -o /dev/null -w "curl: %{http_code} in %{time_total}s (exit %{exitcode})\n" --limit-rate 100k \
-  -F caption=cutoff -F img=@/tmp/big.jpg http://localhost:8080/api/photos &
+curl -s -o /dev/null -w "curl: %{http_code} in %{time_total}s (exit %{exitcode})\n" --limit-rate 50k \
+  -F caption=cutoff -F img=@/tmp/big.png http://localhost:8080/api/photos &
 sleep 0.5 && kill -TERM $PID
 ```
 
 ```
 ⏻ draining — 1 request in flight
-⏻ 1 request did not finish within 2s — cutting it off
-⏻ stopped (2s)
+⏻ 1 request did not finish within 7s — cutting it off
+  (Cloud Run allows 10s from SIGTERM; the rest flushes metrics)
+⏻ stopped (7s)
 ```
 
-curl reports `000 ... (exit 55)` — no status line, because the
-connection died under it. That is the honest outcome, and the console
-names it rather than leaving a mystery.
+curl reports `000 in 8.689741s (exit 55)` — no status line, because the
+connection died under it. That is the honest outcome, and the second
+console line says where the 7s came from rather than leaving a bare
+number to wonder about.
 
 ### 2c. Idle and impatient
 
@@ -140,6 +162,10 @@ names it rather than leaving a mystery.
 drain watches the in-flight count, so an idle instance does not sit out
 its ceiling. (This is the common case in the cloud: Cloud Run stops
 routing to an instance *before* it signals.)
+
+The ceiling is the same 7s locally as deployed, on purpose: a shorter
+local cap would hide the deployed behavior at the one moment it
+matters, when a request is genuinely hanging.
 
 `Ctrl-C` twice quickly during 2b → `tako: second signal — exiting now`.
 

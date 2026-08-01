@@ -139,14 +139,25 @@ window to the flush. A busy one takes what it needs, up to the ceiling,
 and the flush keeps a one-second floor regardless. Time the drain does
 not use is repaid, not lost.
 
-Locally, Ctrl-C does the same with a 2-second ceiling, and a second
-Ctrl-C exits immediately.
+**Locally, Ctrl-C does exactly the same, with the same 7-second
+ceiling** — a hanging request behaves in dev the way it will in Cloud
+Run, which is the one moment the difference would matter. An idle server
+still stops instantly. A second Ctrl-C exits immediately, and that, not
+a shorter local cap, is the escape hatch for a wedged handler.
 
 A handler that outlives the ceiling is cut off, and says so rather than
 leaving you to find it as a mystery 502:
 
 ```
 tako: 1 request did not finish within 7s — cutting it off (SIGKILL follows in ~3s)
+```
+
+and locally, where there is no SIGKILL to name, it says where the
+number came from instead:
+
+```
+⏻ 1 request did not finish within 7s — cutting it off
+  (Cloud Run allows 10s from SIGTERM; the rest flushes metrics)
 ```
 
 The count covers HTTP/2 as well as HTTP/1.1. That is not free:
