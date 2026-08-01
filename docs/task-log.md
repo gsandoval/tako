@@ -8508,3 +8508,82 @@ fine.
 regenerated deliberately, the analyzer's `Footprint` split to match,
 and one gate covering both option constructors. No production apps, so
 `Timeout` can move outright rather than being aliased.
+
+## Discovered work + a gate-script defect — 2026-08-01
+
+### `tako destroy` has no `--plan` (user-reported)
+
+`runDeploy` accepts `--plan` and stops after printing the plan;
+`runDestroy` does not. Verified in `cmd/tako/deploy.go:784` — its arg
+loop rejects anything unrecognized, so `tako destroy --plan` fails with
+a bare `unknown argument "--plan"`.
+
+The interesting part is that destroy **already builds the preview**: it
+observes everything, prints `tako destroy · <app> (<env>) in <project>
+— this deletes:` with every object, then a `DATA — deleted with the
+app, gone forever:` block, and only then prompts for the app name. So
+the information exists; there is just no way to see it **without
+entering the confirmation flow**. Today the only way to preview a
+destroy is to start one and deliberately type the wrong name.
+
+That matters more than a missing flag usually would, because destroy is
+the one irreversible command (§4.6a: data destruction is never
+automatic). Being able to inspect it in CI, or in a review, or just
+cautiously, without arming the prompt is the point.
+
+Two things to fix together:
+
+1. `--plan` on destroy: observe, print the same block, exit 0 before
+   the prompt.
+2. Destroy's unknown-argument error should list what it accepts, the
+   way deploy's does (`tako deploy accepts --plan, --canary=<pct>,
+   --yes, --project, --region, --env`). Right now it names the bad
+   argument and nothing else.
+
+Not scheduled — logged for its own slice.
+
+### `gcloud monitoring time-series list` does not exist
+
+Caught while making §4 of `validate/metrics.md` executable, after the
+user reported the section did not say how to actually upload anything.
+The gate script and `docs/reference/observability.md` both told the
+reader to run:
+
+```
+gcloud monitoring time-series list --filter '…'
+```
+
+There is no such command. `gcloud monitoring` covers dashboards,
+policies, snoozes and uptime checks — not time series:
+
+```
+ERROR: (gcloud.monitoring) Invalid choice: 'time-series'.
+```
+
+`alpha`/`beta` variants are not installed by default either, so they
+are no answer for a walk that has to be runnable as written. The
+command came in from the Stage 7 handoff (`docs/stage7-handoff.md:209`,
+hedged as "or the API") and I carried it forward without running it.
+
+Replaced everywhere with the REST call, **verified live** against
+`run.googleapis.com/request_count` on tako-test-01 before being written
+down:
+
+```
+curl -s -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  --data-urlencode 'filter=metric.type="custom.googleapis.com/tako/uploads"' \
+  --data-urlencode "interval.startTime=$AGO" \
+  --data-urlencode "interval.endTime=$NOW" \
+  "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries"
+```
+
+**The lesson is the one this project keeps re-learning:** a validation
+step nobody has executed is a guess with a command prompt in front of
+it. The gate would have blocked at §4 with a gcloud error that says
+nothing about metrics.
+
+§4 also now spells out the upload — service URL via `gcloud run
+services describe metrics-gallery` (env prefix included), three
+`curl -F` uploads of the §2 PNG, and a `read_metric` helper — plus what
+each field in the response has to show and why an empty `location` is a
+bug rather than a partial success.

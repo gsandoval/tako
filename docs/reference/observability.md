@@ -77,12 +77,17 @@ custom.googleapis.com/tako/uploads      # tako.Counter("uploads")
 custom.googleapis.com/tako/thumb_ms     # tako.Histogram("thumb_ms")
 ```
 
-Find them in Metrics Explorer by pasting that metric type, or:
+Find them in Metrics Explorer by pasting that metric type. From the
+command line there is no `gcloud` surface for reading time series —
+`gcloud monitoring` covers dashboards, policies and uptime checks, not
+points — so read the API:
 
 ```
-gcloud monitoring time-series list \
-  --filter 'metric.type = "custom.googleapis.com/tako/uploads"' \
-  --project my-project
+curl -s -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  --data-urlencode 'filter=metric.type="custom.googleapis.com/tako/uploads"' \
+  --data-urlencode "interval.startTime=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)" \
+  --data-urlencode "interval.endTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  https://monitoring.googleapis.com/v3/projects/my-project/timeSeries
 ```
 
 **Recording is still free at the call site.** `Add` takes a lock and

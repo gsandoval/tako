@@ -194,34 +194,84 @@ Datastore's explanation.
 
 ## 4. Metrics arrive
 
-Upload two or three photos through the deployed app, then wait for one
-flush (≤60s) and read them back:
+### 4a. Find the deployed service
+
+`tako deploy` prints the URL in its summary; this re-reads it, so the
+walk can be scripted. Note the **env prefix** — `--env metrics` deploys
+`gallery` as `metrics-gallery`:
 
 ```
-gcloud monitoring time-series list \
-  --project <test-project> \
-  --filter 'metric.type = "custom.googleapis.com/tako/uploads"' \
-  --format 'value(metric.labels.instance, points[0].value.int64Value)'
-
-gcloud monitoring time-series list \
-  --project <test-project> \
-  --filter 'metric.type = "custom.googleapis.com/tako/thumb_ms"' \
-  --format 'value(metric.labels.instance, points[0].value.distributionValue.count)'
+PROJECT=<test-project>
+URL=$(gcloud run services describe metrics-gallery \
+  --project $PROJECT --region us-central1 --format 'value(status.url)')
+echo $URL
 ```
 
-Expect:
+### 4b. Upload photos
 
-- `uploads` ≥ the number of photos, as a **cumulative** value.
-- `thumb_ms` with a non-zero distribution count and buckets populated
-  in the low-hundreds-of-ms range.
-- An `instance` label on both. **Check the resource labels too** —
-  `service_name`, `revision_name` and `location` must be filled, and
-  `location` in particular comes off the metadata server rather than
-  the env, so an empty one means `WhoAmI` fell back and export should
-  have been skipped entirely.
+Reuse the real PNG from §2a (`/tmp/big.png`) — a decodable image, so the
+thumbnail worker succeeds and `thumb_ms` gets samples. Random bytes
+would upload fine and then dead-letter, leaving the histogram empty:
 
-Then confirm the same thing in the console: Metrics Explorer →
-paste `custom.googleapis.com/tako/uploads`.
+```
+for i in 1 2 3; do
+  curl -s -o /dev/null -w "upload $i → %{http_code}\n" \
+    -F caption="metrics-$i" -F img=@/tmp/big.png "$URL/api/photos"
+done
+```
+
+→ three `200`s. Confirm they landed, and that thumbnails were built
+(`ready` flips true once `MakeThumb` runs):
+
+```
+curl -s "$URL/api/photos" | head -c 400
+```
+
+### 4c. Read the metrics back
+
+Wait **one flush interval (60s)** — recording is in-process and ships on
+a timer, so an immediate read finds nothing and that is not a failure.
+
+There is no `gcloud monitoring time-series list` command; read the API
+directly (works with the components you already have):
+
+```
+NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+AGO=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)      # GNU date: -d '1 hour ago'
+
+read_metric() {
+  curl -s -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    --data-urlencode "filter=metric.type=\"custom.googleapis.com/tako/$1\"" \
+    --data-urlencode "interval.startTime=$AGO" \
+    --data-urlencode "interval.endTime=$NOW" \
+    "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries"
+}
+
+read_metric uploads
+read_metric thumb_ms
+```
+
+Expect from `uploads`:
+
+- `"metricKind": "CUMULATIVE"`, `"valueType": "INT64"`, and a point
+  whose `int64Value` is **≥ 3** — a running total, not a delta.
+- `metric.labels.instance` present. This is the label that keeps two
+  instances of one revision from writing the same series.
+- `resource.type: "cloud_run_revision"` with `service_name`,
+  `revision_name` and **`location`** all filled. An empty `location`
+  means `WhoAmI` could not reach the metadata server, in which case
+  export should have been skipped entirely — that combination is a bug,
+  not a partial success.
+
+From `thumb_ms`: `"valueType": "DISTRIBUTION"`, a `distributionValue`
+with `count` ≥ 3, and `bucketCounts` non-zero somewhere in the middle
+of the range (thumbnails land in the tens-to-hundreds of ms).
+
+If either comes back `{}`, the metric has not flushed yet — wait
+another 60s before treating it as a failure.
+
+Then confirm the same thing visually: **Metrics Explorer → paste
+`custom.googleapis.com/tako/uploads`**, and sum across `instance`.
 
 ## 5. The last flush survives a revision swap
 
@@ -236,8 +286,7 @@ redeploy again. The old instance takes SIGTERM before its ticker fires,
 so the upload only reaches Cloud Monitoring if the shutdown flush ran.
 
 ```
-gcloud monitoring time-series list --project <test-project> \
-  --filter 'metric.type = "custom.googleapis.com/tako/uploads"'
+read_metric uploads      # the helper from §4c
 ```
 
 → the count includes that photo, under the **old** revision's series.
