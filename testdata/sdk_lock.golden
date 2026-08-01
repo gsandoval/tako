@@ -59,7 +59,10 @@
     func (context.Context).Value(key any) any
 const Batch Profile
 const Default Profile
+const Inherit Toggle
 const Latency Profile
+const Off Toggle
+const On Toggle
 func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res]
 func Auth(opts ...Option) *AuthHandle
 func Bucket(name string, opts ...Option) *BucketHandle
@@ -103,6 +106,7 @@ func WithPrivate() Option
 func WithProfile(p Profile) Option
 func WithRateLimit(n int) Option
 func WithRedirect(from string, to string) Option
+func WithRetries(n int) Option
 func WithSingleflight() Option
 func WithTTL(d time.Duration) Option
 func WithTrustedHTML() Option
@@ -119,7 +123,7 @@ type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type EventSource[T any] interface{eventSource(T); sourceName() string}
-type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int}
+type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; Timeout time.Duration; CPUAlwaysOn Toggle}
 type HTML struct{}
 type Handler struct{}
 type HistogramHandle struct{}
@@ -134,5 +138,6 @@ type SecretHandle struct{}
 type ServiceHandle struct{}
 type SiteHandle struct{}
 type TestApp struct{}
+type Toggle int
 type TopicHandle[T any] struct{}
 type User struct{ID string; Email string; Name string}

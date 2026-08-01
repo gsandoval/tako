@@ -12,11 +12,15 @@ import (
 // was never set anywhere, so a Latency service was throttled exactly
 // like Default. These pin the promise to the wire.
 func TestLatencyAllocatesCPUBetweenRequests(t *testing.T) {
-	if !analyzer.CPUAlwaysOn("latency") {
+	if analyzer.ProfileKnobs["latency"].CPUAlwaysOn != analyzer.ToggleOn {
 		t.Error("latency must keep CPU allocated — it is half of what a warm instance buys")
 	}
-	for _, p := range []string{"default", "batch", "singleton"} {
-		if analyzer.CPUAlwaysOn(p) {
+	// A singleton's loop runs BETWEEN requests, so it needs CPU too.
+	if analyzer.ProfileKnobs["singleton"].CPUAlwaysOn != analyzer.ToggleOn {
+		t.Error("a singleton loop runs between requests and needs CPU allocated")
+	}
+	for _, p := range []string{"default", "batch"} {
+		if analyzer.ProfileKnobs[p].CPUAlwaysOn != analyzer.ToggleOff {
 			t.Errorf("%s should take Cloud Run's throttled default", p)
 		}
 	}
@@ -42,7 +46,7 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 				"public":         true,
 				"scaling": map[string]any{
 					"min": 1, "max": 10, "concurrency": 40,
-					"cpu": "2", "memory": "1Gi", "cpuAlwaysOn": tc.alwaysOn,
+					"cpu": "2", "memory": "1Gi", "cpuAlwaysOn": tc.alwaysOn, "timeout": 300,
 				},
 			},
 		}

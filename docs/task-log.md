@@ -7688,3 +7688,59 @@ Docs: new `reference/service.md`; `domains.md`, `api.md`, `pages.md`,
 `site.md`, `footprint.md` and the reference index updated;
 `validate/domain.md` §1 and §8 now declare through `tako.Service` and
 expect the renamed service.
+
+## V2 — the fixed knobs, unfixed (2026-08-01)
+
+**Folded into `Footprint`, as decided** — no second mechanism. Timeout
+and CPU allocation resolve exactly like CPU and memory: a profile
+default, an optional override, one `Over()`.
+
+| profile | … | Timeout | CPU between requests |
+|---|---|---|---|
+| default | … | 300s | throttled |
+| latency | … | 300s | **allocated** |
+| batch | … | 900s | throttled |
+| singleton | … | 3600s | **allocated** |
+
+Singleton allocates CPU because its loop runs BETWEEN requests — a
+throttled singleton is a loop that stops running, which the primitive
+never survived; V0 only noticed the Latency half of this.
+
+**`CPUAlwaysOn` is a `Toggle`, not a `bool`.** In a struct whose zero
+value means inherit, a bool cannot say "explicitly off". `Inherit`/`On`/
+`Off` — the one new type, and the pattern any future boolean knob takes.
+
+**Job and Singleton profiles became DEFAULTS.** `partition()` assigns
+them; `applyProfiles` can override; `desired.go`'s two overwrite lines
+are gone. The option was accepted and ignored before — the S6 audit's
+exact complaint. Visible in the goldens: `shop-settle` now reads
+`profile batch` where it used to claim `default` while the provisioner
+quietly did something else.
+
+**Singleton `MaxInstances` refused** (`tako/singleton-max`) as decided;
+`MinInstances` and `Concurrency` too (they are what keep the loop's host
+alive and alone). CPU, Memory and Timeout are the user's.
+
+**`WithRetries(n)` on JobHandler**, 0–10. Jobs have no dead letter, so a
+high ceiling would only promise something nothing catches. JobHandler
+also accepts `WithProfile` now.
+
+**Two ceilings, not one.** A service's request timeout caps at 60m, a
+job task's at 24h. `footprintArg` cannot know which it is parsing, so it
+refuses only what is impossible everywhere (>24h) and `applyFootprints`
+refuses what is impossible for THIS service, naming `tako.Job` as the
+answer for work that outlives a request.
+
+### Live on tako-test-02 (`--env v2`)
+
+shop's settle job with `WithRetries(1)` + `Footprint{Memory: "4Gi",
+Timeout: 2*time.Hour}` read back: `maxRetries: 1`, `timeout: 7200s`,
+`taskCount: 4`, `memory 4Gi`. Destroy clean.
+
+**A text I falsified and fixed in the same slice:** the security summary
+hardcoded *"retries: 3"*. The moment retries became declarable that
+line became a lie, so it reads `jobRetriesOf(graph, svc)` now — verified
+printing `retries: 1` live.
+
+`sdk_lock` regenerated: `+ WithRetries`, `+ type Toggle`, `+ Inherit/On/
+Off`, and `Footprint` gains `Timeout` and `CPUAlwaysOn`.

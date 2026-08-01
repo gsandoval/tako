@@ -57,6 +57,11 @@ type Footprint struct {
 	Concurrency  int    `json:"concurrency,omitempty"`
 	MinInstances int    `json:"min_instances,omitempty"`
 	MaxInstances int    `json:"max_instances,omitempty"`
+	// TimeoutSeconds caps one unit of work: a request for a service, a
+	// task for a job. Zero inherits the profile's.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// CPUAlwaysOn mirrors tako.Toggle: 0 inherit, 1 on, 2 off.
+	CPUAlwaysOn int `json:"cpu_always_on,omitempty"`
 }
 
 // Resource is one declared resource var.
@@ -144,6 +149,8 @@ type Handler struct {
 	Schedule string `json:"schedule,omitempty"`
 	// Parallel is a JobHandler's WithParallel task fan-out (0 = one task).
 	Parallel int `json:"parallel,omitempty"`
+	// Retries is a JobHandler's WithRetries claim (0 = Cloud Run's 3).
+	Retries int `json:"retries,omitempty"`
 	// Profile is the handler's WithProfile claim ("latency", "batch";
 	// empty = default). The service inherits it — mixed claims within
 	// one service are an analysis error.

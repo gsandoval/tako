@@ -112,8 +112,8 @@ func (r *RunJobs) body(o provision.Object) map[string]any {
 				"serviceAccount": spec["serviceAccount"],
 				// Compute, not messaging: Cloud Run retries a failed
 				// task up to maxRetries; there is no dead-letter here.
-				"maxRetries": 3,
-				"timeout":    "3600s",
+				"maxRetries": spec["retries"],
+				"timeout":    fmt.Sprintf("%ds", spec["timeout"]),
 				"containers": []map[string]any{{
 					"image": spec["image"],
 					"env":   env,

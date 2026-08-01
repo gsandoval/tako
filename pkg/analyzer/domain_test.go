@@ -3,6 +3,7 @@ package analyzer
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -175,4 +176,82 @@ func writeModule(t *testing.T, dir, pkg, body string) {
 	write("go.mod", "module "+pkg+"\n\ngo 1.26\n\nrequire github.com/gsandoval/tako v0.0.0\n\nrequire (\n\tgo.etcd.io/bbolt v1.5.0 // indirect\n\tgolang.org/x/sys v0.47.0 // indirect\n)\n\nreplace github.com/gsandoval/tako => "+root+"\n")
 	write("go.sum", string(src))
 	write("app.go", "package "+pkg+"\n\nimport \"github.com/gsandoval/tako\"\n"+body)
+}
+
+// V2: Job and Singleton profiles are DEFAULTS, not overwrites — the
+// provisioner used to force them regardless of what the user asked for.
+func TestJobProfileIsADefaultNotAnOverwrite(t *testing.T) {
+	dir := t.TempDir()
+	writeModule(t, dir, "batchy", `
+var work = tako.Job[string]("work")
+
+var Work = tako.JobHandler(work, run,
+	tako.WithProfile(tako.Latency),
+	tako.WithRetries(1),
+	tako.WithFootprint(tako.Footprint{Memory: "8Gi", CPU: 4, Timeout: 2 * time.Hour}))
+
+func run(ctx tako.Ctx, _ string) error { return nil }
+`)
+	// The fixture needs "time" imported alongside tako.
+	patchImports(t, dir)
+	graph, err := Analyze(Config{Dir: dir, Env: []string{"GOWORK=off"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(graph.Services) != 1 {
+		t.Fatalf("want one service, got %v", graph.Services)
+	}
+	svc := graph.Services[0]
+	if !svc.Job {
+		t.Fatal("want a job service")
+	}
+	if svc.Profile != "latency" {
+		t.Errorf("profile = %q, want latency — the job default must be overridable", svc.Profile)
+	}
+	resolved := svc.Footprint.Over(ProfileKnobs[svc.Profile])
+	if resolved.TimeoutSeconds != 7200 {
+		t.Errorf("timeout = %ds, want 7200", resolved.TimeoutSeconds)
+	}
+	for _, h := range graph.Handlers {
+		if h.Kind == "job" && h.Retries != 1 {
+			t.Errorf("retries = %d, want 1", h.Retries)
+		}
+	}
+}
+
+// Timeout and CPU allocation resolve exactly like CPU and memory: a
+// profile default, an optional override, one Over().
+func TestTimeoutAndCPUResolveThroughOver(t *testing.T) {
+	base := ProfileKnobs["default"]
+	if base.TimeoutSeconds != 300 || base.CPUAlwaysOn != ToggleOff {
+		t.Fatalf("default profile drifted: %+v", base)
+	}
+	got := Footprint{TimeoutSeconds: 60, CPUAlwaysOn: ToggleOn}.Over(base)
+	if got.TimeoutSeconds != 60 || got.CPUAlwaysOn != ToggleOn {
+		t.Errorf("override lost: %+v", got)
+	}
+	// Zero inherits — including the Toggle's Inherit.
+	inherit := Footprint{Memory: "1Gi"}.Over(ProfileKnobs["latency"])
+	if inherit.TimeoutSeconds != 300 || inherit.CPUAlwaysOn != ToggleOn {
+		t.Errorf("inherit lost: %+v", inherit)
+	}
+	// Off is not zero: it must beat a profile that says on.
+	off := Footprint{CPUAlwaysOn: ToggleOff}.Over(ProfileKnobs["latency"])
+	if off.CPUAlwaysOn != ToggleOff {
+		t.Error("Off must override a profile that allocates CPU — that is why Toggle exists")
+	}
+}
+
+func patchImports(t *testing.T, dir string) {
+	t.Helper()
+	p := filepath.Join(dir, "app.go")
+	b, err := os.ReadFile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.Replace(string(b), `import "github.com/gsandoval/tako"`,
+		"import (\n\t\"time\"\n\n\t\"github.com/gsandoval/tako\"\n)", 1)
+	if err := os.WriteFile(p, []byte(s), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }

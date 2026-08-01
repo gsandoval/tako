@@ -505,6 +505,8 @@ func partition(handlers []Handler) []Service {
 		svc := *byService[name]
 		// A deployable whose one handler is a JobHandler provisions as
 		// a Cloud Run JOB; a Singleton's provisions min=1/max=1.
+		// Their profiles are DEFAULTS here rather than overwrites at
+		// provision time, so WithProfile can still move them (V2).
 		kinds := map[string]bool{}
 		for _, h := range handlers {
 			if h.Service == svc.Name {
@@ -513,6 +515,12 @@ func partition(handlers []Handler) []Service {
 		}
 		svc.Job = len(kinds) == 1 && kinds["job"]
 		svc.Singleton = len(kinds) == 1 && kinds["singleton"]
+		switch {
+		case svc.Job:
+			svc.Profile = "batch"
+		case svc.Singleton:
+			svc.Profile = "singleton"
+		}
 		services = append(services, svc)
 	}
 	return services

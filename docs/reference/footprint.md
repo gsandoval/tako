@@ -11,16 +11,20 @@ and specific. Prefer the profile; pin only what the profile can't know.
 selects its service's scaling profile (one service, one profile). The
 knobs (`ProfileKnobs`, spec §4.6):
 
-| profile           | CPU | Memory | Concurrency | Min | Max | CPU between requests |
-|-------------------|-----|--------|-------------|-----|-----|----------------------|
-| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | throttled            |
-| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | **always allocated** |
-| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | throttled            |
+| profile           | CPU | Memory | Concurrency | Min | Max | Timeout | CPU between requests |
+|-------------------|-----|--------|-------------|-----|-----|---------|----------------------|
+| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | 300s    | throttled            |
+| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | 300s    | **always allocated** |
+| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            |
+| *(singleton)*     | 1   | 512Mi  | 1           | 1   | 1   | 3600s   | **always allocated** |
 
-(Jobs base on batch; singletons use a fixed internal profile —
-CPU 1 / 512Mi / concurrency 1 / min 1 / max 1.) Default scales to
-zero; Latency keeps an instance warm — min=1 bills continuously; Batch
-favors throughput per instance for background work.
+Default scales to zero; Latency keeps an instance warm — min=1 bills
+continuously; Batch favors throughput per instance for background work.
+
+**Jobs default to batch and singletons to the singleton profile, but
+both are now DEFAULTS you can override** with `WithProfile` — the
+provisioner used to overwrite whatever you asked for, which made the
+option accepted and ignored.
 
 **Latency's concurrency is deliberately LOWER than Default's**, which
 reads backwards until you see what it buys: fewer requests packed onto
@@ -45,8 +49,20 @@ type Footprint struct {
 	Concurrency  int    // concurrent requests per instance (1–1000)
 	MinInstances int    // always-warm instances — they bill continuously
 	MaxInstances int    // scale-out cap (1–1000)
+	Timeout      time.Duration // one unit of work: a request, or a job task
+	CPUAlwaysOn  Toggle // Inherit | On | Off — CPU between requests
 }
 ```
+
+`Timeout` caps how long ONE unit of work may run — a request for a
+service, a task for a job. Cloud Run's ceilings differ, and so do the
+refusals: 60m for a service (past that you want a
+[job](job.md)), 24h for a job task.
+
+`CPUAlwaysOn` is a three-state `Toggle`, not a `bool`, because a struct
+whose zero value means "inherit" cannot otherwise express "explicitly
+off". `tako.On` forces allocation on a Default-profile service;
+`tako.Off` forces it off on Latency.
 
 Zero fields inherit from the profile; set fields override it. The
 min=0 nuance: a zero field means *inherit*, so an explicit
@@ -124,7 +140,7 @@ The claims live in golden tests —
 - `service mixedprofile cannot be both latency (Fast) and batch (Slow)
   — one service scales one way; split the packages or align the
   profiles (tako/mixed-profile)`
-- Scoping: `a job footprint sets CPU and Memory only — executions are
+- Scoping: `a job footprint sets CPU, Memory and Timeout only — executions are
   tasks, not serving instances; WithParallel sets the fan-out` and
   `a singleton footprint sets CPU and Memory only —
   min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one`
@@ -132,9 +148,6 @@ The claims live in golden tests —
 ## Not yet
 
 - Three named profiles; no custom or per-app profiles.
-- No GPU, and no request-timeout knob — the knob set is exactly the
-  five Footprint fields. CPU allocation between requests is not a knob
-  either: it is decided by the profile (Latency allocates, the rest
-  throttle).
+- No GPU.
 - An explicit `MinInstances: 0` cannot be written as a field (zero
   means inherit) — pick a min=0 profile instead.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,7 +47,8 @@ type runService struct {
 			MinInstanceCount int `json:"minInstanceCount"`
 			MaxInstanceCount int `json:"maxInstanceCount"`
 		} `json:"scaling"`
-		MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
+		MaxInstanceRequestConcurrency int    `json:"maxInstanceRequestConcurrency,omitempty"`
+		Timeout                       string `json:"timeout,omitempty"`
 		Containers                    []struct {
 			Image string `json:"image"`
 			Env   []struct {
@@ -111,6 +113,16 @@ func (r *RunServices) isPublic(ctx context.Context, name string) bool {
 	return false
 }
 
+// secondsOf parses Cloud Run's duration form ("300s") back to an int,
+// the shape the desired spec carries.
+func secondsOf(d string) int {
+	n, err := strconv.Atoi(strings.TrimSuffix(d, "s"))
+	if err != nil {
+		return 0
+	}
+	return n
+}
+
 // liveHash re-derives the intended-spec map from the live service so a
 // console edit of any tako-owned field hashes differently. Values GCP
 // normalizes are un-normalized (cpu "1000m" → "1").
@@ -136,6 +148,7 @@ func liveHash(svc runService, public bool) string {
 			"memory":      c.Resources.Limits["memory"],
 			// cpuIdle is the API's inverse of the knob tako names.
 			"cpuAlwaysOn": !c.Resources.CPUIdle,
+			"timeout":     secondsOf(svc.Template.Timeout),
 		},
 		"public": public,
 	})
@@ -163,6 +176,7 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 				"maxInstanceCount": scaling["max"],
 			},
 			"maxInstanceRequestConcurrency": scaling["concurrency"],
+			"timeout":                       fmt.Sprintf("%ds", scaling["timeout"]),
 			"containers": []map[string]any{{
 				"image": spec["image"],
 				"env":   env,

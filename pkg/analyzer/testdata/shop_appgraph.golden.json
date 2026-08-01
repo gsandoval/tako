@@ -21,7 +21,7 @@
       "handlers": [
         "shop.Settle"
       ],
-      "profile": "default",
+      "profile": "batch",
       "job": true
     },
     {
@@ -30,7 +30,7 @@
       "handlers": [
         "shop.Invoicer"
       ],
-      "profile": "default",
+      "profile": "singleton",
       "singleton": true
     },
     {

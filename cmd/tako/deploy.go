@@ -438,7 +438,10 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 		if !public[cfg.Name(svc.Name)] {
 			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
 			if svc.Job {
-				ingress = "a Cloud Run Job — no ingress; executions run on demand (retries: 3, then the execution fails)"
+				// The retry count is declared now (WithRetries), so the
+				// summary must read it rather than recite the default.
+				ingress = fmt.Sprintf("a Cloud Run Job — no ingress; executions run on demand (retries: %d, then the execution fails)",
+					jobRetriesOf(graph, svc.Name))
 			}
 			if svc.Singleton {
 				ingress = "ingress: none serving — the loop runs while this instance holds the lease"
@@ -603,6 +606,16 @@ func warnFootprints(graph *analyzer.AppGraph) {
 				svc.Name, r.MinInstances)
 		}
 	}
+}
+
+// jobRetriesOf is the job's declared retry count, or Cloud Run's 3.
+func jobRetriesOf(graph *analyzer.AppGraph, service string) int {
+	for _, h := range graph.Handlers {
+		if h.Service == service && h.Kind == "job" && h.Retries > 0 {
+			return h.Retries
+		}
+	}
+	return 3
 }
 
 // warnDomains states the cost of a custom domain at DECISION time. The

@@ -215,14 +215,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		if !ok {
 			return nil, fmt.Errorf("no image built for service %s", svc.Name)
 		}
-		profile := svc.Profile
-		if svc.Singleton {
-			profile = "singleton"
-		}
-		if svc.Job {
-			profile = "batch"
-		}
-		resolved, err := resolveKnobs(svc, profile)
+		resolved, err := resolveKnobs(svc, svc.Profile)
 		if err != nil {
 			return nil, err
 		}
@@ -232,7 +225,8 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			"concurrency": resolved.Concurrency,
 			"cpu":         strconv.Itoa(resolved.CPU),
 			"memory":      resolved.Memory,
-			"cpuAlwaysOn": analyzer.CPUAlwaysOn(profile),
+			"cpuAlwaysOn": resolved.CPUAlwaysOn == analyzer.ToggleOn,
+			"timeout":     resolved.TimeoutSeconds,
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
@@ -303,10 +297,12 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					"serviceAccount": cfg.SAEmail(svc.Name),
 					"env":            env,
 					"taskCount":      taskCount,
-					// Task compute: the footprint's CPU/Memory when
-					// pinned, batch-profile values otherwise.
-					"cpu":    strconv.Itoa(resolved.CPU),
-					"memory": resolved.Memory,
+					// Task compute: the footprint's CPU/Memory/Timeout
+					// when pinned, batch-profile values otherwise.
+					"cpu":     strconv.Itoa(resolved.CPU),
+					"memory":  resolved.Memory,
+					"timeout": resolved.TimeoutSeconds,
+					"retries": jobRetries(g, svc.Name),
 				},
 			})
 			continue
@@ -490,6 +486,16 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 
 	objs = append(objs, deriveGrants(g, cfg)...)
 	return objs, nil
+}
+
+// jobRetries is the job's WithRetries claim, or Cloud Run's 3.
+func jobRetries(g *analyzer.AppGraph, service string) int {
+	for _, h := range g.Handlers {
+		if h.Service == service && h.Kind == "job" && h.Retries > 0 {
+			return h.Retries
+		}
+	}
+	return 3
 }
 
 // sourceTopic is the physical topic one async handler's subscription

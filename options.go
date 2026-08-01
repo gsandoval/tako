@@ -87,13 +87,41 @@ type Footprint struct {
 	MinInstances int
 	// MaxInstances caps the scale-out (1–1000).
 	MaxInstances int
+	// Timeout caps how long ONE unit of work may run: a request for a
+	// service, a task for a job. Zero inherits the profile's.
+	Timeout time.Duration
+	// CPUAlwaysOn keeps CPU allocated between requests instead of
+	// throttling it. Inherit (the zero value) takes the profile's
+	// choice — only Latency allocates.
+	CPUAlwaysOn Toggle
 }
+
+// Toggle is a three-state override for a boolean knob, because a plain
+// bool cannot distinguish "leave it alone" from "explicitly off" in a
+// struct whose zero value means inherit.
+type Toggle int
+
+const (
+	// Inherit takes the profile's value.
+	Inherit Toggle = iota
+	// On forces the knob on regardless of profile.
+	On
+	// Off forces the knob off regardless of profile.
+	Off
+)
 
 // WithFootprint overrides the scaling profile field-by-field with
 // explicit compute values. Prefer a profile (named intent, framework
 // values); reach for a footprint when a workload's needs are known and
-// specific. On job handlers and singletons only CPU and Memory apply.
+// specific. On job handlers and singletons only CPU, Memory and Timeout
+// apply — the instance shape is what makes those primitives what they
+// are.
 func WithFootprint(f Footprint) Option { return option("footprint", f) }
+
+// WithRetries sets how many times a failed job task is retried before
+// the execution fails. Jobs are compute, not messaging: there is no
+// dead-letter to catch what runs out of attempts.
+func WithRetries(n int) Option { return option("retries", n) }
 
 // WithSingleflight wraps a Cron handler in a lease so overlapping or
 // double-fired runs collapse to one execution.

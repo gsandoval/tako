@@ -262,7 +262,8 @@ func resolveQueueVar(pkg *packages.Package, arg ast.Expr, queueVars map[types.Ob
 }
 
 // jobOptions is the option set tako.JobHandler accepts.
-var jobOptions = map[string]bool{"WithParallel": true, "WithFootprint": true}
+var jobOptions = map[string]bool{"WithParallel": true, "WithFootprint": true,
+	"WithRetries": true, "WithProfile": true}
 
 // extractJobHandler validates one tako.JobHandler declaration: its own
 // deployable (a Cloud Run JOB — no routes, no request timeout), bound
@@ -284,9 +285,27 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		return nil
 	}
 	parallel := 0
+	retries := 0
+	profile := ""
 	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
+		if isOpt && optName == "WithProfile" {
+			profile = profileArg(pkg, opt)
+			continue
+		}
+		if isOpt && optName == "WithRetries" {
+			n, ok := intOptionArg(pkg, opt)
+			if !ok || n < 0 || n > 10 {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "tako.WithRetries takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it",
+					Rule: "retries",
+				})
+			}
+			retries = n
+			continue
+		}
 		if isOpt && optName == "WithParallel" {
 			if optCall, ok := opt.(*ast.CallExpr); ok && len(optCall.Args) == 1 {
 				if tv, ok := pkg.TypesInfo.Types[optCall.Args[0]]; ok && tv.Value != nil {
@@ -299,10 +318,10 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		}
 		if isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit) {
 				fail(&Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU and Memory only — executions are tasks, not serving instances; WithParallel sets the fan-out",
+					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling and no idle CPU to throttle; WithParallel sets the fan-out and WithRetries the attempts",
 					Rule: "footprint",
 				})
 			}
@@ -311,7 +330,7 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		if isOpt && !jobOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel, WithFootprint)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel, WithRetries, WithProfile, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -335,6 +354,8 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
 		Binding:   jobName,
 		Parallel:  parallel,
+		Retries:   retries,
+		Profile:   profile,
 		Footprint: footprint,
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
@@ -363,10 +384,18 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 	for _, opt := range call.Args[2:] {
 		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0) {
+			if footprint != nil && footprint.MaxInstances != 0 {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU and Memory only — min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one",
+					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and Timeout are yours",
+					Rule: "singleton-max",
+				})
+				bad = true
+			}
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "a singleton footprint sets CPU, Memory and Timeout only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
 					Rule: "footprint",
 				})
 				bad = true

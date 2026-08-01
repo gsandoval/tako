@@ -52,6 +52,25 @@ func startSettle(ctx tako.Ctx, req SettleReq) (SettleStarted, error) {
 Cloud Run Job execution created in the cloud. It never waits for
 completion.
 
+### Retries and timeout
+
+```go
+var Settle = tako.JobHandler(settle, runSettle,
+	tako.WithParallel(4),
+	tako.WithRetries(1),
+	tako.WithFootprint(tako.Footprint{Memory: "4Gi", Timeout: 2 * time.Hour}))
+```
+
+`WithRetries(n)` sets how many times a failed task is retried before the
+execution fails (default 3, range 0–10). Jobs are compute, not
+messaging: **there is no dead letter** to catch a task that runs out of
+attempts, which is why the ceiling is low — a task that fails ten times
+will not pass on the eleventh.
+
+`Timeout` on the footprint caps one TASK (default 900s from the batch
+profile, up to 24h) — not the execution, which is as long as its slowest
+task.
+
 ## Local
 
 An execution rides the local queue dispatcher as a tracked in-process

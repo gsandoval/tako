@@ -1,0 +1,1 @@
+app.go:7:39: tako.WithRetries takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it (tako/retries)

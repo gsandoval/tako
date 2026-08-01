@@ -15,7 +15,7 @@ shop: 4 services
     entity reports
     entity sequences
     entity settle-shards
-  service shop-settle (package shop, profile default)
+  service shop-settle (package shop, profile batch)
     job Settle ← settle ×4 tasks (app.go:101)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)
@@ -25,7 +25,7 @@ shop: 4 services
     entity reports
     entity sequences
     entity settle-shards
-  service shop-invoicer (package shop, profile default)
+  service shop-invoicer (package shop, profile singleton)
     singleton Invoicer — invoicer, exactly one everywhere (app.go:102)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)

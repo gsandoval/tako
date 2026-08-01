@@ -6,32 +6,35 @@ import (
 	"go/constant"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 )
-
-// CPUAlwaysOn reports whether a profile keeps CPU allocated between
-// requests. Only Latency does: paying for idle CPU is the other half of
-// what a warm instance buys (the first half being min 1), and it is
-// exactly what the profile promises in its doc comment. Everything else
-// takes Cloud Run's default, where CPU is throttled outside a request.
-//
-// V2 makes this a Footprint field; today it is derived from the profile
-// alone, which is all the SDK ever claimed.
-func CPUAlwaysOn(profile string) bool { return profile == "latency" }
 
 // ProfileKnobs maps a scaling profile to its Cloud Run values (spec
 // §4.6). One table serves both sides: the provisioner derives service
 // specs from it, and footprint validation resolves overrides against it
 // so impossible combinations fail analysis, not deploy.
 var ProfileKnobs = map[string]Footprint{
-	"default": {CPU: 1, Memory: "512Mi", Concurrency: 80, MinInstances: 0, MaxInstances: 20},
-	"latency": {CPU: 2, Memory: "1Gi", Concurrency: 40, MinInstances: 1, MaxInstances: 100},
-	"batch":   {CPU: 2, Memory: "2Gi", Concurrency: 10, MinInstances: 0, MaxInstances: 10},
+	"default": {CPU: 1, Memory: "512Mi", Concurrency: 80, MinInstances: 0, MaxInstances: 20,
+		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOff},
+	"latency": {CPU: 2, Memory: "1Gi", Concurrency: 40, MinInstances: 1, MaxInstances: 100,
+		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOn},
+	"batch": {CPU: 2, Memory: "2Gi", Concurrency: 10, MinInstances: 0, MaxInstances: 10,
+		TimeoutSeconds: 900, CPUAlwaysOn: ToggleOff},
 	// Singleton: min=1/max=1 keeps the loop's host alive; the LEASE is
-	// what makes it exactly-one (spec §4.4).
-	"singleton": {CPU: 1, Memory: "512Mi", Concurrency: 1, MinInstances: 1, MaxInstances: 1},
+	// what makes it exactly-one (spec §4.4). Its loop runs between
+	// requests, so CPU stays allocated.
+	"singleton": {CPU: 1, Memory: "512Mi", Concurrency: 1, MinInstances: 1, MaxInstances: 1,
+		TimeoutSeconds: 3600, CPUAlwaysOn: ToggleOn},
 }
+
+// Toggle states, mirroring tako.Toggle.
+const (
+	ToggleInherit = 0
+	ToggleOn      = 1
+	ToggleOff     = 2
+)
 
 // Over layers a footprint's set fields on top of base: every non-zero
 // field wins, every zero field inherits.
@@ -51,6 +54,12 @@ func (f Footprint) Over(base Footprint) Footprint {
 	}
 	if f.MaxInstances != 0 {
 		out.MaxInstances = f.MaxInstances
+	}
+	if f.TimeoutSeconds != 0 {
+		out.TimeoutSeconds = f.TimeoutSeconds
+	}
+	if f.CPUAlwaysOn != ToggleInherit {
+		out.CPUAlwaysOn = f.CPUAlwaysOn
 	}
 	return out
 }
@@ -73,6 +82,15 @@ func (f Footprint) String() string {
 	}
 	if f.MaxInstances != 0 {
 		parts = append(parts, fmt.Sprintf("max %d", f.MaxInstances))
+	}
+	if f.TimeoutSeconds != 0 {
+		parts = append(parts, fmt.Sprintf("timeout %ds", f.TimeoutSeconds))
+	}
+	switch f.CPUAlwaysOn {
+	case ToggleOn:
+		parts = append(parts, "cpu always on")
+	case ToggleOff:
+		parts = append(parts, "cpu throttled")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -146,8 +164,28 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 				f.MinInstances = int(n)
 			case "MaxInstances":
 				f.MaxInstances = int(n)
+			case "Timeout":
+				// time.Duration is an int64 of NANOSECONDS; Cloud Run
+				// speaks whole seconds, so a sub-second timeout is a
+				// mistake worth naming rather than truncating to zero.
+				if n > 0 && n < int64(time.Second) {
+					fail(kv.Value, fmt.Sprintf("footprint Timeout must be at least one second; got %s", time.Duration(n)))
+				}
+				f.TimeoutSeconds = int(n / int64(time.Second))
+			case "CPUAlwaysOn":
+				f.CPUAlwaysOn = int(n)
 			}
 		}
+	}
+	// The CEILING depends on the deployable — a service's request timeout
+	// caps at 60m, a job task's at 24h — and this parser cannot know
+	// which it is looking at. It rejects what is impossible everywhere;
+	// applyFootprints rejects what is impossible for THIS service.
+	if f.TimeoutSeconds < 0 || f.TimeoutSeconds > 24*3600 {
+		fail(lit, fmt.Sprintf("footprint Timeout must be between 1s and 24h; got %s", time.Duration(f.TimeoutSeconds)*time.Second))
+	}
+	if f.CPUAlwaysOn < 0 || f.CPUAlwaysOn > 2 {
+		fail(lit, "footprint CPUAlwaysOn must be tako.Inherit, tako.On, or tako.Off")
 	}
 	switch f.CPU {
 	case 0, 1, 2, 4, 8:
@@ -226,14 +264,7 @@ func applyFootprints(graph *AppGraph, errs *ErrorList) {
 		}
 		svc.Footprint = claim
 
-		base := ProfileKnobs[svc.Profile]
-		switch {
-		case svc.Job:
-			base = ProfileKnobs["batch"]
-		case svc.Singleton:
-			base = ProfileKnobs["singleton"]
-		}
-		r := claim.Over(base)
+		r := claim.Over(ProfileKnobs[svc.Profile])
 		mi, _ := memMi(r.Memory)
 		cpus := fmt.Sprintf("%d vCPU", r.CPU)
 		if r.CPU != 1 {
@@ -255,6 +286,12 @@ func applyFootprints(graph *AppGraph, errs *ErrorList) {
 			resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 8Gi needs at least 4 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
 		case mi > 4*1024 && r.CPU < 2:
 			resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 4Gi needs at least 2 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
+		}
+		// Cloud Run's two ceilings: a request may run 60 minutes, a job
+		// task 24 hours. Resolved, because a profile can supply it.
+		if !svc.Job && r.TimeoutSeconds > 3600 {
+			resolveFail(fmt.Sprintf("service %s resolves to a %s request timeout — Cloud Run caps a request at 60m; for work that outlives a request use a tako.Job (docs/reference/job.md)",
+				svc.Name, time.Duration(r.TimeoutSeconds)*time.Second))
 		}
 		if r.MinInstances > r.MaxInstances {
 			resolveFail(fmt.Sprintf("service %s resolves to MinInstances %d over MaxInstances %d (profile %s) — pin MaxInstances too", svc.Name, r.MinInstances, r.MaxInstances, svc.Profile))
