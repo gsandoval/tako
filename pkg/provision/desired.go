@@ -227,6 +227,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			"memory":       resolved.Memory,
 			"cpuAlwaysOn":  resolved.CPUAlwaysOn == analyzer.ToggleOn,
 			"startupBoost": resolved.StartupBoost == analyzer.ToggleOn,
+			"affinity":     resolved.SessionAffinity == analyzer.ToggleOn,
 			"timeout":      resolved.TimeoutSeconds,
 		}
 		env := map[string]any{
@@ -237,10 +238,6 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			// The service's own base name: dead-topic derivation
 			// (Permanent publishes there directly) and log labeling.
 			"TAKO_SERVICE": svc.Name,
-			// The drain share of Cloud Run's fixed 10s shutdown window.
-			// The instance cannot read this anywhere — unlike its region
-			// or id, it is a tako decision — so it rides the env.
-			"TAKO_DRAIN": strconv.Itoa(resolved.DrainSeconds),
 		}
 		if cfg.AuthAPIKey != "" {
 			env["TAKO_AUTH_APIKEY"] = cfg.AuthAPIKey
@@ -312,6 +309,12 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			})
 			continue
 		}
+		// The drain share of Cloud Run's fixed 10s shutdown window. The
+		// instance cannot read this anywhere — unlike its region or id, it
+		// is a tako decision — so it rides the env. SERVICES ONLY: a job
+		// has no listener to close and no in-flight request to finish, so
+		// injecting it there would be a knob with nothing behind it.
+		env["TAKO_DRAIN"] = strconv.Itoa(resolved.DrainSeconds)
 		objs = append(objs, Object{
 			Kind: KindRunService,
 			Name: cfg.Name(svc.Name),

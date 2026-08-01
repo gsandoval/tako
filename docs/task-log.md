@@ -8241,3 +8241,50 @@ tests inject them; `BootGCP` does the metadata lookup. If the metadata
 server is unreachable, export is skipped with one logged line — that
 means we are not on Cloud Run, which is not an error worth crashing a
 service over.
+
+### Knob review — 2026-08-01 (second pass)
+
+User: *"I do want to expose sessionAffinity … A question about h2c
+it's whether we are supporting HTTP2 for our server … Make sure to
+remove configurations or knobs that have no impact."*
+
+**`SessionAffinity` ships.** `Footprint.SessionAffinity Toggle` → v2
+`RevisionTemplate.sessionAffinity`. Off in every profile — it trades
+away even load spreading, so it is opt-in per service, never a
+profile's idea. Refused on jobs (nothing serves) and on **singletons**:
+max=1 means affinity has exactly one instance to choose from, which is
+the definition of a knob with no impact.
+
+**`executionEnvironment` stays out** — user's call, and the reason is
+right: tako always wants the current generation, and a knob whose only
+other value is "older sandbox" is a downgrade switch.
+
+**h2c is not a knob we declined — it is a feature we have not built.**
+`pkg/runtime/http.go` builds a plain `http.Server` and calls
+`ListenAndServe`; nothing wires `golang.org/x/net/http2/h2c` (x/net is
+an INDIRECT dependency — `go.mod:26`). Without TLS, Go serves HTTP/1.1
+only. Cloud Run's `h2c` setting tells the front end to forward
+**cleartext HTTP/2** to the container, so turning it on against today's
+runtime would break every request, not merely fail to help.
+
+Supporting it means: promote `golang.org/x/net` to a direct dependency,
+wrap `Serve`'s handler in `h2c.NewHandler(h, &http2.Server{})`, then
+expose the Cloud Run setting — in that order, because the setting is
+only safe once the server can answer. Worth it for gRPC-style streaming
+or many-small-requests clients; nothing in the five examples asks yet.
+Logged as discovered work, NOT as a footprint knob.
+
+**Dead config found and removed: `TAKO_DRAIN` was going into jobs.**
+The env map is built once and shared by both the run-service and the
+run-job specs, so every job container carried a drain budget for a
+listener it does not have — while the analyzer refuses `Drain` on a job
+footprint in the same breath. Now injected only on the service path,
+pinned by `TestJobsCarryNoServiceOnlyEnv` (which asserts BOTH
+directions: absent on jobs, present on services).
+
+`sessionAffinity` is the **third** v2 field on this service that is
+omitted-when-false (`cpuIdle`, `startupCpuBoost`, `sessionAffinity`),
+so it went into `liveHash` with the other two and the drift-trap test
+grew a `sticky` case — affinity is nobody's profile default, so an
+explicit footprint is the only way it is ever true, which is exactly
+the case a forgotten `liveHash` field would break.

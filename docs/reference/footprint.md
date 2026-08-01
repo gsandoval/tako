@@ -56,6 +56,7 @@ type Footprint struct {
 	CPUAlwaysOn  Toggle // Inherit | On | Off — CPU between requests
 	Drain        time.Duration // finishing in-flight requests at shutdown
 	StartupBoost Toggle // Inherit | On | Off — extra CPU until serving
+	SessionAffinity Toggle // Inherit | On | Off — sticky routing
 }
 ```
 
@@ -72,6 +73,17 @@ off". `tako.On` forces allocation on a Default-profile service;
 `StartupBoost` gives a starting instance extra CPU until it is serving.
 It is the one knob that moves cold-start latency, which is why Latency
 takes it and the others don't — you pay for it only during startup.
+
+`SessionAffinity` asks Cloud Run to send a returning client back to the
+instance it reached last. **No profile turns it on**, because it trades
+away even load spreading: sticky clients pile onto instances the
+autoscaler would rather have balanced. Reach for it when per-client warm
+state makes a real difference — a decoded model, a primed cache — and
+never for state you cannot lose. It is best-effort, and an instance can
+disappear between any two requests.
+
+It is refused on jobs (nothing serves) and on singletons (exactly one
+instance means affinity has nothing to choose between).
 
 ### Drain
 
@@ -181,8 +193,9 @@ The claims live in golden tests —
 - Scoping: `a job footprint sets CPU, Memory and Timeout only —
   executions are tasks, not serving instances, so there is no
   concurrency, no scaling, no idle CPU to throttle, no cold start to
-  boost and no in-flight requests to drain; WithParallel sets the
-  fan-out and WithRetries the attempts (tako/footprint)`, and for a
+  boost, no in-flight requests to drain and no clients to keep affinity
+  with; WithParallel sets the fan-out and WithRetries the attempts
+  (tako/footprint)`, and for a
   singleton `a singleton footprint cannot set MaxInstances — the lease
   is what makes a singleton exactly-one … (tako/singleton-max)`
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud

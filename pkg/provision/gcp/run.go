@@ -47,9 +47,13 @@ type runService struct {
 			MinInstanceCount int `json:"minInstanceCount"`
 			MaxInstanceCount int `json:"maxInstanceCount"`
 		} `json:"scaling"`
-		MaxInstanceRequestConcurrency int    `json:"maxInstanceRequestConcurrency,omitempty"`
-		Timeout                       string `json:"timeout,omitempty"`
-		Containers                    []struct {
+		MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
+		// Omitted-when-false, like cpuIdle and startupCpuBoost — the third
+		// field on this service with that shape, and the third chance to
+		// report drift against ourselves if liveHash forgets it.
+		SessionAffinity bool   `json:"sessionAffinity,omitempty"`
+		Timeout         string `json:"timeout,omitempty"`
+		Containers      []struct {
 			Image string `json:"image"`
 			Env   []struct {
 				Name  string `json:"name"`
@@ -154,6 +158,7 @@ func liveHash(svc runService, public bool) string {
 			// cpuIdle is the API's inverse of the knob tako names.
 			"cpuAlwaysOn":  !c.Resources.CPUIdle,
 			"startupBoost": c.Resources.StartupCPUBoost,
+			"affinity":     svc.Template.SessionAffinity,
 			"timeout":      secondsOf(svc.Template.Timeout),
 		},
 		"public": public,
@@ -182,7 +187,10 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 				"maxInstanceCount": scaling["max"],
 			},
 			"maxInstanceRequestConcurrency": scaling["concurrency"],
-			"timeout":                       fmt.Sprintf("%ds", scaling["timeout"]),
+			// Best-effort stickiness, and a template field rather than a
+			// container one — Cloud Run routes, the container never knows.
+			"sessionAffinity": scaling["affinity"] == true,
+			"timeout":         fmt.Sprintf("%ds", scaling["timeout"]),
 			"containers": []map[string]any{{
 				"image": spec["image"],
 				"env":   env,

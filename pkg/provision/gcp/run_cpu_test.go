@@ -61,10 +61,15 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 		name        string
 		alwaysOn    bool
 		boost       bool
+		affinity    bool
 		wantCPUIdle bool
 	}{
-		{"latency", true, true, false},
-		{"default", false, false, true},
+		{"latency", true, true, false, false},
+		{"default", false, false, false, true},
+		// Affinity is nobody's profile default, so the only way it is ever
+		// true is an explicit footprint — which is exactly the case a
+		// forgotten liveHash field would break.
+		{"sticky", false, false, true, true},
 	} {
 		obj := provision.Object{
 			Kind: provision.KindRunService,
@@ -77,7 +82,7 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 				"scaling": map[string]any{
 					"min": 1, "max": 10, "concurrency": 40,
 					"cpu": "2", "memory": "1Gi", "cpuAlwaysOn": tc.alwaysOn,
-					"startupBoost": tc.boost, "timeout": 300,
+					"startupBoost": tc.boost, "affinity": tc.affinity, "timeout": 300,
 				},
 			},
 		}
@@ -95,6 +100,9 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 		}
 		if b := live.Template.Containers[0].Resources.StartupCPUBoost; b != tc.boost {
 			t.Errorf("%s: startupCpuBoost = %v, want %v", tc.name, b, tc.boost)
+		}
+		if a := live.Template.SessionAffinity; a != tc.affinity {
+			t.Errorf("%s: sessionAffinity = %v, want %v", tc.name, a, tc.affinity)
 		}
 		// The drift trap: liveHash re-derives the spec from the response,
 		// so a field emitted but not read back reports drift forever.

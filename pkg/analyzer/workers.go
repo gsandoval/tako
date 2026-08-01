@@ -358,10 +358,10 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		}
 		if isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.DrainSeconds != 0 || footprint.StartupBoost != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.DrainSeconds != 0 || footprint.StartupBoost != ToggleInherit || footprint.SessionAffinity != ToggleInherit) {
 				fail(&Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost and no in-flight requests to drain; WithParallel sets the fan-out and WithRetries the attempts",
+					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost, no in-flight requests to drain and no clients to keep affinity with; WithParallel sets the fan-out and WithRetries the attempts",
 					Rule: "footprint",
 				})
 			}
@@ -427,15 +427,15 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 			if footprint != nil && footprint.MaxInstances != 0 {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory, Timeout and Drain are yours",
+					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory, Timeout, Drain and StartupBoost are yours",
 					Rule: "singleton-max",
 				})
 				bad = true
 			}
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.SessionAffinity != ToggleInherit) {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU, Memory, Timeout and Drain only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
+					Msg:  "a singleton footprint sets CPU, Memory, Timeout, Drain and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone, and with exactly one instance session affinity has nothing to choose between",
 					Rule: "footprint",
 				})
 				bad = true

@@ -70,6 +70,9 @@ type Footprint struct {
 	// StartupBoost mirrors tako.Toggle: extra CPU until the instance is
 	// serving (Cloud Run v2 startupCpuBoost).
 	StartupBoost int `json:"startup_boost,omitempty"`
+	// SessionAffinity mirrors tako.Toggle: route a returning client back
+	// to the instance it reached last (Cloud Run v2 sessionAffinity).
+	SessionAffinity int `json:"session_affinity,omitempty"`
 }
 
 // Resource is one declared resource var.

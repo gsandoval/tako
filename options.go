@@ -128,6 +128,12 @@ type Footprint struct {
 	// it is serving, which is the one knob that moves cold-start
 	// latency. Inherit takes the profile's choice — only Latency boosts.
 	StartupBoost Toggle
+	// SessionAffinity asks Cloud Run to send a returning client back to
+	// the instance it reached last. No profile turns it on: it trades
+	// away even load spreading, and an instance can vanish at any time,
+	// so it is a best-effort optimization for warm per-client state —
+	// never somewhere to keep state you cannot lose.
+	SessionAffinity Toggle
 }
 
 // Toggle is a three-state override for a boolean knob, because a plain
