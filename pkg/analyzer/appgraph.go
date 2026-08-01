@@ -73,6 +73,9 @@ type Footprint struct {
 	// SessionAffinity mirrors tako.Toggle: route a returning client back
 	// to the instance it reached last (Cloud Run v2 sessionAffinity).
 	SessionAffinity int `json:"session_affinity,omitempty"`
+	// HTTP2 mirrors tako.Toggle: keep HTTP/2 to the instance instead of
+	// letting the edge downgrade it (Cloud Run v2 port name "h2c").
+	HTTP2 int `json:"http2,omitempty"`
 }
 
 // Resource is one declared resource var.

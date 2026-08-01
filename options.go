@@ -134,6 +134,17 @@ type Footprint struct {
 	// so it is a best-effort optimization for warm per-client state —
 	// never somewhere to keep state you cannot lose.
 	SessionAffinity Toggle
+	// HTTP2 keeps HTTP/2 all the way to the instance instead of letting
+	// Cloud Run downgrade it to HTTP/1.1 at the edge. Browsers already
+	// reach Cloud Run over HTTP/2 either way — this is about the last
+	// hop, and it is what buys request multiplexing and streaming
+	// between the frontend and your handler.
+	//
+	// A tako server always answers HTTP/2, so turning this on cannot
+	// arrive at a container that refuses it. Off by default because
+	// Cloud Run's own default is to downgrade, and for ordinary
+	// request/response JSON the last hop gains little.
+	HTTP2 Toggle
 }
 
 // Toggle is a three-state override for a boolean knob, because a plain

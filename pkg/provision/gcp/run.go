@@ -59,6 +59,9 @@ type runService struct {
 				Name  string `json:"name"`
 				Value string `json:"value"`
 			} `json:"env,omitempty"`
+			Ports []struct {
+				Name string `json:"name,omitempty"`
+			} `json:"ports,omitempty"`
 			Resources struct {
 				Limits  map[string]string `json:"limits,omitempty"`
 				CPUIdle bool              `json:"cpuIdle,omitempty"`
@@ -132,6 +135,16 @@ func secondsOf(d string) int {
 	return n
 }
 
+// portName maps the knob to Cloud Run's two allowed port names. Named
+// rather than inlined because liveHash has to reverse it, and the pair
+// drifting apart is exactly the bug that reports drift against itself.
+func portName(http2 bool) string {
+	if http2 {
+		return "h2c"
+	}
+	return "http1"
+}
+
 // liveHash re-derives the intended-spec map from the live service so a
 // console edit of any tako-owned field hashes differently. Values GCP
 // normalizes are un-normalized (cpu "1000m" → "1").
@@ -159,6 +172,7 @@ func liveHash(svc runService, public bool) string {
 			"cpuAlwaysOn":  !c.Resources.CPUIdle,
 			"startupBoost": c.Resources.StartupCPUBoost,
 			"affinity":     svc.Template.SessionAffinity,
+			"http2":        len(c.Ports) > 0 && c.Ports[0].Name == "h2c",
 			"timeout":      secondsOf(svc.Template.Timeout),
 		},
 		"public": public,
@@ -194,6 +208,12 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 			"containers": []map[string]any{{
 				"image": spec["image"],
 				"env":   env,
+				// The port NAME is how Cloud Run's v2 API expresses the
+				// protocol for the last hop: "h2c" keeps HTTP/2 all the way
+				// to the instance, "http1" lets the edge downgrade. TLS is
+				// terminated at the frontend either way — a container never
+				// sees it — so h2c is the only shape HTTP/2 can take here.
+				"ports": []map[string]any{{"name": portName(scaling["http2"] == true)}},
 				"resources": map[string]any{
 					"limits": map[string]string{
 						"cpu":    fmt.Sprint(scaling["cpu"]),

@@ -104,8 +104,9 @@ never rewinds.
 - A footprint touching the other scaling fields:
   `a singleton footprint sets CPU, Memory, Timeout, Drain and
   StartupBoost only — min=1 and concurrency=1 are what keep the loop's
-  host alive and alone, and with exactly one instance session affinity
-  has nothing to choose between (tako/footprint)`
+  host alive and alone, and a loop whose only caller is its own health
+  check has no clients to keep affinity with or negotiate HTTP/2 over
+  (tako/footprint)`
 - A non-constant name: `tako.Singleton name must be a string constant —
   names are read at analysis time, not run time; got …` (tako/const-name)
 

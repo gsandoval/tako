@@ -120,7 +120,17 @@ func drain(srv *http.Server, live *inflight) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
+	err := srv.Shutdown(ctx)
+	if err == nil {
+		// http.Server.Shutdown waits for HTTP/1.1 requests, but an h2c
+		// connection is HIJACKED — Shutdown marks it StateHijacked and
+		// stops tracking it, so it returns while HTTP/2 streams are still
+		// running. The in-flight COUNTER is at the handler, above the
+		// protocol, so it is the only thing that knows. Without this the
+		// lame duck would quietly hold only for HTTP/1.1 traffic.
+		err = waitIdle(ctx, live)
+	}
+	if err != nil {
 		left := live.load()
 		if left < 1 {
 			left = 1
@@ -133,6 +143,21 @@ func drain(srv *http.Server, live *inflight) {
 		}
 		_ = srv.Close()
 	}
+}
+
+// waitIdle blocks until no handler is running, or the budget expires.
+// It exists for hijacked (HTTP/2) connections, which Shutdown cannot
+// account for; on a purely HTTP/1.1 service the counter is already zero
+// by the time Shutdown returns and this costs one read.
+func waitIdle(ctx context.Context, live *inflight) error {
+	for live.load() > 0 {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(20 * time.Millisecond):
+		}
+	}
+	return nil
 }
 
 // track counts a request for the whole time its handler runs.

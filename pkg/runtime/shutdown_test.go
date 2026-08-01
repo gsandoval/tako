@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // serveOn starts an http.Server on a free port and returns it with its
@@ -21,7 +24,9 @@ func serveOn(t *testing.T, h http.Handler) (*http.Server, string, *inflight) {
 		t.Fatal(err)
 	}
 	var live inflight
-	srv := &http.Server{Handler: track(&live, h)}
+	// Mirrors Serve's own wiring — h2c wrapper included, since the
+	// hijacking it does is precisely what the drain has to cope with.
+	srv := &http.Server{Handler: h2c.NewHandler(track(&live, h), &http2.Server{})}
 	go func() { _ = srv.Serve(ln) }()
 	return srv, "http://" + ln.Addr().String(), &live
 }
@@ -159,5 +164,104 @@ func TestBudgetsFitTheShutdownWindow(t *testing.T) {
 	t.Setenv("TAKO_DRAIN", "")
 	if got := drainBudget(); got != devDrain {
 		t.Errorf("undeployed drain = %s, want the dev default %s", got, devDrain)
+	}
+}
+
+// h2cClient speaks HTTP/2 with prior knowledge over a plain TCP socket
+// — exactly what Cloud Run's frontend does to a container when the port
+// is named h2c, and what `curl --http2-prior-knowledge` does locally.
+func h2cClient() *http.Client {
+	return &http.Client{Transport: &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, _ *tls.Config) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, addr)
+		},
+	}}
+}
+
+// The server must answer real HTTP/2, not merely tolerate the setting:
+// Cloud Run stops downgrading once the port is named h2c, so a container
+// that cannot speak it fails every request instead of falling back.
+func TestServerSpeaksHTTP2(t *testing.T) {
+	var gotProto string
+	srv, addr, live := serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotProto = r.Proto
+		fmt.Fprint(w, "ok")
+	}))
+	defer func() { t.Setenv("TAKO_DRAIN", "1"); drain(srv, live) }()
+
+	resp, err := h2cClient().Get(addr + "/h2")
+	if err != nil {
+		t.Fatalf("h2c request failed — Cloud Run would send exactly this once HTTP2 is on: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+	if gotProto != "HTTP/2.0" {
+		t.Errorf("handler saw %q, want HTTP/2.0 — h2c did not take effect", gotProto)
+	}
+}
+
+// HTTP/1.1 must keep working unchanged: h2c.NewHandler wraps every
+// service, deployed with the setting or not, and Cloud Run's default is
+// still to downgrade.
+func TestHTTP11StillWorksAlongsideH2C(t *testing.T) {
+	var gotProto string
+	srv, addr, live := serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotProto = r.Proto
+		fmt.Fprint(w, "ok")
+	}))
+	defer func() { t.Setenv("TAKO_DRAIN", "1"); drain(srv, live) }()
+
+	resp, err := http.Get(addr + "/plain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if gotProto != "HTTP/1.1" {
+		t.Errorf("handler saw %q, want HTTP/1.1", gotProto)
+	}
+}
+
+// The interaction that would have gone unnoticed: an h2c connection is
+// HIJACKED, and http.Server.Shutdown stops tracking hijacked conns — so
+// Shutdown returns while HTTP/2 streams are still running. The lame duck
+// has to hold for them too, or it silently only covers HTTP/1.1.
+func TestDrainWaitsForHTTP2Requests(t *testing.T) {
+	started := make(chan struct{})
+	var finished atomic.Bool
+	srv, addr, live := serveOn(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		time.Sleep(400 * time.Millisecond)
+		finished.Store(true)
+		fmt.Fprint(w, "done")
+	}))
+
+	done := make(chan int, 1)
+	go func() {
+		resp, err := h2cClient().Get(addr + "/slow-h2")
+		if err != nil {
+			done <- 0
+			return
+		}
+		defer resp.Body.Close()
+		done <- resp.StatusCode
+	}()
+
+	<-started
+	t.Setenv("TAKO_DRAIN", "7")
+	drain(srv, live)
+
+	if !finished.Load() {
+		t.Error("an in-flight HTTP/2 request was abandoned — Shutdown does not track hijacked connections, so the counter must")
+	}
+	select {
+	case code := <-done:
+		if code != http.StatusOK {
+			t.Errorf("HTTP/2 request got %d, want 200", code)
+		}
+	case <-time.After(2 * time.Second):
+		t.Error("the HTTP/2 client never got its response")
 	}
 }

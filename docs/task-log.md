@@ -8259,6 +8259,8 @@ the definition of a knob with no impact.
 right: tako always wants the current generation, and a knob whose only
 other value is "older sandbox" is a downgrade switch.
 
+**(Superseded the same day — see "HTTP/2 shipped" below.)**
+
 **h2c is not a knob we declined — it is a feature we have not built.**
 `pkg/runtime/http.go` builds a plain `http.Server` and calls
 `ListenAndServe`; nothing wires `golang.org/x/net/http2/h2c` (x/net is
@@ -8288,3 +8290,97 @@ so it went into `liveHash` with the other two and the drift-trap test
 grew a `sticky` case — affinity is nobody's profile default, so an
 explicit footprint is the only way it is ever true, which is exactly
 the case a forgotten `liveHash` field would break.
+
+## HTTP/2 shipped — and the answer to "can we do real TLS HTTP/2?" — 2026-08-01
+
+User: *"I'd be interested in knowing if you can implement an HTTP2
+server so we receive HTTP2 traffic not HTTP plain text but actual HTTP2
+traffic; if this is not possible or is too complicated … then just do
+the clear text HTTP2, although the non-clear text is preferred. Also
+validate how this configuration is supposed to work on Google Cloud
+Run."*
+
+### The validation, first — TLS-terminating HTTP/2 is impossible here
+
+Not hard, not complicated: **architecturally excluded.** Cloud Run's
+frontend terminates TLS for every service and forwards to the container
+without it. Google's own words, from the container contract and the
+HTTP/2 page:
+
+> "The container shouldn't implement any transport layer security
+> directly. TLS is terminated by Cloud Run."
+
+> "Google's frontend-serving infrastructure terminates TLS and then
+> forwards the `h2c` traffic to Cloud Run and to your container through
+> an encrypted channel."
+
+Three consequences worth writing down, because the preference in the
+question rests on an assumption the platform does not permit:
+
+1. There is no configuration, port, or certificate arrangement that
+   lets a Cloud Run container terminate TLS. h2c is not the fallback —
+   it is the ONLY shape HTTP/2 can take on the last hop.
+2. **"Cleartext" describes the application protocol, not the wire.**
+   The frontend-to-container hop is encrypted by Google's
+   infrastructure either way, so h2c does not expose traffic that TLS
+   would have protected.
+3. The client-facing half is **already** HTTP/2 over TLS with or
+   without this setting. Browsers negotiate h2 with the frontend today.
+   The knob only decides whether the frontend downgrades to HTTP/1.1
+   before handing off — Cloud Run's default is to downgrade, except for
+   native gRPC, which needs HTTP/2 and works by default.
+
+So the user's preferred option loses nothing that was available, and
+their fallback is the whole feature.
+
+### What shipped
+
+- **The server always speaks HTTP/2.** `Serve` wraps every handler in
+  `h2c.NewHandler(…, &http2.Server{})`, which upgrades an HTTP/2
+  preface and passes HTTP/1.1 through untouched.
+  `golang.org/x/net` moved from indirect to a direct dependency.
+  Unconditional on purpose: Cloud Run stops downgrading the moment the
+  setting is on, so a container that could not answer h2c would fail
+  EVERY request, not degrade. Always-capable makes the platform toggle
+  unable to break anything.
+- **`Footprint.HTTP2 Toggle`** → Cloud Run v2's port NAME
+  (`containers[].ports[].name`: `h2c` or `http1` — the API's whole
+  vocabulary for this). Off in every profile, matching Cloud Run's own
+  default. Refused on jobs and singletons.
+- Local check, the one Google's docs prescribe:
+  `curl -i --http2-prior-knowledge http://localhost:8080/`
+
+### The bug this turned up in U2a
+
+**`http.Server.Shutdown` does not wait for HTTP/2 requests.** h2c
+hijacks the connection; `Shutdown` marks a hijacked conn
+`StateHijacked` and stops tracking it, so it returns while HTTP/2
+streams are still running. The lame duck built two commits ago would
+have silently covered HTTP/1.1 only — and would have looked correct,
+because every existing drain test used HTTP/1.1.
+
+Fixed with `waitIdle`: after `Shutdown` returns, wait for the in-flight
+COUNTER to reach zero inside the same budget. The counter lives in
+`track()`, above the protocol, so it is the one thing that knows about
+a hijacked request.
+
+**Proven, not assumed** — with the `waitIdle` call disabled,
+`TestDrainWaitsForHTTP2Requests` fails exactly as predicted:
+
+```
+--- FAIL: TestDrainWaitsForHTTP2Requests (0.40s)
+    shutdown_test.go:257: an in-flight HTTP/2 request was abandoned —
+    Shutdown does not track hijacked connections, so the counter must
+```
+
+`serveOn` in the test helper now mirrors `Serve`'s real wiring, h2c
+wrapper included, so no drain test can pass against a server shaped
+differently from the one that ships.
+
+### Note for a later slice
+
+`Footprint` is drifting from "compute values" into "the per-service
+Cloud Run knob bag": `SessionAffinity` is routing and `HTTP2` is
+protocol, neither of which is compute. The layering still reads fine
+(profile + overrides) and splitting it would be an API change of its
+own, so this is a naming observation, not a proposal.

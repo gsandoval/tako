@@ -228,6 +228,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			"cpuAlwaysOn":  resolved.CPUAlwaysOn == analyzer.ToggleOn,
 			"startupBoost": resolved.StartupBoost == analyzer.ToggleOn,
 			"affinity":     resolved.SessionAffinity == analyzer.ToggleOn,
+			"http2":        resolved.HTTP2 == analyzer.ToggleOn,
 			"timeout":      resolved.TimeoutSeconds,
 		}
 		env := map[string]any{

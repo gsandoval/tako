@@ -16,6 +16,8 @@ import (
 	"time"
 
 	tako "github.com/gsandoval/tako"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/h2c"
 )
 
 // JSONHandler adapts an API endpoint to net/http: decode the request via
@@ -109,7 +111,18 @@ func Serve(h http.Handler) {
 		port = "8080"
 	}
 	var live inflight
-	srv := &http.Server{Addr: ":" + port, Handler: track(&live, logRequests(h))}
+	// h2c.NewHandler serves BOTH: it detects HTTP/2's cleartext preface
+	// and upgrades, and passes everything else through as HTTP/1.1. So
+	// the server is always HTTP/2-capable and turning the platform
+	// setting on can never arrive at a container that cannot answer.
+	//
+	// Cloud Run terminates TLS at its frontend and forwards cleartext to
+	// the container — always, for every service. A tako server therefore
+	// never speaks TLS itself, and h2c is not a downgrade from "real"
+	// HTTP/2: it is the only shape the frontend-to-container hop has,
+	// and that hop is encrypted by Google's infrastructure regardless.
+	handler := h2c.NewHandler(track(&live, logRequests(h)), &http2.Server{})
+	srv := &http.Server{Addr: ":" + port, Handler: handler}
 
 	stopping := make(chan os.Signal, 2)
 	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)

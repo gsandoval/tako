@@ -57,6 +57,7 @@ type Footprint struct {
 	Drain        time.Duration // finishing in-flight requests at shutdown
 	StartupBoost Toggle // Inherit | On | Off — extra CPU until serving
 	SessionAffinity Toggle // Inherit | On | Off — sticky routing
+	HTTP2 Toggle // Inherit | On | Off — HTTP/2 to the instance
 }
 ```
 
@@ -84,6 +85,42 @@ disappear between any two requests.
 
 It is refused on jobs (nothing serves) and on singletons (exactly one
 instance means affinity has nothing to choose between).
+
+### HTTP2
+
+`HTTP2` keeps HTTP/2 all the way to your instance instead of letting
+Cloud Run downgrade it at the edge.
+
+**Read that carefully, because the thing it does not do is the thing
+people expect.** Browsers already reach Cloud Run over HTTP/2 with TLS,
+whether you set this or not. Cloud Run terminates TLS at its frontend —
+**always, for every service; a container can never terminate TLS
+itself** — and by default it then forwards HTTP/1.1 over the last hop.
+`HTTP2` changes only that last hop, to HTTP/2 cleartext (`h2c`). The hop
+is still encrypted by Google's infrastructure; "cleartext" describes the
+application protocol, not the wire.
+
+So this is not a TLS setting and not a knob for browser performance. It
+is worth turning on for **request multiplexing and streaming between the
+frontend and your handler** — long-lived streams, many concurrent small
+requests, gRPC-shaped traffic. For ordinary request/response JSON the
+last hop gains close to nothing, which is why it is off by default,
+matching Cloud Run's own default.
+
+**A tako server always speaks HTTP/2**, deployed with this on or not:
+`Serve` wraps every handler in `h2c`, which upgrades an HTTP/2 preface
+and passes HTTP/1.1 straight through. That matters because Cloud Run
+stops downgrading the moment the setting is on — a container that could
+not answer h2c would fail *every* request rather than falling back. You
+can confirm it locally against `tako dev`, the same check Google's docs
+prescribe:
+
+```
+curl -i --http2-prior-knowledge http://localhost:8080/
+```
+
+Refused on jobs (nothing serves) and on singletons (a health endpoint
+has no connection worth multiplexing).
 
 ### Drain
 
@@ -193,9 +230,9 @@ The claims live in golden tests —
 - Scoping: `a job footprint sets CPU, Memory and Timeout only —
   executions are tasks, not serving instances, so there is no
   concurrency, no scaling, no idle CPU to throttle, no cold start to
-  boost, no in-flight requests to drain and no clients to keep affinity
-  with; WithParallel sets the fan-out and WithRetries the attempts
-  (tako/footprint)`, and for a
+  boost, no in-flight requests to drain, no clients to keep affinity
+  with and no connections to negotiate HTTP/2 over; WithParallel sets the
+  fan-out and WithRetries the attempts (tako/footprint)`, and for a
   singleton `a singleton footprint cannot set MaxInstances — the lease
   is what makes a singleton exactly-one … (tako/singleton-max)`
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud

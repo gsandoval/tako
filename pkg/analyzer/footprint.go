@@ -18,23 +18,23 @@ import (
 var ProfileKnobs = map[string]Footprint{
 	"default": {CPU: 1, Memory: "512Mi", Concurrency: 80, MinInstances: 0, MaxInstances: 20,
 		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOff, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff},
+		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	// Latency buys tail latency three ways: a warm floor, CPU that never
 	// throttles, and a boost on the cold start that a warm floor cannot
 	// prevent. Leaving any of the three unset makes the profile's name a
 	// claim it does not deliver.
 	"latency": {CPU: 2, Memory: "1Gi", Concurrency: 40, MinInstances: 1, MaxInstances: 100,
 		TimeoutSeconds: 300, CPUAlwaysOn: ToggleOn, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOn, SessionAffinity: ToggleOff},
+		StartupBoost: ToggleOn, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	"batch": {CPU: 2, Memory: "2Gi", Concurrency: 10, MinInstances: 0, MaxInstances: 10,
 		TimeoutSeconds: 900, CPUAlwaysOn: ToggleOff, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff},
+		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 	// Singleton: min=1/max=1 keeps the loop's host alive; the LEASE is
 	// what makes it exactly-one (spec §4.4). Its loop runs between
 	// requests, so CPU stays allocated.
 	"singleton": {CPU: 1, Memory: "512Mi", Concurrency: 1, MinInstances: 1, MaxInstances: 1,
 		TimeoutSeconds: 3600, CPUAlwaysOn: ToggleOn, DrainSeconds: DefaultDrainSeconds,
-		StartupBoost: ToggleOff, SessionAffinity: ToggleOff},
+		StartupBoost: ToggleOff, SessionAffinity: ToggleOff, HTTP2: ToggleOff},
 }
 
 // The shutdown window is Cloud Run's, not tako's: SIGTERM, then SIGKILL
@@ -95,6 +95,9 @@ func (f Footprint) Over(base Footprint) Footprint {
 	if f.SessionAffinity != ToggleInherit {
 		out.SessionAffinity = f.SessionAffinity
 	}
+	if f.HTTP2 != ToggleInherit {
+		out.HTTP2 = f.HTTP2
+	}
 	return out
 }
 
@@ -140,6 +143,12 @@ func (f Footprint) String() string {
 		parts = append(parts, "session affinity")
 	case ToggleOff:
 		parts = append(parts, "no session affinity")
+	}
+	switch f.HTTP2 {
+	case ToggleOn:
+		parts = append(parts, "http/2 end to end")
+	case ToggleOff:
+		parts = append(parts, "http/1.1 to the instance")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -234,6 +243,8 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 				f.StartupBoost = int(n)
 			case "SessionAffinity":
 				f.SessionAffinity = int(n)
+			case "HTTP2":
+				f.HTTP2 = int(n)
 			}
 		}
 	}
@@ -252,6 +263,9 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 	}
 	if f.SessionAffinity < 0 || f.SessionAffinity > 2 {
 		fail(lit, "footprint SessionAffinity must be tako.Inherit, tako.On, or tako.Off")
+	}
+	if f.HTTP2 < 0 || f.HTTP2 > 2 {
+		fail(lit, "footprint HTTP2 must be tako.Inherit, tako.On, or tako.Off")
 	}
 	// The shutdown window is Cloud Run's and it is fixed at 10s. Clamping
 	// a bigger number would leave the declaration reading like a promise

@@ -358,10 +358,10 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		}
 		if isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.DrainSeconds != 0 || footprint.StartupBoost != ToggleInherit || footprint.SessionAffinity != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.DrainSeconds != 0 || footprint.StartupBoost != ToggleInherit || footprint.SessionAffinity != ToggleInherit || footprint.HTTP2 != ToggleInherit) {
 				fail(&Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost, no in-flight requests to drain and no clients to keep affinity with; WithParallel sets the fan-out and WithRetries the attempts",
+					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost, no in-flight requests to drain, no clients to keep affinity with and no connections to negotiate HTTP/2 over; WithParallel sets the fan-out and WithRetries the attempts",
 					Rule: "footprint",
 				})
 			}
@@ -432,10 +432,10 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 				})
 				bad = true
 			}
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.SessionAffinity != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.SessionAffinity != ToggleInherit || footprint.HTTP2 != ToggleInherit) {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU, Memory, Timeout, Drain and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone, and with exactly one instance session affinity has nothing to choose between",
+					Msg:  "a singleton footprint sets CPU, Memory, Timeout, Drain and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone, and a loop whose only caller is its own health check has no clients to keep affinity with or negotiate HTTP/2 over",
 					Rule: "footprint",
 				})
 				bad = true
