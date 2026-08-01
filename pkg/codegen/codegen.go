@@ -319,7 +319,7 @@ import (
 	b.WriteString(callBlock)
 	for _, r := range g.Resources {
 		if r.Package == svc.Package && r.Kind == "queue" && r.RateLimit > 0 {
-			fmt.Fprintf(&b, "\t// queue %s: WithRateLimit(%d) — Cloud Tasks caps dispatch in the\n\t// cloud; locally the dispatcher paces to the same rate.\n", r.Name, r.RateLimit)
+			fmt.Fprintf(&b, "\t// queue %s: WithDelivery RateLimit %d — Cloud Tasks caps dispatch\n\t// in the cloud; locally the dispatcher paces to the same rate.\n", r.Name, r.RateLimit)
 			fmt.Fprintf(&b, "\truntime.SetQueueRate(%q, %d)\n\n", r.Name, r.RateLimit)
 		}
 	}

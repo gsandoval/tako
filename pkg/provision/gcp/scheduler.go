@@ -70,6 +70,8 @@ func (r *SchedulerJobs) List(ctx context.Context) ([]provision.Observed, error) 
 				"uri":            j.HTTPTarget.URI,
 				"serviceAccount": j.HTTPTarget.OIDCToken.ServiceAccountEmail,
 				"audience":       j.HTTPTarget.OIDCToken.Audience,
+				"timeZone":       j.TimeZone,
+				"deadline":       secondsOf(j.AttemptDeadline),
 			}),
 		})
 	}
@@ -82,7 +84,7 @@ func (r *SchedulerJobs) body(o provision.Object) map[string]any {
 		"name":        r.parent() + "/jobs/" + o.Name,
 		"description": r.marker() + " spec-hash=" + provision.SpecHash(o.Spec),
 		"schedule":    spec["schedule"],
-		"timeZone":    "Etc/UTC",
+		"timeZone":    spec["timeZone"],
 		"httpTarget": map[string]any{
 			"uri":        spec["uri"],
 			"httpMethod": "POST",
@@ -94,7 +96,7 @@ func (r *SchedulerJobs) body(o provision.Object) map[string]any {
 		// The run's timeout: Scheduler retries a failed or overlong
 		// attempt on the next tick (no retryConfig — the schedule IS
 		// the retry policy for idempotent crons).
-		"attemptDeadline": "180s",
+		"attemptDeadline": fmt.Sprintf("%ds", spec["deadline"]),
 	}
 }
 

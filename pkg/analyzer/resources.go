@@ -329,26 +329,23 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 	// audit found WithRateLimit doing exactly that).
 	carrierOptions := map[string]map[string]bool{
 		"cache": {"WithTTL": true},
+		"queue": {"WithDelivery": true},
+		"topic": {"WithDelivery": true},
 	}
 	bad := false
-	rateLimit := 0
+	var delivery *Delivery
 	for _, opt := range call.Args[1:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if !isOpt {
 			continue
 		}
-		if kind == "queue" && optName == "WithRateLimit" {
-			n, ok := intOptionArg(pkg, opt)
-			if !ok || n <= 0 || n > 500 {
-				*errs = append(*errs, &Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "tako.WithRateLimit takes a constant 1–500 messages per second (Cloud Tasks' dispatch ceiling)",
-					Rule: "rate-limit",
-				})
+		if (kind == "queue" || kind == "topic") && optName == "WithDelivery" {
+			d := deliveryArg(dir, pkg, opt, kind, errs)
+			if d == nil {
 				bad = true
 				continue
 			}
-			rateLimit = n
+			delivery = d
 			continue
 		}
 		if !carrierOptions[kind][optName] {
@@ -356,8 +353,8 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 			switch kind {
 			case "cache":
 				accepts = "WithTTL"
-			case "queue":
-				accepts = "WithRateLimit"
+			case "queue", "topic":
+				accepts = "WithDelivery"
 			}
 			*errs = append(*errs, &Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
@@ -375,7 +372,10 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		Name:      resName,
 		Var:       pkg.Name + "." + name.Name,
 		Package:   pkg.PkgPath,
-		RateLimit: rateLimit,
+		RateLimit:         delivery.rate(),
+		MaxAttempts:       delivery.attempts(),
+		MinBackoffSeconds: delivery.minBackoff(),
+		MaxBackoffSeconds: delivery.maxBackoff(),
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	if tv, ok := pkg.TypesInfo.Types[call]; ok {

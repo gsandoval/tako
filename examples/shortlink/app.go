@@ -17,10 +17,17 @@ var (
 	// cloud, a timer (or the test clock) locally.
 	expiries = tako.Queue[Expiry]("expiries")
 
-	// The archive walks dead links at a POLITE pace: WithRateLimit caps
+	// The archive walks dead links at a POLITE pace: RateLimit caps
 	// dispatch at 2/s everywhere — Cloud Tasks enforces it in the cloud,
-	// the local dispatcher paces to the same number.
-	archive = tako.Queue[Expiry]("archive", tako.WithRateLimit(2))
+	// the local dispatcher paces to the same number. Archiving is
+	// idempotent and never urgent, so it gets fewer, slower retries than
+	// the framework default.
+	archive = tako.Queue[Expiry]("archive", tako.WithDelivery(tako.Delivery{
+		RateLimit:   2,
+		MaxAttempts: 5,
+		MinBackoff:  30 * time.Second,
+		MaxBackoff:  10 * time.Minute,
+	}))
 )
 
 // Link's schema comes from the struct: entity:"id" is the key,

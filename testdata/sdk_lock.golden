@@ -94,7 +94,9 @@ func UploadHeaders(opts ...Option) map[string]string
 func WithAuth() Option
 func WithBuild(command string, outDir string) Option
 func WithContentType(pattern string) Option
+func WithDeadline(d time.Duration) Option
 func WithDelay(d time.Duration) Option
+func WithDelivery(d Delivery) Option
 func WithDevProxy(url string) Option
 func WithDomain(domain string) Option
 func WithEmail() Option
@@ -104,11 +106,11 @@ func WithMaxSize(bytes int64) Option
 func WithParallel(n int) Option
 func WithPrivate() Option
 func WithProfile(p Profile) Option
-func WithRateLimit(n int) Option
 func WithRedirect(from string, to string) Option
 func WithRetries(n int) Option
 func WithSingleflight() Option
 func WithTTL(d time.Duration) Option
+func WithTimezone(zone string) Option
 func WithTrustedHTML() Option
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
 type AuthHandle struct{}
@@ -118,6 +120,7 @@ type BucketHandle struct{Uploaded BucketEvent}
 type CacheHandle[T any] struct{}
 type CounterHandle struct{}
 type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
+type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
 type Endpoint[Req any, Res any] struct{}
 type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}

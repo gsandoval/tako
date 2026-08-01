@@ -36,6 +36,26 @@ cleanup deletes never-completed uploads
 are narrated and the next run stays on schedule — there is no retry
 of a failed run, the schedule itself is the retry.
 
+### Timezone and deadline
+
+```go
+var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans,
+	tako.WithSingleflight(),
+	tako.WithTimezone("America/Mexico_City"),
+	tako.WithDeadline(10*time.Minute))
+```
+
+Schedules run in **UTC** unless `WithTimezone` says otherwise — nine
+o'clock means nine o'clock somewhere, and the zone follows daylight
+saving. The name is an IANA zone, checked against the tz database **at
+analysis time**, so a misspelling is a build error rather than a 3am
+surprise.
+
+`WithDeadline` caps one run (default 180s, range 15s–30m) before Cloud
+Scheduler abandons the attempt. There is no retry config: the schedule
+IS the retry policy for an idempotent cron. Work that needs longer than
+30 minutes wants a [job](job.md).
+
 ## Local
 
 `tako dev` runs each cron on a real ticker and narrates it:

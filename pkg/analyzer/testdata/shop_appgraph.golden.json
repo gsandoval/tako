@@ -96,6 +96,9 @@
       "var": "shop.settle",
       "package": "shop",
       "type": "SettleParams",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:43:2"
     },
     {

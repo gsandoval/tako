@@ -135,4 +135,4 @@ a 401 `sign in to continue`.
 Responses are JSON or a `tako.Blob` stream — nothing else. Multipart
 uploads buffer through the service (32MB in memory, then temp files);
 large uploads belong on signed URLs — see [bucket.md](bucket.md).
-No per-endpoint rate limiting (`WithRateLimit` is a queue option).
+No per-endpoint rate limiting (rate is a queue setting — `WithDelivery`, see [queue.md](queue.md)).

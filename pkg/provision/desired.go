@@ -358,6 +358,14 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			return nil, fmt.Errorf("cron %s: %v", h.Var, err)
 		}
 		short := h.Var[strings.LastIndex(h.Var, ".")+1:]
+		tz := h.Timezone
+		if tz == "" {
+			tz = "Etc/UTC"
+		}
+		deadline := h.DeadlineSeconds
+		if deadline == 0 {
+			deadline = 180
+		}
 		objs = append(objs, Object{
 			Kind: KindSchedulerJob,
 			Name: cfg.Name(h.Service) + "-cron-" + strings.ToLower(short),
@@ -366,6 +374,8 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				"uri":            cfg.RunURL(h.Service) + "/_tako/cron/" + short,
 				"serviceAccount": cfg.SAEmail(h.Service),
 				"audience":       cfg.RunURL(h.Service),
+				"timeZone":       tz,
+				"deadline":       deadline,
 			},
 		})
 	}
@@ -412,10 +422,14 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				if rate == 0 {
 					rate = 500 // delay-only queues: Tasks' dispatch ceiling
 				}
+				attempts := r.MaxAttempts
+				if attempts == 0 {
+					attempts = analyzer.DeliveryDefaults.MaxAttempts
+				}
 				objs = append(objs, Object{
 					Kind: KindTasksQueue,
 					Name: cfg.Name(r.Name) + "-tako",
-					Spec: map[string]any{"rate": rate},
+					Spec: map[string]any{"rate": rate, "attempts": attempts},
 				})
 			}
 		}
@@ -456,12 +470,31 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 	// topic. The dead topic needs a subscription BEFORE messages route
 	// to it (Pub/Sub drops dead-letters otherwise): the pull "keep"
 	// subscription is that retention, and what tako dlq reads.
+	byCarrier := map[string]analyzer.Resource{}
+	for _, r := range g.Resources {
+		if r.Kind == "queue" || r.Kind == "topic" {
+			byCarrier[r.Name] = r
+		}
+	}
 	for _, h := range g.Handlers {
 		if h.Kind != "worker" && h.Kind != "subscribe" {
 			continue
 		}
 		dead := gcpb.DeadTopicName(cfg.Env, h.Service)
 		url := cfg.RunURL(h.Service)
+		// The carrier's declared contract (WithDelivery), or the
+		// framework defaults the analyzer already resolved.
+		d := byCarrier[strings.TrimSuffix(h.Binding, ".Uploaded")]
+		attempts, minB, maxB := d.MaxAttempts, d.MinBackoffSeconds, d.MaxBackoffSeconds
+		if attempts == 0 {
+			attempts = analyzer.DeliveryDefaults.MaxAttempts
+		}
+		if minB == 0 {
+			minB = analyzer.DeliveryDefaults.MinBackoffSeconds
+		}
+		if maxB == 0 {
+			maxB = analyzer.DeliveryDefaults.MaxBackoffSeconds
+		}
 		objs = append(objs,
 			Object{Kind: KindTopic, Name: dead, Spec: map[string]any{}},
 			Object{
@@ -477,8 +510,8 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					"endpoint":       url + "/_tako/push",
 					"serviceAccount": cfg.SAEmail(h.Service),
 					"audience":       url,
-					"retry":          map[string]any{"minimumBackoff": "10s", "maximumBackoff": "300s"},
-					"deadLetter":     map[string]any{"topic": dead, "maxAttempts": 5},
+					"retry":          map[string]any{"minimumBackoff": fmt.Sprintf("%ds", minB), "maximumBackoff": fmt.Sprintf("%ds", maxB)},
+					"deadLetter":     map[string]any{"topic": dead, "maxAttempts": attempts},
 				},
 			},
 		)

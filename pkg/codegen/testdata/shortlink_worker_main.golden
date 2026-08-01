@@ -18,7 +18,7 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// worker CountClick ← queue clicks (app.go:47)
+	// worker CountClick ← queue clicks (app.go:54)
 	runtime.RegisterWorker("CountClick", shortlink.CountClick)
 	// Cloud deliveries arrive as pushes: 204 acks, 500 retries, 400 = permanent.
 	mux.Handle("POST /_tako/push", runtime.PushHandler("CountClick", shortlink.CountClick))

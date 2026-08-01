@@ -61,6 +61,9 @@
       "var": "shortlink.clicks",
       "package": "shortlink",
       "type": "Click",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:12:2"
     },
     {
@@ -77,6 +80,9 @@
       "var": "shortlink.expiries",
       "package": "shortlink",
       "type": "Expiry",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "delayed": true,
       "pos": "app.go:18:2"
     },
@@ -87,7 +93,10 @@
       "package": "shortlink",
       "type": "Expiry",
       "rate_limit": 2,
-      "pos": "app.go:23:2"
+      "max_attempts": 5,
+      "min_backoff_seconds": 30,
+      "max_backoff_seconds": 600,
+      "pos": "app.go:25:2"
     },
     {
       "kind": "entity",
@@ -95,7 +104,7 @@
       "var": "shortlink.archived",
       "package": "shortlink",
       "type": "Expiry",
-      "pos": "app.go:162:5"
+      "pos": "app.go:169:5"
     }
   ],
   "handlers": [
@@ -109,7 +118,7 @@
       "req_ref": "shortlink.CreateReq",
       "res_ref": "shortlink.Link",
       "has_body": true,
-      "pos": "app.go:43:2"
+      "pos": "app.go:50:2"
     },
     {
       "kind": "api",
@@ -128,7 +137,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:44:2"
+      "pos": "app.go:51:2"
     },
     {
       "kind": "api",
@@ -147,7 +156,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:45:2"
+      "pos": "app.go:52:2"
     },
     {
       "kind": "worker",
@@ -155,7 +164,7 @@
       "package": "shortlink",
       "service": "shortlink-countclick",
       "binding": "clicks",
-      "pos": "app.go:47:2"
+      "pos": "app.go:54:2"
     },
     {
       "kind": "worker",
@@ -163,7 +172,7 @@
       "package": "shortlink",
       "service": "shortlink-expire",
       "binding": "expiries",
-      "pos": "app.go:48:2"
+      "pos": "app.go:55:2"
     },
     {
       "kind": "worker",
@@ -171,7 +180,7 @@
       "package": "shortlink",
       "service": "shortlink-archive",
       "binding": "archive",
-      "pos": "app.go:49:2"
+      "pos": "app.go:56:2"
     }
   ],
   "edges": [

@@ -94,9 +94,14 @@ type Resource struct {
 	// under-indexes a shape (the aggregate-per-entity scheme this
 	// replaced did — shop, R0).
 	Composites [][]string `json:"composites,omitempty"`
-	// RateLimit is a queue's WithRateLimit cap (messages/second);
-	// 0 = unlimited. Rate-limited queues route through Cloud Tasks.
-	RateLimit int `json:"rate_limit,omitempty"`
+	// Delivery is a queue's or topic's WithDelivery contract; zero
+	// fields inherit the framework defaults. RateLimit above zero
+	// routes the queue through Cloud Tasks (only a broker with a cap
+	// can enforce one).
+	RateLimit         int `json:"rate_limit,omitempty"`
+	MaxAttempts       int `json:"max_attempts,omitempty"`
+	MinBackoffSeconds int `json:"min_backoff_seconds,omitempty"`
+	MaxBackoffSeconds int `json:"max_backoff_seconds,omitempty"`
 	// Delayed marks a queue with at least one WithDelay publish site —
 	// delayed delivery routes through Cloud Tasks in the cloud.
 	Delayed bool `json:"delayed,omitempty"`
@@ -159,6 +164,10 @@ type Handler struct {
 	// inherits it — differing claims within one service are an
 	// analysis error (tako/mixed-footprint).
 	Footprint *Footprint `json:"footprint,omitempty"`
+	// Timezone is a Cron's WithTimezone claim (IANA name); empty = UTC.
+	Timezone string `json:"timezone,omitempty"`
+	// DeadlineSeconds is a Cron's WithDeadline claim; 0 = 180s.
+	DeadlineSeconds int `json:"deadline_seconds,omitempty"`
 	// Singleflight marks a Cron declared with tako.WithSingleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.

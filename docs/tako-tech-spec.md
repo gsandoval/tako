@@ -132,7 +132,7 @@ thumbs.Publish(ctx, job, tako.WithDelay(4*time.Hour)) error   // provisions Clou
 ready.Publish(ctx, event) error
 ```
 
-Queue options `WithDelay` / `WithRateLimit(n)` silently select Cloud Tasks instead of Pub/Sub as the backend — same user API, provisioner's choice.
+A `WithDelay` publish site or a `WithDelivery` RateLimit silently selects Cloud Tasks instead of Pub/Sub as the backend — same user API, provisioner's choice.
 
 ### 2.5 Coordination
 
@@ -637,7 +637,7 @@ Derived IAM mapping:
 | Cross-service call (§2.12) | caller's SA gets `run.invoker` on callee; `private` = IAM-only, no unauthenticated access (network-internal ingress is a later `WithVPC` opt-in) |
 | Job.Run used | `run.jobsExecutor` on that job |
 
-Queue backend selection: plain queues → Pub/Sub push; queues using `WithDelay`/`WithRateLimit` → Cloud Tasks in front of the same push endpoint (T3 — the task carries the standard envelope with the worker's own OIDC identity; note Tasks has no dead letter: 5 attempts, then gone).
+Queue backend selection: plain queues → Pub/Sub push; queues using `WithDelay` or a `WithDelivery` RateLimit → Cloud Tasks in front of the same push endpoint (T3 — the task carries the standard envelope with the worker's own OIDC identity; note Tasks has no dead letter: `MaxAttempts` attempts, then gone).
 
 Scaling profiles → Cloud Run knobs:
 

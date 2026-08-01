@@ -6,6 +6,7 @@ import (
 	"go/constant"
 	"go/types"
 	"strings"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 
@@ -147,7 +148,8 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 // cronOptions is the option set tako.Cron accepts. Profile/footprint
 // (S6 amendment) shape the HOSTING service — the one a cron-only
 // package would otherwise have no way to control.
-var cronOptions = map[string]bool{"WithSingleflight": true, "WithProfile": true, "WithFootprint": true}
+var cronOptions = map[string]bool{"WithSingleflight": true, "WithProfile": true, "WithFootprint": true,
+	"WithTimezone": true, "WithDeadline": true}
 
 // extractCron validates one tako.Cron declaration. Cron handlers run in
 // the package's app service (spec §4.1 partitioning), not their own.
@@ -178,11 +180,47 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 
 	singleflight := false
 	profile := ""
+	timezone := ""
+	deadline := 0
 	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithSingleflight" {
 			singleflight = true
+			continue
+		}
+		if isOpt && optName == "WithTimezone" {
+			zone, ok := stringOptionArg(pkg, opt)
+			// The tz database is right here at analysis time, so a
+			// misspelled zone is a build error, not a 3am surprise.
+			if !ok {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "tako.WithTimezone takes a constant IANA zone name — schedules are read at analysis time, not run time",
+					Rule: "const-name",
+				})
+			} else if _, err := time.LoadLocation(zone); err != nil {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  fmt.Sprintf("tako.WithTimezone does not know the zone %q — use an IANA name like \"America/Mexico_City\" or \"Europe/Madrid\"", zone),
+					Rule: "timezone",
+				})
+			} else {
+				timezone = zone
+			}
+			continue
+		}
+		if isOpt && optName == "WithDeadline" {
+			n, ok := intOptionArg(pkg, opt)
+			secs := n / int(time.Second)
+			if !ok || secs < 15 || secs > 1800 {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "tako.WithDeadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job",
+					Rule: "deadline",
+				})
+			}
+			deadline = secs
 			continue
 		}
 		if isOpt && optName == "WithProfile" {
@@ -196,7 +234,7 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		if isOpt && !cronOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithTimezone, WithDeadline, WithProfile, WithFootprint)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -207,15 +245,17 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	}
 
 	return &Handler{
-		Kind:         "cron",
-		Var:          pkg.Name + "." + name.Name,
-		Package:      pkg.PkgPath,
-		Service:      pkg.Name,
-		Schedule:     sched,
-		Singleflight: singleflight,
-		Profile:      profile,
-		Footprint:    footprint,
-		Pos:          relPos(dir, pkg.Fset, name.Pos()),
+		Kind:            "cron",
+		Var:             pkg.Name + "." + name.Name,
+		Package:         pkg.PkgPath,
+		Service:         pkg.Name,
+		Schedule:        sched,
+		Singleflight:    singleflight,
+		Timezone:        timezone,
+		DeadlineSeconds: deadline,
+		Profile:         profile,
+		Footprint:       footprint,
+		Pos:             relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

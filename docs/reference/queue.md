@@ -50,12 +50,39 @@ transaction before counting; see the
 
 `Publish` takes one option, `WithDelay(d)`, deferring first delivery —
 a timer (or the test clock) locally, a Cloud Tasks `scheduleTime` in
-the cloud (T3). Declaring `WithRateLimit(n)` on the queue caps
-dispatch at n/second everywhere. Either one routes the queue's cloud
-traffic through a Cloud Tasks queue in front of the worker — same
-API, provisioner's choice — with one trade to know: Tasks has no
-dead letter (see Not yet). Shortlink's TTL'd links publish their own
-expiry with `WithDelay`, and its archive walks at `WithRateLimit(2)`.
+the cloud (T3).
+
+### The delivery contract
+
+Every queue and topic has one, and `WithDelivery` overrides it
+field-by-field — zero fields inherit the framework's defaults:
+
+```go
+var archive = tako.Queue[Expiry]("archive", tako.WithDelivery(tako.Delivery{
+	RateLimit:   2,                // deliveries per second (1–500)
+	MaxAttempts: 5,                // before dead-lettering (5–100)
+	MinBackoff:  30 * time.Second, // wait between attempts
+	MaxBackoff:  10 * time.Minute,
+}))
+```
+
+| field | default | range |
+|---|---|---|
+| `MaxAttempts` | 5 | 5–100 (Pub/Sub's dead-letter policy) |
+| `MinBackoff` | 10s | 1s–10m |
+| `MaxBackoff` | 300s | 1s–10m |
+| `RateLimit` | none | 1–500 (Cloud Tasks' dispatch ceiling) |
+
+Setting `RateLimit`, or publishing with `WithDelay`, routes the queue's
+cloud traffic through a Cloud Tasks queue in front of the worker — same
+API, provisioner's choice — with one trade to know: Tasks has no dead
+letter (see Not yet). Shortlink's TTL'd links publish their own expiry
+with `WithDelay`, and its archive walks at `RateLimit: 2` with slower,
+fewer retries because archiving is idempotent and never urgent.
+
+`RateLimit` is a QUEUE setting only. A topic fans out to subscribers
+with independent fates, so there is no single consumer to pace — cap the
+queue each subscriber feeds instead. Declaring it on a topic is refused.
 Payloads that fail to decode are `Permanent` automatically:
 redelivering malformed JSON can't help.
 
@@ -117,16 +144,19 @@ to replay a failure exactly.
 - `tako.Queue name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
 - `tako.WithMaxSize is not a Publish option (Publish accepts WithDelay)` — at runtime, from `Publish`.
 - `queue "x" has no Cloud Tasks route — a WithDelay publish site the analyzer did not see? redeploy so the deploy can provision it` — a binary older than its deploy.
-- `tako.WithRateLimit takes a constant 1–500 messages per second (Cloud Tasks' dispatch ceiling) (tako/rate-limit)`
+- `delivery RateLimit must be 1–500 messages per second (Cloud Tasks' dispatch ceiling); got 501 (tako/delivery)`
+- `delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2 (tako/delivery)`
+- `delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink (tako/delivery)`
+- `delivery RateLimit is a queue setting — a topic fans out to subscribers with independent fates, so there is no single consumer to pace; cap the queue each subscriber feeds instead (tako/delivery)`
 
 ## Not yet
 
-- **Tasks-routed queues have no dead letter.** Cloud Tasks retries 5
-  attempts (mirroring the Pub/Sub contract) and then the task is
+- **Tasks-routed queues have no dead letter.** Cloud Tasks retries
+  `MaxAttempts` times (mirroring the Pub/Sub contract) and then the task is
   GONE — there is no `tako dlq` for a rate-limited or delayed
   message that exhausts its retries. Put irreplaceable work on a
   plain queue; use Tasks routing for work whose source can re-emit.
 - Delay ceiling: Cloud Tasks schedules at most 30 days out.
-- `WithRateLimit` caps at 500/s (Cloud Tasks' dispatch ceiling); the
+- `RateLimit` caps at 500/s (Cloud Tasks' dispatch ceiling); the
   local dispatcher paces to the same number under `tako dev`, but
   `NewTestApp` does not pace (tests assert semantics, not timing).

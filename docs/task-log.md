@@ -7744,3 +7744,77 @@ printing `retries: 1` live.
 
 `sdk_lock` regenerated: `+ WithRetries`, `+ type Toggle`, `+ Inherit/On/
 Off`, and `Footprint` gains `Timeout` and `CPUAlwaysOn`.
+
+## V3 — delivery and schedule, declared (2026-08-01)
+
+```go
+var archive = tako.Queue[Expiry]("archive", tako.WithDelivery(tako.Delivery{
+	RateLimit: 2, MaxAttempts: 5,
+	MinBackoff: 30 * time.Second, MaxBackoff: 10 * time.Minute,
+}))
+
+var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans, tako.WithSingleflight(),
+	tako.WithTimezone("America/Mexico_City"), tako.WithDeadline(10*time.Minute))
+```
+
+`Delivery` mirrors `Footprint` exactly — a struct of optional fields over
+a table of defaults (`DeliveryDefaults`: 5 attempts, 10s→300s, no cap) —
+because that mechanism is already understood. **`WithRateLimit` is
+absorbed as `Delivery.RateLimit` and removed**: one knob with two
+spellings is worse than a breaking change (the `WithCDN` precedent).
+
+**The bounds are the BACKENDS' bounds, stated as the framework's.**
+`MaxAttempts` is 5–100 because that is what Pub/Sub's dead-letter policy
+accepts, and the error says so rather than clamping a number the user
+wrote down. `MinBackoff`/`MaxBackoff` cap at 10m; min > max is refused
+("backoff grows, it does not shrink").
+
+**`RateLimit` on a topic is refused.** A topic fans out to subscribers
+with independent fates, so there is no single consumer to pace — the
+error names the fix (cap the queue each subscriber feeds).
+
+**`WithTimezone` is checked against the tz database AT ANALYSIS TIME**
+via `time.LoadLocation`, so a misspelled zone is a build error rather
+than a 3am surprise. `WithDeadline` is 15s–30m (Cloud Scheduler's range
+for an HTTP target) and points at `tako.Job` for anything longer.
+
+### Live on tako-test-02 (`--env v3`)
+
+gallery with `Delivery{MaxAttempts: 8, MinBackoff: 20s, MaxBackoff: 2m}`
+on the thumbnails queue and the cron above. Read back:
+
+- push subscription `v3-gallery-makethumb`: `retryPolicy
+  {minimumBackoff: 20s, maximumBackoff: 120s}`, `deadLetterPolicy
+  {maxDeliveryAttempts: 8}`
+- scheduler `v3-gallery-cron-cleanup`: `0 9 * * *`,
+  `America/Mexico_City`, `600s`
+
+Re-deploy converged to **55 skips, 0 updates** — the new hash fields
+(timeZone, deadline, attempts) reproduce from live state, so no drift.
+Destroy clean, scratch secret deleted, project pristine.
+
+### The second falsified text, found the same way as the first
+
+The security summary hardcoded *"redelivery: 5 attempts with backoff"*.
+V3 made attempts declarable, so for a queue with `MaxAttempts: 8` that
+line became a lie — exactly what V2 hit with *"retries: 3"*. Both now
+read the declaration, and `TestSummaryReadsDeclaredCountsNotDefaults`
+pins both so the third one cannot happen quietly.
+
+That is the pattern of this whole stage: **every constant promoted to a
+knob leaves a sentence somewhere that used to be true.** Worth grepping
+for recited numbers whenever a default becomes declarable.
+
+### Docs
+
+`queue.md` gains the contract table and the four refusals; `cron.md`
+gains timezone + deadline; `api.md`, `guide/02-shortlink.md`,
+`validate/tasks.md` and the spec migrated off `WithRateLimit`;
+`api-review-2.md` records all four Stage 8 surface changes in one table.
+Historical records (C.md, api-review-1, validation-log, implementation
+plan) keep the old name — they are records of what was true then.
+
+**examples/shortlink migrated** to `WithDelivery` and is the demanding
+example: archiving is idempotent and never urgent, so it declares slower,
+fewer retries than the framework default — a real reason to override,
+not a demo of the syntax.

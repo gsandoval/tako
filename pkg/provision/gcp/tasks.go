@@ -29,6 +29,9 @@ type tasksQueue struct {
 	RateLimits struct {
 		MaxDispatchesPerSecond float64 `json:"maxDispatchesPerSecond,omitempty"`
 	} `json:"rateLimits"`
+	RetryConfig struct {
+		MaxAttempts int `json:"maxAttempts,omitempty"`
+	} `json:"retryConfig"`
 	State string `json:"state,omitempty"`
 }
 
@@ -49,7 +52,10 @@ func (r *TasksQueues) List(ctx context.Context) ([]provision.Observed, error) {
 		if !strings.HasSuffix(id, "-tako") {
 			continue
 		}
-		hash := provision.SpecHash(map[string]any{"rate": int(q.RateLimits.MaxDispatchesPerSecond)})
+		hash := provision.SpecHash(map[string]any{
+			"rate":     int(q.RateLimits.MaxDispatchesPerSecond),
+			"attempts": q.RetryConfig.MaxAttempts,
+		})
 		observed = append(observed, provision.Observed{
 			Kind:     provision.KindTasksQueue,
 			Name:     id,
@@ -66,10 +72,9 @@ func (r *TasksQueues) body(o provision.Object) map[string]any {
 		"rateLimits": map[string]any{
 			"maxDispatchesPerSecond": o.Spec["rate"],
 		},
-		// Mirror the Pub/Sub redelivery contract's attempt count. Tasks
-		// has NO dead letter — an exhausted task is gone (documented in
-		// queue.md's Not yet).
-		"retryConfig": map[string]any{"maxAttempts": 5},
+		// Mirror the queue's declared redelivery contract. Tasks has NO
+		// dead letter — an exhausted task is gone (queue.md's Not yet).
+		"retryConfig": map[string]any{"maxAttempts": o.Spec["attempts"]},
 	}
 }
 
@@ -82,7 +87,7 @@ func (r *TasksQueues) Create(ctx context.Context, o provision.Object) error {
 }
 
 func (r *TasksQueues) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues/%s?updateMask=rateLimits.maxDispatchesPerSecond", r.parent(), o.Name)
+	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues/%s?updateMask=rateLimits.maxDispatchesPerSecond,retryConfig.maxAttempts", r.parent(), o.Name)
 	if err := r.C.do(ctx, http.MethodPatch, url, r.body(o), nil); err != nil {
 		return Classify(err, r.C.Project, "update the tasks queue", "roles/cloudtasks.admin")
 	}

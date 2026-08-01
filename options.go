@@ -45,8 +45,27 @@ func WithEmail() Option { return option("email") }
 // (Cloud Tasks) — same API, provisioner's choice.
 func WithDelay(d time.Duration) Option { return option("delay", d) }
 
-// WithRateLimit caps a queue's delivery rate at n messages per second.
-func WithRateLimit(n int) Option { return option("rate_limit", n) }
+// Delivery shapes how a queue's or topic's messages reach their
+// handlers: how many attempts, how long between them, and how fast.
+// Zero fields inherit the framework's defaults — 5 attempts, 10s backing
+// off to 300s, no rate cap.
+type Delivery struct {
+	// MaxAttempts is how many deliveries a message gets before it is
+	// dead-lettered (5–100).
+	MaxAttempts int
+	// MinBackoff and MaxBackoff bound the exponential wait between
+	// attempts (1s–10m each).
+	MinBackoff time.Duration
+	MaxBackoff time.Duration
+	// RateLimit caps deliveries per second (1–500). Setting it routes
+	// the queue through a broker that can enforce a cap; it is a queue
+	// setting, since a topic's subscribers have independent fates.
+	RateLimit int
+}
+
+// WithDelivery overrides a queue's or topic's delivery contract
+// field-by-field.
+func WithDelivery(d Delivery) Option { return option("delivery", d) }
 
 // WithMaxSize limits the object size accepted by a SignedPut URL, in bytes.
 func WithMaxSize(bytes int64) Option { return option("max_size", bytes) }
@@ -126,6 +145,15 @@ func WithRetries(n int) Option { return option("retries", n) }
 // WithSingleflight wraps a Cron handler in a lease so overlapping or
 // double-fired runs collapse to one execution.
 func WithSingleflight() Option { return option("singleflight") }
+
+// WithTimezone runs a cron on its schedule in the given IANA zone
+// ("America/Mexico_City") instead of UTC. Nine o'clock means nine
+// o'clock somewhere.
+func WithTimezone(zone string) Option { return option("timezone", zone) }
+
+// WithDeadline caps how long one cron run may take before the scheduler
+// abandons the attempt (15s–30m; the schedule is the retry).
+func WithDeadline(d time.Duration) Option { return option("deadline", d) }
 
 // WithParallel fans a Job out across n parallel tasks.
 func WithParallel(n int) Option { return option("parallel", n) }

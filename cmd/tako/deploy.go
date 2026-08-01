@@ -436,7 +436,10 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			ingress = "public ingress on " + svc.Domain + " AND its run.app URL (a domain mapping adds an address, it does not close one)"
 		}
 		if !public[cfg.Name(svc.Name)] {
-			ingress = "ingress: OIDC push from its own SA only · redelivery: 5 attempts with backoff, then dead-letter"
+			// The attempt count is declared now (WithDelivery), so the
+			// summary reads the carrier rather than reciting a default.
+			ingress = fmt.Sprintf("ingress: OIDC push from its own SA only · redelivery: %d attempts with backoff, then dead-letter",
+				deliveryAttemptsOf(graph, svc.Name))
 			if svc.Job {
 				// The retry count is declared now (WithRetries), so the
 				// summary must read it rather than recite the default.
@@ -606,6 +609,23 @@ func warnFootprints(graph *analyzer.AppGraph) {
 				svc.Name, r.MinInstances)
 		}
 	}
+}
+
+// deliveryAttemptsOf is the declared MaxAttempts of the carrier feeding
+// this async service, or the framework default.
+func deliveryAttemptsOf(graph *analyzer.AppGraph, service string) int {
+	for _, h := range graph.Handlers {
+		if h.Service != service || (h.Kind != "worker" && h.Kind != "subscribe") {
+			continue
+		}
+		binding := strings.TrimSuffix(h.Binding, ".Uploaded")
+		for _, r := range graph.Resources {
+			if (r.Kind == "queue" || r.Kind == "topic") && r.Name == binding && r.MaxAttempts > 0 {
+				return r.MaxAttempts
+			}
+		}
+	}
+	return analyzer.DeliveryDefaults.MaxAttempts
 }
 
 // jobRetriesOf is the job's declared retry count, or Cloud Run's 3.

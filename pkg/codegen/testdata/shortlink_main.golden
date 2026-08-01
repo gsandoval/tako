@@ -16,28 +16,28 @@ import (
 func main() {
 	runtime.Boot() // wire backends: local under .tako/data, gcp from Phase E
 
-	// queue archive: WithRateLimit(2) — Cloud Tasks caps dispatch in the
-	// cloud; locally the dispatcher paces to the same rate.
+	// queue archive: WithDelivery RateLimit 2 — Cloud Tasks caps dispatch
+	// in the cloud; locally the dispatcher paces to the same rate.
 	runtime.SetQueueRate("archive", 2)
 
 	mux := http.NewServeMux()
 
-	// POST /api/links → Create (app.go:43)
+	// POST /api/links → Create (app.go:50)
 	mux.Handle("POST /api/links", runtime.JSONHandler(shortlink.Create, decodeCreate))
 
-	// GET /api/links/{slug} → Resolve (app.go:44)
+	// GET /api/links/{slug} → Resolve (app.go:51)
 	mux.Handle("GET /api/links/{slug}", runtime.JSONHandler(shortlink.Resolve, decodeResolve))
 
-	// GET /api/links → List (app.go:45)
+	// GET /api/links → List (app.go:52)
 	mux.Handle("GET /api/links", runtime.JSONHandler(shortlink.List, decodeList))
 
-	// worker CountClick ← queue clicks (app.go:47) — local mode runs the worker in-process
+	// worker CountClick ← queue clicks (app.go:54) — local mode runs the worker in-process
 	runtime.RegisterWorker("CountClick", shortlink.CountClick)
 
-	// worker Expire ← queue expiries (app.go:48) — local mode runs the worker in-process
+	// worker Expire ← queue expiries (app.go:55) — local mode runs the worker in-process
 	runtime.RegisterWorker("Expire", shortlink.Expire)
 
-	// worker Archive ← queue archive (app.go:49) — local mode runs the worker in-process
+	// worker Archive ← queue archive (app.go:56) — local mode runs the worker in-process
 	runtime.RegisterWorker("Archive", shortlink.Archive)
 
 	runtime.Serve(mux)

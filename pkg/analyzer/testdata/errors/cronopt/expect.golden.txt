@@ -1,1 +1,1 @@
-app.go:5:47: tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint) (tako/invalid-option)
+app.go:5:47: tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithTimezone, WithDeadline, WithProfile, WithFootprint) (tako/invalid-option)

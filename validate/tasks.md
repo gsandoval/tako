@@ -1,21 +1,21 @@
 # validate/tasks.md — T3: Cloud Tasks (delay + rate limit)
 
 The claim: `WithDelay` delivers in the cloud at its scheduled time,
-`WithRateLimit` caps a queue's dispatch everywhere, and both ride ONE
+`WithDelivery`'s RateLimit caps a queue's dispatch everywhere, and both ride ONE
 declaration — a Cloud Tasks queue in front of the worker, derived,
 granted, and destroyed like everything else.
 
 **Setup:** run the CLI as `go run ../../cmd/tako …` from
 examples/shortlink (the demanding example: TTL'd links publish their
 own expiry `WithDelay`; the archive queue declares
-`WithRateLimit(2)`).
+`RateLimit: 2`).
 
 ## 1. The declarations carry the whole story
 
 `expiries` is a plain queue whose PUBLISH SITE uses WithDelay — the
 analyzer detects the option at the call site (`gen graph --json`
-shows `"delayed": true`); `archive` declares WithRateLimit(2)
-(`"rate_limit": 2`). Break it: `WithRateLimit(0)` → the 1–500 rule;
+shows `"delayed": true`); `archive` declares RateLimit 2
+(`"rate_limit": 2`). Break it: `RateLimit: 501` → the 1–500 rule;
 any option on a Topic → invalid-option. All golden-tested.
 
 ## 2. Local: the same semantics, the test clock owns time

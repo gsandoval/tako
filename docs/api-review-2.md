@@ -34,6 +34,32 @@ pretends otherwise. `WithDomain` in the same pass is re-documented from
 a site-level option to a SERVICE-level one (its signature is unchanged,
 so the lock's row is untouched).
 
+## Stage 8 surface changes (2026-08-01)
+
+Four deliberate changes, each its own task with its own `sdk_lock`
+regeneration. They all serve one correction: settings that describe a
+whole deployable were being declared on whichever route happened to be
+first, and knobs the framework decided were unreachable.
+
+| change | why |
+|---|---|
+| **+ `Service`, `ServiceHandle`** (V1) | a home for service-level settings; one per package, optional. Package = service still holds — this NAMES that service, it does not split it |
+| **+ `Toggle`, `Inherit`/`On`/`Off`; `Footprint` + `Timeout`, `CPUAlwaysOn`** (V2) | request timeout and CPU allocation were fixed constants. A `bool` cannot say "explicitly off" in a struct whose zero means inherit, hence the tri-state |
+| **+ `WithRetries`** (V2) | job retries were hardcoded to 3 |
+| **+ `Delivery`, `WithDelivery`; − `WithRateLimit`** (V3) | attempts and backoff were fixed. `WithRateLimit` is absorbed as `Delivery.RateLimit` — one knob with two spellings is worse than a breaking change (the `WithCDN` precedent) |
+| **+ `WithTimezone`, `WithDeadline`** (V3) | crons ran in `Etc/UTC` with a 180s deadline, neither reachable |
+
+`WithProfile`, `WithFootprint` and `WithDomain` are no longer accepted
+on `API`/`Page` (`tako/service-option` names where they went). They
+remain on `Worker`/`Subscribe`/`JobHandler`/`Singleton`, where the one
+handler IS the service. `WithDomain` also came off `Site`.
+
+Six-rules check on the additions: all are package-level vars via
+constructors or plain option funcs (rule 1); all are read by static
+analysis with no request-path reflection (rule 2); `Delivery` and
+`Footprint` follow the same zero-means-inherit struct convention, so
+there is one layering idea, not two.
+
 ## Six-rules spot re-check
 
 1. *Package-level vars via constructors* — every Stage 3 addition

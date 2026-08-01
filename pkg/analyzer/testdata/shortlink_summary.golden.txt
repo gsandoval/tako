@@ -1,8 +1,8 @@
 shortlink: 4 services
   service shortlink (package shortlink, profile default)
-    POST /api/links → Create (app.go:43)
-    GET /api/links/{slug} → Resolve (app.go:44)
-    GET /api/links → List (app.go:45)
+    POST /api/links → Create (app.go:50)
+    GET /api/links/{slug} → Resolve (app.go:51)
+    GET /api/links → List (app.go:52)
     entity links (indexes: Owner, Created)
     queue clicks
     entity clicks-seen
@@ -10,7 +10,7 @@ shortlink: 4 services
     queue archive
     entity archived
   service shortlink-countclick (package shortlink, profile default)
-    worker CountClick ← queue clicks (app.go:47)
+    worker CountClick ← queue clicks (app.go:54)
     entity links (indexes: Owner, Created)
     queue clicks
     entity clicks-seen
@@ -18,7 +18,7 @@ shortlink: 4 services
     queue archive
     entity archived
   service shortlink-expire (package shortlink, profile default)
-    worker Expire ← queue expiries (app.go:48)
+    worker Expire ← queue expiries (app.go:55)
     entity links (indexes: Owner, Created)
     queue clicks
     entity clicks-seen
@@ -26,7 +26,7 @@ shortlink: 4 services
     queue archive
     entity archived
   service shortlink-archive (package shortlink, profile default)
-    worker Archive ← queue archive (app.go:49)
+    worker Archive ← queue archive (app.go:56)
     entity links (indexes: Owner, Created)
     queue clicks
     entity clicks-seen

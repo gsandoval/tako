@@ -88,6 +88,9 @@
       "var": "gallery.thumbs",
       "package": "gallery",
       "type": "ThumbJob",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:23:2"
     },
     {
@@ -96,6 +99,9 @@
       "var": "gallery.ready",
       "package": "gallery",
       "type": "PhotoReady",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:24:2"
     },
     {
@@ -103,6 +109,9 @@
       "name": "feed",
       "var": "gallery.feed",
       "package": "gallery",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:30:2"
     },
     {
@@ -110,6 +119,9 @@
       "name": "notifier-key",
       "var": "gallery.notifier",
       "package": "gallery",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:31:2"
     },
     {
@@ -117,6 +129,9 @@
       "name": "uploads",
       "var": "gallery.ups",
       "package": "gallery",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:32:2"
     },
     {
@@ -124,6 +139,9 @@
       "name": "thumb_ms",
       "var": "gallery.thumbMs",
       "package": "gallery",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
       "pos": "app.go:33:2"
     },
     {
