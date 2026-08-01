@@ -10,6 +10,11 @@ examples/gallery. Cloud steps need a test project with the usual APIs
 enabled and the gallery secret present
 (`printf dev-key | gcloud secrets create notifier-key --project <test-project> --data-file=-`).
 
+**Running this alongside `validate/dlq-replay.md`?** Both walks deploy
+gallery. Deploy once with `--env dlq`, run §4–§6 here against that
+environment, then let dlq-replay's §6 do the destroy. One deploy, one
+teardown, both verdicts.
+
 ## 1. The declaration reads as intent
 
 examples/gallery/app.go — the resizer:
@@ -51,7 +56,29 @@ Break it on purpose, read the texts, put it back:
   Singleton → the honest scoping texts (tasks aren't serving
   instances; min=1/max=1 is the exactly-one machinery)
 
-All golden-tested: `go test ./pkg/analyzer -run TestErrors/footprint`.
+And `WithTraffic`'s own (V6):
+
+- `tako.Traffic{Timeout: 500 * time.Millisecond}` →
+  `traffic Timeout must be at least one second; got 500ms` — the
+  nanosecond trap, the same one `Footprint` used to guard
+- `tako.Traffic{SessionAffinity: 3}` →
+  `traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off`
+- `tako.WithTraffic(tako.Traffic{})` →
+  `traffic sets nothing — drop tako.WithTraffic or pin at least one field`
+- `WithTraffic` on an `API` or `Page` →
+  `tako.WithTraffic describes the whole service, not one route — declare it on tako.Service instead (tako/service-option)`
+- `tako.Traffic{SessionAffinity: tako.On}` on a **JobHandler** →
+  `a job's only traffic setting is Timeout — an execution serves nobody,
+  so there are no clients to keep affinity with and no connections to
+  negotiate HTTP/2 over`
+- the same on a **Singleton** → its twin, naming the one instance
+
+**And the migration signal itself:** `tako.Footprint{Timeout: …}` no
+longer compiles. `unknown field Timeout in struct literal of type
+tako.Footprint` is the whole upgrade instruction — the field moved, and
+the compiler says where to look.
+
+All golden-tested: `go test ./pkg/analyzer -run 'TestErrors/footprint|TestErrors/serviceoption|TestErrors/trafficopt'`.
 
 ## 4. Cloud: pinned values land, inherited values come from the profile
 
@@ -90,10 +117,99 @@ any footprint), run `deploy --plan`:
 
 **Judge:** the escape hatch never silently buys always-on instances.
 
+## 6. Traffic: the other half of the split (V6)
+
+`Footprint` sizes the machine; `Traffic` says how requests reach it.
+Confirm both land, and that they land independently.
+
+Read the **v2** API — `gcloud run services describe` renders the v1
+view, where these appear as annotations if at all:
+
 ```
-go run ../../cmd/tako destroy --project <test-project>
+knobs() {
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://run.googleapis.com/v2/projects/$PROJECT/locations/us-central1/services/$1" \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin); t=d['template']; c=t['containers'][0]
+print('  resources      :', json.dumps(c.get('resources')))
+print('  ports          :', json.dumps(c.get('ports')))
+print('  sessionAffinity:', t.get('sessionAffinity'))
+print('  timeout        :', t.get('timeout'))
+print('  concurrency    :', t.get('maxInstanceRequestConcurrency'))
+"
+}
 ```
 
+### 6a. The profile supplies traffic too
+
+```
+knobs dlq-gallery              # profile default
+knobs dlq-gallery-makethumb    # profile batch + footprint
+```
+
+→ `timeout: 300s` and `timeout: 900s` respectively, with
+`sessionAffinity: None` and `ports: [{"name": "http1", …}]` on both.
+That difference comes from `TrafficKnobs`, not `ProfileKnobs` — batch
+differs from default in how long ONE unit of work may run, and the two
+tables now say so separately.
+
+### 6b. An explicit claim, on a service that renames nothing
+
+Put it on a SUBSCRIBER — declaring `tako.Service` would rename the app
+service and orphan it mid-walk. In `examples/gallery/app.go`:
+
+```go
+NotifyOwner = tako.Subscribe(photoReady, notifyOwner,
+	tako.WithTraffic(tako.Traffic{
+		Timeout:         45 * time.Second,
+		SessionAffinity: tako.On,
+		HTTP2:           tako.On,
+	}))
+```
+
+Redeploy, then `knobs dlq-gallery-notifyowner`:
+
+```
+  ports          : [{"name": "h2c", "containerPort": 8080}]
+  sessionAffinity: True
+  timeout        : 45s
+```
+
+Three things, each the wire form of one field:
+
+1. **`timeout: 45s`** — the override beat the profile's 300s.
+2. **`sessionAffinity: True`** — no profile turns this on, so its only
+   possible source is your declaration.
+3. **`ports[0].name: "h2c"`** — the protocol for the last hop, and it
+   carries a `containerPort`. A name without a number is refused
+   outright (it was, once).
+
+**Judge:** the footprint on that service is untouched — `resources`
+still shows the default profile's `cpu 1 / 512Mi`. Setting traffic did
+not disturb compute, which is the entire point of the split.
+
+Confirm it speaks HTTP/2 for real, not just that the flag is set:
+
+```
+curl -i --http2-prior-knowledge "$(gcloud run services describe dlq-gallery \
+  --project $PROJECT --region us-central1 --format 'value(status.url)')/api/photos"
+```
+
+→ `HTTP/2 200`.
+
+Revert the edit and redeploy before teardown.
+
+## 7. Teardown
+
+```
+go run ../../cmd/tako destroy --plan --project <test-project> --env dlq
+go run ../../cmd/tako destroy --project <test-project> --env dlq
+```
+
+The `--plan` line is V5: the same block destroy prints, without arming
+the prompt.
+
 Clean project; delete the secret when done
-(`gcloud secrets delete notifier-key --project <test-project> --quiet`).
+(`gcloud secrets delete dlq-notifier-key --project <test-project> --quiet`).
 Record the verdict in docs/validation-log.md.

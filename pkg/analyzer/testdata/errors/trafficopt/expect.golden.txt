@@ -1,0 +1,5 @@
+app.go:15:3: a job's only traffic setting is Timeout — an execution serves nobody, so there are no clients to keep affinity with and no connections to negotiate HTTP/2 over (tako/traffic)
+app.go:19:3: a singleton's only traffic setting is Timeout — exactly one instance serving nothing but its own health check has no clients to keep affinity with or negotiate HTTP/2 over (tako/traffic)
+app.go:24:20: traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off (tako/traffic)
+app.go:24:42: traffic Timeout must be at least one second; got 500ms (tako/traffic)
+app.go:28:20: traffic sets nothing — drop tako.WithTraffic or pin at least one field (tako/traffic)
