@@ -8773,3 +8773,185 @@ Also worth recording: `minInstanceCount` is omitted when 0, joining
 omitted-when-false family. Four fields on one resource where absent
 means false — the reason `liveHash` has to mirror the API's shape
 exactly rather than the shape tako sends.
+
+# Stage 9 — DX proposals (U3, V5, V6) — 2026-08-01
+
+**Status: awaiting approval.** Three slices, gated separately. U3 is
+the feature; V5 is a small CLI gap the U2 walk exposed; V6 is the SDK
+change already argued for and now scheduled.
+
+## U3 — `tako dlq --replay`
+
+Goal: a dead letter can be put back into at-least-once delivery, and
+leaves the DLQ when it is. A MOVE, not a copy.
+
+### Surface
+
+```
+tako dlq                              # list services + retained counts   (exists)
+tako dlq <service>                    # peek, consumes nothing            (exists)
+tako dlq <service> --ack              # drain what was printed            (exists)
+tako dlq <service> --replay <id>      # NEW — re-deliver one, then remove
+tako dlq <service> --replay --all     # NEW — re-deliver everything
+```
+
+`--ack` and `--replay` are mutually exclusive (tier-2 ladder: no typed
+confirmation, both are recoverable — a replayed message that fails
+again simply dead-letters again).
+
+### Messages need stable ids, and today they have none
+
+Peek prints payload, reason and age; nothing addressable. The cloud
+path holds a Pub/Sub **ackId**, which is per-pull and useless as a
+handle — the id you saw is invalid by the time you type it.
+
+So the slice adds an `id` to the listing: Pub/Sub's `messageId` in the
+cloud (stable for the message's life), the file stem locally. Peek
+prints it, and `--replay` accepts **any unique prefix**, the way git
+takes short SHAs:
+
+```
+$ tako dlq gallery-makethumb
+gallery-makethumb — 2 retained
+  14672041893  2m ago   attempts 5   decode image: unknown format
+    {"photo":"izupocvqy7bva6ax","caption":"boom"}
+  14672041955  2m ago   permanent    caption rejected
+    {"photo":"a7x2k9wq1mz","caption":""}
+
+$ tako dlq gallery-makethumb --replay 1467204189
+↩ replayed 14672041893 → thumbnails (1 message)
+```
+
+### The decision this slice turns on: topic-sourced replay
+
+For a **queue** it is easy — one worker, so republishing to the queue's
+topic re-delivers to exactly the thing that failed.
+
+For a **topic** it is not. A topic fans out to every subscriber, and a
+dead letter belongs to exactly ONE of them. Republishing to the source
+topic re-runs the message through the subscribers that already handled
+it fine — duplicate emails, duplicate charges. Pub/Sub has no
+inject-into-one-subscription API.
+
+Three ways out:
+
+**(a) POST straight at the failed subscriber's push endpoint**, with an
+OIDC token the operator mints. What the Stage 7 handoff suggested.
+*Against:* the CLI becomes the broker — no retry, no dead-lettering, no
+attempt counter, so a replay that fails is simply lost; it needs the
+operator to satisfy `run.invoker` on a private service (they hold
+`run.admin`, which is not the same); and it has no local equivalent, so
+local and cloud stop matching.
+
+**(b) Publish with an addressing attribute and let Pub/Sub filter.**
+Add `tako-replay-to: <subscriber>` and give every push subscription a
+filter accepting only unaddressed messages or ones addressed to it.
+*Against:* subscription filters are IMMUTABLE, so adopting this
+replaces every existing subscription, and a filter expression is a new
+thing to get wrong in a place where getting it wrong silently drops
+production traffic.
+
+**(c) RECOMMENDED — same attribute, filtered in the runtime.**
+Republish to the source topic with `tako-replay-to: <subscriber>`; the
+push handler acks-and-drops anything addressed to someone else.
+
+*For:* no infrastructure change and no subscription replace; the
+message rides the REAL delivery path, so retries, the attempt counter
+and dead-lettering all behave exactly as they do normally — a replay
+that fails again lands back on the DLQ, which is the semantics the gate
+has to prove; and local can do precisely the same thing, so the
+conformance suite covers both. `pubsubEnvelope` already parses
+attributes (`pkg/runtime/push.go:37`) and just needs to return them.
+*Cost:* the other subscribers each receive one message and ack it
+without work. Cheap, and visible in logs rather than hidden.
+
+Queue replays need no attribute at all — one worker, nothing to
+address.
+
+### Local
+
+The CLI is a different process from `tako dev`, and when dev is down
+there is no broker to publish into. So local replay **moves the file**
+into `deadletter/replay/`, and the dispatcher drains that inbox on boot
+and on each watch tick.
+
+Processless, works whether dev is up or down, and keeps the CLI from
+needing the bbolt lock. The move is also the "leaves the DLQ" half of
+the contract, done atomically by rename.
+
+### Errors
+
+```
+--ack and --replay do the opposite things to the same message — pick one
+no dead letter matching "1467" in gallery-makethumb — tako dlq gallery-makethumb lists what is there
+"146" matches 3 dead letters — use more characters
+--replay needs a service (tako dlq <service> --replay <id>)
+```
+
+### Gate
+
+`validate/dlq-replay.md`: gallery's `boom` caption dead-letters live;
+`--replay` returns it; the worker fails it again (still boom) → back on
+the DLQ, proving the move rather than a copy; then fix and replay for
+the success path. A topic-sourced replay must show the OTHER subscriber
+NOT re-running. Local equivalent scripted in the same file.
+
+## V5 — `tako destroy --plan`
+
+Found during the U2 walk. `tako deploy` takes `--plan`; `tako destroy`
+does not, and rejects it with a bare `unknown argument "--plan"`.
+
+Destroy already BUILDS the whole preview — every object, plus the
+`DATA — deleted with the app, gone forever:` block — and then prompts.
+The information exists; there is no way to see it without arming the
+prompt. Today the only way to preview the one irreversible command is
+to start it and deliberately type the wrong name.
+
+```
+tako destroy --plan --project p --env metrics
+```
+
+→ the exact block destroy prints today, then exit 0 before the prompt.
+Nothing observed, nothing deleted, safe in CI.
+
+Also fixed here: destroy's unknown-argument error should list what it
+accepts, the way deploy's does.
+
+```
+unknown argument "--plna" (tako destroy accepts --plan, --project, --region, --env)
+```
+
+Gate: folds into the next walk that destroys anything — no separate
+script.
+
+## V6 — split `Footprint` from `Traffic`
+
+The proposal argued earlier in this log, now scheduled. `Footprint`
+says it "pins explicit compute values"; `Timeout` is a request
+lifetime, `SessionAffinity` is routing and `HTTP2` is a wire protocol.
+
+```go
+tako.Service(tako.WithFootprint(tako.Footprint{
+    CPU: 2, Memory: "1Gi", Concurrency: 40,
+    MinInstances: 1, MaxInstances: 100,
+    CPUAlwaysOn: tako.On, StartupBoost: tako.On,
+}))
+
+tako.Service(tako.WithTraffic(tako.Traffic{
+    Timeout:         30 * time.Second,
+    SessionAffinity: tako.On,
+    HTTP2:           tako.On,
+}))
+```
+
+`Concurrency` stays in `Footprint` — how many requests fit in one
+instance is sizing, not routing. `Timeout` moving is the only genuinely
+breaking change; no production apps, so it moves outright rather than
+being aliased.
+
+Falls out of it: the job and singleton refusal texts split into two
+short ones instead of one sentence enumerating five unrelated reasons.
+
+`ProfileKnobs` grows a second table; `sdk_lock.golden` regenerates
+deliberately; the analyzer's `Footprint` splits to match. Gate:
+`validate/footprint.md` extended to cover both option constructors.
