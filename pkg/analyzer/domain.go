@@ -73,64 +73,25 @@ func domainArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorList)
 	return d
 }
 
-// applyDomains projects WithDomain claims onto services and rejects
-// conflicts, the way applyProfiles projects WithProfile. A domain is
-// declared on any ONE of a service's handlers — or on its site — and
-// answers for the whole service, because a tako service is one origin:
-// its embedded static assets and its dynamic routes share a URL.
+// applyDomains projects each package's tako.Service domain claim onto
+// its app service.
 //
-// Only API and Page accept the option (a worker or job that took a
-// domain would be refused as tako/invalid-option before reaching here),
-// so a handler claim always lands on a service that serves traffic. A
-// SITE's claim is the case that can miss: the site mounts on its
-// package's app service, and a package whose every handler is async — or
-// that is a job — has no such service for the domain to address.
+// There is no conflict rule and there cannot be one: WithDomain is
+// accepted only on tako.Service, and a package declares at most one
+// (tako/one-service). The single failure left is a domain in front of a
+// package where nothing serves public traffic.
 func applyDomains(graph *AppGraph, errs *ErrorList) {
-	for i := range graph.Services {
-		svc := &graph.Services[i]
-		claim, claimedBy := "", ""
-		for _, h := range graph.Handlers {
-			if h.Service != svc.Name || h.Domain == "" {
-				continue
-			}
-			if claim != "" && claim != h.Domain {
-				*errs = append(*errs, &Error{
-					Pos: h.Pos,
-					Msg: fmt.Sprintf("service %s cannot answer on both %q (%s) and %q (%s) — one service, one domain; split the packages or align the domains",
-						svc.Name, claim, claimedBy, h.Domain, ShortVar(h)),
-					Rule: "domain-conflict",
-				})
-				continue
-			}
-			claim, claimedBy = h.Domain, ShortVar(h)
-		}
-		if claim != "" {
-			svc.Domain = claim
-		}
-	}
-
-	// Site claims, projected onto whichever service mounts the site —
-	// the same choice codegen's siteOf makes.
 	for _, r := range graph.Resources {
-		if r.Kind != "site" || r.Domain == "" {
+		if r.Kind != "service" || r.Domain == "" {
 			continue
 		}
 		svc := mountingService(graph, r.Package)
 		if svc == nil {
 			*errs = append(*errs, &Error{
 				Pos: r.Pos,
-				Msg: fmt.Sprintf("the site declares the domain %q, but no service in this package serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API or Page route here, or move the domain to the package that has one",
+				Msg: fmt.Sprintf("this package declares the domain %q, but nothing here serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API, Page or Site route here, or move the domain to the package that has one",
 					r.Domain),
 				Rule: "domain-unreachable",
-			})
-			continue
-		}
-		if svc.Domain != "" && svc.Domain != r.Domain {
-			*errs = append(*errs, &Error{
-				Pos: r.Pos,
-				Msg: fmt.Sprintf("service %s cannot answer on both %q (a handler) and %q (the site) — one service, one domain; split the packages or align the domains",
-					svc.Name, svc.Domain, r.Domain),
-				Rule: "domain-conflict",
 			})
 			continue
 		}
@@ -160,4 +121,116 @@ func mountingService(graph *AppGraph, pkgPath string) *Service {
 		}
 	}
 	return nil
+}
+
+// extractService validates one tako.Service declaration: the app
+// service's own record, and the home for every setting that describes a
+// SERVICE rather than a route.
+func extractService(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" {
+		return nil
+	}
+	r := &Resource{
+		Kind:    "service",
+		Name:    name.Name,
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+	bad := false
+	for _, opt := range call.Args {
+		optName, isOpt := sdkOptionCall(pkg, opt)
+		if !isOpt {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+				Msg:  fmt.Sprintf("tako.Service accepts WithDomain, WithProfile, WithFootprint; got %s", describeExpr(opt)),
+				Rule: "invalid-option",
+			})
+			bad = true
+			continue
+		}
+		switch optName {
+		case "WithDomain":
+			if d := domainArg(dir, pkg, opt, errs); d != "" {
+				r.Domain = d
+			} else {
+				bad = true
+			}
+		case "WithProfile":
+			r.Profile = profileArg(pkg, opt)
+		case "WithFootprint":
+			r.Footprint = footprintArg(dir, pkg, opt, errs)
+		default:
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+				Msg:  fmt.Sprintf("tako.%s is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint)", optName),
+				Rule: "invalid-option",
+			})
+			bad = true
+		}
+	}
+	if bad {
+		return nil
+	}
+	return r
+}
+
+// renameAppServices applies a declared tako.Service's name to the
+// package's APP service — the one running API, Page and Cron handlers.
+// Worker, subscriber, job and singleton services are already named after
+// the handler that spawned them and are left alone.
+func renameAppServices(graph *AppGraph, serviceNames, sitePackages map[string]string) {
+	for pkgPath, newName := range serviceNames {
+		// The app service's old name is the package name; satellites
+		// carry a suffix and must not be caught by the rename.
+		old := ""
+		for _, h := range graph.Handlers {
+			if h.Package == pkgPath && h.Service == packageNameOf(h.Var) {
+				old = h.Service
+				break
+			}
+		}
+		if old == "" {
+			// No app handlers: a site-only package still deploys, and
+			// its service takes the declared name too.
+			if _, ok := sitePackages[pkgPath]; ok {
+				sitePackages[pkgPath] = newName
+			}
+			continue
+		}
+		for i := range graph.Handlers {
+			if graph.Handlers[i].Package == pkgPath && graph.Handlers[i].Service == old {
+				graph.Handlers[i].Service = newName
+			}
+		}
+		if _, ok := sitePackages[pkgPath]; ok {
+			sitePackages[pkgPath] = newName
+		}
+	}
+}
+
+// packageNameOf is the package half of a package-qualified var
+// ("blog.Home" → "blog") — which is exactly what an app service is
+// named before any tako.Service declaration renames it.
+func packageNameOf(qualifiedVar string) string {
+	if i := strings.Index(qualifiedVar, "."); i >= 0 {
+		return qualifiedVar[:i]
+	}
+	return qualifiedVar
+}
+
+// isAppService reports whether svc is its package's APP service — the
+// one running API, Page and Cron handlers — as opposed to a worker,
+// subscriber, job or singleton carved out of the same package. A
+// tako.Service declaration describes only the former.
+func isAppService(graph *AppGraph, svc Service) bool {
+	if svc.Job || svc.Singleton {
+		return false
+	}
+	for _, h := range graph.Handlers {
+		if h.Service == svc.Name && (h.Kind == "worker" || h.Kind == "subscribe") {
+			return false
+		}
+	}
+	return true
 }

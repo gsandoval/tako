@@ -27,7 +27,10 @@ func Summary(g *AppGraph) string {
 			fmt.Fprintf(&b, "    %s\n", HandlerLine(h))
 		}
 		for _, r := range g.Resources {
-			if r.Package != svc.Package {
+			// The service declaration is the LINE it annotates, not a
+			// resource sitting under it — its domain and profile already
+			// render above.
+			if r.Package != svc.Package || r.Kind == "service" {
 				continue
 			}
 			fmt.Fprintf(&b, "    %s\n", ResourceLine(r))

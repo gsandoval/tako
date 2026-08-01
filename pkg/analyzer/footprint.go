@@ -205,6 +205,22 @@ func applyFootprints(graph *AppGraph, errs *ErrorList) {
 			}
 			claim, claimedBy, claimPos = h.Footprint, ShortVar(h), h.Pos
 		}
+		for _, r := range graph.Resources {
+			if r.Kind != "service" || r.Package != svc.Package || r.Footprint == nil {
+				continue
+			}
+			if claim != nil && *claim != *r.Footprint {
+				*errs = append(*errs, &Error{
+					Pos:  r.Pos,
+					Msg:  fmt.Sprintf("service %s cannot carry both footprint (%s) from %s and footprint (%s) from %s — one service scales one way; split the packages or align the footprints", svc.Name, claim, claimedBy, r.Footprint, r.Var),
+					Rule: "mixed-footprint",
+				})
+				continue
+			}
+			if isAppService(graph, *svc) {
+				claim, claimedBy, claimPos = r.Footprint, r.Var, r.Pos
+			}
+		}
 		if claim == nil {
 			continue
 		}

@@ -20,11 +20,14 @@ and every routine deploy. Add the option for the walk, remove it after
 
 ## 1. The refusals, before anything is built
 
-Add to `examples/blog/app.go`, inside the `tako.Site(...)` call:
+Add to `examples/blog/app.go`, as a new package-level var:
 
 ```go
-	tako.WithDomain("<your-domain>"),
+var web = tako.Service(tako.WithDomain("<your-domain>"))
 ```
+
+Note this also RENAMES the service to `blog-web` (V4) — expect every
+provisioned object to carry the new name.
 
 Analysis first — these cost nothing and never touch the cloud:
 
@@ -173,14 +176,14 @@ takes one just as well. Restore blog, then in `examples/shortlink` add
 to ONE endpoint only:
 
 ```go
-	Create  = tako.API("POST /api/links", create, tako.WithDomain("<your-api-domain>"))
+var api = tako.Service(tako.WithDomain("<your-api-domain>"))
 ```
 
 ```
 go run ../../cmd/tako gen graph
 ```
 
-**Judge:** `service shortlink (…, domain <your-api-domain>)` — and the
+**Judge:** `service shortlink-api (…, domain <your-api-domain>)` — and the
 three worker services (`shortlink-countclick`, `-expire`, `-archive`)
 carved out of the SAME package carry no domain. One declaration, on one
 endpoint, addressing every route in that service; workers excluded

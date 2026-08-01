@@ -7616,3 +7616,75 @@ converged to `skip`; destroy clean.
 
 No new exported symbol (`CPUAlwaysOn` is analyzer-internal), so no
 sdk_lock change; the SDK edit is a doc comment.
+
+## V1 + V4 — tako.Service, and the name it gives (2026-08-01)
+
+```go
+package blog
+
+var web = tako.Service(
+	tako.WithDomain("blog.example.com"),
+	tako.WithProfile(tako.Latency),
+	tako.WithFootprint(tako.Footprint{Memory: "1Gi"}),
+)
+```
+
+One per package (`tako/one-service`), optional, no per-handler binding —
+the shape `tako.Site` and `tako.Auth` already have, so it adds a home
+rather than a concept. `ServiceHandle` carries no methods: the
+declaration IS the value.
+
+**Where the three service-level options may now be declared:**
+
+| option | `tako.Service` | Worker/Subscribe/Job/Singleton | API/Page | Site |
+|---|---|---|---|---|
+| `WithProfile`, `WithFootprint` | yes | yes | **refused** | n/a |
+| `WithDomain` | yes | no (unreachable) | **refused** | **removed** |
+
+The principle held to: a service-level option is declared where it is
+UNAMBIGUOUS. A worker is one handler, so the handler IS the service and
+`examples/gallery/app.go:79` still reads well. An API service has many
+routes and no honest first among them. `tako/service-option` names the
+move: *"tako.WithProfile describes the whole service, not one route —
+declare it on tako.Service instead"*.
+
+`WithDomain` came OFF `tako.Site` too. Site is unambiguous, so by the
+principle it could have stayed — but two homes for one knob is the same
+"one knob, two spellings" objection that made V3 absorb `WithRateLimit`.
+One home.
+
+**V4, opt-in as decided:** a declared `tako.Service` names the app
+service `<package>-<var>` (`blog-web`); an undeclared package keeps the
+bare package name. The rename lands on handlers BEFORE `partition()`, so
+one pass does it. Satellites are untouched — they are already named
+after the handler that spawned them.
+
+### A third dead rule, removed
+
+`tako/domain-conflict` cannot fire any more: `WithDomain` is accepted
+only on `tako.Service`, and a package declares at most one. Handler-level
+domain claims became impossible, so `Handler.Domain` went with the rule
+and `applyDomains` collapsed to a projection plus the one reachable
+refusal (`domain-unreachable`). Third time this stage that shipping the
+option in its right place deleted a rule that existed to police the
+wrong place.
+
+### Validation
+
+Fixtures reworked: `domain` (shape text + position — the exhaustive
+shape coverage is `TestDomainProblem`), `domainunreachable`,
+`serviceoption` (all three options on routes), `oneservice`;
+`domainconflict` deleted. Unit tests pin the naming both ways.
+
+**Live on tako-test-02:** blog with `var web = tako.Service(...)` →
+`✓ blog-web → https://blog-web-…run.app`, SA `blog-web-sa`, domain
+mapping `blog.ker.gs` on the renamed route, DNS records printed.
+Destroy removed the mapping first, then `run service blog-web`. Clean.
+
+`sdk_lock` regenerated: `+ func Service(opts ...Option) *ServiceHandle`,
+`+ type ServiceHandle struct{}`. Deliberate, and the only additions.
+
+Docs: new `reference/service.md`; `domains.md`, `api.md`, `pages.md`,
+`site.md`, `footprint.md` and the reference index updated;
+`validate/domain.md` §1 and §8 now declare through `tako.Service` and
+expect the renamed service.

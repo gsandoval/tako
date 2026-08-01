@@ -31,10 +31,10 @@ forwards site requests to a generator's own dev server (Vite/Hugo
 HMR) during `tako dev`. `WithTrustedHTML()` sets the markdown posture
 ([pages.md](pages.md)).
 
-`WithDomain(fqdn)` is a SERVICE-level option, not a site-level one:
-declare it on the site, or on any one of the service's `API` or `Page`
-handlers, and the whole service answers there. A service with no site at
-all can have one too — [domains.md](domains.md) is the whole story.
+A custom domain is not a site setting — it belongs to the SERVICE that
+serves the site, so it goes on [`tako.Service`](service.md) via
+`WithDomain`. A service with no site at all can have one too;
+[domains.md](domains.md) is the whole story.
 
 ## Use
 
@@ -69,7 +69,7 @@ deployed site never proxies. Blog needs Hugo on your machine
 bill; the site scales to zero with its service. Node and Hugo never
 reach production.
 
-`WithDomain("blog.example.com")` puts the service on a custom domain
+`tako.Service(tako.WithDomain("blog.example.com"))` puts the service on a custom domain
 with a Google-managed certificate, via a Cloud Run domain mapping — no
 standing infrastructure charge, but two manual steps that are yours
 (proving ownership, publishing DNS). [domains.md](domains.md) has the

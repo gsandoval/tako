@@ -1,0 +1,1 @@
+app.go:8:10: a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two (tako/one-service)

@@ -1,2 +1,0 @@
-app.go:7:5: service domainconflict cannot answer on both "www.example.com" (a handler) and "blog.example.com" (the site) — one service, one domain; split the packages or align the domains (tako/domain-conflict)
-app.go:11:2: service domainconflict cannot answer on both "www.example.com" (Read) and "api.example.com" (Write) — one service, one domain; split the packages or align the domains (tako/domain-conflict)

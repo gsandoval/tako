@@ -13,12 +13,17 @@ import (
 
 // apiOptions is the option set tako.API accepts; anything else is
 // tako/invalid-option.
+// serviceLevelOptions describe a whole deployable. On a worker or a job
+// the single handler IS the service, so they stay honest there; on an
+// API or Page they would sit on an arbitrary route, which is what
+// tako.Service exists to fix.
+var serviceLevelOptions = map[string]bool{
+	"WithProfile": true, "WithFootprint": true, "WithDomain": true,
+}
+
 var apiOptions = map[string]bool{
-	"WithAuth":      true,
-	"WithPrivate":   true,
-	"WithProfile":   true,
-	"WithFootprint": true,
-	"WithDomain":    true,
+	"WithAuth":    true,
+	"WithPrivate": true,
 }
 
 // bindableTypes are the field types path:/query:/form: tags may bind in
@@ -66,9 +71,6 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 
 	requiresAuth := false
 	private := false
-	profile := ""
-	domain := ""
-	var footprint *Footprint
 	for _, opt := range call.Args[2:] {
 		optName, ok := sdkOptionCall(pkg, opt)
 		if ok && optName == "WithAuth" {
@@ -79,22 +81,22 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 			private = true
 			continue
 		}
-		if ok && optName == "WithProfile" {
-			profile = profileArg(pkg, opt)
-			continue
-		}
-		if ok && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			continue
-		}
-		if ok && optName == "WithDomain" {
-			domain = domainArg(dir, pkg, opt, errs)
+		if ok && serviceLevelOptions[optName] {
+			// These describe the whole SERVICE, and a service has many
+			// routes — there is no honest reason for one of them to carry
+			// the claim. tako.Service is the home (V1).
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, opt.Pos()),
+				Msg: fmt.Sprintf("tako.%s describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.%s(…))",
+					optName, optName),
+				Rule: "service-option",
+			})
 			continue
 		}
 		if ok && !apiOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate, WithProfile, WithFootprint, WithDomain)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate)",
 					optName, ctor, ctor),
 				Rule: "invalid-option",
 			})
@@ -225,9 +227,6 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
 		RequiresAuth: requiresAuth,
 		Private:      private,
-		Profile:      profile,
-		Footprint:    footprint,
-		Domain:       domain,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

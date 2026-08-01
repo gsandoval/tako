@@ -1,1 +1,2 @@
-app.go:6:5: service mixedprofile cannot be both latency (Fast) and batch (Slow) — one service scales one way; split the packages or align the profiles (tako/mixed-profile)
+app.go:5:44: tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)
+app.go:6:44: tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)

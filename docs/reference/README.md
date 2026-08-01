@@ -23,6 +23,8 @@ path.
   CSRF, htmx fragments
 - [site.md](site.md) — `tako.Site`: static serving, templates,
   frontend builds (`WithBuild`), SPA, redirects
+- [service.md](service.md) — `tako.Service`: the app service declared —
+  its name and its service-wide settings
 - [domains.md](domains.md) — `tako.WithDomain`: a custom domain with
   managed TLS on any service, site or API-only
 

@@ -29,6 +29,13 @@ point of the profile. Warmth (min 1) and CPU always allocated are the
 other two halves — an instance that is up but throttled still stalls on
 the first request.
 
+`WithProfile` and `WithFootprint` are declared on
+[`tako.Service`](service.md) for a package's app service, and on the
+handler itself for a worker, subscriber, job or singleton (where the one
+handler IS the service). They are refused on `API` and `Page`
+(`tako/service-option`) — a service has many routes and none is an
+honest place for a service-wide claim.
+
 `tako.WithFootprint(tako.Footprint{…})` (S1) overrides field-by-field:
 
 ```go

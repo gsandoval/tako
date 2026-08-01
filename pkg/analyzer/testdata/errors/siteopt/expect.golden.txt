@@ -1,2 +1,2 @@
-app.go:9:31: tako.WithTTL is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain) (tako/invalid-option)
-app.go:9:58: tako.WithSingleflight is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain) (tako/invalid-option)
+app.go:9:31: tako.WithTTL is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML) (tako/invalid-option)
+app.go:9:58: tako.WithSingleflight is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML) (tako/invalid-option)

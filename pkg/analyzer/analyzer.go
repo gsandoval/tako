@@ -109,6 +109,8 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
 	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
 	sitePackages := map[string]string{}       // package path → package name (service-from-site)
+	serviceOfPackage := map[string]string{}   // package path → declaring var (one per package)
+	serviceNames := map[string]string{}       // package path → declared app-service name
 	workersByQueue := map[string]*Handler{}   // queue name → its worker
 	jobVars := map[types.Object]string{}      // job var object → job name
 	jobsByName := map[string]*Handler{}       // job name → its handler
@@ -189,6 +191,20 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					}
 					siteOfPackage[pkg.PkgPath] = r.Var
 					sitePackages[pkg.PkgPath] = pkg.Name
+					graph.Resources = append(graph.Resources, *r)
+				}
+			case "Service":
+				if r := extractService(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					if prior, exists := serviceOfPackage[pkg.PkgPath]; exists {
+						errs = append(errs, &Error{
+							Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
+							Msg:  fmt.Sprintf("a package declares one service — %s is already declared; remove %s or merge the two", prior, r.Var),
+							Rule: "one-service",
+						})
+						continue
+					}
+					serviceOfPackage[pkg.PkgPath] = r.Var
+					serviceNames[pkg.PkgPath] = pkg.Name + "-" + strings.ToLower(r.Name)
 					graph.Resources = append(graph.Resources, *r)
 				}
 			case "Auth":
@@ -322,6 +338,12 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	sort.SliceStable(graph.Resources, func(i, j int) bool {
 		return posLess(graph.Resources[i].Pos, graph.Resources[j].Pos)
 	})
+	// A declared tako.Service names the package's app service
+	// <package>-<var> (V4) — the shape workers and subscribers already
+	// use. Undeclared packages keep the bare package name: that IS the
+	// honest name for a service nobody bothered to name. Renaming here,
+	// before partition, is what makes one pass enough.
+	renameAppServices(graph, serviceNames, sitePackages)
 	graph.Services = partition(graph.Handlers)
 	// A package with a Site but no handlers is still an app: the pure-
 	// static site deploys as its package's service.
@@ -574,6 +596,22 @@ func applyProfiles(graph *AppGraph, errs *ErrorList) {
 				continue
 			}
 			claim, claimedBy = h.Profile, ShortVar(h)
+		}
+		for _, r := range graph.Resources {
+			if r.Kind != "service" || r.Package != svc.Package || r.Profile == "" {
+				continue
+			}
+			if claim != "" && claim != r.Profile {
+				*errs = append(*errs, &Error{
+					Pos:  r.Pos,
+					Msg:  fmt.Sprintf("service %s cannot be both %s (%s) and %s (%s) — one service scales one way; split the packages or align the profiles", svc.Name, claim, claimedBy, r.Profile, r.Var),
+					Rule: "mixed-profile",
+				})
+				continue
+			}
+			if isAppService(graph, *svc) {
+				claim = r.Profile
+			}
 		}
 		if claim != "" {
 			svc.Profile = claim

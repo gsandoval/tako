@@ -82,6 +82,7 @@ func Queue[T any](name string, opts ...Option) *QueueHandle[T]
 func Redirect(target string) (HTML, error)
 func SPA() Option
 func Secret(name string, opts ...Option) *SecretHandle
+func Service(opts ...Option) *ServiceHandle
 func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler
 func Site(dir string, opts ...Option) *SiteHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler
@@ -130,6 +131,7 @@ type Option struct{}
 type Profile int
 type QueueHandle[T any] struct{}
 type SecretHandle struct{}
+type ServiceHandle struct{}
 type SiteHandle struct{}
 type TestApp struct{}
 type TopicHandle[T any] struct{}

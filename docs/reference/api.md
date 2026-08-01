@@ -16,21 +16,21 @@ var Echo = tako.API("POST /echo", echo)
 ```
 
 The only options: `tako.WithAuth()` (401 without a session;
-`ctx.User()` guaranteed past it), `tako.WithPrivate()` (IAM-only
-ingress — other services, not the public internet), `tako.WithProfile`
-and `tako.WithFootprint` (scaling — [footprint.md](footprint.md)), and
-`tako.WithDomain()` (a custom domain — [domains.md](domains.md)).
+`ctx.User()` guaranteed past it) and `tako.WithPrivate()` (IAM-only
+ingress — other services, not the public internet). Both describe the
+ROUTE they sit on.
 
-`WithAuth`, `WithPrivate` and the scaling options describe the route
-they sit on. `WithDomain` is different: it addresses the whole SERVICE,
-so you declare it once, on any one endpoint, and every route in that
-service answers there — no site required.
+Settings that describe the whole service — the domain it answers on, how
+it scales — live on [`tako.Service`](service.md) instead, because a
+service has many routes and none of them is a more honest place to put a
+service-wide fact:
 
 ```go
 var (
-	Create  = tako.API("POST /api/links", create, tako.WithDomain("api.example.com"))
-	Resolve = tako.API("GET /api/links/{slug}", resolve) // same service, same domain
-	List    = tako.API("GET /api/links", list)           // same service, same domain
+	api     = tako.Service(tako.WithDomain("api.example.com"), tako.WithProfile(tako.Latency))
+	Create  = tako.API("POST /api/links", create)
+	Resolve = tako.API("GET /api/links/{slug}", resolve)
+	List    = tako.API("GET /api/links", list)
 )
 ```
 
@@ -86,9 +86,9 @@ curl -X POST localhost:8080/echo -d '{"message":"hi"}'
 
 Package = service: your API routes deploy as one Cloud Run service
 running as its own service account, with IAM derived from the code.
-There is nothing to declare for that grouping — it is derived, which is
-also what makes `WithDomain` on any one endpoint address all of them
-([domains.md](domains.md)).
+The grouping is derived, never declared — `tako.Service` names that
+service and carries its settings, it does not create or split it
+([service.md](service.md)).
 The default profile scales to zero — an idle API costs nothing.
 `WithPrivate` closes the front door: browsers and curl get 403 from
 Cloud Run itself; callers get `run.invoker` derived from the call
@@ -121,7 +121,8 @@ field When: query:-tagged fields must be string, bool, int, int64, or float64; g
 GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag (tako/body-on-get)
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
-tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate, WithProfile, WithFootprint, WithDomain) (tako/invalid-option)
+tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate) (tako/invalid-option)
+tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)
 ```
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,
