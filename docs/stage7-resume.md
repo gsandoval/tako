@@ -15,14 +15,13 @@ correctly EXCEPT where this file corrects it. Read this first, then that.
 | Stage 8 V3 — `Delivery`, cron timezone/deadline | done, `b787317` |
 | index waits halved | done, `52ae1a2` |
 | domain replace race | done, `a3d361e` |
-| **U2 — metrics export** | **NOT STARTED — next** |
-| U3 — dlq replay | not started |
+| U2 — metrics export + graceful shutdown | done + **gated pass** (validation-log, 2026-08-01); absorbed Stage 8 V0–V4 |
+| **U3 — dlq replay** | **NOT STARTED — next** |
 | U4 — shared-cache plan | not started |
 
-**Stage 8 has no human gate row.** It was built under a "do this first,
-then come back to U1" instruction, so V0–V3 are agent-side validated
-(live on tako-test-02, transcripts in the task log) but ungated. Ask
-whether it wants gates or rides along with a later one.
+**Stage 8 is gated** — folded into U2's walk (§6 of
+`validate/metrics.md`) at the user's direction, and covered by U2's
+verdict row.
 
 ## Ground truth for U2, verified in the code (2026-08-01)
 
