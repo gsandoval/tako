@@ -328,36 +328,147 @@ path at all, so up to 60s of metrics died with every revision.
 
 ## 6. Stage 8 (V0–V4), folded in
 
-Never gated; validated agent-side on tako-test-02. Confirm live:
+Never gated; validated agent-side on tako-test-02. Confirm live.
 
-**V0 — Latency actually allocates CPU, and now boosts startup.**
-
-```
-gcloud run services describe gallery --project <test-project> --region us-central1 --format yaml | grep -i "cpu-idle\|startup-cpu-boost\|cpuIdle\|startupCpuBoost"
-```
-
-→ a Latency-profile service reads back CPU always-on **and** startup
-boost; a Default one reads back neither. (`cpuIdle` and
-`startupCpuBoost` are both omitted-when-false by the v2 API — the same
-drift trap, pinned by `TestRunServiceEmitsCPUIdle`.)
-
-**V1 — `tako.Service` carries service-wide options.** `WithProfile`,
-`WithFootprint` and `WithDomain` on `tako.Service`; refused on `API`
-and `Page` with `tako/service-option`.
-
-**V2 — timeout, CPU and job retries are reachable.** Set
-`Timeout` in a footprint, redeploy, and read it back:
+**Read the v2 API, not `gcloud run services describe`.** tako writes
+`cpuIdle` and `startupCpuBoost` through the v2 API; gcloud's describe
+renders the v1/Knative view, where they appear — if at all — as
+`run.googleapis.com/*` annotations. Grepping the v2 field names against
+v1 YAML matches nothing, and looks like a failure when it is a
+mismatch of representations.
 
 ```
-gcloud run services describe gallery --project <test-project> --region us-central1 --format 'value(spec.template.spec.timeoutSeconds)'
+knobs() {
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://run.googleapis.com/v2/projects/$PROJECT/locations/us-central1/services/$1" \
+  | python3 -c "
+import json,sys
+d=json.load(sys.stdin); t=d['template']; c=t['containers'][0]
+print('  resources      :', json.dumps(c.get('resources')))
+print('  ports          :', json.dumps(c.get('ports')))
+print('  sessionAffinity:', t.get('sessionAffinity'))
+print('  timeout        :', t.get('timeout'))
+print('  scaling        :', json.dumps(t.get('scaling')))
+print('  concurrency    :', t.get('maxInstanceRequestConcurrency'))
+"
+}
 ```
 
-**V3 — `Delivery` and cron timezone/deadline.** Declared attempts show
-in the deploy summary rather than the old hardcoded `redelivery: 5
-attempts` (pinned by `cmd/tako/summary_test.go`).
+### V4 — every service carries its package name
 
-**V4 — service naming.** Every service carries its package name;
-an undeclared one keeps `<package>`.
+No edit needed; the deployed set is the evidence:
+
+```
+gcloud run services list --project $PROJECT --format 'value(metadata.name)' | grep metrics-
+```
+
+→ `metrics-gallery` (the app service — **undeclared keeps `<package>`**),
+plus `metrics-gallery-onuploaded`, `-makethumb`, `-notifyowner`,
+`-warmfeed`: one per worker/subscriber, each `<package>-<varname>`.
+
+### V0/V2 — the defaults, and the footprint layered over them
+
+```
+knobs metrics-gallery              # profile default
+knobs metrics-gallery-makethumb    # profile batch + footprint
+```
+
+```
+metrics-gallery (profile default):
+  resources      : {"limits": {"cpu": "1", "memory": "512Mi"}, "cpuIdle": true}
+  ports          : [{"name": "http1", "containerPort": 8080}]
+  sessionAffinity: None
+  timeout        : 300s
+  scaling        : {"maxInstanceCount": 20}
+  concurrency    : 80
+
+metrics-gallery-makethumb (profile batch + footprint):
+  resources      : {"limits": {"cpu": "2", "memory": "4Gi"}, "cpuIdle": true}
+  ports          : [{"name": "http1", "containerPort": 8080}]
+  sessionAffinity: None
+  timeout        : 900s
+  scaling        : {"maxInstanceCount": 5}
+  concurrency    : 4
+```
+
+Read across those two:
+
+- **V2 (timeout reachable):** 300s for a service, 900s for batch — the
+  profile's value, on the wire.
+- **Footprint layering:** makethumb takes `cpu 2` and `timeout 900s`
+  from the batch PROFILE, and `memory 4Gi`, `concurrency 4`, `max 5`
+  from its FOOTPRINT. That interleaving is the whole design.
+- **`cpuIdle: true`** on both — neither profile allocates CPU between
+  requests, and tako does not set it spuriously.
+- **No `startupCpuBoost` key at all**, and `sessionAffinity: None`.
+  Both are omitted-when-false by the API; absent IS false. Same for
+  `minInstanceCount`, which is why `scaling` shows only the max.
+- **`ports: [{"name": "http1", "containerPort": 8080}]`** — the port
+  carries the protocol, and carries a NUMBER. A name without a number
+  is rejected outright (it was, once).
+
+### V0 — the positive case needs a Latency service
+
+**No gallery service uses the latency profile** (four default, one
+batch), so nothing in the app as shipped sets `cpuIdle: false` or
+`startupCpuBoost: true`. Declare one for the walk.
+
+Put it on a SUBSCRIBER, not on `tako.Service`: declaring `tako.Service`
+renames the app service to `<package>-<var>`, which would orphan
+`metrics-gallery` in the middle of the walk. A subscriber already owns
+its own service, so this is an in-place update.
+
+In `examples/gallery/app.go`, add the option to `NotifyOwner`:
+
+```go
+NotifyOwner = tako.Subscribe(photoReady, notifyOwner,
+	tako.WithProfile(tako.Latency))
+```
+
+Redeploy, then:
+
+```
+knobs metrics-gallery-notifyowner
+```
+
+```
+  resources      : {"limits": {"cpu": "2", "memory": "1Gi"}, "startupCpuBoost": true}
+  timeout        : 300s
+  scaling        : {"minInstanceCount": 1, "maxInstanceCount": 100}
+  concurrency    : 40
+```
+
+Three things to check, because they are the V0 bug and its sequel:
+
+1. **`cpuIdle` is GONE.** Absent means false means CPU stays allocated
+   between requests. Before V0, `Latency` promised this in its doc
+   comment and set it nowhere, so a Latency service ran throttled
+   exactly like Default.
+2. **`startupCpuBoost: true`** — the other half. A warm floor of 1 does
+   nothing for the second instance a spike starts.
+3. **`minInstanceCount: 1`** — the warm floor itself, and the one that
+   bills continuously. The plan warned about it.
+
+Revert the edit and redeploy before §7.
+
+### V1 — `tako.Service` carries service-wide options
+
+Analysis-only, no deploy:
+
+```
+go test ./pkg/analyzer -run 'TestErrors/serviceoption|TestErrors/oneservice'
+```
+
+→ `WithProfile`/`WithFootprint`/`WithDomain` are refused on `API` and
+`Page` with `tako/service-option`, and a package may declare at most one
+`tako.Service` (`tako/one-service`).
+
+### V3 — `Delivery` and cron timezone/deadline
+
+The deploy summary reads the declaration rather than reciting a
+constant (pinned by `cmd/tako/summary_test.go`). In §3's output, the
+redelivery line for a queue with a declared `MaxAttempts` shows that
+number, not the framework default of 5.
 
 ## 7. Destroy clean
 

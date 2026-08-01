@@ -8708,3 +8708,68 @@ The metric descriptors auto-created by the FAILING writes carry an
 path — encoded returns 400). The old revision recreates them on every
 failed flush until it is replaced, so the delete is a post-redeploy
 step; `validate/metrics.md` §4c now says so.
+
+## Gate catch — §6 checked the wrong API, on the wrong service — 2026-08-01
+
+User ran §6's V0 check and got no matches:
+
+```
+gcloud run services describe metrics-gallery … --format yaml | grep -i "cpuIdle\|startupCpuBoost"
+```
+
+Two independent defects, either of which alone makes the step
+unrunnable.
+
+**1. Wrong representation.** tako writes `cpuIdle` and
+`startupCpuBoost` through the Cloud Run **v2** API. `gcloud run
+services describe` renders the **v1/Knative** view, where those surface
+— if at all — as `run.googleapis.com/*` annotations. Grepping v2 field
+names against v1 YAML matches nothing and reads like a failed
+assertion. §6 now queries v2 directly with a `knobs` helper.
+
+**2. Wrong service — and no right one exists.** `metrics-gallery` runs
+the `default` profile, whose values for both knobs ARE the defaults, so
+even the correct v1 annotations would be absent. Worse, checked against
+the graph:
+
+```
+service gallery              profile default
+service gallery-onuploaded   profile default
+service gallery-makethumb    profile batch + footprint
+service gallery-notifyowner  profile default
+service gallery-warmfeed     profile default
+```
+
+**No gallery service uses the latency profile**, and latency is the only
+profile that sets either knob. V0's positive case was unobservable on
+this app no matter which API you asked.
+
+§6 now does both halves: the NEGATIVE case against the shipped app
+(default and batch must read back `cpuIdle: true` and no
+`startupCpuBoost` — proof tako does not set them spuriously), and the
+POSITIVE case behind a one-line temporary edit.
+
+**The edit goes on a SUBSCRIBER, not on `tako.Service`.** Declaring
+`tako.Service` renames the app service to `<package>-<var>`
+(`analyzer.go:207`), which would orphan `metrics-gallery` mid-walk.
+`NotifyOwner` already owns its own service, so `WithProfile(Latency)`
+there is an in-place update.
+
+### Bonus: the live read confirmed three other things
+
+Captured from the deployment while fixing this, and now the expected
+output in §6:
+
+- **V2 is real on the wire:** 300s for the default service, 900s for
+  batch.
+- **Footprint layering is real:** makethumb takes `cpu 2`/`timeout 900s`
+  from the batch profile and `memory 4Gi`/`concurrency 4`/`max 5` from
+  its footprint.
+- **The port fix is live:** `ports: [{"name": "http1",
+  "containerPort": 8080}]`.
+
+Also worth recording: `minInstanceCount` is omitted when 0, joining
+`cpuIdle`, `startupCpuBoost` and `sessionAffinity` in the
+omitted-when-false family. Four fields on one resource where absent
+means false — the reason `liveHash` has to mirror the API's shape
+exactly rather than the shape tako sends.
