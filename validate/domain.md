@@ -166,7 +166,37 @@ still exist at your registrar, and `gcloud domains list-user-verified`
 still lists your domain. Both are yours, not the project's. Remove the
 DNS record yourself.
 
-## 8. Put the example back
+## 8. The API-only shape (no site anywhere)
+
+The domain is a SERVICE-level option, so a service with no `tako.Site`
+takes one just as well. Restore blog, then in `examples/shortlink` add
+to ONE endpoint only:
+
+```go
+	Create  = tako.API("POST /api/links", create, tako.WithDomain("<your-api-domain>"))
+```
+
+```
+go run ../../cmd/tako gen graph
+```
+
+**Judge:** `service shortlink (…, domain <your-api-domain>)` — and the
+three worker services (`shortlink-countclick`, `-expire`, `-archive`)
+carved out of the SAME package carry no domain. One declaration, on one
+endpoint, addressing every route in that service; workers excluded
+because they take authenticated push, never public traffic.
+
+Deploy it (use `--env u1` to keep it off prod's names), and judge that
+the mapping's `routeName` is the API service:
+
+```
+gcloud beta run domain-mappings describe --domain <your-api-domain> \
+  --region us-central1 --project <test-project>
+```
+
+Then destroy `--env u1` and put shortlink back.
+
+## 9. Put the example back
 
 Remove the `tako.WithDomain(...)` line from `examples/blog/app.go` and
 confirm `git status` is clean under `examples/`, then:

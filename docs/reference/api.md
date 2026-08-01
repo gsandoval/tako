@@ -18,7 +18,21 @@ var Echo = tako.API("POST /echo", echo)
 The only options: `tako.WithAuth()` (401 without a session;
 `ctx.User()` guaranteed past it), `tako.WithPrivate()` (IAM-only
 ingress — other services, not the public internet), `tako.WithProfile`
-and `tako.WithFootprint` (scaling — [footprint.md](footprint.md)).
+and `tako.WithFootprint` (scaling — [footprint.md](footprint.md)), and
+`tako.WithDomain()` (a custom domain — [domains.md](domains.md)).
+
+`WithAuth`, `WithPrivate` and the scaling options describe the route
+they sit on. `WithDomain` is different: it addresses the whole SERVICE,
+so you declare it once, on any one endpoint, and every route in that
+service answers there — no site required.
+
+```go
+var (
+	Create  = tako.API("POST /api/links", create, tako.WithDomain("api.example.com"))
+	Resolve = tako.API("GET /api/links/{slug}", resolve) // same service, same domain
+	List    = tako.API("GET /api/links", list)           // same service, same domain
+)
+```
 
 ## Use
 
@@ -72,6 +86,9 @@ curl -X POST localhost:8080/echo -d '{"message":"hi"}'
 
 Package = service: your API routes deploy as one Cloud Run service
 running as its own service account, with IAM derived from the code.
+There is nothing to declare for that grouping — it is derived, which is
+also what makes `WithDomain` on any one endpoint address all of them
+([domains.md](domains.md)).
 The default profile scales to zero — an idle API costs nothing.
 `WithPrivate` closes the front door: browsers and curl get 403 from
 Cloud Run itself; callers get `run.invoker` derived from the call
@@ -104,7 +121,7 @@ field When: query:-tagged fields must be string, bool, int, int64, or float64; g
 GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag (tako/body-on-get)
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
-tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate, WithProfile, WithFootprint) (tako/invalid-option)
+tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate, WithProfile, WithFootprint, WithDomain) (tako/invalid-option)
 ```
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,

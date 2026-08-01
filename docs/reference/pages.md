@@ -17,6 +17,10 @@ var Save    = tako.Page("POST /p", save, tako.WithAuth())
 var Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
 ```
 
+Page takes the same options as `tako.API`, including
+[`tako.WithDomain`](domains.md) — declared on any one page, it puts the
+whole service on that domain.
+
 Pages render through a declared [`tako.Site`](site.md); its
 `templates/` subtree backs `site.Render` and is never served raw.
 

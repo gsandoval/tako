@@ -7318,3 +7318,54 @@ unlabeled records render as `@`.
 - Domain mappings are preview; if Google retires them, the applier is
   swapped and users redeploy — no user code changes. That indirection is
   why the cheap option is not a trap, and it is written down.
+
+## U1 — follow-up: the API-only path, proven and documented (2026-08-01)
+
+User review of U1 asked whether a domain on an API-only service is
+actually possible, and observed that tako has no concept of grouping
+endpoints into a service — the grouping is derived. Both halves were
+worth answering: the capability existed and worked, the DOCUMENTATION
+did not.
+
+**Proven live on tako-test-02** with `examples/shortlink` (API-only, no
+`tako.Site` anywhere), `WithDomain("api.ker.gs")` on ONE endpoint
+(`Create`):
+
+- `gen graph`: `service shortlink (…, domain api.ker.gs)` — and the
+  three worker services carved out of the SAME package carry none.
+- Deployed (`--env u1`, 2m5s). Live mapping read back:
+  `routeName: u1-shortlink`, labels `tako-app=shortlink tako-env=u1`,
+  record `api CNAME ghs.googlehosted.com.`
+- Security summary put the domain on the API service and left the three
+  workers on `ingress: OIDC push from its own SA only`.
+- Destroy `--env u1` removed the mapping first; example restored.
+
+**The documentation gap, fixed.** `WithDomain` was only described in
+`reference/site.md` — a page an API-only user has no reason to open —
+and `reference/api.md` did not mention it at all, while its quoted
+`invalid-option` golden still listed the pre-U1 option set (a stale
+error text, which this project treats as a product bug).
+
+- **New `docs/reference/domains.md`** is the option's home, because it
+  belongs to no single constructor. It states the derivation explicitly
+  — package = service, each worker/subscriber carved into its own, a
+  site embedded in its package's app service — and shows shortlink's
+  real four-service graph so "which service does this address?" has a
+  visible answer. Also documents that envs do NOT prefix a domain
+  (globally unique by nature), so two envs claiming one name is a 409
+  the user resolves, not something tako papers over.
+- `api.md`: option listed, stale golden corrected, and the distinction
+  drawn — `WithAuth`/`WithPrivate`/scaling describe the ROUTE they sit
+  on, `WithDomain` addresses the whole SERVICE.
+- `pages.md` names it; `site.md` keeps the one-line framing and defers;
+  `reference/README.md` indexes it. Domain error texts now live in ONE
+  page so they cannot diverge.
+- `validate/domain.md` gains §8, the API-only walk.
+
+**Discovered work (not U1's):** redeploying shortlink to prod failed with
+`create tasks queue expiries-tako: … a queue with this name existed too
+recently` — Cloud Tasks blocks reusing a deleted queue's name for ~7
+days, so a destroy/redeploy cycle inside that window cannot converge.
+The T3 walk deleted those queues on 2026-07-31. tako has no text for
+this; the raw API message is what surfaces. Worth its own honesty fix
+(name the wait, suggest `--env`), unscheduled.

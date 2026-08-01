@@ -33,18 +33,8 @@ HMR) during `tako dev`. `WithTrustedHTML()` sets the markdown posture
 
 `WithDomain(fqdn)` is a SERVICE-level option, not a site-level one:
 declare it on the site, or on any one of the service's `API` or `Page`
-handlers, and the whole service answers there. One service, one domain —
-which is why a service with no site at all can still have one:
-
-```go
-// a site's service
-var site = tako.Site("./site/public", tako.WithDomain("blog.example.com"))
-
-// an API-only service — no site anywhere in the package
-var Create = tako.API("POST /links", create, tako.WithDomain("api.example.com"))
-```
-
-See [Cloud](#cloud) for what it provisions and the two manual steps.
+handlers, and the whole service answers there. A service with no site at
+all can have one too — [domains.md](domains.md) is the whole story.
 
 ## Use
 
@@ -81,36 +71,10 @@ reach production.
 
 `WithDomain("blog.example.com")` puts the service on a custom domain
 with a Google-managed certificate, via a Cloud Run domain mapping — no
-standing infrastructure charge. Two manual steps are yours, and
-`tako deploy` narrates both:
-
-1. **Prove you own the domain**, once per project — preflight refuses
-   until you do, with the command: `gcloud domains verify example.com`
-   (it opens Search Console).
-2. **Create the DNS records** the deploy prints. Cloud Run returns them
-   relative to your zone, which is what a registrar's host field wants:
-
-```
-  domain  blog.ker.gs              awaiting DNS
-    create these records in the DNS zone for ker.gs:
-      blog                         CNAME  ghs.googlehosted.com.
-    then re-run tako deploy — the certificate provisions once the
-    records resolve (usually ~15 minutes, up to 24 hours).
-```
-
-Deploys are stateless and resumable, so re-running picks up wherever the
-certificate got to — including when nothing else changed:
-
-```
-  domain  blog.ker.gs              certificate ACTIVE → https://blog.ker.gs
-```
-
-A mapping ADDS an address; it does not close one. The `run.app` URL
-keeps serving, and the security summary says so. Domain mappings are
-available in about ten regions and carry no edge caching — the trade,
-the prices of the alternatives, and the conditions that would make tako
-switch mechanisms are all in
-[domain-options.md](../domain-options.md).
+standing infrastructure charge, but two manual steps that are yours
+(proving ownership, publishing DNS). [domains.md](domains.md) has the
+transcripts, the refusals, and the limits; [domain-options.md](../domain-options.md)
+prices what tako deliberately did not build.
 
 ## Test it
 
@@ -137,18 +101,11 @@ At analysis time:
 tako.Site directory ./web does not exist (add it, or use WithBuild if a generator creates it) (tako/site-dir)
 tako.WithTTL is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain) (tako/invalid-option)
 a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two (tako/one-site)
-tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)
-tako.WithDomain needs a fully-qualified domain — "blog" has no dot (tako/domain)
-service blog cannot answer on both "www.example.com" (a handler) and "blog.example.com" (the site) — one service, one domain; split the packages or align the domains (tako/domain-conflict)
-the site declares the domain "blog.example.com", but no service in this package serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API or Page route here, or move the domain to the package that has one (tako/domain-unreachable)
 ```
 
-At deploy time, before anything is built:
-
-```
-Cloud Run domain mappings are not available in europe-west2 — deploy to one of asia-east1, asia-northeast1, asia-southeast1, europe-north1, europe-west1, europe-west4, us-central1, us-east1, us-east4, us-west1 (tako deploy --region <region>), or drop tako.WithDomain and use the run.app URL
-blog.example.com is not verified for tako-test-02 — prove you own it once: gcloud domains verify example.com (this opens Search Console), then re-run tako deploy
-```
+`WithDomain`'s own refusals — bad shape, two domains on one service, a
+domain in front of a package nothing public reaches, and the two deploy
+gates — live in [domains.md](domains.md).
 
 At render time, `site.Render` on a fragments-only site:
 
