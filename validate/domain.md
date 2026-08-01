@@ -135,18 +135,33 @@ pins the same trap offline).
 
 ## 6. Re-pointing is a REPLACE, and says so first
 
-Move the domain to another service — declare it on a handler in a
-different package instead of on blog's site — and plan:
+Since V1 a service is named after its declaring var, so re-pointing the
+domain at a different service is a ONE-WORD edit — no second package
+needed. Rename the var in `examples/blog/app.go`:
+
+```go
+var api = tako.Service(tako.WithDomain("<your-domain>"))   // was: web
+```
+
+That renames the service `blog-web` → `blog-api`, so the mapping's
+`routeName` changes, which is the immutable field.
 
 ```
 go run ../../cmd/tako deploy --project <test-project> --plan
 ```
 
-**Judge:** `! update  domain mapping <your-domain>` with the reason
-*"the mapped service is immutable (blog → …) — delete+create; the domain
-stops answering until the new certificate provisions, which can take up
-to 24 hours"*, and a real deploy PROMPTS `[y/N]` before doing it.
-Answer `n`: *"aborted — nothing was changed"*. Put the declaration back.
+**Judge:**
+- `! update  domain mapping <your-domain>` — the `!` marker, with the
+  reason *"the mapped service is immutable (blog-web → blog-api) —
+  delete+create; the domain stops answering until the new certificate
+  provisions, which can take up to 24 hours"*.
+- The plan ALSO shows the old `blog-web` objects as orphans with
+  `blog-api` as the rename suspect (§4.6a) — a service rename is a
+  rename of everything it owns.
+
+A real deploy PROMPTS `[y/N]` before any of it. **Answer `n`** and judge
+*"aborted — nothing was changed"*; nothing should have moved. Rename the
+var back to `web` and confirm the next plan is all skips.
 
 ## 7. Destroy: it comes off first, and it comes off clean
 

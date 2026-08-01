@@ -21,6 +21,8 @@ var (
 	// public/templates — the one subtree a Site never serves raw.
 	site = tako.Site("./site/public",
 		tako.WithBuild("cd site && hugo --minify", "./site/public"))
+
+	app = tako.Service(tako.WithDomain("blog.ker.gs"))
 )
 
 // Comment hangs off a post by the post's own URL path — the one stable
