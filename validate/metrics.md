@@ -55,11 +55,20 @@ go run ../../cmd/tako dev
 
 First confirm the server answers HTTP/2 — the check Google's docs
 prescribe, and the one that has to pass before `HTTP2` is safe to turn
-on:
+on. Use a route the app actually serves (gallery is API-only, so `/` is
+a genuine 404):
 
 ```
-curl -i --http2-prior-knowledge http://localhost:8080/
+curl -i --http2-prior-knowledge http://localhost:8080/api/photos
 ```
+
+→ `HTTP/2 200`.
+
+**Read the protocol in the status line, not the status code.**
+`--http2-prior-knowledge` sends an HTTP/2 preface with no fallback, so
+any HTTP response at all — 200, 404, 500 — proves the server spoke
+HTTP/2. A broken h2c never reaches a status: curl fails in the framing
+layer or the connection resets.
 
 Then upload a photo so a handler is live, and `Ctrl-C` **while a
 request is in flight** (the gallery upload is slow enough; if not, hit
