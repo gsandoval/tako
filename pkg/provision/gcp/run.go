@@ -54,7 +54,8 @@ type runService struct {
 				Value string `json:"value"`
 			} `json:"env,omitempty"`
 			Resources struct {
-				Limits map[string]string `json:"limits,omitempty"`
+				Limits  map[string]string `json:"limits,omitempty"`
+				CPUIdle bool              `json:"cpuIdle,omitempty"`
 			} `json:"resources"`
 		} `json:"containers"`
 	} `json:"template"`
@@ -133,6 +134,8 @@ func liveHash(svc runService, public bool) string {
 			"concurrency": svc.Template.MaxInstanceRequestConcurrency,
 			"cpu":         cpu,
 			"memory":      c.Resources.Limits["memory"],
+			// cpuIdle is the API's inverse of the knob tako names.
+			"cpuAlwaysOn": !c.Resources.CPUIdle,
 		},
 		"public": public,
 	})
@@ -168,6 +171,9 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 						"cpu":    fmt.Sprint(scaling["cpu"]),
 						"memory": fmt.Sprint(scaling["memory"]),
 					},
+					// Cloud Run throttles CPU between requests unless told
+					// otherwise; Latency is the profile that says otherwise.
+					"cpuIdle": scaling["cpuAlwaysOn"] != true,
 				},
 			}},
 		},

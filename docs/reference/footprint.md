@@ -11,16 +11,23 @@ and specific. Prefer the profile; pin only what the profile can't know.
 selects its service's scaling profile (one service, one profile). The
 knobs (`ProfileKnobs`, spec §4.6):
 
-| profile           | CPU | Memory | Concurrency | Min | Max |
-|-------------------|-----|--------|-------------|-----|-----|
-| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  |
-| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 |
-| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  |
+| profile           | CPU | Memory | Concurrency | Min | Max | CPU between requests |
+|-------------------|-----|--------|-------------|-----|-----|----------------------|
+| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | throttled            |
+| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | **always allocated** |
+| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | throttled            |
 
 (Jobs base on batch; singletons use a fixed internal profile —
 CPU 1 / 512Mi / concurrency 1 / min 1 / max 1.) Default scales to
 zero; Latency keeps an instance warm — min=1 bills continuously; Batch
 favors throughput per instance for background work.
+
+**Latency's concurrency is deliberately LOWER than Default's**, which
+reads backwards until you see what it buys: fewer requests packed onto
+one instance means less queueing behind a busy one, which is the whole
+point of the profile. Warmth (min 1) and CPU always allocated are the
+other two halves — an instance that is up but throttled still stalls on
+the first request.
 
 `tako.WithFootprint(tako.Footprint{…})` (S1) overrides field-by-field:
 
@@ -118,7 +125,9 @@ The claims live in golden tests —
 ## Not yet
 
 - Three named profiles; no custom or per-app profiles.
-- No GPU, no request-timeout knob, no CPU-throttling toggle — the knob
-  set is exactly the five Footprint fields.
+- No GPU, and no request-timeout knob — the knob set is exactly the
+  five Footprint fields. CPU allocation between requests is not a knob
+  either: it is decided by the profile (Latency allocates, the rest
+  throttle).
 - An explicit `MinInstances: 0` cannot be written as a field (zero
   means inherit) — pick a min=0 profile instead.

@@ -7369,3 +7369,250 @@ days, so a destroy/redeploy cycle inside that window cannot converge.
 The T3 walk deleted those queues on 2026-07-31. tako has no text for
 this; the raw API message is what surfaces. Worth its own honesty fix
 (name the wait, suggest `--env`), unscheduled.
+
+## Stage 8 proposal — the explicit service (2026-08-01) — AWAITING APPROVAL
+
+Origin: the U1 review. `WithDomain` on an arbitrary API endpoint felt
+wrong, and the inventory that followed showed the feeling was right and
+not about domains at all — tako has THREE service-level options
+(`WithProfile`, `WithFootprint`, `WithDomain`) declared at route level,
+and a long list of decisions the user cannot reach at all.
+
+User decisions, 2026-08-01:
+- The four footprint profiles stay as they are.
+- Job and Singleton must stop being forced profiles — both overridable.
+- Every fixed knob (request timeout, CPU throttling, job timeout, job
+  retries) becomes overridable; naming is mine to propose.
+- Every messaging/retry constant becomes overridable; naming is mine to
+  propose.
+- Service naming should follow one pattern for API/Page/Cron the way
+  workers already do (open question, below).
+- **Option B adopted:** a package-level `tako.Service` declaration is
+  the home for service-level options. Package = service HOLDS.
+
+### V0 — the Latency lie (smallest, independent, do first)
+
+`options.go:26` promises Latency means "CPU always on". `cpuIdle` is
+never set anywhere in the repo, so Latency gets Cloud Run's default —
+THROTTLED, identical to Default. The SDK documents a behavior the
+provisioner does not implement.
+
+Same comment claims "high concurrency" while the table gives Latency 40
+against Default's 80. Here the TABLE is right — fewer concurrent
+requests per instance is exactly how you buy tail latency — so the fix
+is the comment, not the number.
+
+V0 wires `cpuIdle: false` for always-on and corrects the comment. No new
+surface; a doc-comment change plus one provisioner field. This is the T1
+honesty standard applied to the one profile that promised the most.
+
+### V1 — `tako.Service`: the keystone
+
+```go
+package blog
+
+var svc = tako.Service(
+	tako.WithDomain("blog.example.com"),
+	tako.WithProfile(tako.Latency),
+	tako.WithFootprint(tako.Footprint{Memory: "1Gi"}),
+)
+```
+
+One per package, no per-handler binding — the exact shape `tako.Site`
+and `tako.Auth` already have, so it introduces no new concept, only a
+new home. Two-or-more in a package is `tako/one-service`, mirroring
+`tako/one-site`.
+
+**Where each option may be declared, after V1:**
+
+| option | `tako.Service` | Worker/Subscribe/Job/Singleton | API/Page |
+|---|---|---|---|
+| `WithProfile`, `WithFootprint` | yes | yes | **no longer** |
+| `WithDomain` | yes | no (unreachable) | **no longer** |
+
+The principle: a service-level option is declared where it is
+UNAMBIGUOUS. For a worker, one handler IS the service, so the handler is
+an honest home (`examples/gallery/app.go:79` keeps reading well). For an
+API service with twelve endpoints there is no honest home, so the
+declaration moves to the service. Removing them from API/Page is a
+breaking API change and its own task.
+
+### V2 — the fixed knobs, named
+
+Proposal: **fold per-service runtime into `Footprint` and the profile
+table** rather than invent a second mechanism. Timeout and CPU
+allocation resolve exactly like CPU and memory do — a profile default,
+an optional override, one `Over()` layering. Two new columns, two new
+fields, zero new machinery:
+
+| profile | … | timeout | cpu always-on |
+|---|---|---|---|
+| default | … | 300s | no |
+| latency | … | 300s | **yes** |
+| batch | … | 900s | no |
+| singleton | … | 3600s | **yes** |
+
+```go
+tako.WithFootprint(tako.Footprint{Timeout: 5 * time.Minute, CPUAlwaysOn: true})
+```
+
+Job execution is NOT service shape, so job knobs go on the JobHandler:
+
+```go
+var Settle = tako.JobHandler(settle, tako.WithParallel(4),
+	tako.WithTimeout(2*time.Hour), tako.WithRetries(1))
+```
+
+`WithTimeout` reading as "how long one unit of work may run" — a request
+for a service, a task for a job — is a deliberate reuse, not a clash.
+
+**Alternative if `Footprint` should stay purely about SIZE:** a separate
+`tako.Limits{Timeout, CPUAlwaysOn}` with its own `WithLimits`. Costs a
+second struct and a second layering path for no behavioral gain. Not
+recommended, but it is the honest fork in the road.
+
+**Job and Singleton stop being forced** (`desired.go:220,223`): the
+profile becomes the DEFAULT for those kinds rather than an overwrite.
+Open question on singleton semantics below.
+
+### V3 — delivery, named
+
+Mirror `Footprint` exactly — a struct of optional fields over a table of
+defaults, because that mechanism is already understood:
+
+```go
+var clicks = tako.Queue[Click]("clicks", tako.WithDelivery(tako.Delivery{
+	MaxAttempts: 3,
+	MinBackoff:  5 * time.Second,
+	MaxBackoff:  time.Minute,
+	RateLimit:   2,
+}))
+```
+
+Defaults stay today's: 5 attempts, 10s→300s backoff, no rate cap.
+`WithRateLimit` is absorbed as `Delivery.RateLimit` and REMOVED — the
+`WithCDN` precedent, its own API task with its own `sdk_lock`
+regeneration. (Keeping both would give one knob two spellings.)
+
+Cron carries scheduler's constants, which are schedule facts, not
+delivery facts:
+
+```go
+var Cleanup = tako.Cron("0 9 * * *", cleanup,
+	tako.WithTimezone("America/Mexico_City"),
+	tako.WithDeadline(10*time.Minute))
+```
+
+`WithTimezone` is the one with real user demand — "9am" means 9am
+somewhere, and `Etc/UTC` is currently silent and unchangeable.
+
+### V4 — service naming (OPEN QUESTION — needs your call)
+
+Today: API/Page/Cron → `<package>`; Worker/Subscribe/Job/Singleton →
+`<package>-<varname>`. You want one pattern.
+
+With V1 there is finally a var to name the app service after, so
+`<package>-<varname>` becomes available to it — `var api =
+tako.Service(...)` in package `blog` → service `blog-api`, exactly the
+worker convention.
+
+**The cost is the reason this is a question, not a decision:** a service
+NAME is its identity in every provisioned object. Renaming `blog` to
+`blog-api` is a §4.6a rename — new service, new SA, new grants, new push
+subscriptions, and the old ones become orphans the plan flags as rename
+suspects. Every deployed app pays a full replace once.
+
+Three ways, and I do not think this is mine to pick:
+
+- **(a) Opt-in.** Declaring `tako.Service` names the service
+  `<package>-<varname>`; not declaring it keeps `<package>`. Consistency
+  when you ask for it, no forced migration, but two conventions coexist.
+- **(b) Always `<package>-<varname>`**, with `tako.Service` required in
+  any package that has API/Page/Cron handlers. Fully uniform; forces a
+  declaration on hello-world and renames every existing app.
+- **(c) Keep `<package>`** for the app service and accept that the app
+  service is genuinely the package's, while satellites are named after
+  the handler that spawned them. No migration, no new consistency.
+
+If V4 lands at all it should land WITH V1 in one commit: two renames of
+the same services across two releases is twice the migration for no
+reason.
+
+### Open questions
+
+1. **V4 above** — (a), (b), or (c)?
+2. **Singleton overrides: how far?** CPU and memory are plainly the
+   user's. `MaxInstances` is not obviously so — the lease is what makes
+   a singleton exactly-one, so `max: 3` is not incorrect, merely two
+   instances paying to lose a race. Refuse it (`tako/singleton-max`),
+   warn, or allow silently?
+3. **`Footprint` vs a separate `Limits`** for timeout and CPU
+   allocation — recommendation is fold, but it is a taste call about
+   what the word "footprint" covers.
+
+### Sequencing, and what it displaces
+
+V0 → V1 (+V4) → V2 → V3. V1 is the keystone: it is the home V2's and
+V3's declarations want, so it goes first even though V2 is the one that
+started this.
+
+Every slice from V1 on is an SDK surface change, so each reopens
+api-review-2 and regenerates `sdk_lock` as its own task — the standing
+rule, applied four times.
+
+**This displaces U2 (metrics export), U3 (dlq replay) and U4 (shared
+cache plan), which remain unstarted.** U1 also still holds an unsigned
+gate verdict (validate/domain.md §§4 and 6 need a domain with published
+DNS). Whether Stage 8 preempts U2–U4 or follows them is yours to say.
+
+### Decisions on the open questions (user, 2026-08-01)
+
+1. **V4 naming: opt-in (a).** Declaring `var api = tako.Service(...)`
+   names the service `<package>-<varname>`; a package that declares none
+   keeps `<package>`. No invented names, no ceremony in the quickstart —
+   the R2 five-minute path is untouched. Two conventions coexist by
+   design: the bare package name IS the honest name for a service nobody
+   bothered to name.
+2. **Singleton `MaxInstances` is REFUSED** (`tako/singleton-max`): the
+   lease makes a singleton exactly-one, so a max above 1 only buys
+   instances that pay to lose a race. CPU, memory and timeout are the
+   user's; the shape that defines the primitive is not.
+3. **Fold into `Footprint`** — no separate `Limits`. Timeout and CPU
+   allocation are footprint columns, resolved by the same `Over()`.
+
+Renaming breaks existing deployments and that is ACCEPTED: there are no
+production apps yet, so the migration cost the naming question turned on
+is zero. Examples are renamed with the slice.
+
+**Sequencing confirmed:** Stage 8 (V0 → V1+V4 → V2 → V3) runs FIRST;
+U1's human gate (validate/domain.md §§4, 6) is validated after it; then
+U2, U3, U4. U2/U3 were going to be written against a surface V1 moves,
+so this ordering avoids writing them twice.
+
+**APPROVED 2026-08-01 — implementation follows.**
+
+## V0 — the Latency lie, fixed (2026-08-01)
+
+`options.go` promised Latency meant "CPU always on"; `cpuIdle` was set
+nowhere, so Latency was throttled exactly like Default. Now wired:
+`analyzer.CPUAlwaysOn(profile)` feeds the run spec, the applier emits
+`resources.cpuIdle`, and `liveHash` reads it back.
+
+The same comment claimed "high concurrency" while the table gave Latency
+40 against Default's 80. The TABLE was right — fewer requests per
+instance is how tail latency is bought — so the comment was corrected,
+not the number, and footprint.md now explains why it reads backwards.
+
+**Live on tako-test-02.** Latency: `run.googleapis.com/cpu-throttling:
+'false'`, min 1, max 100, concurrency 40. Flipping back to Default
+planned `~ update run service hello` and read back `cpuIdle: true`.
+
+**The drift trap, checked in both directions.** Cloud Run's v2 GET
+returns `cpuIdle: true` for a throttled service and OMITS it when false,
+so a naive round-trip could have reported permanent drift on every
+default service — the majority of them. Verified live both ways, and
+`TestRunServiceEmitsCPUIdle` pins the round-trip offline. Re-deploy
+converged to `skip`; destroy clean.
+
+No new exported symbol (`CPUAlwaysOn` is analyzer-internal), so no
+sdk_lock change; the SDK edit is a doc comment.

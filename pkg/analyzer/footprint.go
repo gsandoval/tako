@@ -10,6 +10,16 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// CPUAlwaysOn reports whether a profile keeps CPU allocated between
+// requests. Only Latency does: paying for idle CPU is the other half of
+// what a warm instance buys (the first half being min 1), and it is
+// exactly what the profile promises in its doc comment. Everything else
+// takes Cloud Run's default, where CPU is throttled outside a request.
+//
+// V2 makes this a Footprint field; today it is derived from the profile
+// alone, which is all the SDK ever claimed.
+func CPUAlwaysOn(profile string) bool { return profile == "latency" }
+
 // ProfileKnobs maps a scaling profile to its Cloud Run values (spec
 // §4.6). One table serves both sides: the provisioner derives service
 // specs from it, and footprint validation resolves overrides against it

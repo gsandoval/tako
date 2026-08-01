@@ -20,9 +20,12 @@ func option(name string, args ...any) Option { return Option{name: name, args: a
 type Profile int
 
 const (
-	// Default scales to zero: min 0, modest concurrency, throttled CPU.
+	// Default scales to zero: min 0, high concurrency per instance,
+	// CPU throttled between requests.
 	Default Profile = iota
-	// Latency keeps an instance warm: min 1, high concurrency, CPU always on.
+	// Latency keeps an instance warm (min 1) with CPU always allocated,
+	// and deliberately packs FEWER requests per instance than Default —
+	// less queueing behind a busy instance is how tail latency is bought.
 	Latency
 	// Batch favors throughput per instance for background work.
 	Batch

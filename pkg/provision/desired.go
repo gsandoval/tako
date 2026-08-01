@@ -232,6 +232,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			"concurrency": resolved.Concurrency,
 			"cpu":         strconv.Itoa(resolved.CPU),
 			"memory":      resolved.Memory,
+			"cpuAlwaysOn": analyzer.CPUAlwaysOn(profile),
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
