@@ -70,26 +70,84 @@ any HTTP response at all — 200, 404, 500 — proves the server spoke
 HTTP/2. A broken h2c never reaches a status: curl fails in the framing
 layer or the connection resets.
 
-Then upload a photo so a handler is live, and `Ctrl-C` **while a
-request is in flight** (the gallery upload is slow enough; if not, hit
-a page and interrupt immediately).
+### 2a. An in-flight request finishes
 
-Expect the request to **complete**, then:
+Timing a Ctrl-C by hand is a coin flip, so **make the request slow on
+purpose** with `curl --limit-rate` and signal the service directly. Two
+terminals, or background the curl as below.
+
+Make a payload once (contents do not matter — upload stores the blob;
+decoding happens later in the worker):
+
+```
+dd if=/dev/urandom of=/tmp/big.jpg bs=1024 count=600
+```
+
+The dev drain ceiling is **2s**, so for a request that FINISHES, the
+upload must have under 2s left when the signal lands. 600KB at 400k/s
+is ~1.5s total; signalling at 0.4s leaves ~1.1s:
+
+```
+PID=$(pgrep -f ".tako/bin/gallery" | head -1)
+curl -s -o /dev/null -w "curl: %{http_code} in %{time_total}s\n" --limit-rate 400k \
+  -F caption=drain -F img=@/tmp/big.jpg http://localhost:8080/api/photos &
+sleep 0.4 && kill -TERM $PID
+```
+
+Expect, in the dev console:
 
 ```
 ⏻ draining — 1 request in flight
-⏻ stopped (0.0s)
+POST /api/photos → 200 (1463.1ms)
+📈 uploads +1 (total 1)
+⏻ stopped (1.06s)
 ```
 
-Then `Ctrl-C` on an idle server: `⏻ draining` / `⏻ stopped` **at once**
-— the drain watches the in-flight count, so an idle instance does not
-sit out its ceiling.
+and from curl: `curl: 200 in 1.503986s`.
 
-Press `Ctrl-C` twice fast on a busy server → `tako: second signal —
-exiting now`.
+**Three things in that transcript, all load-bearing.** The request was
+answered **200** after SIGTERM — before U2a it would have been cut off
+mid-write. The `📈 uploads` line lands *after* the drain began, so a
+metric recorded by a draining instance is still counted. And `stopped
+(1.06s)` is well under the ceiling: the drain ended when the request
+did, not when a budget expired.
 
-**What used to happen here:** nothing. `Serve` called
+### 2b. A request that overruns is cut off, and says so
+
+Same payload, four times slower — 600KB at 100k/s is ~6s, far past the
+2s ceiling:
+
+```
+PID=$(pgrep -f ".tako/bin/gallery" | head -1)
+curl -s -o /dev/null -w "curl: %{http_code} in %{time_total}s (exit %{exitcode})\n" --limit-rate 100k \
+  -F caption=cutoff -F img=@/tmp/big.jpg http://localhost:8080/api/photos &
+sleep 0.5 && kill -TERM $PID
+```
+
+```
+⏻ draining — 1 request in flight
+⏻ 1 request did not finish within 2s — cutting it off
+⏻ stopped (2s)
+```
+
+curl reports `000 ... (exit 55)` — no status line, because the
+connection died under it. That is the honest outcome, and the console
+names it rather than leaving a mystery.
+
+### 2c. Idle and impatient
+
+`Ctrl-C` on an idle server: `⏻ draining` / `⏻ stopped` **at once** — the
+drain watches the in-flight count, so an idle instance does not sit out
+its ceiling. (This is the common case in the cloud: Cloud Run stops
+routing to an instance *before* it signals.)
+
+`Ctrl-C` twice quickly during 2b → `tako: second signal — exiting now`.
+
+**What used to happen in all of these:** nothing. `Serve` called
 `http.ListenAndServe` and the process died where it stood.
+
+Restart the dev server before §3 (2a and 2b each stop it), and remove
+the uploads the walk created: `rm -rf .tako/data`.
 
 ## 3. Deploy
 
