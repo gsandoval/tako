@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -141,6 +142,9 @@ func (d *DatastoreIndexes) List(ctx context.Context) ([]provision.Observed, erro
 	return observed, nil
 }
 
+// Create STARTS a build and returns; Wait is what blocks. Datastore
+// builds indexes concurrently, so waiting inside Create made N indexes
+// cost N × ~6 minutes for work the server was willing to overlap.
 func (d *DatastoreIndexes) Create(ctx context.Context, o provision.Object) error {
 	u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes"
 	body := map[string]any{
@@ -157,9 +161,83 @@ func (d *DatastoreIndexes) Create(ctx context.Context, o provision.Object) error
 	if d.Say != nil {
 		d.Say("index        %s building…", o.Name)
 	}
-	// Index builds routinely outrun the generic operation wait — give
-	// them their own ceiling (empty databases usually finish in ~5m).
-	return d.C.waitOperation(ctx, "https://datastore.googleapis.com/v1/"+op.Name, 10*time.Minute)
+	return nil
+}
+
+// indexWait is how long Wait gives a build. Measured: ~4m to serving on
+// an empty database, and it does not grow much with data at this scale.
+const indexWait = 15 * time.Minute
+
+// Wait blocks until every desired index is SERVING.
+//
+// It waits on the index's own state, not on the create operation. The
+// two disagree by a lot: measured on an empty database, the index
+// reaches READY at ~4m08s and the operation only reports done at
+// ~5m50s — 1m42s of waiting after queries already work, which is
+// exactly the "the console says it's done" complaint.
+//
+// It waits for every DESIRED index rather than only the ones this run
+// created, so a deploy resumed while an earlier build was still running
+// still refuses to put services in front of an index that cannot serve
+// them. On a converged deploy this is one list call.
+func (d *DatastoreIndexes) Wait(ctx context.Context) error {
+	if len(d.Desired) == 0 {
+		return nil
+	}
+	waiting := map[string]provision.Object{}
+	for _, o := range d.Desired {
+		if o.Kind == provision.KindDatastoreIndex {
+			waiting[o.Name] = o
+		}
+	}
+	if len(waiting) == 0 {
+		return nil
+	}
+	start := time.Now()
+	deadline := start.Add(indexWait)
+	announced := false
+	for {
+		live, err := d.live(ctx)
+		if err != nil {
+			return err
+		}
+		for name, o := range waiting {
+			for _, li := range live {
+				if !sameIndex(o, li) {
+					continue
+				}
+				switch li.State {
+				case "READY":
+					if announced && d.Say != nil {
+						d.Say("index        %s ready (%s)", name, time.Since(start).Round(time.Second))
+					}
+					delete(waiting, name)
+				case "ERROR":
+					return fmt.Errorf("datastore index %s failed to build — delete it and re-deploy: gcloud datastore indexes cleanup, or remove index %s in the console", name, li.IndexID)
+				}
+				break
+			}
+		}
+		if len(waiting) == 0 {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			var names []string
+			for name := range waiting {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			return fmt.Errorf("datastore index %s did not finish building within %s — it is still building, so re-running tako deploy will pick it up where it is",
+				strings.Join(names, ", "), indexWait)
+		}
+		if !announced && d.Say != nil {
+			// Only once, and only if we are actually going to wait: a
+			// converged deploy should say nothing at all here.
+			d.Say("index        waiting for %d build(s) — Datastore takes ~4 minutes per index", len(waiting))
+			announced = true
+		}
+		time.Sleep(5 * time.Second)
+	}
 }
 
 func (d *DatastoreIndexes) Update(ctx context.Context, o provision.Object) error {

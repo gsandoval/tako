@@ -7875,3 +7875,66 @@ domain whose records you can publish.** Everything else is walked.
   (pre-existing, unrelated to this stage).
 - The agent plan (`docs/tako-agent-plan.md`) stops at Stage 4; Stages
   5–8 live only in this log and the Stage 7 handoff.
+
+## Index waits — measured, then halved (2026-08-01)
+
+User: "creating a datastore index takes a long time, and even when the
+console shows it done it still hangs a little longer."
+
+**Measured rather than guessed.** A probe index on tako-test-01, both
+signals polled:
+
+| moment | elapsed |
+|---|---|
+| operation `startTime` | 0:00 |
+| index state → `READY` (serving; the console shows this) | **4:08** |
+| operation → `done` (what tako waited on) | **5:50** |
+| | **1:42 waiting after queries already worked** |
+
+All 41 historical index operations on that project ran 5m50s–6m59s on
+empty databases, so the ~6 minutes is a flat server-side cost, not
+proportional to data. The 1m42s tail was ours.
+
+### Two fixes
+
+1. **Wait on the index's STATE, not the create operation.** `READY` is
+   the condition that actually matters — it means the index answers
+   queries — and it arrives ~1m42s earlier. The operation is no longer
+   polled at all; `ERROR` state is the failure signal.
+2. **`Create` starts a build and returns; `Wait` collects them.**
+   Datastore builds indexes concurrently (visible in the July 24
+   operations: two overlapping builds finishing the same second), but
+   `Apply` is serial and `Create` used to block, so N indexes cost N ×
+   6 minutes for work the server was happy to overlap.
+
+`Wait` is called after the image push, so builds run under the grant
+passes, the notifications and the push — most of a deploy — instead of
+adding to them. It waits for every DESIRED index, not just the ones this
+run created, so a deploy resumed mid-build still refuses to put services
+in front of an index that cannot serve them (previously `List` reported
+a `CREATING` index as present and the deploy sailed past it).
+
+### Live, two indexes at once
+
+```
+  index        idxprobeA (x, y) building…
+  index        idxprobeB (x, y) building…
+both creates returned after 2.099s
+  index        waiting for 2 build(s) — Datastore takes ~4 minutes per index
+  index        idxprobeA (x, y) ready (4m0s)
+  index        idxprobeB (x, y) ready (4m5s)
+BOTH INDEXES SERVING after 4m7s
+```
+
+Old behavior for the same two: ~5m50s + ~5m50s = **~11m40s**. New:
+**4m07s**. A single-index app drops ~5m50s → ~4m, and on a converged
+deploy `Wait` is one list call that prints nothing.
+
+### Note
+
+Validating this collided with the user's in-flight U1 walk: a scratch
+deploy of blog to tako-test-01 hit their live `blog.ker.gs` mapping. The
+409 guard did its job — *"tako will not take it from whatever holds
+it"* — so nothing of theirs moved, and the scratch env was destroyed
+env-scoped, leaving `blog-app` and the mapping intact. The error path
+got an unplanned live validation.

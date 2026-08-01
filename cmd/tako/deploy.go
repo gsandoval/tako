@@ -295,6 +295,13 @@ func runDeploy(args []string) error {
 		}
 		fmt.Printf("  ⛅ image      %s\n", images[svc.Name])
 	}
+	// Index builds started back in the first Apply and have been running
+	// ever since — through the grant passes, the bucket notifications and
+	// the image push, which is most of a deploy. Collect them here, the
+	// last moment before anything can serve a query against them.
+	if err := indexes.Wait(ctx); err != nil {
+		return err
+	}
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRunService), desired, applier); err != nil {
 		return err
 	}

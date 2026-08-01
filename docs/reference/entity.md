@@ -74,6 +74,13 @@ separate queries; it never under-indexes a shape. The one query in
 `.Where("Post", "=", …).OrderBy("Created")` — derives
 `comments (post, created)`; shortlink's derives `links (owner, -created)`.
 
+Composite indexes are built at deploy time and are the slowest part of a
+first deploy: **~4 minutes each**, flat, regardless of how much data you
+have. tako starts every build at once (Datastore builds them
+concurrently) and collects them just before your services go live, so
+the wait overlaps the image push rather than adding to it. Two indexes
+cost ~4 minutes, not ~8.
+
 `tako deploy` shows each composite as a `+ datastore index` plan entry
 and creates it before the services, waiting on the build (first builds
 take minutes). Live indexes on kinds tako manages that match no current
