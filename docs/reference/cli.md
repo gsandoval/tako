@@ -46,6 +46,7 @@ tako prune [--data]    delete orphans tako once managed
 tako dlq [service] --ack   drain the printed dead-letter messages for good
 tako dlq <service> --replay <id>|--all   re-deliver, then remove from the DLQ (a MOVE)
 tako destroy           delete everything labeled for this app
+tako destroy --plan    show what it would delete, delete nothing
 ```
 
 `deploy --plan` stops after the classified plan; `--canary` holds new
@@ -100,6 +101,10 @@ parser:
 
 ## Not yet
 
+- `destroy --plan` observes and prints the same block destroy prints —
+  including the `DATA — deleted with the app, gone forever` list — then
+  exits before the prompt. It is the safe way to inspect a teardown, and
+  the only one that does not involve starting it.
 - No `--yes` on `destroy` / `prune --data` — tier 3 is non-bypassable
   by design, not a missing feature.
 - No per-command `--help`: the single usage screen still fits;

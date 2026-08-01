@@ -56,8 +56,13 @@ Cloud, mutating (see the confirmation ladder below):
                        counts + typed confirmation
   tako dlq [service] --ack
                        drain the printed dead-letter messages for good
+  tako dlq <service> --replay <id>|--all
+                       re-deliver a dead letter, then take it off the DLQ
+  tako dlq --local [carrier]
+                       the same, against .tako/data
   tako destroy         delete everything labeled for this app (typed app
                        name, always; never touches unlabeled resources)
+  tako destroy --plan  show exactly what destroy would delete, and stop
 
 The confirmation ladder — friction scales with irreversibility:
   reversible/derivable  no ceremony (promote/rollback undo each other;

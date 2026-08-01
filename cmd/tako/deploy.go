@@ -787,7 +787,7 @@ func runDestroy(args []string) error {
 		return err
 	}
 	if len(rest) > 0 {
-		return fmt.Errorf("unknown argument %q", rest[0])
+		return fmt.Errorf("unknown argument %q (tako destroy accepts --plan, --project, --region, --env)", rest[0])
 	}
 	ctx := context.Background()
 	graph, err := analyzer.Analyze(analyzer.Config{Dir: "."})
@@ -894,6 +894,14 @@ func runDestroy(args []string) error {
 				fmt.Printf("    dead-letter messages retained on %s (if any)\n", o.Name)
 			}
 		}
+	}
+	// --plan stops here, having observed everything and deleted nothing.
+	// Destroy always BUILT this preview; until now the only way to see it
+	// was to start the one irreversible command and type the wrong name
+	// on purpose. Inspecting a teardown should not require arming it.
+	if t.planOnly {
+		fmt.Println("\n(--plan: nothing was deleted; drop --plan to run it)")
+		return nil
 	}
 	fmt.Printf("type the app name to confirm: ")
 	line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
