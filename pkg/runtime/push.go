@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"time"
 
@@ -30,7 +31,7 @@ var deadLetter func(ctx context.Context, payload []byte, reason string) error
 // serves both — a non-envelope body passes through untouched. GCS
 // bucket notifications (C5) arrive through the same envelope and are
 // translated to the ObjectInfo wire shape subscriber code decodes.
-func pubsubEnvelope(body []byte) ([]byte, int, bool) {
+func pubsubEnvelope(body []byte) ([]byte, int, map[string]string, bool) {
 	var env struct {
 		Message struct {
 			Data       []byte            `json:"data"` // encoding/json base64-decodes
@@ -40,12 +41,31 @@ func pubsubEnvelope(body []byte) ([]byte, int, bool) {
 		DeliveryAttempt int    `json:"deliveryAttempt"`
 	}
 	if json.Unmarshal(body, &env) != nil || env.Subscription == "" || env.Message.Data == nil {
-		return nil, 0, false
+		return nil, 0, nil, false
 	}
 	if payload, ok := gcsNotification(env.Message.Attributes, env.Message.Data); ok {
-		return payload, env.DeliveryAttempt, true
+		return payload, env.DeliveryAttempt, env.Message.Attributes, true
 	}
-	return env.Message.Data, env.DeliveryAttempt, true
+	return env.Message.Data, env.DeliveryAttempt, env.Message.Attributes, true
+}
+
+// ReplayAttr addresses a replayed dead letter at one subscriber; see
+// pkg/provision/gcp.ReplayAttr for why the message goes back through the
+// topic rather than at the subscriber directly. Duplicated rather than
+// imported: the runtime must not depend on the provisioner.
+const ReplayAttr = "tako-replay-to"
+
+// addressedElsewhere reports whether a replayed message names a
+// DIFFERENT service than this one. A topic fans out to every
+// subscriber; a dead letter belongs to exactly one, so everyone else
+// acks and does nothing. Messages with no replay attribute — every
+// normal delivery — are for whoever receives them.
+func addressedElsewhere(attrs map[string]string) (string, bool) {
+	to := attrs[ReplayAttr]
+	if to == "" {
+		return "", false
+	}
+	return to, to != os.Getenv("TAKO_SERVICE")
 }
 
 // gcsNotification translates a GCS OBJECT_FINALIZE notification
@@ -105,8 +125,19 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 			return
 		}
 		attempt := 0
-		if data, n, ok := pubsubEnvelope(payload); ok {
-			payload, attempt = data, n
+		var attrs map[string]string
+		if data, n, a, ok := pubsubEnvelope(payload); ok {
+			payload, attempt, attrs = data, n, a
+		}
+		if to, elsewhere := addressedElsewhere(attrs); elsewhere {
+			// Ack it: the message reached us only because the topic fans
+			// out, and nacking would retry a delivery that will never be
+			// ours. Logged, not silent — a replay touching every
+			// subscriber should be visible.
+			slog.Default().Info("tako: skipping replay addressed to another service",
+				"handler", name, "replay-to", to)
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		log := slog.Default().With("handler", name, "source", source)
 		if attempt > 0 {

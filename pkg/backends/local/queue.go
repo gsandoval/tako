@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -357,4 +358,81 @@ func (d *QueueDispatcher) WaitIdle(timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("queues still busy after %s", timeout)
 	}
+}
+
+// ReplayDir is the inbox a replayed dead letter is MOVED into. The CLI
+// and the dev server are different processes with no channel between
+// them, and when dev is down there is no broker to publish into at all
+// — so replay is a rename, and the dispatcher drains the directory on
+// boot and on every watch tick. The rename is also the "leaves the DLQ"
+// half of the contract, done atomically by the filesystem.
+const ReplayDir = "replay"
+
+// DrainReplays re-delivers every dead letter moved into the replay
+// inbox and returns how many it dispatched. A record whose carrier no
+// longer exists (the queue was renamed, the subscriber deleted) is left
+// in place rather than dropped: the file is the only copy.
+func (d *QueueDispatcher) DrainReplays() (int, error) {
+	dir := filepath.Join(d.dir, "deadletter", ReplayDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return 0, nil
+		}
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var rec backends.DeadLetter
+		if json.Unmarshal(raw, &rec) != nil || rec.Queue == "" {
+			continue
+		}
+		if !d.replay(rec) {
+			continue // carrier gone: leave the file, it is the only copy
+		}
+		_ = os.Remove(path)
+		n++
+	}
+	return n, nil
+}
+
+// replay puts one record back on its carrier. A queue goes to its single
+// worker; a topic goes to the ONE subscriber that failed, never the
+// whole fan-out — the same addressing the cloud path does with the
+// tako-replay-to attribute, which is what keeps the two backends
+// behaving alike.
+func (d *QueueDispatcher) replay(rec backends.DeadLetter) bool {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if rec.Subscriber == "" {
+		deliver, ok := d.consumers[rec.Queue]
+		if !ok {
+			return false
+		}
+		go d.dispatch(delivery{
+			source: rec.Queue,
+			dlDir:  filepath.Join("deadletter", rec.Queue),
+		}, deliver, rec.Payload)
+		return true
+	}
+	for _, sub := range d.subscribers[rec.Queue] {
+		if sub.name != rec.Subscriber {
+			continue
+		}
+		go d.dispatch(delivery{
+			source:   rec.Queue,
+			consumer: sub.name,
+			dlDir:    filepath.Join("deadletter", rec.Queue, sub.name),
+		}, sub.deliver, rec.Payload)
+		return true
+	}
+	return false
 }

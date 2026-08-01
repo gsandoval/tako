@@ -137,6 +137,48 @@ func TestClicksCountExactlyOnceUnderChaos(t *testing.T) {
 The seed prints on every chaos run; rerun with `TAKO_CHAOS_SEED=<n>`
 to replay a failure exactly.
 
+## Replaying a dead letter
+
+`tako dlq <service>` lists what failed, each line starting with an id:
+
+```
+  14672041893  2m ago   attempts 5   decode image: unknown format
+    {"photo":"izupocvqy7bva6ax","caption":"boom"}
+```
+
+`tako dlq <service> --replay 1467` puts it back into delivery and takes
+it off the DLQ — **a move, not a copy**. Any unique prefix of the id
+works, the way git takes a short SHA. `--replay --all` does the lot.
+
+The message goes back through the **real broker**, which is the point:
+it gets the normal attempt count, the normal backoff, and if it fails
+again it lands **back on the DLQ**. Replay is not a promise that the
+message will succeed — it is a second chance under the same rules.
+
+For a queue that is all there is to it: one worker, one destination.
+For a **topic** it is subtler. A topic fans out to every subscriber, but
+a dead letter belongs to exactly one of them — the one whose handler
+failed. Republishing to the topic would re-run the subscribers that
+already succeeded, so tako addresses the replay (`tako-replay-to`) and
+every other subscriber acks it without doing work. You will see one
+line per uninvolved subscriber in the logs; that is the mechanism, not
+a bug.
+
+Locally the same command works against `.tako/data`:
+
+```
+tako dlq --local                      # everything on disk
+tako dlq --local thumbnails --replay 1699
+```
+
+A local replay moves the file into `deadletter/replay/`, which a
+running `tako dev` drains within a couple of seconds. If dev is down it
+waits for the next boot — the file is the message, so nothing is lost
+either way.
+
+`--ack` and `--replay` are refused together: they do the opposite
+things to the same message.
+
 ## Errors you'll meet
 
 - `queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out (tako/one-worker)`

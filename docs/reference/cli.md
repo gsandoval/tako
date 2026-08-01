@@ -32,6 +32,8 @@ out.
 ```
 tako logs [service] [--since 15m]     recent logs for the deployed services
 tako dlq [service]                    peek dead-lettered messages per async service
+tako dlq <service> --replay <id>      put one dead letter back into delivery
+tako dlq --local [carrier]            the same, against .tako/data
 ```
 
 ## Cloud, mutating
@@ -42,6 +44,7 @@ tako promote           send 100% of every service's traffic to latest
 tako rollback          return traffic to the previous revision set
 tako prune [--data]    delete orphans tako once managed
 tako dlq [service] --ack   drain the printed dead-letter messages for good
+tako dlq <service> --replay <id>|--all   re-deliver, then remove from the DLQ (a MOVE)
 tako destroy           delete everything labeled for this app
 ```
 

@@ -167,6 +167,7 @@ func BootLocal(dir string) error {
 		return err
 	}
 	attachQueueConsole(app.Dispatcher, dir)
+	watchReplays(app.Dispatcher)
 	attachMetricsConsole(app.Metrics)
 	// TAKO_CHAOS=<seed> (tako dev --chaos) turns on delivery chaos:
 	// duplicates, redelivery after ack, reordering — seeded, so a run
@@ -244,4 +245,25 @@ func SetQueueRate(queue string, perSec int) {
 	if booted != nil {
 		booted.Dispatcher.SetRate(queue, perSec)
 	}
+}
+
+// replayPoll is how often a local run looks for replayed dead letters.
+// The CLI and this process are strangers — the CLI renames a file into
+// the inbox and has no way to say so — and a restart is not an
+// acceptable price for "put that message back", so it polls. One
+// ReadDir of a directory that usually does not exist.
+const replayPoll = 2 * time.Second
+
+// watchReplays drains the replay inbox for as long as this process
+// lives. Dev-only in practice: the cloud path republishes through the
+// broker and needs no inbox.
+func watchReplays(d *local.QueueDispatcher) {
+	go func() {
+		for {
+			time.Sleep(replayPoll)
+			if n, err := d.DrainReplays(); err == nil && n > 0 {
+				fmt.Printf("↩ replayed %d dead letter(s) back into delivery\n", n)
+			}
+		}
+	}()
 }
