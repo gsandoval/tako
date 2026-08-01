@@ -63,8 +63,11 @@ Other facts worth not re-deriving:
 - **Env available at runtime:** `TAKO_PROJECT`, `TAKO_APP`, `TAKO_ENV`,
   `TAKO_SERVICE` are injected by `desired.go`; Cloud Run itself provides
   `K_SERVICE`, `K_REVISION`. Region is NOT injected — check before
-  assuming (the `cloud_run_revision` monitored resource needs
-  `location`).
+  assuming. (This note originally said the `cloud_run_revision`
+  monitored resource needs `location`. That resource turned out to be
+  UNWRITABLE for user-defined metrics — see the U2 postmortem in the
+  task log. The writable type is `generic_task`, which needs `location`
+  too, so the conclusion held for the wrong reason.)
 - **gallery declares the demanding metrics** since F8: an `uploads`
   counter and a `thumb_ms` histogram.
 

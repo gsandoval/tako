@@ -37,7 +37,8 @@ func newFakeMonitoring(t *testing.T) *fakeMonitoring {
 func testStore(t *testing.T, f *fakeMonitoring) *MetricsStore {
 	t.Helper()
 	m := NewMetricsStore(&Client{HC: f.Client(), Opts: Options{Project: "p"}},
-		Identity{Service: "gallery", Revision: "gallery-00007-abc", Location: "us-central1", Instance: "42"})
+		Identity{Namespace: "gallery-prod", Job: "gallery", TaskID: "42",
+			Location: "us-central1", Revision: "gallery-00007-abc"})
 	m.base = f.URL
 	return m
 }
@@ -74,22 +75,31 @@ func TestCounterWritesCumulativeTotal(t *testing.T) {
 	if got := metric["type"]; got != "custom.googleapis.com/tako/uploads" {
 		t.Errorf("metric type = %v", got)
 	}
-	// The label that keeps two instances of one revision from writing the
-	// same series: cloud_run_revision has no instance among its labels.
-	if got := metric["labels"].(map[string]any)["instance"]; got != "42" {
-		t.Errorf("instance label = %v, want the writer's id", got)
+	if got := metric["labels"].(map[string]any)["revision"]; got != "gallery-00007-abc" {
+		t.Errorf("revision label = %v — a metric shift should be traceable to a deploy", got)
 	}
 	res := one["resource"].(map[string]any)
-	if got := res["type"]; got != "cloud_run_revision" {
-		t.Errorf("resource type = %v", got)
+	// NOT cloud_run_revision: user-defined metrics may only be written
+	// against a set of resource types, and Cloud Run's own is not one of
+	// them. Writing there is refused with "metric cannot be written to
+	// cloud_run_revision", which cost a live gate.
+	if got := res["type"]; got != "generic_task" {
+		t.Errorf("resource type = %v, want generic_task — cloud_run_revision is not writable for user-defined metrics", got)
 	}
 	labels := res["labels"].(map[string]any)
 	for k, want := range map[string]string{
-		"project_id": "p", "service_name": "gallery",
-		"revision_name": "gallery-00007-abc", "location": "us-central1",
+		"project_id": "p", "location": "us-central1",
+		"namespace": "gallery-prod", "job": "gallery", "task_id": "42",
 	} {
 		if labels[k] != want {
 			t.Errorf("resource label %s = %v, want %s", k, labels[k], want)
+		}
+	}
+	// generic_task requires all four scoping labels; an empty one files
+	// the series somewhere nobody will look for it.
+	for _, k := range []string{"project_id", "location", "namespace", "job", "task_id"} {
+		if labels[k] == "" {
+			t.Errorf("resource label %s is empty — generic_task requires it", k)
 		}
 	}
 	point := one["points"].([]any)[0].(map[string]any)
@@ -216,7 +226,7 @@ func TestRecordingDoesNotWaitOnTheAPI(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}))
 	defer slow.Close()
-	m := NewMetricsStore(&Client{HC: slow.Client(), Opts: Options{Project: "p"}}, Identity{})
+	m := NewMetricsStore(&Client{HC: slow.Client(), Opts: Options{Project: "p"}}, Identity{Job: "x"})
 	m.base = slow.URL
 
 	m.Add(context.Background(), "uploads", 1)

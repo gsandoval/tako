@@ -118,7 +118,7 @@ func TestMetrics(t *testing.T) {
 		// it runs here too, against a sink whose flush never leaves the
 		// process (no base URL is reachable, and recording must not care).
 		RunMetrics(t, func(t *testing.T) backends.Metrics {
-			return gcpb.NewMetricsStore(&gcpb.Client{}, gcpb.Identity{Service: "conformance"})
+			return gcpb.NewMetricsStore(&gcpb.Client{}, gcpb.Identity{Job: "conformance"})
 		})
 	default:
 		t.Fatalf("unknown -backend %q", *backend)

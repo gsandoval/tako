@@ -21,13 +21,22 @@ import (
 // carries the truth rather than a gap. Only the flush at shutdown is
 // unrecoverable, which is why Serve drains before it runs.
 //
-// SERIES IDENTITY IS PER INSTANCE, deliberately. The cloud_run_revision
-// monitored resource labels a revision (service_name, revision_name,
-// location) and nothing narrower — there is no instance among them — so
-// every instance of a revision would otherwise write the same cumulative
-// series, and concurrent writers to one series is either a rejection or
-// nonsense. The `instance` METRIC label separates them; Metrics Explorer
-// sums across it (docs/reference/observability.md says so).
+// The monitored resource is generic_task, NOT cloud_run_revision.
+// User-defined metrics may only be written against a specific set of
+// resource types, and Cloud Run's own is not among them — writing there
+// is refused outright:
+//
+//	metric cannot be written to cloud_run_revision, see
+//	.../creating-metrics#which-resource for a list of writable types
+//
+// generic_task is the type Google points serverless writers at, and its
+// schema happens to fit exactly: namespace scopes the deployment, job
+// names the service, and TASK_ID identifies the instance. That last one
+// matters for correctness, not tidiness — every instance of a revision
+// would otherwise share one cumulative series, and concurrent writers to
+// a single series is either a rejection or nonsense. The revision rides
+// along as a metric label, which costs no extra series (task_id is
+// already finer-grained) and makes a metric shift traceable to a deploy.
 type MetricsStore struct {
 	c    *Client
 	who  Identity
@@ -56,14 +65,23 @@ type MetricsStore struct {
 	stopOnce sync.Once
 }
 
-// Identity is who is writing: the monitored resource's labels plus the
-// instance that separates one writer from its siblings. BootGCP reads
-// these off the metadata server; tests pass them in.
+// Identity is who is writing: generic_task's four scoping labels plus
+// the revision, which rides as a metric label. BootGCP assembles it from
+// the injected env and the metadata server; tests pass one in.
 type Identity struct {
-	Service  string // K_SERVICE
-	Revision string // K_REVISION
-	Location string // the region, from the metadata server
-	Instance string // metadata instance/id, or a hostname-pid fallback
+	// Namespace scopes the deployment, "<app>-<env>", so prod and a
+	// preview environment never merge into one series.
+	Namespace string
+	// Job is the tako service name — the name the user wrote, not the
+	// env-prefixed deployed one.
+	Job string
+	// TaskID is this instance. Cloud Run's instance id when the metadata
+	// server answers, hostname-pid otherwise.
+	TaskID string
+	// Location is the region.
+	Location string
+	// Revision is K_REVISION, carried as a metric label.
+	Revision string
 }
 
 // Bucket layout for every histogram: exponential, doubling, starting at
@@ -249,16 +267,16 @@ func (m *MetricsStore) point(name, valueType string, now time.Time, value map[st
 	return map[string]any{
 		"metric": map[string]any{
 			"type":   "custom.googleapis.com/tako/" + name,
-			"labels": map[string]string{"instance": m.who.Instance},
+			"labels": map[string]string{"revision": m.who.Revision},
 		},
 		"resource": map[string]any{
-			"type": "cloud_run_revision",
+			"type": "generic_task",
 			"labels": map[string]string{
-				"project_id":         m.c.Opts.Project,
-				"service_name":       m.who.Service,
-				"revision_name":      m.who.Revision,
-				"location":           m.who.Location,
-				"configuration_name": m.who.Service,
+				"project_id": m.c.Opts.Project,
+				"location":   m.who.Location,
+				"namespace":  m.who.Namespace,
+				"job":        m.who.Job,
+				"task_id":    m.who.TaskID,
 			},
 		},
 		"metricKind": "CUMULATIVE",

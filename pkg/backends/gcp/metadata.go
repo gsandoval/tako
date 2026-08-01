@@ -48,15 +48,21 @@ func metadataValue(ctx context.Context, path string) (string, error) {
 // instance can already read them, and an env var would only be a second
 // copy free to disagree.
 //
-// A missing region is fatal to export (the monitored resource requires
-// location, and a wrong one files metrics under a region that does not
-// exist), so the caller treats the error as "not on Cloud Run, skip
-// export". A missing instance id is not: hostname-pid separates writers
-// just as well, which is the only job that label has.
+// A missing region is fatal to export (generic_task requires location,
+// and a wrong one files metrics under a region that does not exist), so
+// the caller treats the error as "not on Cloud Run, skip export". A
+// missing instance id is not: hostname-pid separates writers just as
+// well, which is the only job task_id has.
 func WhoAmI(ctx context.Context) (Identity, error) {
 	who := Identity{
-		Service:  os.Getenv("K_SERVICE"),
-		Revision: os.Getenv("K_REVISION"),
+		Namespace: os.Getenv("TAKO_APP") + "-" + os.Getenv("TAKO_ENV"),
+		Job:       os.Getenv("TAKO_SERVICE"),
+		Revision:  os.Getenv("K_REVISION"),
+	}
+	if who.Job == "" {
+		// Falls back to Cloud Run's own name for it rather than writing
+		// series under an empty job label.
+		who.Job = os.Getenv("K_SERVICE")
 	}
 	region, err := metadataValue(ctx, "instance/region")
 	if err != nil {
@@ -68,10 +74,10 @@ func WhoAmI(ctx context.Context) (Identity, error) {
 		who.Location = region[i+1:]
 	}
 	if id, err := metadataValue(ctx, "instance/id"); err == nil && id != "" {
-		who.Instance = id
+		who.TaskID = id
 	} else {
 		host, _ := os.Hostname()
-		who.Instance = fmt.Sprintf("%s-%d", host, os.Getpid())
+		who.TaskID = fmt.Sprintf("%s-%d", host, os.Getpid())
 	}
 	return who, nil
 }

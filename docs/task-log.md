@@ -8639,3 +8639,72 @@ turned a failed cloud deploy into a red unit test.
 Recovery needed nothing special — deploy is stateless and resumable, so
 a re-run picks up from the partial env (the index was already built and
 read back READY).
+
+## Gate catch — cloud_run_revision is not writable — 2026-08-01
+
+The second live U2 failure, and the more serious one: **metrics never
+arrived at all.** Reading them back returned the API's empty result,
+`{"unit": "{not_a_unit}"}`, and the service logged (user-reported):
+
+```
+WARN tako: metrics flush failed … err="HTTP 400 …: One or more TimeSeries
+could not be written: … resource.type=\"cloud_run_revision\" …: metric
+cannot be written to cloud_run_revision, see
+https://cloud.google.com/monitoring/custom-metrics/creating-metrics#which-resource
+for a list of writable resource types"
+```
+
+**Cloud Monitoring permits user-defined metrics only against a fixed
+set of monitored resource types, and `cloud_run_revision` is not one of
+them.** Confirmed by listing the writable set off a live descriptor —
+it contains `generic_task`, `generic_node`, `gce_instance`, the k8s and
+aws types, `global`, and no Cloud Run type at all.
+
+The Stage 7 handoff specified `cloud_run_revision`, and I verified its
+LABELS against the docs (that is where the missing-instance-identity
+finding came from) without ever checking that it can be WRITTEN to.
+Verifying half a claim reads exactly like verifying it.
+
+**Fix:** `generic_task`, which is the type Google points serverless
+writers at, and whose schema fits better than the one it replaces:
+
+| generic_task label | value |
+|---|---|
+| `namespace` | `<app>-<env>` — prod and a preview env never merge |
+| `job` | the tako service name, as the user wrote it |
+| `task_id` | the instance |
+| `location` | the region |
+
+`task_id` makes the custom `instance` metric label unnecessary — the
+resource now carries instance identity natively, which is what
+`cloud_run_revision` could not do and what the whole per-instance-series
+argument was about. The revision moves to a `revision` metric label: no
+extra series (`task_id` is finer-grained) and a metric shift becomes
+traceable to a deploy.
+
+Proven before writing the fix: a probe write to `generic_task` with
+these exact labels was **accepted**, and read back. That is the step
+whose absence caused this.
+
+### Two failures, one cause
+
+Both live U2 failures — the named port with no number, and this — are
+the same class: **a payload the API refuses, in a package with no HTTP
+seam, so every test passed.** The unit tests marshal `body()` and read
+it back; nothing validates against the API's rules.
+
+`pkg/provision/gcp` and `pkg/backends/gcp` both need an injectable host
+(`gcp.Client` already wraps an `*http.Client`; `MetricsStore` already
+takes a `base`, which is why its wire format IS unit-tested — it just
+tested the wrong resource type). This has now cost four live failures
+across the stage (waitGone, the domain verbs, the port, the resource
+type). It should be scheduled, not carried as discovered work.
+
+### Cleanup performed
+
+The metric descriptors auto-created by the FAILING writes carry an
+`instance` label the new code does not set. Deleted from tako-test-01
+(note: the type's slashes must NOT be percent-encoded in the delete
+path — encoded returns 400). The old revision recreates them on every
+failed flush until it is replaced, so the delete is a post-redeploy
+step; `validate/metrics.md` §4c now says so.

@@ -232,6 +232,21 @@ curl -s "$URL/api/photos" | head -c 400
 Wait **one flush interval (60s)** — recording is in-process and ships on
 a timer, so an immediate read finds nothing and that is not a failure.
 
+If a previous walk on this project ever wrote against the old resource
+type, delete the descriptors once after redeploying — a descriptor
+auto-created by a FAILED write keeps the labels that write used:
+
+```
+for m in uploads thumb_ms; do
+  curl -s -o /dev/null -w "$m → %{http_code}\n" -X DELETE \
+    -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://monitoring.googleapis.com/v3/projects/$PROJECT/metricDescriptors/custom.googleapis.com/tako/$m"
+done
+```
+
+(Do not URL-encode the slashes — the metric type is part of the resource
+path, and encoding them returns 400.)
+
 There is no `gcloud monitoring time-series list` command; read the API
 directly (works with the components you already have):
 
@@ -255,13 +270,16 @@ Expect from `uploads`:
 
 - `"metricKind": "CUMULATIVE"`, `"valueType": "INT64"`, and a point
   whose `int64Value` is **≥ 3** — a running total, not a delta.
-- `metric.labels.instance` present. This is the label that keeps two
-  instances of one revision from writing the same series.
-- `resource.type: "cloud_run_revision"` with `service_name`,
-  `revision_name` and **`location`** all filled. An empty `location`
-  means `WhoAmI` could not reach the metadata server, in which case
-  export should have been skipped entirely — that combination is a bug,
-  not a partial success.
+- `resource.type: "generic_task"` — **not `cloud_run_revision`**, which
+  Cloud Monitoring refuses for user-defined metrics.
+- All four scoping labels filled: `namespace` (`gallery-metrics`),
+  `job` (`gallery`), `task_id` (the instance), `location`
+  (`us-central1`). An empty `location` means `WhoAmI` could not reach
+  the metadata server, in which case export should have been skipped
+  entirely — that combination is a bug, not a partial success.
+- `metric.labels.revision` present, naming the revision that wrote it.
+- More than one `task_id` if more than one instance served — each is
+  its own cumulative series, by design.
 
 From `thumb_ms`: `"valueType": "DISTRIBUTION"`, a `distributionValue`
 with `count` ≥ 3, and `bucketCounts` non-zero somewhere in the middle
@@ -270,8 +288,16 @@ of the range (thumbnails land in the tens-to-hundreds of ms).
 If either comes back `{}`, the metric has not flushed yet — wait
 another 60s before treating it as a failure.
 
+If a write is being REFUSED rather than merely delayed, the service
+says so — check before waiting again:
+
+```
+gcloud logging read 'resource.labels.service_name="metrics-gallery" AND textPayload:"metrics flush failed"' \
+  --project $PROJECT --limit 3 --freshness=1h --format 'value(textPayload)'
+```
+
 Then confirm the same thing visually: **Metrics Explorer → paste
-`custom.googleapis.com/tako/uploads`**, and sum across `instance`.
+`custom.googleapis.com/tako/uploads`**, and sum across `task_id`.
 
 ## 5. The last flush survives a revision swap
 

@@ -102,13 +102,27 @@ next flush carries the truth rather than leaving a gap. The one flush
 that cannot be recovered is the last one, which is why a service
 [drains before it exits](#shutdown).
 
-**Series are per instance.** Cloud Run's `cloud_run_revision` monitored
-resource identifies a revision — `service_name`, `revision_name`,
-`location` — and nothing narrower, so every point also carries an
-`instance` metric label. Without it, two instances of one revision
-would write the same cumulative series and fight over it. **Aggregate
-across `instance` when you chart:** sum for counters, and for
-histograms let the percentile aggregation do it.
+**Metrics are filed under `generic_task`, not `cloud_run_revision`.**
+Google allows user-defined metrics to be written against only a set of
+monitored resource types, and Cloud Run's own is not among them — a
+write there is refused with *"metric cannot be written to
+cloud_run_revision"*. `generic_task` is the type for this, and its
+labels map cleanly:
+
+| label | value |
+|---|---|
+| `namespace` | `<app>-<env>` — prod and a preview env never merge |
+| `job` | the tako service name, as you wrote it |
+| `task_id` | the instance |
+| `location` | the region |
+
+`task_id` is load-bearing, not decoration: every instance of a revision
+would otherwise share one cumulative series, and concurrent writers to a
+single series is either a rejection or nonsense. **Aggregate across
+`task_id` when you chart** — sum for counters, percentile aggregation
+for histograms. The revision rides along as a `revision` metric label,
+which adds no series (`task_id` is already finer) and makes a shift in a
+metric traceable to a deploy.
 
 Histogram buckets are exponential, doubling, from 1 to 262144 — one
 layout for every histogram, because `tako.Histogram` takes a name and a
