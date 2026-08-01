@@ -96,9 +96,14 @@ never rewinds.
 - Any option other than `WithFootprint`:
   `tako.Singleton accepts only WithFootprint — min=1/max=1 plus the
   lease is the rest of the contract (tako/invalid-option)`
-- A footprint touching the scaling fields:
-  `a singleton footprint sets CPU and Memory only —
-  min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one
+- A footprint setting the scale-out:
+  `a singleton footprint cannot set MaxInstances — the lease is what
+  makes a singleton exactly-one, so a max above 1 only buys instances
+  that pay to lose the race; CPU, Memory and Timeout are yours
+  (tako/singleton-max)`
+- A footprint touching the other scaling fields:
+  `a singleton footprint sets CPU, Memory and Timeout only — min=1 and
+  concurrency=1 are what keep the loop's host alive and alone
   (tako/footprint)`
 - A non-constant name: `tako.Singleton name must be a string constant —
   names are read at analysis time, not run time; got …` (tako/const-name)

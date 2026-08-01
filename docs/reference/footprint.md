@@ -140,10 +140,15 @@ The claims live in golden tests —
 - `service mixedprofile cannot be both latency (Fast) and batch (Slow)
   — one service scales one way; split the packages or align the
   profiles (tako/mixed-profile)`
-- Scoping: `a job footprint sets CPU, Memory and Timeout only — executions are
-  tasks, not serving instances; WithParallel sets the fan-out` and
-  `a singleton footprint sets CPU and Memory only —
-  min=1/max=1/concurrency=1 plus the lease is what makes it exactly-one`
+- Scoping: `a job footprint sets CPU, Memory and Timeout only —
+  executions are tasks, not serving instances, so there is no
+  concurrency, no scaling and no idle CPU to throttle; WithParallel sets
+  the fan-out and WithRetries the attempts (tako/footprint)`, and for a
+  singleton `a singleton footprint cannot set MaxInstances — the lease
+  is what makes a singleton exactly-one … (tako/singleton-max)`
+- Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud
+  Run caps a request at 60m; for work that outlives a request use a
+  tako.Job (docs/reference/job.md) (tako/footprint)`
 
 ## Not yet
 

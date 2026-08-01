@@ -112,13 +112,19 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 
 ## Errors you'll meet
 
-- `a job footprint sets CPU and Memory only — executions are tasks, not
-  serving instances; WithParallel sets the fan-out (tako/footprint)`
+- `a job footprint sets CPU, Memory and Timeout only — executions are
+  tasks, not serving instances, so there is no concurrency, no scaling
+  and no idle CPU to throttle; WithParallel sets the fan-out and
+  WithRetries the attempts (tako/footprint)`
+- `tako.WithRetries takes a constant 0–10 attempts after the first — a
+  task that fails 10 times is not going to pass on the 11th, and jobs
+  have no dead letter to catch it (tako/retries)`
 - A second `JobHandler` on the same job:
   `job "settle" already has handler shop.Settle (app.go:99) — a job has
   exactly one body (tako/one-job-handler)`
-- `tako.WithProfile is not a tako.JobHandler option (tako.JobHandler
-  accepts WithParallel, WithFootprint) (tako/invalid-option)`
+- `tako.WithTTL is not a tako.JobHandler option (tako.JobHandler
+  accepts WithParallel, WithRetries, WithProfile, WithFootprint)
+  (tako/invalid-option)`
 - `Run` in a bare test: `tako: jobs are not wired — Run works in booted
   services (tako dev / deploy) and NewTestApp tests, not bare tests`
 - Missing env in the cloud: `job "settle" has no execution target —
