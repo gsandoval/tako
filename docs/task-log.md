@@ -7938,3 +7938,43 @@ deploy of blog to tako-test-01 hit their live `blog.ker.gs` mapping. The
 it"* — so nothing of theirs moved, and the scratch env was destroyed
 env-scoped, leaving `blog-app` and the mapping intact. The error path
 got an unplanned live validation.
+
+## U1 gate catch — the replace raced its own delete (2026-08-01)
+
+The U1 walk's §6 (re-point is a REPLACE) failed live on the user's
+tako-test-01:
+
+```
+  ⚠ replacing domain mapping blog.ker.gs (route → blog-web): delete + create…
+update domain mapping blog.ker.gs: blog.ker.gs is already mapped in tako-test-01 —
+a domain answers for one service, and tako will not take it from whatever holds it…
+```
+
+**Cloud Run's mapping delete is ASYNCHRONOUS.** `Delete` returns as soon
+as the mapping is marked for deletion; the resource keeps answering GET
+for a moment after. `Update` (delete + create, because `routeName` is
+immutable and there is no update verb) created immediately and raced its
+own teardown — then reported the 409 as if the USER were holding the
+domain, which is the worst possible reading of a failure tako caused.
+
+Measured live on tako-test-02: the mapping answers GET for **~1.4s**
+after Delete returns. Small, and reliably fatal, because the create
+fires in microseconds.
+
+**Fix:** `Update` waits for the mapping to truly read back gone
+(`waitGone`, 2s poll, 2m ceiling) before creating — converging on
+OBSERVED state rather than on a call's return value, the same discipline
+grant revocation already follows. Validated live end to end: the replace
+now completes in ~1s.
+
+State left by the failure: the mapping was deleted and not recreated, so
+the domain had no mapping. The DNS records are unaffected, so a re-run
+after the fix re-provisions without a second propagation wait.
+
+### Discovered work
+
+`waitGone` is validated live but not unit-tested: `gcp.Client` has no
+injectable host, so no applier in `provision/gcp` can be tested against
+a fake HTTP server. Adding that seam would make this whole package
+testable offline (the `domains_test.go` round-trip tests already work
+around it by exercising `body()` alone). Worth doing; not mid-gate.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -127,6 +128,13 @@ func (r *DomainMappings) Create(ctx context.Context, o provision.Object) error {
 // Update is delete + create: the API has no update verb and routeName is
 // immutable. The plan classified this as a REPLACE, so the consequence
 // was stated before anything happened; this narrates it again as it runs.
+//
+// The delete is ASYNCHRONOUS. It returns as soon as the mapping is
+// marked for deletion, and the resource keeps answering GET for a few
+// seconds after — so creating immediately raced our own teardown and
+// came back "already mapped", blaming the user for holding a domain
+// tako was in the middle of releasing. Wait for it to actually read back
+// gone, the same discipline grant revocation already follows.
 func (r *DomainMappings) Update(ctx context.Context, o provision.Object) error {
 	if r.Say != nil {
 		r.Say("⚠ replacing domain mapping %s (route → %s): delete + create; the domain stops answering until the new certificate is ready",
@@ -135,7 +143,31 @@ func (r *DomainMappings) Update(ctx context.Context, o provision.Object) error {
 	if err := r.Delete(ctx, o.Name); err != nil {
 		return err
 	}
+	if err := r.waitGone(ctx, o.Name); err != nil {
+		return err
+	}
 	return r.Create(ctx, o)
+}
+
+// mappingGoneWait bounds how long a delete may take to become visible.
+const mappingGoneWait = 2 * time.Minute
+
+// waitGone blocks until the mapping truly reads back absent. Converging
+// on the OBSERVED state rather than on the delete call's return is what
+// makes the replace safe to retry.
+func (r *DomainMappings) waitGone(ctx context.Context, domain string) error {
+	deadline := time.Now().Add(mappingGoneWait)
+	for {
+		err := r.C.do(ctx, http.MethodGet, r.base()+"/"+domain, nil, nil)
+		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("domain mapping %s did not finish deleting within %s — re-run tako deploy; the replace resumes from wherever it got to",
+				domain, mappingGoneWait)
+		}
+		time.Sleep(2 * time.Second)
+	}
 }
 
 func (r *DomainMappings) Delete(ctx context.Context, name string) error {
