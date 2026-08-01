@@ -220,13 +220,14 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			return nil, err
 		}
 		knobs := map[string]any{
-			"min":         resolved.MinInstances,
-			"max":         resolved.MaxInstances,
-			"concurrency": resolved.Concurrency,
-			"cpu":         strconv.Itoa(resolved.CPU),
-			"memory":      resolved.Memory,
-			"cpuAlwaysOn": resolved.CPUAlwaysOn == analyzer.ToggleOn,
-			"timeout":     resolved.TimeoutSeconds,
+			"min":          resolved.MinInstances,
+			"max":          resolved.MaxInstances,
+			"concurrency":  resolved.Concurrency,
+			"cpu":          strconv.Itoa(resolved.CPU),
+			"memory":       resolved.Memory,
+			"cpuAlwaysOn":  resolved.CPUAlwaysOn == analyzer.ToggleOn,
+			"startupBoost": resolved.StartupBoost == analyzer.ToggleOn,
+			"timeout":      resolved.TimeoutSeconds,
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
@@ -236,6 +237,10 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			// The service's own base name: dead-topic derivation
 			// (Permanent publishes there directly) and log labeling.
 			"TAKO_SERVICE": svc.Name,
+			// The drain share of Cloud Run's fixed 10s shutdown window.
+			// The instance cannot read this anywhere — unlike its region
+			// or id, it is a tako decision — so it rides the env.
+			"TAKO_DRAIN": strconv.Itoa(resolved.DrainSeconds),
 		}
 		if cfg.AuthAPIKey != "" {
 			env["TAKO_AUTH_APIKEY"] = cfg.AuthAPIKey

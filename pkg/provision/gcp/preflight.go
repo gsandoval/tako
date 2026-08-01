@@ -46,6 +46,9 @@ type Needs struct {
 	// preflight verifies each exists and prints the exact create
 	// command when one does not.
 	Secrets []string
+	// Metrics is set when the app declares any counter or histogram:
+	// the runtime writes them to Cloud Monitoring, which must be on.
+	Metrics bool
 	// SignBlob is set when any handler mints signed URLs (sign edges):
 	// the runtime calls the IAM Credentials API, which must be enabled.
 	SignBlob bool
@@ -91,6 +94,9 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		perms = append(perms,
 			struct{ perm, role string }{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
 			struct{ perm, role string }{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
+	}
+	if needs.Metrics {
+		apis = append(apis, "monitoring.googleapis.com")
 	}
 	if needs.SignBlob {
 		apis = append(apis, "iamcredentials.googleapis.com")

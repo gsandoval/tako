@@ -66,10 +66,82 @@ and the deploy derives the accessor grants before any service starts.
 Rotation is yours: add a new secret version; instances pick it up as
 they restart.
 
-Counters and histograms use the same log-line sink in the cloud —
-each recording is a structured log entry, so today `tako logs` is
-where you read them. Cloud Monitoring export is a later backend
-behind the same call sites.
+## Metrics in the cloud
+
+Locally, every `Add` and `Observe` is a structured log line and a 📈
+line in the dev console. Deployed, the same call sites also export to
+Cloud Monitoring as user-defined metrics:
+
+```
+custom.googleapis.com/tako/uploads      # tako.Counter("uploads")
+custom.googleapis.com/tako/thumb_ms     # tako.Histogram("thumb_ms")
+```
+
+Find them in Metrics Explorer by pasting that metric type, or:
+
+```
+gcloud monitoring time-series list \
+  --filter 'metric.type = "custom.googleapis.com/tako/uploads"' \
+  --project my-project
+```
+
+**Recording is still free at the call site.** `Add` takes a lock and
+returns; nothing in a request path ever waits on Cloud Monitoring. A
+background flush ships what accumulated **every 60 seconds**, so a
+metric you just recorded takes up to a minute to appear.
+
+**Both kinds are written cumulatively** — the running total since the
+instance started, not the delta since the last flush. That is what
+makes a failed flush harmless: the total lives in the instance, so the
+next flush carries the truth rather than leaving a gap. The one flush
+that cannot be recovered is the last one, which is why a service
+[drains before it exits](#shutdown).
+
+**Series are per instance.** Cloud Run's `cloud_run_revision` monitored
+resource identifies a revision — `service_name`, `revision_name`,
+`location` — and nothing narrower, so every point also carries an
+`instance` metric label. Without it, two instances of one revision
+would write the same cumulative series and fight over it. **Aggregate
+across `instance` when you chart:** sum for counters, and for
+histograms let the percentile aggregation do it.
+
+Histogram buckets are exponential, doubling, from 1 to 262144 — one
+layout for every histogram, because `tako.Histogram` takes a name and a
+`float64` and no unit. Samples below 1 and above 262144 land in the
+under/overflow buckets rather than being dropped. At 2× per bucket this
+is honest about magnitude and coarse about precision: read it for "did
+thumbnails get slower", not for a tight p99.
+
+Cost: user-defined metrics bill on ingestion, and one instance writing
+two metrics once a minute is negligible. It grows with metrics ×
+instances, so it is worth a glance if you declare many metrics on a
+service that scales wide.
+
+## Shutdown
+
+Cloud Run replaces a revision by sending the old instance `SIGTERM` and
+killing it **10 seconds later**. That window is fixed — there is no API
+field for it and no `gcloud` flag — so tako divides it instead:
+
+1. The listener closes. New requests go to the new revision; this
+   instance accepts nothing more.
+2. Requests **already executing run to completion** — up to `Drain`,
+   7 seconds by default ([footprint.md](footprint.md)).
+3. Shutdown hooks flush, which is where the final metrics write goes.
+4. The process exits.
+
+Locally, Ctrl-C does the same with a 2-second drain, and a second
+Ctrl-C exits immediately.
+
+A handler that outlives the drain budget is cut off, and says so rather
+than leaving you to find it as a mystery 502:
+
+```
+tako: 1 request did not finish within 7s — cutting it off (SIGKILL follows in ~3s)
+```
+
+Jobs flush on exit too, on both the success and the failure path — a
+failing task's metrics are usually the ones worth having.
 
 `tako logs [service] [--since 15m]` (plus the standard
 `--project`/`--region`/`--env`) is cloud read-only: it analyzes the
@@ -110,9 +182,14 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
 
 ## Not yet
 
-- No Cloud Monitoring export — metrics are structured logs everywhere;
-  no dashboards, alerts, or histogram percentiles yet.
-- No metric labels/dimensions: `Add` and `Observe` take only a value.
+- No metric labels/dimensions: `Add` and `Observe` take only a value,
+  so you cannot break `uploads` down by user or status. (The `instance`
+  label the exporter adds is tako's, not yours — it exists to keep
+  instances from colliding, not to slice by.)
+- No dashboards or alert policies are created for you; tako writes the
+  metrics, you build the views.
+- Histogram bucket bounds are fixed (doubling, 1 to 262144) and not
+  declarable.
 - `tako logs` fetches once — no `--follow`/streaming, no severity
   filter.
 - No secret versioning surface: services read `latest` at boot, and

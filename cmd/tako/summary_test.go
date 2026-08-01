@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
@@ -34,5 +35,22 @@ func TestSummaryReadsDeclaredCountsNotDefaults(t *testing.T) {
 	}
 	if got := jobRetriesOf(graph, "g-other"); got != 3 {
 		t.Errorf("undeclared retries = %d, want Cloud Run's 3", got)
+	}
+}
+
+// Same trap, one slice later: the project-scope line explained itself
+// with Datastore's reason, and U2 put a second role on the project. A
+// metrics grant described as a Datastore quirk understates what it is.
+func TestProjectGrantsExplainTheirOwnScope(t *testing.T) {
+	metrics := projectGrantReason("roles/monitoring.metricWriter")
+	datastore := projectGrantReason("roles/datastore.user")
+	if metrics == datastore {
+		t.Error("a metrics grant and a datastore grant are project-wide for different reasons; one explanation cannot serve both")
+	}
+	if !strings.Contains(metrics, "every service") {
+		t.Errorf("the metrics reason must say the grant is package-wide, got %q", metrics)
+	}
+	if !strings.Contains(datastore, "Datastore") {
+		t.Errorf("the datastore reason must still name Datastore, got %q", datastore)
 	}
 }

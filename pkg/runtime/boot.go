@@ -18,6 +18,12 @@ import (
 
 var booted *boot.App
 
+// metricsFlush is how often buffered metrics ship. Cloud Monitoring
+// accepts one point per series per 10s, and a minute is the granularity
+// its charts read at anyway — so this trades up-to-a-minute of latency
+// for a request path that never waits on a write.
+const metricsFlush = 60 * time.Second
+
 // Boot wires the service's backends per TAKO_BACKEND (default "local":
 // in-process backends under .tako/data). Generated mains call it first.
 func Boot() {
@@ -95,7 +101,22 @@ func BootGCP() error {
 	hooks.Topic = gcpb.NewTopicStore(c)
 	hooks.Signer = gcpb.NewSigner(c)
 	hooks.Cache = local.NewMemoryCache()
-	hooks.Metrics = local.NewMetricsLog()
+	// Metrics export (U2). The identity comes off the metadata server
+	// rather than the env because Cloud Run publishes the region and the
+	// instance id there and nowhere else; failing to reach it means this
+	// is not Cloud Run, which is a reason to fall back to logging, not to
+	// refuse to boot.
+	if who, err := gcpb.WhoAmI(context.Background()); err != nil {
+		fmt.Fprintf(os.Stderr, "tako: metrics stay log-only — the instance metadata server is unreachable, so Cloud Monitoring has no region to file them under: %v\n", err)
+		hooks.Metrics = local.NewMetricsLog()
+	} else {
+		metrics := gcpb.NewMetricsStore(c, who)
+		metrics.Start(metricsFlush)
+		hooks.Metrics = metrics
+		// The last flush runs after the drain, so it carries the
+		// recordings the final in-flight requests made.
+		hooks.OnShutdown(metrics.Close)
+	}
 	// Leases are objects in the framework bucket — the real §4.4
 	// mechanism, shared with the deploy lease.
 	hooks.Lease = gcpb.NewLeaseStore(c)

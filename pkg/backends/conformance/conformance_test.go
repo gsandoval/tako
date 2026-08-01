@@ -107,6 +107,24 @@ func TestCache(t *testing.T) {
 	}
 }
 
+func TestMetrics(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunMetrics(t, func(t *testing.T) backends.Metrics {
+			return local.NewMetricsLog()
+		})
+	case "gcp":
+		// The export store is the same contract with a batcher behind it;
+		// it runs here too, against a sink whose flush never leaves the
+		// process (no base URL is reachable, and recording must not care).
+		RunMetrics(t, func(t *testing.T) backends.Metrics {
+			return gcpb.NewMetricsStore(&gcpb.Client{}, gcpb.Identity{Service: "conformance"})
+		})
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
+
 func TestTopic(t *testing.T) {
 	switch *backend {
 	case "local":

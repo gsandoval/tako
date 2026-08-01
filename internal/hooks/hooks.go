@@ -94,3 +94,18 @@ var HTMLParts func(h any) (markup []byte, redirect string, fragment bool)
 // RenderMarkdown renders markdown under the site's declared posture
 // (sanitized unless WithTrustedHTML) — site.Markdown calls through.
 var RenderMarkdown func(src string) ([]byte, error)
+
+// shutdown holds the cleanup a backend needs before the process ends —
+// flushing buffered metrics, mostly. Registered at boot, run once by
+// pkg/runtime after the last in-flight request finishes.
+//
+// The ctx carries what is left of Cloud Run's shutdown window, which is
+// short and fixed. A hook that cannot finish inside it must give up, not
+// hold the process past the kill.
+var shutdown []func(context.Context)
+
+// OnShutdown registers cleanup to run before the process exits.
+func OnShutdown(fn func(context.Context)) { shutdown = append(shutdown, fn) }
+
+// ShutdownHooks returns the registered cleanup, in registration order.
+func ShutdownHooks() []func(context.Context) { return shutdown }

@@ -58,6 +58,11 @@ type runService struct {
 			Resources struct {
 				Limits  map[string]string `json:"limits,omitempty"`
 				CPUIdle bool              `json:"cpuIdle,omitempty"`
+				// Like cpuIdle, this reads back only when true — the
+				// omitempty is the API's shape, not laziness, and the
+				// LiveHash below must mirror it exactly or every deploy
+				// reports drift against itself.
+				StartupCPUBoost bool `json:"startupCpuBoost,omitempty"`
 			} `json:"resources"`
 		} `json:"containers"`
 	} `json:"template"`
@@ -147,8 +152,9 @@ func liveHash(svc runService, public bool) string {
 			"cpu":         cpu,
 			"memory":      c.Resources.Limits["memory"],
 			// cpuIdle is the API's inverse of the knob tako names.
-			"cpuAlwaysOn": !c.Resources.CPUIdle,
-			"timeout":     secondsOf(svc.Template.Timeout),
+			"cpuAlwaysOn":  !c.Resources.CPUIdle,
+			"startupBoost": c.Resources.StartupCPUBoost,
+			"timeout":      secondsOf(svc.Template.Timeout),
 		},
 		"public": public,
 	})
@@ -188,6 +194,10 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 					// Cloud Run throttles CPU between requests unless told
 					// otherwise; Latency is the profile that says otherwise.
 					"cpuIdle": scaling["cpuAlwaysOn"] != true,
+					// Extra CPU until the instance is serving. A warm floor
+					// cannot prevent every cold start, so this is the other
+					// half of what Latency promises.
+					"startupCpuBoost": scaling["startupBoost"] == true,
 				},
 			}},
 		},

@@ -113,9 +113,10 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 ## Errors you'll meet
 
 - `a job footprint sets CPU, Memory and Timeout only — executions are
-  tasks, not serving instances, so there is no concurrency, no scaling
-  and no idle CPU to throttle; WithParallel sets the fan-out and
-  WithRetries the attempts (tako/footprint)`
+  tasks, not serving instances, so there is no concurrency, no scaling,
+  no idle CPU to throttle, no cold start to boost and no in-flight
+  requests to drain; WithParallel sets the fan-out and WithRetries the
+  attempts (tako/footprint)`
 - `tako.WithRetries takes a constant 0–10 attempts after the first — a
   task that fails 10 times is not going to pass on the 11th, and jobs
   have no dead letter to catch it (tako/retries)`

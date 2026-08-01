@@ -7978,3 +7978,266 @@ injectable host, so no applier in `provision/gcp` can be tested against
 a fake HTTP server. Adding that seam would make this whole package
 testable offline (the `domains_test.go` round-trip tests already work
 around it by exercising `body()` alone). Worth doing; not mid-gate.
+
+## U2 — DX proposal (metrics export + graceful shutdown) — 2026-08-01
+
+**Status: awaiting approval.** Two halves, one slice, in this order —
+U2a exists because U2b needs it, and the user directed it explicitly
+("this sigterm issue might also result in going into a lame duck mode
+where inflight requests finish being processed and then no more
+requests are accepted and then it shuts down").
+
+The Stage 7 handoff assumed a shutdown path to hook. There is none:
+`pkg/runtime/http.go:108` is `http.ListenAndServe`, and the only exit
+is `os.Exit`. So U2a is not a metrics detail — it changes how every
+tako service dies, and it is worth having on its own merits.
+
+### U2a — the lame duck
+
+**Behavior.** On SIGTERM (cloud) or SIGINT (Ctrl-C locally):
+
+1. **Stop accepting.** The listener closes; new connections are
+   refused, keep-alive connections are told `Connection: close`.
+2. **Finish in flight.** Requests already executing run to completion.
+3. **Flush.** Shutdown hooks run — in U2b, that is the metrics batcher.
+4. **Exit 0.**
+
+This is exactly `http.Server.Shutdown`, which is why the whole change
+is small. What it buys beyond metrics: a revision swap stops cutting
+responses mid-write, and Cloud Run's own "instance is draining" period
+stops being indistinguishable from a crash.
+
+**Budget.** Cloud Run sends SIGTERM and SIGKILLs 10s later
+([container contract](https://docs.cloud.google.com/run/docs/container-contract)).
+tako splits that: **7s drain, 2s flush, 1s margin.** Locally the drain
+is 2s so Ctrl-C stays snappy. A second signal exits immediately —
+the standard escape hatch for a wedged handler.
+
+**Console.** Dev, where the drain is visible and interesting:
+
+```
+^C
+⏻ draining — 2 requests in flight
+⏻ stopped (0.3s)
+```
+
+Cloud, one line to stdout so it lands in the same log stream as
+requests:
+
+```
+tako: SIGTERM — draining (3 in flight)
+tako: stopped (1.4s)
+```
+
+When the drain budget runs out, the line names the consequence rather
+than hiding it:
+
+```
+tako: 1 request did not finish within 7s — cutting it off (SIGKILL follows in ~3s)
+```
+
+In-flight count comes from an atomic in `logRequests`, which already
+wraps every request.
+
+**Three exits, not one.** All of these currently skip cleanup:
+
+- `Serve` — the signal path above. Covers app services, workers,
+  subscribers, singletons: every generated main funnels through it
+  (`pkg/codegen/codegen.go:184,238,399,401`).
+- `RunJobMain` (`pkg/runtime/job.go:66`) — runs hooks after the
+  handler returns, on **both** the success and the `os.Exit(1)` failure
+  path. A job that records metrics and then exits currently loses all
+  of them.
+- The dev stdin leash (`http.go:98`) — `os.Exit(0)` today, which runs
+  no defers. Takes the same graceful path.
+
+**Seam.** `hooks.Shutdown []func(context.Context)` — ordered, internal,
+no new SDK surface. Backends register at boot.
+
+### U2b — Cloud Monitoring export
+
+**`pkg/backends/gcp/metrics.go`,** an in-process batcher behind the
+existing two-method contract. Accumulate in memory; flush every 60s and
+on shutdown to `projects.timeSeries.create`.
+
+- Counters → `custom.googleapis.com/tako/<name>`, **CUMULATIVE INT64**,
+  running total since process start, `startTime` pinned to process
+  start.
+- Histograms → same prefix, **CUMULATIVE DISTRIBUTION**, exponential
+  buckets: `scale 1, growthFactor 2, numFiniteBuckets 18` → finite
+  range 1…131072, plus under/overflow. One const.
+- Never blocks a caller: `Add`/`Observe` take a mutex and return; the
+  flush is a background goroutine.
+
+**Why cumulative matters:** a dropped flush loses nothing. The next one
+carries the true running total, because the total lives in memory, not
+in the wire format. Only the shutdown flush is unrecoverable — which
+is precisely why U2a comes first.
+
+**Bucket sanity check against the demanding metric.** gallery's
+`thumb_ms` (`examples/gallery/app.go:33`) times thumbnail generation on
+small images — expect roughly 5–500ms, landing in buckets 3–9 of 18.
+2× resolution is coarse for tight percentiles and honest for v0; the
+doc says so rather than implying p99 precision tako can't deliver.
+
+**Correction to the handoff — the resource is not enough.** The
+handoff says to use the `cloud_run_revision` monitored resource. Its
+labels are exactly `project_id, service_name, revision_name, location,
+configuration_name` ([verified](https://docs.cloud.google.com/monitoring/api/resources))
+— **no instance identity.** Every instance of a revision would write
+the same cumulative series, and concurrent writers to one series is
+either a rejection or garbage. So each point also carries a metric
+label **`instance`** (metadata server `instance/id`, falling back to
+`hostname-pid` like `leaseOwner()` already does). Series stay
+per-instance; Metrics Explorer sums across them, and the doc says to.
+
+**`location` needs a new env var.** `TAKO_REGION` is not injected today
+(checked `pkg/provision/desired.go:231`). One line in the env block —
+we know the region at deploy time, so deriving it from the metadata
+server at runtime would be strictly worse.
+
+**Failure handling** — fire-and-forget all the way down, since the
+contract has no error return to surface anything through:
+
+- 4xx → log the API text once, drop the batch. Retrying a malformed
+  batch forever is worse than losing it.
+- 5xx → one retry after 2s, then drop.
+- 200 series max per call; batch and page.
+
+**Wiring:** `boot.go:98`'s `hooks.Metrics = local.NewMetricsLog()`
+becomes the gcp store. Local is unchanged — dev keeps its 📈 lines.
+
+### Grants, preflight, tests
+
+**Grant: `roles/monitoring.metricWriter` on the project, to every
+service SA, whenever the app declares any metric.** The handoff asked
+whether edges exist. They don't — `pkg/analyzer/analyzer.go:175` builds
+counters and histograms as carriers, and only `Secret` gets a
+`resourceVars` entry among the F8 primitives, so no usage edge is
+derived and per-service derivation is impossible without new analyzer
+work. This mirrors the secret precedent exactly (package-wide because
+boot is package-wide), and the security summary will say so in those
+words rather than implying tako narrowed it.
+
+**Preflight:** `monitoring.googleapis.com` when any metric is declared.
+
+**Conformance:** a new metrics chapter — the suite has none. Local
+asserts in-process totals. For gcp, the flush is unit-tested against a
+fake HTTP server by giving the store a `baseURL` field defaulting to
+the real host. That sidesteps `gcp.Client`'s missing HTTP seam (the
+same gap logged as discovered work for `provision/gcp`) without
+widening the client in a slice that isn't about that.
+
+**No new SDK symbols** — `Counter` and `Histogram` already exist, the
+shutdown seam is internal. `sdk_lock.golden` does not move.
+
+### Docs
+
+- `reference/observability.md` — the "No Cloud Monitoring export"
+  not-yet bullet goes; "no metric labels/dimensions" **stays** (still
+  true for users). Gains: metric naming, the ≤60s flush latency, the
+  Metrics Explorer path, the `instance` label and how to aggregate
+  across it, and the cost line (ingestion-priced, scaling with metrics
+  × instances — trivial at 2 metrics and a handful of instances).
+- A lifecycle section for the drain: what SIGTERM does, the 7s/2s
+  split, and that a handler outliving the budget is cut off.
+- `reference/footprint.md` — `Timeout` caps one request; the drain
+  budget is separate and shorter. Worth one sentence, because a 300s
+  timeout next to a 10s SIGKILL invites the wrong assumption.
+
+### Gate
+
+`validate/metrics.md`: deploy gallery to tako-test-02, upload a photo,
+wait ≤2 flushes, read back `custom.googleapis.com/tako/uploads > 0` and
+a `thumb_ms` distribution; kill a revision mid-flight and prove the
+drain (in-flight request completes, final flush lands); destroy clean.
+
+### Open, and deliberately not decided here
+
+- **Raising Cloud Run's 10s grace period.** It appears configurable,
+  but it is a footprint knob and this slice does not add one. Logged as
+  discovered work; the 7s/2s split assumes the default.
+- **Stage 8 (V0–V4) has no gate verdict row.** Built under a "do this
+  first" instruction, agent-side validated, ungated. Needs a call:
+  its own gate, or ride along with U2's.
+
+### Approved with amendments — 2026-08-01
+
+User: *"approved, fold Stage 8 into U2's gate / do make the grace
+period a footprint knob if possible, make other relevant settings knobs
+as well / can't the region be read from the cloud run metadata for
+location?"*
+
+**1. Stage 8 folds into U2's gate.** `validate/metrics.md` grows a
+Stage 8 section covering V0–V4; one verdict row covers both.
+
+**2. The grace period is not tako's to give — corrected.** I proposed
+logging it as a knob "if configurable". It is not. Checked both
+discovery documents live:
+
+```
+$ curl -s "https://run.googleapis.com/$discovery/rest?version=v1" | … RevisionSpec
+containers, timeoutSeconds, imagePullSecrets, serviceAccountName,
+volumes, containerConcurrency, enableServiceLinks, runtimeClassName, nodeSelector
+
+$ … version=v2 | … GoogleCloudRunV2RevisionTemplate
+… timeout … (no grace/termination field)
+```
+
+No `terminationGracePeriodSeconds` in v1's `RevisionSpec` or v2's
+`RevisionTemplate`, and no `gcloud run deploy` flag. **Cloud Run's 10s
+SIGTERM→SIGKILL window is fixed.** (The "configurable up to 60 seconds"
+claim I surfaced earlier came from a blog post, not the docs. It is
+wrong for services.)
+
+So the knob is not *how long* the grace period is — nobody can change
+that — but **how tako spends it**:
+
+- **`Footprint.Drain time.Duration`** — how much of the window goes to
+  finishing in-flight requests; the remainder goes to flushing.
+  Default 7s. **Refused above 9s** with a positioned analyzer error,
+  because a value above the fixed ceiling is a promise tako cannot
+  keep — the same discipline `Delivery.MaxAttempts` already follows
+  ("tako will not quietly clamp yours"):
+  `drain 30s exceeds Cloud Run's fixed 10s shutdown window — SIGKILL
+  lands first, so anything above 9s is a promise tako cannot keep
+  (tako/drain-range)`
+- Profiles set it: `default`/`latency` 7s, `batch` 7s, `singleton` 7s.
+  One number for now — no profile has a reason to differ yet, and a
+  table column that never varies is a lie waiting to happen.
+
+**3. Other settings promoted to knobs.** Cloud Run v2's
+`ResourceRequirements` has exactly three fields, and tako set two of
+them:
+
+```
+limits, cpuIdle, startupCpuBoost
+```
+
+- **`Footprint.StartupBoost Toggle`** ships. This is the same class of
+  bug V0 fixed: `Latency`'s promise is tail latency, cold start is the
+  dominant term, and tako was leaving the one knob that addresses it
+  unset. Profiles: `latency` On, everything else Off.
+- **Declined, no example demands them** (CLAUDE.md's rule):
+  `executionEnvironment` (gen1/gen2), `sessionAffinity`, `h2c`,
+  `healthCheckDisabled`, and the metrics flush interval. Listed here
+  so the next reader knows they were considered, not missed.
+
+**4. Region from the metadata server — user is right, adopted.**
+`TAKO_REGION` is dropped from the proposal. `/computeMetadata/v1/instance/region`
+returns `projects/<num>/regions/<region>`; the last path segment is the
+`location` label. Three reasons this beats injecting it:
+
+- The metadata server is **already required** for the `instance` label
+  (Cloud Run injects no instance id env var, and its hostname is not
+  one), so region costs nothing extra — same client, same boot.
+- It cannot go stale or disagree with reality.
+- Adding an env var to the service spec changes every service's spec
+  hash, so it would have forced a revision swap on every app to carry
+  a value the instance can already read.
+
+The store takes `location` and `instance` as construction params so
+tests inject them; `BootGCP` does the metadata lookup. If the metadata
+server is unreachable, export is skipped with one logged line — that
+means we are not on Cloud Run, which is not an error worth crashing a
+service over.

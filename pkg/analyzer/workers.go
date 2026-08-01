@@ -358,10 +358,10 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		}
 		if isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.DrainSeconds != 0 || footprint.StartupBoost != ToggleInherit) {
 				fail(&Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling and no idle CPU to throttle; WithParallel sets the fan-out and WithRetries the attempts",
+					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost and no in-flight requests to drain; WithParallel sets the fan-out and WithRetries the attempts",
 					Rule: "footprint",
 				})
 			}
@@ -427,7 +427,7 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 			if footprint != nil && footprint.MaxInstances != 0 {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and Timeout are yours",
+					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory, Timeout and Drain are yours",
 					Rule: "singleton-max",
 				})
 				bad = true
@@ -435,7 +435,7 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU, Memory and Timeout only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
+					Msg:  "a singleton footprint sets CPU, Memory, Timeout and Drain only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
 					Rule: "footprint",
 				})
 				bad = true

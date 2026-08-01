@@ -26,15 +26,45 @@ func TestLatencyAllocatesCPUBetweenRequests(t *testing.T) {
 	}
 }
 
+// The other half of the same promise: a warm floor cannot prevent every
+// cold start, so Latency boosts the ones it gets. Leaving this unset was
+// the same shape of bug as cpuIdle — a profile named for tail latency
+// declining the knob that moves it.
+func TestLatencyBoostsColdStart(t *testing.T) {
+	if analyzer.ProfileKnobs["latency"].StartupBoost != analyzer.ToggleOn {
+		t.Error("latency must boost startup CPU — a warm floor does not cover a scale-out")
+	}
+	for _, p := range []string{"default", "batch", "singleton"} {
+		if analyzer.ProfileKnobs[p].StartupBoost != analyzer.ToggleOff {
+			t.Errorf("%s should not pay for a startup boost it did not ask for", p)
+		}
+	}
+}
+
+// Every profile divides Cloud Run's fixed shutdown window, and none may
+// claim more of it than exists.
+func TestProfilesDrainInsideTheWindow(t *testing.T) {
+	for name, k := range analyzer.ProfileKnobs {
+		if k.DrainSeconds <= 0 {
+			t.Errorf("%s has no drain budget — in-flight requests would be cut off at SIGTERM", name)
+		}
+		if k.DrainSeconds > analyzer.MaxDrainSeconds {
+			t.Errorf("%s drains %ds of a %ds window — the kill lands first",
+				name, k.DrainSeconds, analyzer.ShutdownWindowSeconds)
+		}
+	}
+}
+
 func TestRunServiceEmitsCPUIdle(t *testing.T) {
 	r := &RunServices{C: &Client{Project: "p", Region: "us-central1"}}
 	for _, tc := range []struct {
 		name        string
 		alwaysOn    bool
+		boost       bool
 		wantCPUIdle bool
 	}{
-		{"latency", true, false},
-		{"default", false, true},
+		{"latency", true, true, false},
+		{"default", false, false, true},
 	} {
 		obj := provision.Object{
 			Kind: provision.KindRunService,
@@ -46,7 +76,8 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 				"public":         true,
 				"scaling": map[string]any{
 					"min": 1, "max": 10, "concurrency": 40,
-					"cpu": "2", "memory": "1Gi", "cpuAlwaysOn": tc.alwaysOn, "timeout": 300,
+					"cpu": "2", "memory": "1Gi", "cpuAlwaysOn": tc.alwaysOn,
+					"startupBoost": tc.boost, "timeout": 300,
 				},
 			},
 		}
@@ -61,6 +92,9 @@ func TestRunServiceEmitsCPUIdle(t *testing.T) {
 		got := live.Template.Containers[0].Resources.CPUIdle
 		if got != tc.wantCPUIdle {
 			t.Errorf("%s: cpuIdle = %v, want %v", tc.name, got, tc.wantCPUIdle)
+		}
+		if b := live.Template.Containers[0].Resources.StartupCPUBoost; b != tc.boost {
+			t.Errorf("%s: startupCpuBoost = %v, want %v", tc.name, b, tc.boost)
 		}
 		// The drift trap: liveHash re-derives the spec from the response,
 		// so a field emitted but not read back reports drift forever.

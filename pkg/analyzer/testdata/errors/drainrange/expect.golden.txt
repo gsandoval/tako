@@ -1,0 +1,2 @@
+app.go:14:43: footprint Drain must be between 1s and 9s; got 30s — Cloud Run kills the instance 10s after SIGTERM and that window is not configurable, so a longer drain is a promise tako cannot keep (tako/footprint)
+app.go:23:43: footprint Drain must be at least one second; got 200ms (tako/footprint)

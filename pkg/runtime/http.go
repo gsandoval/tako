@@ -4,12 +4,15 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
 	tako "github.com/gsandoval/tako"
@@ -90,22 +93,60 @@ func newRequestID() string {
 
 // Serve runs the service on PORT (default 8080) with request logging.
 // Generated mains call it last.
+//
+// It shuts down as a lame duck: on SIGTERM (Cloud Run replacing the
+// revision) or SIGINT (Ctrl-C) the listener closes so no new request is
+// accepted, the requests already executing run to completion, and only
+// then do the shutdown hooks flush. Without this the process died where
+// it stood — responses cut mid-write, buffered metrics lost — and Cloud
+// Run's routine drain was indistinguishable from a crash.
+//
+// A second signal exits immediately, for the handler that will not let
+// go.
 func Serve(h http.Handler) {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
 	}
+	var live inflight
+	srv := &http.Server{Addr: ":" + port, Handler: track(&live, logRequests(h))}
+
+	stopping := make(chan os.Signal, 2)
+	signal.Notify(stopping, syscall.SIGINT, syscall.SIGTERM)
 	if os.Getenv("TAKO_DEV_GUARD") == "1" {
 		// tako dev holds this process's stdin: EOF means the dev loop
 		// died — however it died — and an orphaned service holding the
-		// port and the entity-store lock helps nobody. Exit with it.
+		// port and the entity-store lock helps nobody. Stop with it,
+		// through the same drain as a signal: a reload that drops the
+		// requests it was serving is the bug this path used to have.
 		go func() {
 			_, _ = io.Copy(io.Discard, os.Stdin)
 			fmt.Fprintln(os.Stderr, "tako: dev parent exited — shutting down")
-			os.Exit(0)
+			stopping <- syscall.SIGTERM
 		}()
 	}
-	err := http.ListenAndServe(":"+port, logRequests(h))
+
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-stopping
+		go func() {
+			<-stopping
+			fmt.Fprintln(os.Stderr, "tako: second signal — exiting now")
+			os.Exit(130)
+		}()
+		drain(srv, &live)
+	}()
+
+	err := srv.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		<-drained // in-flight requests are done; now the hooks may flush
+		budget := flushBudget(drainBudget())
+		start := time.Now()
+		runShutdownHooks(budget)
+		say("⏻ stopped (%s)", "stopped (%s)", time.Since(start).Round(10*time.Millisecond))
+		return
+	}
 	if err != nil && strings.Contains(err.Error(), "address already in use") {
 		// A collision here answers requests with SOMEONE ELSE'S responses
 		// — mysterious 404s. Name the fix.

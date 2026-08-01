@@ -47,6 +47,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// even when nothing is desired on it.
 	hasEntity := false
 	hasAuth := false
+	hasMetrics := false
 	events := map[string]bool{} // buckets with Uploaded subscribers
 	for _, h := range g.Handlers {
 		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
@@ -69,6 +70,8 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			hasEntity = true
 		case "auth":
 			hasAuth = true
+		case "counter", "histogram":
+			hasMetrics = true
 		case "secret":
 			// Package-wide resolution (approved C4 call (a)): boot
 			// resolves every declared secret in every service, so every
@@ -80,8 +83,19 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			}
 		}
 	}
-	if hasEntity || hasAuth {
+	if hasEntity || hasAuth || hasMetrics {
 		ensure(target{TargetProject, cfg.Project})
+	}
+	// Metrics are carriers with no usage edges — the analyzer records a
+	// counter or histogram as a declaration and derives nothing about who
+	// touches it — so there is no per-service set to narrow this to.
+	// Package-wide, like secrets, and the security summary says so rather
+	// than implying tako scoped it.
+	if hasMetrics {
+		for _, svc := range g.Services {
+			add(target{TargetProject, cfg.Project}, "roles/monitoring.metricWriter",
+				"serviceAccount:"+cfg.SAEmail(svc.Name))
+		}
 	}
 	// Sessions are entity records (W5): every service that serves
 	// routes reads/writes them, so Auth alone grants datastore.user to

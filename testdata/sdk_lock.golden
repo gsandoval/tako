@@ -126,7 +126,7 @@ type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type EventSource[T any] interface{eventSource(T); sourceName() string}
-type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; Timeout time.Duration; CPUAlwaysOn Toggle}
+type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; Timeout time.Duration; CPUAlwaysOn Toggle; Drain time.Duration; StartupBoost Toggle}
 type HTML struct{}
 type Handler struct{}
 type HistogramHandle struct{}

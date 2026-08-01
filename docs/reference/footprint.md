@@ -11,12 +11,14 @@ and specific. Prefer the profile; pin only what the profile can't know.
 selects its service's scaling profile (one service, one profile). The
 knobs (`ProfileKnobs`, spec §4.6):
 
-| profile           | CPU | Memory | Concurrency | Min | Max | Timeout | CPU between requests |
-|-------------------|-----|--------|-------------|-----|-----|---------|----------------------|
-| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | 300s    | throttled            |
-| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | 300s    | **always allocated** |
-| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            |
-| *(singleton)*     | 1   | 512Mi  | 1           | 1   | 1   | 3600s   | **always allocated** |
+| profile           | CPU | Memory | Concurrency | Min | Max | Timeout | CPU between requests | Startup boost |
+|-------------------|-----|--------|-------------|-----|-----|---------|----------------------|---------------|
+| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | 300s    | throttled            | no            |
+| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | 300s    | **always allocated** | **yes**       |
+| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            | no            |
+| *(singleton)*     | 1   | 512Mi  | 1           | 1   | 1   | 3600s   | **always allocated** | no            |
+
+Every profile drains for 7s (see [Drain](#drain)).
 
 Default scales to zero; Latency keeps an instance warm — min=1 bills
 continuously; Batch favors throughput per instance for background work.
@@ -29,9 +31,10 @@ option accepted and ignored.
 **Latency's concurrency is deliberately LOWER than Default's**, which
 reads backwards until you see what it buys: fewer requests packed onto
 one instance means less queueing behind a busy one, which is the whole
-point of the profile. Warmth (min 1) and CPU always allocated are the
-other two halves — an instance that is up but throttled still stalls on
-the first request.
+point of the profile. Warmth (min 1), CPU always allocated, and a
+startup boost are the other three quarters — an instance that is up but
+throttled still stalls on the first request, and a warm floor of 1 does
+nothing for the second instance a traffic spike starts.
 
 `WithProfile` and `WithFootprint` are declared on
 [`tako.Service`](service.md) for a package's app service, and on the
@@ -51,6 +54,8 @@ type Footprint struct {
 	MaxInstances int    // scale-out cap (1–1000)
 	Timeout      time.Duration // one unit of work: a request, or a job task
 	CPUAlwaysOn  Toggle // Inherit | On | Off — CPU between requests
+	Drain        time.Duration // finishing in-flight requests at shutdown
+	StartupBoost Toggle // Inherit | On | Off — extra CPU until serving
 }
 ```
 
@@ -64,11 +69,44 @@ whose zero value means "inherit" cannot otherwise express "explicitly
 off". `tako.On` forces allocation on a Default-profile service;
 `tako.Off` forces it off on Latency.
 
+`StartupBoost` gives a starting instance extra CPU until it is serving.
+It is the one knob that moves cold-start latency, which is why Latency
+takes it and the others don't — you pay for it only during startup.
+
+### Drain
+
+`Drain` is how long a shutting-down instance may spend finishing the
+requests already in flight. **It divides a window it does not set.**
+Cloud Run sends `SIGTERM` and kills the instance 10 seconds later, and
+that 10 seconds is fixed — no API field, no `gcloud` flag. `Drain`
+buys the requests; what is left pays for flushing metrics and closing
+cleanly.
+
+So `Timeout` and `Drain` are not the same clock and the gap between
+them is the point: a service may hold a request for 300s, but at
+shutdown it gets 7. A request still running when the drain expires is
+cut off. If that matters for your workload, the answer is a
+[job](job.md), not a bigger number here.
+
+Values above 9s are **refused, not clamped** — above the ceiling the
+kill lands first, so a longer drain would be a promise tako cannot
+keep:
+
+```
+app.go:14:43: footprint Drain must be between 1s and 9s; got 30s — Cloud Run kills the instance 10s after SIGTERM and that window is not configurable, so a longer drain is a promise tako cannot keep (tako/footprint)
+```
+
+The whole shutdown sequence is in
+[observability.md](observability.md#shutdown).
+
 Zero fields inherit from the profile; set fields override it. The
 min=0 nuance: a zero field means *inherit*, so an explicit
 always-scale-to-zero floor is expressed by choosing a min=0 base
 profile (Default or Batch), not by `MinInstances: 0`. On job handlers
-and singletons only CPU and Memory apply.
+only CPU, Memory and Timeout apply — an execution has no concurrency,
+no scaling, no idle CPU, no cold start to boost and no in-flight
+requests to drain. Singletons take `Drain` too (they serve), but not
+the shape that defines the primitive.
 
 ## Use
 
@@ -142,8 +180,9 @@ The claims live in golden tests —
   profiles (tako/mixed-profile)`
 - Scoping: `a job footprint sets CPU, Memory and Timeout only —
   executions are tasks, not serving instances, so there is no
-  concurrency, no scaling and no idle CPU to throttle; WithParallel sets
-  the fan-out and WithRetries the attempts (tako/footprint)`, and for a
+  concurrency, no scaling, no idle CPU to throttle, no cold start to
+  boost and no in-flight requests to drain; WithParallel sets the
+  fan-out and WithRetries the attempts (tako/footprint)`, and for a
   singleton `a singleton footprint cannot set MaxInstances — the lease
   is what makes a singleton exactly-one … (tako/singleton-max)`
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud

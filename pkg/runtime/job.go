@@ -84,7 +84,13 @@ func RunJobMain(name string, h tako.Handler) {
 	}
 	start := time.Now()
 	ctx := &requestCtx{Context: context.Background(), log: slog.Default().With("job", name), taskIndex: taskIndex, taskCount: taskCount}
-	if err := fn(ctx, raw); err != nil {
+	err := fn(ctx, raw)
+	// A job's every exit is a process exit, and os.Exit runs no defers —
+	// so the flush goes HERE, on both paths. A failing task's metrics are
+	// the ones most worth having, and until this line they were the ones
+	// most reliably lost.
+	runShutdownHooks(jobFlush)
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "tako: job %s failed after %s: %v\n", name, time.Since(start).Round(time.Millisecond), err)
 		os.Exit(1)
 	}

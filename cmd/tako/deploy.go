@@ -379,6 +379,17 @@ func runDeploy(args []string) error {
 	return nil
 }
 
+// projectGrantReason says WHY a grant had to land on the whole project
+// instead of one resource. There is more than one reason, and reciting
+// the Datastore one for a metrics grant would describe a narrower scope
+// than the deploy actually asks for.
+func projectGrantReason(role string) string {
+	if strings.HasPrefix(role, "roles/monitoring") {
+		return "counters and histograms derive no usage edges, so every service writes metrics — package-wide, like secrets"
+	}
+	return "GCP has no per-kind Datastore IAM"
+}
+
 // printSecuritySummary derives every grant from the desired objects —
 // the user sees each grant and why, every deploy.
 func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desired []provision.Object) {
@@ -394,7 +405,7 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			member := fmt.Sprint(b["member"])
 			line := fmt.Sprintf("%s on %s", b["role"], o.Name)
 			if fmt.Sprint(target["type"]) == provision.TargetProject {
-				line = fmt.Sprintf("%s on the project (GCP has no per-kind Datastore IAM)", b["role"])
+				line = fmt.Sprintf("%s on the project (%s)", b["role"], projectGrantReason(fmt.Sprint(b["role"])))
 			}
 			if fmt.Sprint(target["type"]) == provision.TargetBucket && fmt.Sprint(target["id"]) == cfg.Project+"-tako" {
 				line = fmt.Sprintf("%s on the framework bucket (leases — Lock/singleflight)", b["role"])
@@ -528,6 +539,8 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 			}
 		case "secret":
 			n.Secrets = append(n.Secrets, gcpb.SecretName(env, r.Name))
+		case "counter", "histogram":
+			n.Metrics = true
 		}
 	}
 	// Async handlers mean dead-letter topics and subscriptions even

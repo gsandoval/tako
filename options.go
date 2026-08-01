@@ -113,6 +113,21 @@ type Footprint struct {
 	// throttling it. Inherit (the zero value) takes the profile's
 	// choice — only Latency allocates.
 	CPUAlwaysOn Toggle
+	// Drain is how long a shutting-down instance may spend finishing the
+	// requests already in flight before it stops for good. Zero inherits
+	// the profile's.
+	//
+	// It divides a window it does not control: Cloud Run sends SIGTERM
+	// and kills the instance 10 seconds later, and that 10 seconds is
+	// fixed — no API field, no flag. Drain buys the requests; what is
+	// left over pays for flushing metrics and closing cleanly. Values
+	// above 9s are refused rather than clamped, because the kill lands
+	// first and a longer promise would simply be false.
+	Drain time.Duration
+	// StartupBoost gives a starting instance extra CPU above CPU until
+	// it is serving, which is the one knob that moves cold-start
+	// latency. Inherit takes the profile's choice — only Latency boosts.
+	StartupBoost Toggle
 }
 
 // Toggle is a three-state override for a boolean knob, because a plain
