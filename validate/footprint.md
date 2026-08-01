@@ -42,43 +42,103 @@ cd examples/gallery && go run ../../cmd/tako gen graph
 
 ## 3. The analyzer refuses what Cloud Run would refuse (errors are product)
 
-Break it on purpose, read the texts, put it back:
+These are ANALYSIS-time errors, so nothing is deployed and nothing is
+billed. Two ways to see them, and you want both:
 
-- `CPU: 3` → `footprint CPU must be 1, 2, 4, or 8 vCPUs; got 3`
-- `Memory: "1GB"` → the Mi/Gi form and the 128Mi–32Gi range, named
-- `CPU: 8` alone → the RESOLVED judgment:
-  `resolves to 8 vCPUs with 2Gi memory — 8 vCPUs need at least 4Gi; pin Memory too`
-  (the base comes from the batch profile — the analyzer checked the
-  COMBINATION, not the literal)
-- a second, different footprint on another handler in the same
-  package → `tako/mixed-footprint` names both claimants
-- `Concurrency: 10` on a JobHandler or `MinInstances: 2` on a
-  Singleton → the honest scoping texts (tasks aren't serving
-  instances; min=1/max=1 is the exactly-one machinery)
+**The fast way — they are all golden-tested**, texts asserted verbatim,
+no editing:
 
-And `WithTraffic`'s own (V6):
+```
+go test ./pkg/analyzer -run 'TestErrors/footprint|TestErrors/serviceoption|TestErrors/trafficopt|TestErrors/mixedfootprint'
+```
 
-- `tako.Traffic{Timeout: 500 * time.Millisecond}` →
-  `traffic Timeout must be at least one second; got 500ms` — the
-  nanosecond trap, the same one `Footprint` used to guard
-- `tako.Traffic{SessionAffinity: 3}` →
-  `traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off`
-- `tako.WithTraffic(tako.Traffic{})` →
-  `traffic sets nothing — drop tako.WithTraffic or pin at least one field`
-- `WithTraffic` on an `API` or `Page` →
-  `tako.WithTraffic describes the whole service, not one route — declare it on tako.Service instead (tako/service-option)`
-- `tako.Traffic{SessionAffinity: tako.On}` on a **JobHandler** →
-  `a job's only traffic setting is Timeout — an execution serves nobody,
-  so there are no clients to keep affinity with and no connections to
-  negotiate HTTP/2 over`
-- the same on a **Singleton** → its twin, naming the one instance
+**The real way — break gallery and read what a user reads.** Every case
+below is a one-line edit to `examples/gallery/app.go`, surfaced by:
 
-**And the migration signal itself:** `tako.Footprint{Timeout: …}` no
-longer compiles. `unknown field Timeout in struct literal of type
-tako.Footprint` is the whole upgrade instruction — the field moved, and
-the compiler says where to look.
+```
+go run ../../cmd/tako gen graph
+```
 
-All golden-tested: `go test ./pkg/analyzer -run 'TestErrors/footprint|TestErrors/serviceoption|TestErrors/trafficopt'`.
+which analyzes and prints. `git checkout examples/gallery/app.go`
+between cases.
+
+### 3a. A field Cloud Run does not offer
+
+Line 80, change the footprint to `tako.Footprint{Memory: "4Gi", CPU: 3, Concurrency: 4, MaxInstances: 5}`:
+
+```
+app.go:80:22: footprint CPU must be 1, 2, 4, or 8 vCPUs; got 3 (tako/footprint)
+```
+
+Or `tako.Footprint{Memory: "1GB"}`:
+
+```
+app.go:80:22: footprint Memory must be like "512Mi" or "4Gi", between 128Mi and 32Gi; got "1GB" (tako/footprint)
+```
+
+### 3b. The RESOLVED combination, not the literal
+
+Replace the whole footprint with `tako.Footprint{CPU: 8}`:
+
+```
+app.go:78:2: service gallery-makethumb resolves to 8 vCPUs with 2Gi memory — 8 vCPUs need at least 4Gi; pin Memory too (tako/footprint)
+```
+
+**This is the one to dwell on.** Nothing in the declaration says 2Gi —
+that came from the batch profile. The analyzer checked the profile and
+the override TOGETHER, which is what stops a footprint pinning one
+field from silently pairing it with an inherited value Cloud Run will
+not accept. Note it points at line 78, the handler, not at the field.
+
+### 3c. Traffic's own refusals (V6)
+
+Add an option to `NotifyOwner` on line 81:
+
+```go
+NotifyOwner = tako.Subscribe(ready, notifyOwner, tako.WithTraffic(tako.Traffic{}))
+```
+
+```
+app.go:81:68: traffic sets nothing — drop tako.WithTraffic or pin at least one field (tako/traffic)
+```
+
+Then `tako.Traffic{Timeout: 500 * time.Millisecond}` (add `"time"` to
+the imports) →
+`traffic Timeout must be at least one second; got 500ms`, the
+nanosecond trap `Footprint` used to guard.
+
+The scoping twins are easier to read in the fixture than to build here
+(`pkg/analyzer/testdata/errors/trafficopt/`) — a job's and a
+singleton's only traffic setting is `Timeout`, because an execution
+serves nobody and a singleton is one instance answering its own health
+check.
+
+### 3d. Two claims, one service
+
+Put a second cron in gallery with a different footprint from
+`Cleanup`'s. **Crons are how this collision is still possible at all:**
+they run in their package's app service, whereas each worker,
+subscriber, job and singleton owns its own service and `tako.Service`
+is one per package.
+
+```
+service <pkg> cannot carry both footprint (cpu 2) from Sweep and footprint (cpu 4, memory 2Gi) from Purge — one service scales one way; split the packages or align the footprints (tako/mixed-footprint)
+```
+
+### 3e. The migration signal
+
+`tako.Footprint{Timeout: 30 * time.Second}` no longer compiles:
+
+```
+unknown field Timeout in struct literal of type tako.Footprint
+```
+
+That compiler error IS the upgrade instruction — the field moved to
+`Traffic`, and nothing can quietly keep setting it in the old place.
+
+**Judge:** every text names the field, the value it got, the range or
+rule it broke, and where to look. None of them says "invalid
+configuration".
 
 ## 4. Cloud: pinned values land, inherited values come from the profile
 

@@ -9004,3 +9004,43 @@ assert old in s, "block not found — do not guess, look again"
 ```
 
 Removed for real, with that assertion.
+
+## Two gate-script defects of the same shape — 2026-08-01
+
+User: *"I don't know how to generate the output referred to in 'The
+analyzer refuses what Cloud Run would refuse'."*
+
+§3 of `validate/footprint.md` listed error texts under "Break it on
+purpose, read the texts, put it back" and **never named the command**.
+The reader is told what they should see and left to guess how. Same
+shape as §4 of `validate/metrics.md` ("upload two or three photos"),
+and the same fix: exact edits, the exact command
+(`go run ../../cmd/tako gen graph`), and real captured output.
+
+Every transcript in the rewritten §3 was produced by editing
+`examples/gallery/app.go`, running the command, and reverting — not
+written from memory.
+
+### And a fixture that had stopped testing its own name
+
+Verifying §3's "a second, different footprint on another handler" claim
+turned up that `testdata/errors/mixedfootprint/` used two `tako.API`
+handlers — which since V1 are refused by `tako/service-option` before
+`mixed-footprint` can fire. The fixture passed, its golden was green,
+and it asserted **the wrong rule under the right name.**
+
+That raised the real question: is `tako/mixed-footprint` reachable at
+all now? Workers, subscribers, jobs and singletons each own their
+service; `tako.Service` is one per package. Two claims on one service
+looked impossible — the dead-rule pattern that has already cost three
+deletions this stage.
+
+It is reachable, through **crons**: they run in their package's app
+service and accept `WithFootprint`, so two of them collide. Fixture
+rewritten to use crons, and it now produces the rule it is named for.
+§3d says why crons are the only route, so the next reader does not
+re-derive it.
+
+Worth noting the near-miss: had the fixture used any other handler kind,
+the honest outcome would have been deleting the rule. A green test on
+the wrong assertion is how a dead rule survives.
