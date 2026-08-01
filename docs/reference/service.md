@@ -87,7 +87,7 @@ graph, _ := analyzer.Analyze(analyzer.Config{Dir: "."})
 ```
 a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two (tako/one-service)
 tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)
-tako.WithTTL is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint) (tako/invalid-option)
+tako.WithTTL is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic) (tako/invalid-option)
 ```
 
 The `tako/service-option` text is the migration note for code written

@@ -12,8 +12,8 @@ var (
 	fan  = tako.Topic[string]("fan", tako.WithDelivery(tako.Delivery{RateLimit: 3}))
 	back = tako.Queue[string]("back", tako.WithDelivery(tako.Delivery{
 		MinBackoff: 5 * time.Minute, MaxBackoff: time.Minute}))
-	tp   = tako.Topic[string]("events", tako.WithDelay(time.Second))
-	ups  = tako.Counter("ups", tako.WithTTL(time.Minute))
+	tp  = tako.Topic[string]("events", tako.WithDelay(time.Second))
+	ups = tako.Counter("ups", tako.WithTTL(time.Minute))
 )
 
 var _ = q

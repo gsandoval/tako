@@ -2,5 +2,5 @@ app.go:10:36: tako.WithTTL is not a tako.Queue option (tako.Queue accepts WithDe
 app.go:11:54: delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2 (tako/delivery)
 app.go:12:53: delivery RateLimit is a queue setting — a topic fans out to subscribers with independent fates, so there is no single consumer to pace; cap the queue each subscriber feeds instead (tako/delivery)
 app.go:13:54: delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink (tako/delivery)
-app.go:15:38: tako.WithDelay is not a tako.Topic option (tako.Topic accepts WithDelivery) (tako/invalid-option)
-app.go:16:29: tako.WithTTL is not a tako.Counter option (tako.Counter accepts no options) (tako/invalid-option)
+app.go:15:37: tako.WithDelay is not a tako.Topic option (tako.Topic accepts WithDelivery) (tako/invalid-option)
+app.go:16:28: tako.WithTTL is not a tako.Counter option (tako.Counter accepts no options) (tako/invalid-option)

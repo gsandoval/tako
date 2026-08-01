@@ -106,45 +106,14 @@ type Footprint struct {
 	MinInstances int
 	// MaxInstances caps the scale-out (1–1000).
 	MaxInstances int
-	// Timeout caps how long ONE unit of work may run: a request for a
-	// service, a task for a job. Zero inherits the profile's.
-	Timeout time.Duration
 	// CPUAlwaysOn keeps CPU allocated between requests instead of
 	// throttling it. Inherit (the zero value) takes the profile's
 	// choice — only Latency allocates.
 	CPUAlwaysOn Toggle
-	// Drain is how long a shutting-down instance may spend finishing the
-	// requests already in flight before it stops for good. Zero inherits
-	// the profile's.
-	//
-	// It divides a window it does not control: Cloud Run sends SIGTERM
-	// and kills the instance 10 seconds later, and that 10 seconds is
-	// fixed — no API field, no flag. Drain buys the requests; what is
-	// left over pays for flushing metrics and closing cleanly. Values
-	// above 9s are refused rather than clamped, because the kill lands
-	// first and a longer promise would simply be false.
-	Drain time.Duration
 	// StartupBoost gives a starting instance extra CPU above CPU until
 	// it is serving, which is the one knob that moves cold-start
 	// latency. Inherit takes the profile's choice — only Latency boosts.
 	StartupBoost Toggle
-	// SessionAffinity asks Cloud Run to send a returning client back to
-	// the instance it reached last. No profile turns it on: it trades
-	// away even load spreading, and an instance can vanish at any time,
-	// so it is a best-effort optimization for warm per-client state —
-	// never somewhere to keep state you cannot lose.
-	SessionAffinity Toggle
-	// HTTP2 keeps HTTP/2 all the way to the instance instead of letting
-	// Cloud Run downgrade it to HTTP/1.1 at the edge. Browsers already
-	// reach Cloud Run over HTTP/2 either way — this is about the last
-	// hop, and it is what buys request multiplexing and streaming
-	// between the frontend and your handler.
-	//
-	// A tako server always answers HTTP/2, so turning this on cannot
-	// arrive at a container that refuses it. Off by default because
-	// Cloud Run's own default is to downgrade, and for ordinary
-	// request/response JSON the last hop gains little.
-	HTTP2 Toggle
 }
 
 // Toggle is a three-state override for a boolean knob, because a plain
@@ -164,10 +133,49 @@ const (
 // WithFootprint overrides the scaling profile field-by-field with
 // explicit compute values. Prefer a profile (named intent, framework
 // values); reach for a footprint when a workload's needs are known and
-// specific. On job handlers and singletons only CPU, Memory and Timeout
-// apply — the instance shape is what makes those primitives what they
-// are.
+// specific. On job handlers and singletons only CPU and Memory apply —
+// the instance shape is what makes those primitives what they are.
 func WithFootprint(f Footprint) Option { return option("footprint", f) }
+
+// Traffic pins how requests REACH a service and how long they may stay,
+// as opposed to how much machine runs them (Footprint). Zero fields
+// inherit from the scaling profile; set fields override it, and every
+// field is validated at analysis time.
+//
+// The two are separate because they answer separate questions and are
+// chosen at different moments: a footprint is sized against a
+// workload's appetite, a traffic setting against how clients talk to
+// it.
+type Traffic struct {
+	// Timeout caps how long ONE unit of work may run: a request for a
+	// service, a task for a job. Zero inherits the profile's.
+	//
+	// It is not the shutdown budget — those are different clocks. A
+	// service may hold a request for minutes and still get only seconds
+	// to finish it when the instance is replaced.
+	Timeout time.Duration
+	// SessionAffinity asks Cloud Run to send a returning client back to
+	// the instance it reached last. No profile turns it on: it trades
+	// away even load spreading, and an instance can vanish at any time,
+	// so it is a best-effort optimization for warm per-client state —
+	// never somewhere to keep state you cannot lose.
+	SessionAffinity Toggle
+	// HTTP2 keeps HTTP/2 all the way to the instance instead of letting
+	// Cloud Run downgrade it to HTTP/1.1 at the edge. Browsers already
+	// reach Cloud Run over HTTP/2 either way — this is about the last
+	// hop, and it is what buys request multiplexing and streaming
+	// between the frontend and your handler.
+	//
+	// A tako server always answers HTTP/2, so turning this on cannot
+	// arrive at a container that refuses it. Off by default because
+	// Cloud Run's own default is to downgrade, and for ordinary
+	// request/response JSON the last hop gains little.
+	HTTP2 Toggle
+}
+
+// WithTraffic pins request-facing settings over the scaling profile.
+// Refused on jobs, which serve nothing.
+func WithTraffic(t Traffic) Option { return option("traffic", t) }
 
 // WithRetries sets how many times a failed job task is retried before
 // the execution fails. Jobs are compute, not messaging: there is no

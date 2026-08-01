@@ -143,7 +143,7 @@ func extractService(dir string, pkg *packages.Package, name *ast.Ident, call *as
 		if !isOpt {
 			*errs = append(*errs, &Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Service accepts WithDomain, WithProfile, WithFootprint; got %s", describeExpr(opt)),
+				Msg:  fmt.Sprintf("tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic; got %s", describeExpr(opt)),
 				Rule: "invalid-option",
 			})
 			bad = true
@@ -160,10 +160,12 @@ func extractService(dir string, pkg *packages.Package, name *ast.Ident, call *as
 			r.Profile = profileArg(pkg, opt)
 		case "WithFootprint":
 			r.Footprint = footprintArg(dir, pkg, opt, errs)
+		case "WithTraffic":
+			r.Traffic = trafficArg(dir, pkg, opt, errs)
 		default:
 			*errs = append(*errs, &Error{
 				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint)", optName),
+				Msg:  fmt.Sprintf("tako.%s is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic)", optName),
 				Rule: "invalid-option",
 			})
 			bad = true

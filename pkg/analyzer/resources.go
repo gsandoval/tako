@@ -368,15 +368,15 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		return nil
 	}
 	res := &Resource{
-		Kind:      kind,
-		Name:      resName,
-		Var:       pkg.Name + "." + name.Name,
-		Package:   pkg.PkgPath,
+		Kind:              kind,
+		Name:              resName,
+		Var:               pkg.Name + "." + name.Name,
+		Package:           pkg.PkgPath,
 		RateLimit:         delivery.rate(),
 		MaxAttempts:       delivery.attempts(),
 		MinBackoffSeconds: delivery.minBackoff(),
 		MaxBackoffSeconds: delivery.maxBackoff(),
-		Pos:       relPos(dir, pkg.Fset, name.Pos()),
+		Pos:               relPos(dir, pkg.Fset, name.Pos()),
 	}
 	if tv, ok := pkg.TypesInfo.Types[call]; ok {
 		if ptr, ok := tv.Type.(*types.Pointer); ok {

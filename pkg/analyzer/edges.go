@@ -155,8 +155,8 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 								calls[fn] = append(calls[fn], callee)
 							} else if v, isRoot := rootVarOf[callee]; isRoot {
 								errs = append(errs, &Error{
-									Pos: relPos(dir, pkg.Fset, call.Pos()),
-									Msg: fmt.Sprintf("%s is a handler function — cross-service calls go through the Endpoint var (%s.Call(ctx, req)) so the RPC boundary stays visible", callee.Name(), v),
+									Pos:  relPos(dir, pkg.Fset, call.Pos()),
+									Msg:  fmt.Sprintf("%s is a handler function — cross-service calls go through the Endpoint var (%s.Call(ctx, req)) so the RPC boundary stays visible", callee.Name(), v),
 									Rule: "raw-call",
 								})
 							}

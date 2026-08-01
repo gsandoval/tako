@@ -1,1 +1,1 @@
-app.go:13:33: tako.WithTTL is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint) (tako/invalid-option)
+app.go:13:33: tako.WithTTL is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint, WithTraffic) (tako/invalid-option)

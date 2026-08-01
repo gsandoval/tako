@@ -50,16 +50,30 @@ type Footprint struct {
 	Concurrency  int    // concurrent requests per instance (1–1000)
 	MinInstances int    // always-warm instances — they bill continuously
 	MaxInstances int    // scale-out cap (1–1000)
-	Timeout      time.Duration // one unit of work: a request, or a job task
 	CPUAlwaysOn  Toggle // Inherit | On | Off — CPU between requests
 	StartupBoost Toggle // Inherit | On | Off — extra CPU until serving
-	SessionAffinity Toggle // Inherit | On | Off — sticky routing
-	HTTP2 Toggle // Inherit | On | Off — HTTP/2 to the instance
 }
 ```
 
-`Timeout` caps how long ONE unit of work may run — a request for a
-service, a task for a job. Cloud Run's ceilings differ, and so do the
+`WithTraffic` is its sibling, for how requests REACH the service rather
+than how much machine runs them:
+
+```go
+type Traffic struct {
+	Timeout         time.Duration // one unit of work: a request, or a job task
+	SessionAffinity Toggle        // Inherit | On | Off — sticky routing
+	HTTP2           Toggle        // Inherit | On | Off — HTTP/2 to the instance
+}
+```
+
+The two are separate because they answer separate questions, and you
+reach for them at different moments: a footprint is sized against a
+workload's appetite, a traffic setting against how clients talk to it.
+Both layer over the profile the same way, and both are validated at
+analysis time.
+
+`Traffic.Timeout` caps how long ONE unit of work may run — a request
+for a service, a task for a job. Cloud Run's ceilings differ, and so do the
 refusals: 60m for a service (past that you want a
 [job](job.md)), 24h for a job task.
 
@@ -72,7 +86,7 @@ off". `tako.On` forces allocation on a Default-profile service;
 It is the one knob that moves cold-start latency, which is why Latency
 takes it and the others don't — you pay for it only during startup.
 
-`SessionAffinity` asks Cloud Run to send a returning client back to the
+`Traffic.SessionAffinity` asks Cloud Run to send a returning client back to the
 instance it reached last. **No profile turns it on**, because it trades
 away even load spreading: sticky clients pile onto instances the
 autoscaler would rather have balanced. Reach for it when per-client warm
@@ -80,12 +94,12 @@ state makes a real difference — a decoded model, a primed cache — and
 never for state you cannot lose. It is best-effort, and an instance can
 disappear between any two requests.
 
-It is refused on jobs (nothing serves) and on singletons (exactly one
-instance means affinity has nothing to choose between).
+Refused on jobs and singletons: an execution serves nobody, and a
+singleton is one instance answering its own health check.
 
 ### HTTP2
 
-`HTTP2` keeps HTTP/2 all the way to your instance instead of letting
+`Traffic.HTTP2` keeps HTTP/2 all the way to your instance instead of letting
 Cloud Run downgrade it at the edge.
 
 **Read that carefully, because the thing it does not do is the thing
@@ -116,8 +130,7 @@ prescribe:
 curl -i --http2-prior-knowledge http://localhost:8080/
 ```
 
-Refused on jobs (nothing serves) and on singletons (a health endpoint
-has no connection worth multiplexing).
+Refused on jobs and singletons, for the same reason affinity is.
 
 Shutdown is not a knob and deliberately so — see
 [observability.md](observability.md#shutdown). Cloud Run's 10s window is
@@ -129,9 +142,10 @@ Zero fields inherit from the profile; set fields override it. The
 min=0 nuance: a zero field means *inherit*, so an explicit
 always-scale-to-zero floor is expressed by choosing a min=0 base
 profile (Default or Batch), not by `MinInstances: 0`. On job handlers
-only CPU, Memory and Timeout apply — an execution has no concurrency,
-no scaling, no idle CPU and no cold start to boost. Singletons take
-`StartupBoost`, but not the shape that defines the primitive.
+only CPU and Memory apply — an execution has no concurrency, no
+scaling, no idle CPU and no cold start to boost. Their one traffic
+setting is `Timeout`. Singletons take `StartupBoost` too, but not the
+shape that defines the primitive.
 
 ## Use
 
@@ -203,14 +217,14 @@ The claims live in golden tests —
 - `service mixedprofile cannot be both latency (Fast) and batch (Slow)
   — one service scales one way; split the packages or align the
   profiles (tako/mixed-profile)`
-- Scoping: `a job footprint sets CPU, Memory and Timeout only —
-  executions are tasks, not serving instances, so there is no
-  concurrency, no scaling, no idle CPU to throttle, no cold start to
-  boost, no clients to keep affinity with and no connections to
-  negotiate HTTP/2 over; WithParallel sets the fan-out and WithRetries
-  the attempts (tako/footprint)`, and for a
-  singleton `a singleton footprint cannot set MaxInstances — the lease
-  is what makes a singleton exactly-one … (tako/singleton-max)`
+- Scoping: `a job footprint sets CPU and Memory only — executions are
+  tasks, not serving instances, so there is no concurrency, no scaling,
+  no idle CPU to throttle and no cold start to boost; WithParallel sets
+  the fan-out and WithRetries the attempts (tako/footprint)`, its
+  traffic twin `a job's only traffic setting is Timeout — an execution
+  serves nobody, so there are no clients to keep affinity with and no
+  connections to negotiate HTTP/2 over (tako/traffic)`, and for a
+  singleton `a singleton footprint cannot set MaxInstances — … (tako/singleton-max)`
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud
   Run caps a request at 60m; for work that outlives a request use a
   tako.Job (docs/reference/job.md) (tako/footprint)`

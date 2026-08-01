@@ -111,6 +111,7 @@ func WithRetries(n int) Option
 func WithSingleflight() Option
 func WithTTL(d time.Duration) Option
 func WithTimezone(zone string) Option
+func WithTraffic(t Traffic) Option
 func WithTrustedHTML() Option
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
 type AuthHandle struct{}
@@ -126,7 +127,7 @@ type EntityHandle[T any] struct{}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type EventSource[T any] interface{eventSource(T); sourceName() string}
-type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; Timeout time.Duration; CPUAlwaysOn Toggle; Drain time.Duration; StartupBoost Toggle; SessionAffinity Toggle; HTTP2 Toggle}
+type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; CPUAlwaysOn Toggle; StartupBoost Toggle}
 type HTML struct{}
 type Handler struct{}
 type HistogramHandle struct{}
@@ -143,4 +144,5 @@ type SiteHandle struct{}
 type TestApp struct{}
 type Toggle int
 type TopicHandle[T any] struct{}
+type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
 type User struct{ID string; Email string; Name string}

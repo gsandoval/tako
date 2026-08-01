@@ -43,6 +43,9 @@ type Service struct {
 	// fields inherit the profile's value; the provisioner resolves the
 	// pair via ProfileKnobs.
 	Footprint *Footprint `json:"footprint,omitempty"`
+	// Traffic is the service's explicit request-facing override
+	// (WithTraffic), projected like Footprint.
+	Traffic *Traffic `json:"traffic,omitempty"`
 	// Domain is the custom domain the service answers on (WithDomain),
 	// inherited from its handlers or its site the way Profile is. Empty
 	// means the generated run.app URL is the only address.
@@ -57,16 +60,20 @@ type Footprint struct {
 	Concurrency  int    `json:"concurrency,omitempty"`
 	MinInstances int    `json:"min_instances,omitempty"`
 	MaxInstances int    `json:"max_instances,omitempty"`
-	// TimeoutSeconds caps one unit of work: a request for a service, a
-	// task for a job. Zero inherits the profile's.
-	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
 	// CPUAlwaysOn mirrors tako.Toggle: 0 inherit, 1 on, 2 off.
 	CPUAlwaysOn int `json:"cpu_always_on,omitempty"`
 	// StartupBoost mirrors tako.Toggle: extra CPU until the instance is
 	// serving (Cloud Run v2 startupCpuBoost).
 	StartupBoost int `json:"startup_boost,omitempty"`
-	// SessionAffinity mirrors tako.Toggle: route a returning client back
-	// to the instance it reached last (Cloud Run v2 sessionAffinity).
+}
+
+// Traffic mirrors tako.Traffic into the graph: how requests reach a
+// service and how long they may stay. Zero means "inherit".
+type Traffic struct {
+	// TimeoutSeconds caps one unit of work: a request for a service, a
+	// task for a job.
+	TimeoutSeconds int `json:"timeout_seconds,omitempty"`
+	// SessionAffinity mirrors tako.Toggle: 0 inherit, 1 on, 2 off.
 	SessionAffinity int `json:"session_affinity,omitempty"`
 	// HTTP2 mirrors tako.Toggle: keep HTTP/2 to the instance instead of
 	// letting the edge downgrade it (Cloud Run v2 port name "h2c").
@@ -132,6 +139,7 @@ type Resource struct {
 	// (Kind "service"), projected like the handler-level ones.
 	Profile   string     `json:"profile,omitempty"`
 	Footprint *Footprint `json:"footprint,omitempty"`
+	Traffic   *Traffic   `json:"traffic,omitempty"`
 	// Providers are the sign-in providers of an auth declaration
 	// ("google", "email").
 	Providers []string       `json:"providers,omitempty"`
@@ -169,6 +177,9 @@ type Handler struct {
 	// empty = default). The service inherits it — mixed claims within
 	// one service are an analysis error.
 	Profile string `json:"profile,omitempty"`
+	// Traffic is the handler's WithTraffic claim, projected like
+	// Footprint.
+	Traffic *Traffic `json:"traffic,omitempty"`
 	// Footprint is the handler's WithFootprint claim; the service
 	// inherits it — differing claims within one service are an
 	// analysis error (tako/mixed-footprint).

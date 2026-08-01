@@ -99,14 +99,16 @@ never rewinds.
 - A footprint setting the scale-out:
   `a singleton footprint cannot set MaxInstances — the lease is what
   makes a singleton exactly-one, so a max above 1 only buys instances
-  that pay to lose the race; CPU, Memory, Timeout and StartupBoost
-  are yours (tako/singleton-max)`
+  that pay to lose the race; CPU, Memory and StartupBoost are yours
+  (tako/singleton-max)`
 - A footprint touching the other scaling fields:
-  `a singleton footprint sets CPU, Memory, Timeout and StartupBoost
-  only — min=1 and concurrency=1 are what keep the loop's
-  host alive and alone, and a loop whose only caller is its own health
-  check has no clients to keep affinity with or negotiate HTTP/2 over
+  `a singleton footprint sets CPU, Memory and StartupBoost only — min=1
+  and concurrency=1 are what keep the loop's host alive and alone
   (tako/footprint)`
+- A singleton traffic claim beyond the timeout:
+  `a singleton's only traffic setting is Timeout — exactly one instance
+  serving nothing but its own health check has no clients to keep
+  affinity with or negotiate HTTP/2 over (tako/traffic)`
 - A non-constant name: `tako.Singleton name must be a string constant —
   names are read at analysis time, not run time; got …` (tako/const-name)
 

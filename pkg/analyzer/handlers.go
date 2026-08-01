@@ -18,7 +18,7 @@ import (
 // API or Page they would sit on an arbitrary route, which is what
 // tako.Service exists to fix.
 var serviceLevelOptions = map[string]bool{
-	"WithProfile": true, "WithFootprint": true, "WithDomain": true,
+	"WithProfile": true, "WithFootprint": true, "WithTraffic": true, "WithDomain": true,
 }
 
 var apiOptions = map[string]bool{

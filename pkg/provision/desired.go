@@ -112,6 +112,16 @@ func resolveKnobs(svc analyzer.Service, profile string) (analyzer.Footprint, err
 	return base, nil
 }
 
+// resolveTraffic is resolveKnobs' other half: the request-facing
+// settings, layered the same way over the profile's.
+func resolveTraffic(svc analyzer.Service, profile string) analyzer.Traffic {
+	base := analyzer.TrafficKnobs[profile]
+	if svc.Traffic != nil {
+		return svc.Traffic.Over(base)
+	}
+	return base
+}
+
 // Desired derives the managed-object set from the AppGraph. images maps
 // service name → digest-pinned image reference (built before planning:
 // the digest is part of the spec, so image changes are hash changes).
@@ -216,6 +226,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			return nil, fmt.Errorf("no image built for service %s", svc.Name)
 		}
 		resolved, err := resolveKnobs(svc, svc.Profile)
+		traffic := resolveTraffic(svc, svc.Profile)
 		if err != nil {
 			return nil, err
 		}
@@ -227,9 +238,9 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			"memory":       resolved.Memory,
 			"cpuAlwaysOn":  resolved.CPUAlwaysOn == analyzer.ToggleOn,
 			"startupBoost": resolved.StartupBoost == analyzer.ToggleOn,
-			"affinity":     resolved.SessionAffinity == analyzer.ToggleOn,
-			"http2":        resolved.HTTP2 == analyzer.ToggleOn,
-			"timeout":      resolved.TimeoutSeconds,
+			"affinity":     traffic.SessionAffinity == analyzer.ToggleOn,
+			"http2":        traffic.HTTP2 == analyzer.ToggleOn,
+			"timeout":      traffic.TimeoutSeconds,
 		}
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
@@ -304,7 +315,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					// when pinned, batch-profile values otherwise.
 					"cpu":     strconv.Itoa(resolved.CPU),
 					"memory":  resolved.Memory,
-					"timeout": resolved.TimeoutSeconds,
+					"timeout": traffic.TimeoutSeconds,
 					"retries": jobRetries(g, svc.Name),
 				},
 			})

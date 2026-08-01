@@ -8955,3 +8955,52 @@ short ones instead of one sentence enumerating five unrelated reasons.
 `ProfileKnobs` grows a second table; `sdk_lock.golden` regenerates
 deliberately; the analyzer's `Footprint` splits to match. Gate:
 `validate/footprint.md` extended to cover both option constructors.
+
+## V6 landed — and a dead SDK field it exposed — 2026-08-01
+
+`Footprint` split into `Footprint` (compute) and `Traffic`
+(request-facing), Option B from the proposal. `Timeout`,
+`SessionAffinity` and `HTTP2` moved; `Concurrency` stayed, because how
+many requests fit in one instance is sizing.
+
+`ProfileKnobs` gained `TrafficKnobs` beside it. That split is a small
+piece of honesty on its own: batch differs from default in how long ONE
+unit of work may run, not in how clients talk to it, and the two tables
+now say so separately.
+
+The refusal texts got the payoff the proposal predicted — one sentence
+enumerating five unrelated reasons became two short ones:
+
+```
+a job footprint sets CPU and Memory only — executions are tasks, not
+serving instances, so there is no concurrency, no scaling, no idle CPU
+to throttle and no cold start to boost; …
+a job's only traffic setting is Timeout — an execution serves nobody, so
+there are no clients to keep affinity with and no connections to
+negotiate HTTP/2 over
+```
+
+Note the job case is now RIGHT in a way it was not before: a job task
+genuinely has a timeout (24h of it), and lumping that in with affinity
+and HTTP/2 under one refusal had been hiding that.
+
+### The dead field
+
+Regenerating `sdk_lock.golden` showed `Drain time.Duration` still on
+`Footprint`. **It was never removed.** The commit that dropped the drain
+knob removed `DrainSeconds` from the analyzer, `TAKO_DRAIN` from the
+provisioner, the profile column and the fixture — but the edit to
+`options.go` was a scripted string replace that did not match, and I did
+not verify it. The suite stayed green because nothing reads the field.
+
+So for four commits `tako.Footprint` had a knob a user could set that
+was read by nothing: the exact "accepted and silently dropped" failure
+the S6 audit named and the codebase has a rule against. It is the second
+time in this stage a silent no-op replace has slipped through
+unverified — the fix is not care, it is asserting the match:
+
+```python
+assert old in s, "block not found — do not guess, look again"
+```
+
+Removed for real, with that assertion.

@@ -14,7 +14,7 @@ import (
 )
 
 // workerOptions is the option set tako.Worker accepts.
-var workerOptions = map[string]bool{"WithProfile": true, "WithFootprint": true}
+var workerOptions = map[string]bool{"WithProfile": true, "WithFootprint": true, "WithTraffic": true}
 
 // extractWorker validates one tako.Worker declaration. Workers partition
 // into their own service (package = service, but each worker scales and
@@ -38,6 +38,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 
 	profile := ""
 	var footprint *Footprint
+	var traffic *Traffic
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithProfile" {
@@ -48,10 +49,18 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 			footprint = footprintArg(dir, pkg, opt, errs)
 			continue
 		}
+		if isOpt && optName == "WithTraffic" {
+			traffic = trafficArg(dir, pkg, opt, errs)
+			continue
+		}
+		if isOpt && optName == "WithTraffic" {
+			traffic = trafficArg(dir, pkg, opt, errs)
+			continue
+		}
 		if isOpt && !workerOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint, WithTraffic)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -78,6 +87,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		Binding:   queueName,
 		Profile:   profile,
 		Footprint: footprint,
+		Traffic:   traffic,
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	workersByQueue[queueName] = h
@@ -85,7 +95,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 }
 
 // subscribeOptions is the option set tako.Subscribe accepts.
-var subscribeOptions = map[string]bool{"WithProfile": true, "WithFootprint": true}
+var subscribeOptions = map[string]bool{"WithProfile": true, "WithFootprint": true, "WithTraffic": true}
 
 // extractSubscribe validates one tako.Subscribe declaration. Subscribers
 // partition into their own service, and any number may bind one source —
@@ -109,6 +119,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 
 	profile := ""
 	var footprint *Footprint
+	var traffic *Traffic
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithProfile" {
@@ -119,10 +130,14 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 			footprint = footprintArg(dir, pkg, opt, errs)
 			continue
 		}
+		if isOpt && optName == "WithTraffic" {
+			traffic = trafficArg(dir, pkg, opt, errs)
+			continue
+		}
 		if isOpt && !subscribeOptions[optName] {
 			fail(&Error{
 				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile, WithFootprint)",
+				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile, WithFootprint, WithTraffic)",
 					optName),
 				Rule: "invalid-option",
 			})
@@ -141,6 +156,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		BindingKind: bindKind,
 		Profile:     profile,
 		Footprint:   footprint,
+		Traffic:     traffic,
 		Pos:         relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
@@ -183,6 +199,7 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	timezone := ""
 	deadline := 0
 	var footprint *Footprint
+	var traffic *Traffic
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithSingleflight" {
@@ -255,6 +272,7 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		DeadlineSeconds: deadline,
 		Profile:         profile,
 		Footprint:       footprint,
+		Traffic:         traffic,
 		Pos:             relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
@@ -328,10 +346,26 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 	retries := 0
 	profile := ""
 	var footprint *Footprint
+	var traffic *Traffic
 	for _, opt := range call.Args[2:] {
 		optName, isOpt := sdkOptionCall(pkg, opt)
 		if isOpt && optName == "WithProfile" {
 			profile = profileArg(pkg, opt)
+			continue
+		}
+		if isOpt && optName == "WithTraffic" {
+			traffic = trafficArg(dir, pkg, opt, errs)
+			// A job task HAS a timeout — 24h of it. What it does not have
+			// is clients: nothing connects to an execution, so there is
+			// nobody to keep affinity with and no connection to negotiate
+			// a protocol over.
+			if traffic != nil && (traffic.SessionAffinity != ToggleInherit || traffic.HTTP2 != ToggleInherit) {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "a job's only traffic setting is Timeout — an execution serves nobody, so there are no clients to keep affinity with and no connections to negotiate HTTP/2 over",
+					Rule: "traffic",
+				})
+			}
 			continue
 		}
 		if isOpt && optName == "WithRetries" {
@@ -358,10 +392,10 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		}
 		if isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.StartupBoost != ToggleInherit || footprint.SessionAffinity != ToggleInherit || footprint.HTTP2 != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.StartupBoost != ToggleInherit) {
 				fail(&Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU, Memory and Timeout only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle, no cold start to boost, no clients to keep affinity with and no connections to negotiate HTTP/2 over; WithParallel sets the fan-out and WithRetries the attempts",
+					Msg:  "a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; WithParallel sets the fan-out and WithRetries the attempts",
 					Rule: "footprint",
 				})
 			}
@@ -397,6 +431,7 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 		Retries:   retries,
 		Profile:   profile,
 		Footprint: footprint,
+		Traffic:   traffic,
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 	jobsByName[jobName] = h
@@ -421,21 +456,37 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 	}
 	bad := false
 	var footprint *Footprint
+	var traffic *Traffic
 	for _, opt := range call.Args[2:] {
+		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithTraffic" {
+			traffic = trafficArg(dir, pkg, opt, errs)
+			// One instance, and the only caller is its own health check:
+			// affinity has nothing to choose between and there is no
+			// client conversation to upgrade.
+			if traffic != nil && (traffic.SessionAffinity != ToggleInherit || traffic.HTTP2 != ToggleInherit) {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
+					Msg:  "a singleton's only traffic setting is Timeout — exactly one instance serving nothing but its own health check has no clients to keep affinity with or negotiate HTTP/2 over",
+					Rule: "traffic",
+				})
+				bad = true
+			}
+			continue
+		}
 		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithFootprint" {
 			footprint = footprintArg(dir, pkg, opt, errs)
 			if footprint != nil && footprint.MaxInstances != 0 {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory, Timeout and StartupBoost are yours",
+					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and StartupBoost are yours",
 					Rule: "singleton-max",
 				})
 				bad = true
 			}
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.SessionAffinity != ToggleInherit || footprint.HTTP2 != ToggleInherit) {
+			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU, Memory, Timeout and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone, and a loop whose only caller is its own health check has no clients to keep affinity with or negotiate HTTP/2 over",
+					Msg:  "a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
 					Rule: "footprint",
 				})
 				bad = true
@@ -459,6 +510,7 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
 		Binding:   singletonName,
 		Footprint: footprint,
+		Traffic:   traffic,
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

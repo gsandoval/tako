@@ -188,7 +188,8 @@ var work = tako.Job[string]("work")
 var Work = tako.JobHandler(work, run,
 	tako.WithProfile(tako.Latency),
 	tako.WithRetries(1),
-	tako.WithFootprint(tako.Footprint{Memory: "8Gi", CPU: 4, Timeout: 2 * time.Hour}))
+	tako.WithFootprint(tako.Footprint{Memory: "8Gi", CPU: 4}),
+	tako.WithTraffic(tako.Traffic{Timeout: 2 * time.Hour}))
 
 func run(ctx tako.Ctx, _ string) error { return nil }
 `)
@@ -208,7 +209,7 @@ func run(ctx tako.Ctx, _ string) error { return nil }
 	if svc.Profile != "latency" {
 		t.Errorf("profile = %q, want latency — the job default must be overridable", svc.Profile)
 	}
-	resolved := svc.Footprint.Over(ProfileKnobs[svc.Profile])
+	resolved := svc.Traffic.Over(TrafficKnobs[svc.Profile])
 	if resolved.TimeoutSeconds != 7200 {
 		t.Errorf("timeout = %ds, want 7200", resolved.TimeoutSeconds)
 	}
@@ -219,21 +220,27 @@ func run(ctx tako.Ctx, _ string) error { return nil }
 	}
 }
 
-// Timeout and CPU allocation resolve exactly like CPU and memory: a
-// profile default, an optional override, one Over().
+// Timeout and CPU allocation resolve the same way, through their own
+// tables now: a profile default, an optional override, one Over().
 func TestTimeoutAndCPUResolveThroughOver(t *testing.T) {
 	base := ProfileKnobs["default"]
-	if base.TimeoutSeconds != 300 || base.CPUAlwaysOn != ToggleOff {
-		t.Fatalf("default profile drifted: %+v", base)
+	if TrafficKnobs["default"].TimeoutSeconds != 300 || base.CPUAlwaysOn != ToggleOff {
+		t.Fatalf("default profile drifted: %+v / %+v", base, TrafficKnobs["default"])
 	}
-	got := Footprint{TimeoutSeconds: 60, CPUAlwaysOn: ToggleOn}.Over(base)
-	if got.TimeoutSeconds != 60 || got.CPUAlwaysOn != ToggleOn {
+	if got := (Traffic{TimeoutSeconds: 60}.Over(TrafficKnobs["default"])); got.TimeoutSeconds != 60 {
+		t.Errorf("traffic override lost: %+v", got)
+	}
+	got := Footprint{CPUAlwaysOn: ToggleOn}.Over(base)
+	if got.CPUAlwaysOn != ToggleOn {
 		t.Errorf("override lost: %+v", got)
 	}
 	// Zero inherits — including the Toggle's Inherit.
 	inherit := Footprint{Memory: "1Gi"}.Over(ProfileKnobs["latency"])
-	if inherit.TimeoutSeconds != 300 || inherit.CPUAlwaysOn != ToggleOn {
+	if inherit.CPUAlwaysOn != ToggleOn {
 		t.Errorf("inherit lost: %+v", inherit)
+	}
+	if t2 := (Traffic{}.Over(TrafficKnobs["latency"])); t2.TimeoutSeconds != 300 {
+		t.Errorf("traffic inherit lost: %+v", t2)
 	}
 	// Off is not zero: it must beat a profile that says on.
 	off := Footprint{CPUAlwaysOn: ToggleOff}.Over(ProfileKnobs["latency"])

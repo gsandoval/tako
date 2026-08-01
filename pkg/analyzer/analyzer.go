@@ -377,6 +377,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// then the RESOLVED knobs are validated (runs after applyProfiles
 	// because the base comes from the service's profile).
 	applyFootprints(graph, &errs)
+	applyTraffic(graph, &errs)
 	// WithDomain is projected the same way (U1): declared on any one of
 	// a service's handlers, or on its site, it addresses the whole
 	// service — which is why a service that nothing public can reach
@@ -428,7 +429,6 @@ func checkMixedIngress(handlers []Handler, errs *ErrorList) {
 		}
 	}
 }
-
 
 // sdkConstructor returns the SDK constructor name a call invokes ("API",
 // "Worker", ...), or "" when the call is not into the SDK package.
