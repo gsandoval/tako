@@ -10151,3 +10151,102 @@ hand rather than waiting.
 out, `cron.md` gains a pointer, and `release-cycle.md` §3 now tells the
 walker to expect the 403 and gives the until-loop that rides it out —
 both runs needed it, so the script should not pretend otherwise.
+
+## API review 3 — options, scoping, the namespace (2026-08-02) — AWAITING DECISIONS
+
+Owner-requested, triggered by the alerting design: designing a new
+primitive surfaced that nobody could say which options apply where, and
+that `tako.Email` (a notification channel) would collide with
+`tako.WithEmail` (password sign-in). Full review in
+`docs/api-review-3.md`. Docs only — no code changed.
+
+Scope is narrower than review 1 (six rules over every symbol) and
+different from review 2 (did the freeze hold, is this publishable). One
+question: when a user types `tako.`, can they tell which options apply
+where, and can two symbols be confused for one another.
+
+**Timing is the whole reason this is worth doing now.** `git tag` is
+empty; R3's verdict says push and v0.1.0 remain owner actions. Every
+rename in the review is free today and a v2 discussion after the tag.
+
+### Defect found and proven, not argued
+
+`tako.Bucket` and `tako.Entity` accept any option and silently drop it.
+`extractBucket` (resources.go:88) and `extractEntity` (resources.go:43)
+read `call.Args[0]` and never look at `call.Args[1:]`. Proven with the
+real CLI against a scratch module:
+
+```
+var (
+    photos = tako.Bucket("photos", tako.WithTTL(time.Minute))
+    album  = tako.Entity[Photo]("album", tako.WithSingleflight())
+)
+...
+    jobs.Publish(ctx, "x", tako.WithTTL(time.Minute))
+    photos.SignedPut(ctx, "k", time.Minute, tako.WithSingleflight())
+
+$ tako gen graph
+optprobe: 2 services
+  service optprobe (package optprobe, profile default)
+    GET /hello → Hello (app.go:19)
+    bucket photos
+    entity album
+    queue jobs
+```
+
+Zero errors on four illegal uses. Two vanish forever; two become 500s at
+request time.
+
+This regresses a rule the project already wrote down —
+resources.go:328, "an option that is accepted and silently dropped is
+worse than an error (the S6 audit found WithRateLimit doing exactly
+this)". Same root cause as the code-review findings: an invariant held
+by convention across 14 hand-written sites in 5 files, with nothing
+asserting that every constructor declares an option set. The fix is
+small and independent of the redesign; it should not wait for it.
+
+### What the review establishes
+
+- **`Option` is three types wearing one name** — analysis-enforced
+  (18 constructors), silently dropped (2), runtime error (3
+  operations). `options.go:11` promises "fails analysis, not
+  production", which is false for every operation option.
+- **The matrix** — 23 producers × 23 sinks = 529 combinations, 39
+  legal (7.4%). The other 92.6% compile. That table did not exist
+  anywhere in the repo; assembling it from the analyzer's own error
+  texts was most of the review.
+- **Six families fall out and are nearly disjoint**: route,
+  service/compute, site, auth, carrier, operation. The clustering is
+  the design; the surface just doesn't express it.
+- **Collisions**: `Redirect`/`WithRedirect` (high), `Auth`/`WithAuth`,
+  `WithEmail`/a future `Email`, `Handler`/`JobHandler`, and six generic
+  single words in the package namespace (`On` `Off` `Inherit`
+  `Default` `Batch` `Latency`).
+- **One concept, two spellings** — `WithRetries` (0–10) vs
+  `Delivery.MaxAttempts` (5–100); five unrelated names for time; three
+  for concurrency. Review 2's own principle when it retired
+  `WithRateLimit`: one knob with two spellings is worse than a
+  breaking change.
+
+### Recommendation
+
+Hybrid: config structs for declarations (the direction tako already
+took three times — `Delivery`, `Footprint`, `Traffic` are structs
+wrapped in a `With…` only to satisfy a variadic), delete the option
+tier on the three operations, apply the renames regardless, and ship
+the defect fix now. Config structs delete `invalid-option` and
+`service-option` outright; range validation stays in the analyzer where
+it belongs.
+
+**STOP — five decisions in §10 of the review.** The load-bearing ones:
+whether to accept a spec Part 1 rewrite (rule 2's "options all live in
+one namespace" does not survive config structs), and whether this
+precedes alerting (recommended — alerting adds a family and the
+`Email` collision).
+
+### Discovered work
+
+- A completeness test — every constructor in the lock must appear in an
+  option-set table — belongs with the §2 fix whichever remedy is chosen.
+  It is what makes the defect class unrepresentable rather than fixed
+  once.
