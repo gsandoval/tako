@@ -101,6 +101,13 @@ go run ../../cmd/tako dlq --local thumbnails --replay 1
 go run ../../cmd/tako deploy --project <test-project> --env dlq
 ```
 
+**Keep `--env dlq` on every command below.** It prefixes every resource,
+so the Cloud Run services are `dlq-gallery`, `dlq-gallery-notifyowner`
+and so on. Deploy without it and the names are bare (`gallery`) — drop
+the `dlq-` prefix everywhere if you do. Note `tako dlq` takes the
+LOGICAL service name (`gallery-notifyowner`) and applies the env
+itself; only the raw `gcloud` reads need the prefix spelled out.
+
 gallery's `photo-ready` topic has **two** subscribers — `NotifyOwner`
 and `WarmFeed` — which is what makes it the interesting case. Produce a
 failure in ONE of them (the `boom` caption path; see gallery's

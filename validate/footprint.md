@@ -196,17 +196,24 @@ configuration".
 ## 4. Cloud: pinned values land, inherited values come from the profile
 
 ```
-go run ../../cmd/tako deploy --project <test-project>
+go run ../../cmd/tako deploy --project <test-project> --env dlq
 ```
 
-**Judge the summary:** gallery-makethumb's block carries
+**`--env dlq` matters for every command after this.** It prefixes every
+resource, so the services are `dlq-gallery`, `dlq-gallery-makethumb`,
+and so on. Deploy without it and they are bare (`gallery`), and §6's
+reads will not find anything — the API answers
+`Resource 'dlq-gallery' … does not exist`, which the helper above
+prints rather than swallowing.
+
+**Judge the summary:** dlq-gallery-makethumb's block carries
 `compute: 2 cpu / 4Gi / concurrency 4 / instances 0–5 (profile batch + footprint …)`
 — 2 cpu and min 0 INHERITED from batch, the three pins yours.
 
 Then the live service:
 
 ```
-gcloud run services describe gallery-makethumb --project <test-project> \
+gcloud run services describe dlq-gallery-makethumb --project <test-project> \
   --region us-central1 --format json | python3 -c '
 import json,sys; t=json.load(sys.stdin)["spec"]["template"]
 c=t["spec"]["containers"][0]["resources"]["limits"]
@@ -214,7 +221,7 @@ print(c, t["spec"]["containerConcurrency"], t["metadata"]["annotations"].get("au
 ```
 
 → `{'cpu': '2', 'memory': '4Gi'} 4 5`. A second
-`deploy --plan` shows no drift (the footprint is part of the spec
+`deploy --plan --env dlq` shows no drift (the footprint is part of the spec
 hash — changing a value plans `~ update run service`).
 
 ## 5. Standing money is priced, not absorbed
@@ -239,12 +246,18 @@ Read the **v2** API — `gcloud run services describe` renders the v1
 view, where these appear as annotations if at all:
 
 ```
+export PROJECT=<test-project>
+
 knobs() {
   curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
     "https://run.googleapis.com/v2/projects/$PROJECT/locations/us-central1/services/$1" \
   | python3 -c "
 import json,sys
-d=json.load(sys.stdin); t=d['template']; c=t['containers'][0]
+d=json.load(sys.stdin)
+if 'error' in d:
+    print('  API said:', d['error'].get('message','?'))
+    sys.exit(1)
+t=d['template']; c=t['containers'][0]
 print('  resources      :', json.dumps(c.get('resources')))
 print('  ports          :', json.dumps(c.get('ports')))
 print('  sessionAffinity:', t.get('sessionAffinity'))
