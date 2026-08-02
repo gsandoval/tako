@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -49,10 +50,19 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 // Handler is a declared asynchronous or scheduled handler binding, returned
 // by Worker, Subscribe, JobHandler, Cron, and Singleton.
 type Handler struct {
-	kind     string
-	source   string
-	name     string // handler function's name; NewTestApp's wiring identity
-	parallel int    // WithParallel fan-out for jobs; 0/1 = one task
+	kind   string
+	source string
+	// name is the handler FUNCTION's name — a log label, nothing more.
+	// It is deliberately not an identity: a function name is not what
+	// tako deploys a handler as, and using it as one gave crons a
+	// second name that disagreed with the deployed one.
+	name string
+	// id is this declaration's registration number, unique within the
+	// process and assigned in declaration order. It is how a Handler
+	// VALUE is matched — app.AdvanceCron(Cleanup) — without comparing
+	// function pointers, and how the runtime attaches the declared name.
+	id       int
+	parallel int // WithParallel fan-out for jobs; 0/1 = one task
 	invoke   func(Ctx, []byte) error
 }
 
@@ -65,6 +75,21 @@ var (
 	registryMu    sync.Mutex
 	asyncRegistry []Handler
 )
+
+// handlerSeq numbers declarations. Ids start at 1 so a zero Handler —
+// a var that was never assigned a constructor — is distinguishable from
+// a real one and can be refused by name rather than silently missing.
+var handlerSeq int
+
+// nextHandlerID reserves an id BEFORE the Handler is built, because the
+// singleflight closure has to capture it: the lease key is resolved at
+// invoke time from the id, and the closure exists before register runs.
+func nextHandlerID() int {
+	registryMu.Lock()
+	defer registryMu.Unlock()
+	handlerSeq++
+	return handlerSeq
+}
 
 func register(h Handler) Handler {
 	registryMu.Lock()
@@ -142,6 +167,7 @@ func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
 	return register(Handler{
 		kind:   "worker",
+		id:     nextHandlerID(),
 		source: queue.name,
 		name:   fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
@@ -162,6 +188,7 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option)
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler {
 	return register(Handler{
 		kind:   "subscribe",
+		id:     nextHandlerID(),
 		source: source.sourceName(),
 		name:   fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
@@ -181,35 +208,57 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Opti
 // Cron handlers run inside the package's app service. In tests,
 // app.AdvanceCron(name) fires one run synchronously.
 func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler {
-	name := fnName(fn)
+	id := nextHandlerID()
 	invoke := func(ctx Ctx, _ []byte) error { return fn(ctx) }
 	for _, o := range opts {
 		if o.name == "singleflight" {
 			// The wrap lives HERE so every trigger — dev ticker,
-			// AdvanceCron, a future scheduler — inherits it: one CAS
+			// AdvanceCron, Cloud Scheduler — inherits it: one CAS
 			// attempt on the cron's lease; held elsewhere means an
 			// overlapping run is live, and this one collapses into it.
-			invoke = singleflightInvoke(name, fn)
+			invoke = singleflightInvoke(id, fn)
 		}
 	}
 	return register(Handler{
 		kind:   "cron",
 		source: schedule,
-		name:   name,
+		name:   fnName(fn),
+		id:     id,
 		invoke: invoke,
 	})
 }
 
-func singleflightInvoke(name string, fn func(Ctx) error) func(Ctx, []byte) error {
+// leaseKey names a handler's lease. It resolves at INVOKE time, not at
+// declaration, because the declared name arrives later: the generated
+// main's RegisterCron hands the runtime the variable name the analyzer
+// read, and that is the only identity stable across instances and
+// deploys — and the only one that cannot collide when two crons share
+// one function.
+//
+// The lease key is the ONE place a second name survives this slice, and
+// deliberately: NewTestApp seeds the identity from the function name
+// (see registerTestIdentities) so a test that simulates an overlapping
+// run can NAME the lease — tako.Lock("cron-cleanupOrphans") — which an
+// id could not. It is internal plumbing either way; what matters is
+// that the key is stable within its scope, and both are.
+func leaseKey(id int) string {
+	if declared, ok := hooks.HandlerIdentity(id); ok {
+		return "cron-" + declared
+	}
+	return "cron-#" + strconv.Itoa(id)
+}
+
+func singleflightInvoke(id int, fn func(Ctx) error) func(Ctx, []byte) error {
 	return func(ctx Ctx, _ []byte) error {
 		if hooks.Lease == nil {
 			return fn(ctx) // unwired (bare test): run plainly
 		}
-		ran, err := backends.TryDoLease(ctx, hooks.Lease, "cron-"+name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+		key := leaseKey(id)
+		ran, err := backends.TryDoLease(ctx, hooks.Lease, key, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 			return fn(reroot(ctx, c))
 		})
 		if err == nil && !ran && hooks.CronSkipped != nil {
-			hooks.CronSkipped(name)
+			hooks.CronSkipped(strings.TrimPrefix(key, "cron-"))
 		}
 		return err
 	}
@@ -219,11 +268,11 @@ func singleflightInvoke(name string, fn func(Ctx) error) func(Ctx, []byte) error
 // across all revisions, with clean handoff between deploys: the loop
 // executes only while holding the §4.4 lease, so min=1/max=1 plus the
 // lease — not either alone — is the guarantee.
-func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler {
+func Singleton(fn func(Ctx) error, opts ...Option) Handler {
 	return register(Handler{
 		kind:   "singleton",
-		source: name,
 		name:   fnName(fn),
+		id:     nextHandlerID(),
 		invoke: func(ctx Ctx, _ []byte) error { return fn(ctx) },
 	})
 }

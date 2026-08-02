@@ -52,7 +52,7 @@ var (
 	NotifyOwner = tako.Subscribe(ready, notifyOwner)
 	Reindex     = tako.JobHandler(reidx, reindex, tako.WithParallel(10))
 	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
-	Loop        = tako.Singleton("loop", loop)
+	Loop        = tako.Singleton(loop)
 )
 
 type UploadTicket struct {
@@ -189,6 +189,6 @@ var _ = func() {
 	u := app.SignIn("alice")
 	_, _ = StartUpload.Call(app.Ctx(u), StartUploadReq{Caption: "cat"})
 	app.DrainQueues()
-	app.AdvanceCron("cleanup")
+	app.AdvanceCron(Cleanup)
 	app.Chaos()
 }

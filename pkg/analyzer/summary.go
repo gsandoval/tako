@@ -53,7 +53,8 @@ func HandlerLine(h Handler) string {
 		}
 		return fmt.Sprintf("job %s ← %s%s (%s)", ShortVar(h), h.Binding, par, ShortPos(h.Pos))
 	case "singleton":
-		return fmt.Sprintf("singleton %s — %s, exactly one everywhere (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
+		// The binding IS the var now, so printing both stutters.
+		return fmt.Sprintf("singleton %s — exactly one everywhere (%s)", ShortVar(h), ShortPos(h.Pos))
 	case "worker":
 		return fmt.Sprintf("worker %s ← queue %s (%s)", ShortVar(h), h.Binding, ShortPos(h.Pos))
 	case "subscribe":

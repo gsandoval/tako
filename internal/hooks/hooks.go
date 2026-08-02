@@ -6,6 +6,7 @@ package hooks
 
 import (
 	"context"
+	"sync"
 
 	"github.com/gsandoval/tako/pkg/backends"
 )
@@ -76,6 +77,39 @@ var HandlerInfo func(h any) (kind, source string, invoke any)
 // HandlerParallel reads a job handler's WithParallel fan-out (1 when
 // none) — the local runtime runs that many tasks per execution.
 var HandlerParallel func(h any) int
+
+// HandlerID is set by the SDK at init: it reads a Handler's
+// registration id, which is how the runtime attaches a declared name.
+var HandlerID func(h any) int
+
+// handlerIdentity maps a Handler's registration id to the DECLARED name
+// — the package-level variable the analyzer read it from, delivered by
+// the generated RegisterCron/RegisterSingleton calls.
+//
+// The SDK cannot see a variable's name: a Go value does not carry the
+// name of the var it is assigned to, which is why cron identity used to
+// come from reflection on the function pointer and disagreed with every
+// other service tako names. The runtime knows, so the runtime tells.
+//
+// Nothing user-facing reads this. Its one job is the singleflight lease
+// key, which must be stable across instances and deploys — so it has to
+// be the same string the analyzer used, not one this process invented.
+var handlerIdentity sync.Map // int → string
+
+// SetHandlerIdentity records the declared name of a registered handler.
+func SetHandlerIdentity(id int, name string) { handlerIdentity.Store(id, name) }
+
+// HandlerIdentity returns the declared name, and whether one was set. A
+// handler running under NewTestApp has none — no generated main called
+// Register — and callers fall back to a process-local key, which is all
+// a test's lease has to distinguish.
+func HandlerIdentity(id int) (string, bool) {
+	v, ok := handlerIdentity.Load(id)
+	if !ok {
+		return "", false
+	}
+	return v.(string), true
+}
 
 // RenderSite renders a site template inside the layout — pkg/runtime
 // sets it (RegisterSiteTemplates); site.Render calls through. The ctx

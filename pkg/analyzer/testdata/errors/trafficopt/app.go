@@ -15,7 +15,7 @@ var (
 		tako.WithTraffic(tako.Traffic{Timeout: time.Hour, SessionAffinity: tako.On}))
 
 	// Exactly one instance, answering nothing but its own health check.
-	Loop = tako.Singleton("loop", loop,
+	Loop = tako.Singleton(loop,
 		tako.WithTraffic(tako.Traffic{HTTP2: tako.On}))
 
 	// Nanoseconds are the unit trap: a sub-second timeout is a mistake

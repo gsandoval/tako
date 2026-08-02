@@ -107,8 +107,8 @@ go test -run TestCronCleansNeverCompletedUploads -v -count=1 .
 ```
 
 **Judge:** the test issues a ticket that never uploads, drains, calls
-`app.AdvanceCron("cleanupOrphans")`, and the ghost is gone while the
-completed photo survives. Try `app.AdvanceCron("nope")` in a scratch
+`app.AdvanceCron(Cleanup)`, and the ghost is gone while the
+completed photo survives. Try `app.AdvanceCron(MakeThumb)` in a scratch
 edit if you want the unknown-cron error listing declared crons.
 
 ## 6. Everything else still green

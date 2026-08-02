@@ -56,6 +56,7 @@ func JobHandler[T any](job *JobHandle[T], fn func(Ctx, T) error, opts ...Option)
 	}
 	return register(Handler{
 		kind:     "job",
+		id:       nextHandlerID(),
 		source:   job.name,
 		parallel: parallel,
 		name:     fnName(fn),

@@ -261,7 +261,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			case "Singleton":
 				if h := extractSingleton(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					// Arg 0: Singleton takes only its loop now. Reading
+					// arg 1 here silently produced NO resource edges,
+					// which means no IAM grants — the singleton would
+					// deploy and then be denied its own datastore.
+					handlerFuncs[h.Var] = funcArg(pkg, d.call, 0)
 				}
 			}
 		}

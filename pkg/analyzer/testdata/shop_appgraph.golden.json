@@ -230,7 +230,7 @@
       "var": "shop.Invoicer",
       "package": "shop",
       "service": "shop-invoicer",
-      "binding": "invoicer",
+      "binding": "Invoicer",
       "pos": "app.go:102:2"
     },
     {

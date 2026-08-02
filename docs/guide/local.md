@@ -52,6 +52,6 @@ comment on the declaration says so.
 `tako.NewTestApp(t)` boots the same in-process backends, fresh per
 test: `app.Ctx(app.SignIn("alice"))` for identities,
 `Endpoint.Call` to invoke handlers, `app.DrainQueues()` to settle
-async work (jobs included), `app.AdvanceCron(name)` to fire a cron,
+async work (jobs included), `app.AdvanceCron(Cleanup)` to fire a cron,
 `app.Chaos()` for delivery chaos. `tako test` regenerates stale code
 first, then runs `go test ./...`.

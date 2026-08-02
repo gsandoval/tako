@@ -99,7 +99,7 @@ var (
 	Me           = tako.API("GET /api/me", me)
 
 	Settle   = tako.JobHandler(settle, runSettle, tako.WithParallel(4))
-	Invoicer = tako.Singleton("invoicer", assignInvoices)
+	Invoicer = tako.Singleton(assignInvoices)
 )
 
 func listProducts(ctx tako.Ctx, _ struct{}) ([]Product, error) {

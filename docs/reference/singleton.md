@@ -16,10 +16,10 @@ duplicates — which is what makes it a Singleton and not a worker.
 From [examples/shop](../../examples/shop/app.go):
 
 ```go
-Invoicer = tako.Singleton("invoicer", assignInvoices)
+Invoicer = tako.Singleton(assignInvoices)
 ```
 
-The name must be a string constant (analyzer-enforced). `Singleton`
+`Singleton` takes only its loop: the declaring variable is the identity — `Invoicer` deploys as `shop-invoicer` — which is the same rule that names every other service tako creates. `Singleton`
 accepts exactly one option, `tako.WithFootprint`, and only its CPU and
 Memory fields — the scaling knobs (min=1/max=1/concurrency=1) are the
 exactly-one machinery and are framework-owned.

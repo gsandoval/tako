@@ -186,7 +186,7 @@ Handlers are declared exactly like resources: a package-level var, a constructor
 | `tako.Subscribe(bucket.Uploaded, fn)` | `func(Ctx, ObjectInfo) error` | handler ref | subscriber service |
 | `tako.JobHandler(job, fn, ...opts)` | `func(Ctx, T) error` (T from `Job[T]`) | handler ref | Cloud Run Job |
 | `tako.Cron(schedule, fn, ...opts)` | `func(Ctx) error` | handler ref | app service |
-| `tako.Singleton(name, fn)` | `func(Ctx) error` (long loop) | handler ref | min=1 service + lease |
+| `tako.Singleton(fn)` | `func(Ctx) error` (long loop) | handler ref | min=1 service + lease |
 
 Handler options share the resource-option namespace: `tako.WithAuth()`, `tako.WithProfile(tako.Batch)`, `tako.WithPrivate()`, `tako.WithSingleflight()`, `tako.WithParallel(10)`.
 
@@ -203,7 +203,7 @@ func upload(ctx tako.Ctx, req UploadReq) (Photo, error) { ... }
 
 **What the compiler now checks vs. what the analyzer still checks.** Payload types are compile-time: `tako.Worker(thumbs, fn)` requires `fn` to match the queue's `T` or it doesn't build, with autocomplete showing the expected shape. The analyzer retains what the type system can't express: constructor arguments (routes, schedules, names) must be constants; route path params must have matching `path:`-tagged `Req` fields; at most one `Worker` per queue; option validity per constructor; handler vars must be package-level.
 
-Uniformity to notice: the three payload-carrying async kinds (worker, subscribe, job) share one signature, one retry model, and one binding pattern — the bound resource is the constructor's first argument. `cron` and `singleton` carry no payload, so their constructors take a schedule/name instead. `WithSingleflight` and `Singleton` are the user-facing faces of the internal lease (§4.4) — raw leader election is intentionally not exposed.
+Uniformity to notice: the three payload-carrying async kinds (worker, subscribe, job) share one signature, one retry model, and one binding pattern — the bound resource is the constructor's first argument. `cron` and `singleton` carry no payload and bind nothing, so they are identified by their declaring variable — the same rule that names every other service tako deploys (`var MakeThumb = tako.Worker(...)` → `gallery-makethumb`). `cron` takes a schedule; `singleton` takes only its loop. `WithSingleflight` and `Singleton` are the user-facing faces of the internal lease (§4.4) — raw leader election is intentionally not exposed.
 
 ### 2.9 Ctx, errors, auth
 

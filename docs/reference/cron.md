@@ -93,7 +93,18 @@ the jobs with everything else.
 
 ## Test it
 
-Tests own scheduled time: `app.AdvanceCron(name)` fires one run
+**The cron's identity is its variable.** `var Cleanup = tako.Cron(...)`
+deploys as the Scheduler job for `/_tako/cron/Cleanup`, leases as
+`cron-Cleanup` under `WithSingleflight`, and is fired in a test as
+`app.AdvanceCron(Cleanup)` — one name, from one place. Renaming the
+variable renames the cron; renaming its function does not.
+
+> Upgrading from a tako that keyed the singleflight lease on the handler
+> function's name: during the one deploy that rolls the change out, old
+> and new instances hold different keys, so a single overlapping run can
+> fire twice. Afterwards it is stable.
+
+Tests own scheduled time: `app.AdvanceCron(Cleanup)` fires one run
 synchronously, by handler function name. Singleflight is testable by
 occupying the cron's lease — named `cron-<handler>` — and firing:
 
@@ -106,7 +117,7 @@ go func() {
     })
 }()
 <-holding
-app.AdvanceCron("cleanupOrphans") // collapses into the held run
+app.AdvanceCron(Cleanup) // collapses into the held run
 ```
 
 ([examples/gallery/coordination_test.go](../../examples/gallery/coordination_test.go))
@@ -116,7 +127,7 @@ app.AdvanceCron("cleanupOrphans") // collapses into the held run
 - `tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23 (tako/cron-schedule)`
 - `"every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression (tako/cron-schedule)`
 - `tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint) (tako/invalid-option)`
-- `tako: AdvanceCron("x"): no such cron — declared crons: cleanupOrphans` — a test naming a cron that isn't declared.
+- `tako: AdvanceCron: that is a worker, not a cron — workers run when their queue delivers, so publish to the queue and DrainQueues` — passing a handler that isn't a cron. Passing a var that was never assigned a constructor gives `tako: AdvanceCron: the handler is empty — pass the var a tako.Cron was assigned to, like app.AdvanceCron(Cleanup)`. A *mistyped* cron is no longer possible: it does not compile.
 
 ## Not yet
 

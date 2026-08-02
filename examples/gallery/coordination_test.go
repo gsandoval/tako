@@ -118,7 +118,7 @@ func TestCleanupSingleflightCollapses(t *testing.T) {
 		})
 	}()
 	<-holding
-	app.AdvanceCron("cleanupOrphans")
+	app.AdvanceCron(Cleanup)
 	if _, err := photoStore.Get(ctx, "orphan"); err != nil {
 		t.Fatalf("collapsed cron run deleted the orphan anyway: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestCleanupSingleflightCollapses(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	app.AdvanceCron("cleanupOrphans")
+	app.AdvanceCron(Cleanup)
 	if _, err := photoStore.Get(ctx, "orphan"); !tako.IsNotFound(err) {
 		t.Fatalf("orphan after a free cron run = %v, want deleted", err)
 	}

@@ -102,6 +102,7 @@ func RunJobMain(name string, h tako.Handler) {
 // still guards against doubled registration). Cloud singleton services
 // run RunSingletonLoop from their own generated main instead.
 func RegisterSingleton(name string, h tako.Handler) {
+	hooks.SetHandlerIdentity(hooks.HandlerID(h), name)
 	if os.Getenv("TAKO_BACKEND") == "gcp" {
 		return // the singleton's own min=1 service runs the loop
 	}

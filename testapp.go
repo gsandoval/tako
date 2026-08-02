@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,6 +36,7 @@ func NewTestApp(tb testing.TB) *TestApp {
 	// never sleeps out a WithDelay.
 	app.Dispatcher.UseManualClock()
 	ta := &TestApp{tb: tb, app: app}
+	registerTestIdentities()
 	for _, h := range registeredAsync() {
 		deliver := func(invoke func(Ctx, []byte) error, name string) func(context.Context, []byte) error {
 			return func(ctx context.Context, payload []byte) error {
@@ -85,6 +85,24 @@ func NewTestApp(tb testing.TB) *TestApp {
 		_ = app.Close()
 	})
 	return ta
+}
+
+// registerTestIdentities gives every declared handler a lease identity
+// under test. Deployed, the generated main supplies the DECLARED
+// (variable) name; a test has no generated main, so the function name
+// stands in — chosen over the registration id because a test that
+// simulates an overlapping cron run has to be able to NAME the lease:
+//
+//	tako.Lock("cron-cleanupOrphans").Do(...)   // hold it, then AdvanceCron
+//
+// The key is internal either way; both forms are stable within their
+// scope, which is all a lease requires.
+func registerTestIdentities() {
+	for _, h := range registeredAsync() {
+		if h.name != "" {
+			hooks.SetHandlerIdentity(h.id, h.name)
+		}
+	}
 }
 
 // TestApp is an in-memory instance of the app under test.
@@ -166,28 +184,45 @@ func (a *TestApp) SetSecret(name, value string) {
 	})
 }
 
-// AdvanceCron runs the named cron handler once, synchronously, as if its
-// schedule fired — tests own scheduled time (see Advance). name is the
-// handler FUNCTION's name ("cleanupOrphans"), which is not the identity
-// the deployed cron carries: Cloud Scheduler addresses the same cron by
-// its VARIABLE name (/_tako/cron/Cleanup). Logged as discovered work;
-// a failed lookup lists the names that do work.
-func (a *TestApp) AdvanceCron(name string) {
+// AdvanceCron runs a cron once, synchronously, as if its schedule fired
+// — tests own scheduled time (see Advance). Pass the cron itself:
+//
+//	app.AdvanceCron(Cleanup)
+//
+// The var IS the cron's identity — it is what tako deploys it as, and
+// what Cloud Scheduler addresses — so referencing it directly is both
+// the most faithful thing a test can say and the only form the compiler
+// can check. It also matches how every other declaration is reached in
+// a test: Create.Call, links.Get, thumbs.Publish.
+func (a *TestApp) AdvanceCron(cron Handler) {
 	a.tb.Helper()
-	var crons []string
-	for _, h := range registeredAsync() {
-		if h.kind != "cron" {
-			continue
-		}
-		if h.name == name {
-			if err := h.invoke(a.handlerCtx(context.Background(), name), nil); err != nil {
-				a.tb.Fatalf("tako: AdvanceCron(%q): %v", name, err)
-			}
-			return
-		}
-		crons = append(crons, h.name)
+	if cron.id == 0 {
+		a.tb.Fatal("tako: AdvanceCron: the handler is empty — pass the var a tako.Cron was assigned to, like app.AdvanceCron(Cleanup)")
+		return
 	}
-	a.tb.Fatalf("tako: AdvanceCron(%q): no such cron — declared crons: %s", name, strings.Join(crons, ", "))
+	if cron.kind != "cron" {
+		a.tb.Fatalf("tako: AdvanceCron: that is a %s, not a cron — %s", cron.kind, wrongKindHint(cron.kind))
+		return
+	}
+	if err := cron.invoke(a.handlerCtx(context.Background(), cron.name), nil); err != nil {
+		a.tb.Fatalf("tako: AdvanceCron(%s): %v", cron.name, err)
+	}
+}
+
+// wrongKindHint says how the handler you DID pass gets run, so the
+// error ends somewhere useful instead of just refusing.
+func wrongKindHint(kind string) string {
+	switch kind {
+	case "worker":
+		return "workers run when their queue delivers, so publish to the queue and DrainQueues"
+	case "subscribe":
+		return "subscribers run when their topic publishes, so publish the event and DrainQueues"
+	case "job":
+		return "jobs run when started, so call the job's Run and DrainQueues"
+	case "singleton":
+		return "a singleton loops for the life of its service; there is no single run to advance"
+	}
+	return "only tako.Cron handlers can be advanced"
 }
 
 // Chaos enables chaos mode on the app's queues and topics: duplicate

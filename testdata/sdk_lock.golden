@@ -36,7 +36,7 @@
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
     func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
     func (*TestApp).Advance(d time.Duration)
-    func (*TestApp).AdvanceCron(name string)
+    func (*TestApp).AdvanceCron(cron Handler)
     func (*TestApp).Chaos()
     func (*TestApp).Ctx(as ...User) Ctx
     func (*TestApp).DrainQueues()
@@ -86,7 +86,7 @@ func Redirect(target string) (HTML, error)
 func SPA() Option
 func Secret(name string, opts ...Option) *SecretHandle
 func Service(opts ...Option) *ServiceHandle
-func Singleton(name string, fn func(Ctx) error, opts ...Option) Handler
+func Singleton(fn func(Ctx) error, opts ...Option) Handler
 func Site(dir string, opts ...Option) *SiteHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler
 func Topic[T any](name string, opts ...Option) *TopicHandle[T]

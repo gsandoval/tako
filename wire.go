@@ -19,6 +19,15 @@ func init() {
 		}
 		return 1
 	}
+	// The runtime attaches the DECLARED name (the analyzer's variable
+	// name, carried by the generated Register calls) to a handler by id.
+	hooks.HandlerID = func(h any) int {
+		hd, ok := h.(Handler)
+		if !ok {
+			return 0
+		}
+		return hd.id
+	}
 	hooks.DeclaredSecrets = declaredSecrets
 	hooks.HTMLParts = func(h any) ([]byte, string, bool) {
 		html, ok := h.(HTML)

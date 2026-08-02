@@ -62,7 +62,7 @@ Three things are load-bearing there:
 | `app.SignIn(name)` | a stub `User{ID: name, Email: name+"@example.test"}` — identity injection, not auth enforcement |
 | `app.DrainQueues()` | block until every published message has acked or dead-lettered |
 | `app.Advance(d)` | move the fake clock, releasing `WithDelay` messages that came due |
-| `app.AdvanceCron(name)` | run one cron body once, synchronously, by handler-function name |
+| `app.AdvanceCron(cron)` | run one cron body once, synchronously — pass the cron itself |
 | `app.SetSecret(name, v)` | provide a declared secret; removed when the test ends |
 | `app.Chaos()` | duplicate, reorder and redeliver messages — seeded and reproducible |
 
@@ -83,21 +83,23 @@ every `WithDelay` test would hang for the real duration. Retry backoff
 and chaos reordering keep their real (millisecond) timers, because
 those are the contract under test.
 
-**Crons do not ride that clock.** `app.AdvanceCron("cleanupOrphans")`
-runs the body by name, because a cron test means *"this cron does the
-right thing when it runs"*, not *"time passed and whatever was due
-fired"*.
+**Crons do not ride that clock.** You fire one directly, because a cron
+test means *"this cron does the right thing when it runs"*, not *"time
+passed and whatever was due fired"*:
 
-**Mind which name.** `AdvanceCron` takes the **handler function's**
-name, while the deployed cron is addressed by its **variable** name —
-so `var Cleanup = tako.Cron("every 24h", cleanupOrphans)` is
-`AdvanceCron("cleanupOrphans")` in a test and `/_tako/cron/Cleanup` in
-the cloud. That split is a known wart, logged for a fix; until then the
-error message is the reliable guide:
+```go
+var Cleanup = tako.Cron("every 24h", cleanupOrphans)
 
+app.AdvanceCron(Cleanup)   // the cron itself, not a name
 ```
-tako: AdvanceCron("cleanup"): no such cron — declared crons: cleanupOrphans, rebuildFeed
-```
+
+**You pass the cron, not a string.** The declaring variable is the
+cron's identity — it is what tako deploys it as, and what Cloud
+Scheduler addresses at `/_tako/cron/Cleanup` — so naming it any other
+way would be naming something else. It also means the compiler checks
+it: a typo or a renamed var is a build error, never a test that
+silently runs nothing. This is the same way every other declaration is
+reached in a test (`Create.Call`, `links.Get`, `thumbs.Publish`).
 
 ### Chaos mode
 
@@ -168,7 +170,8 @@ kept apart from the `NewTestApp` suite next to it.
 ## Errors you'll meet
 
 ```
-tako: AdvanceCron("cleanup"): no such cron — declared crons: cleanupOrphans
+tako: AdvanceCron: that is a worker, not a cron — workers run when their queue delivers, so publish to the queue and DrainQueues
+tako: AdvanceCron: the handler is empty — pass the var a tako.Cron was assigned to, like app.AdvanceCron(Cleanup)
 tako: DrainQueues: queues still busy after 30s
 tako: secret "notifier-key" is not set — add it to .env (tako dev, generated services) or call app.SetSecret (tests)
 tako: ctx.User on an unauthenticated context — pass a user to app.Ctx, or use MaybeUser

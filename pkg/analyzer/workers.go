@@ -441,23 +441,16 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 // extractSingleton validates one tako.Singleton declaration: a min=1
 // service whose generated main runs the lease-guarded loop.
 func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
-	if name.Name == "_" || len(call.Args) < 2 {
-		return nil
-	}
-	singletonName, err := constString(pkg, call.Args[0])
-	if err != nil {
-		*errs = append(*errs, &Error{
-			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg: fmt.Sprintf("tako.Singleton name must be a string constant — names are read at analysis time, not run time; got %s",
-				describeExpr(call.Args[0])),
-			Rule: "const-name",
-		})
+	// tako.Singleton(fn, opts...) — no name argument. The declaring
+	// variable is the identity, the same rule every other service tako
+	// deploys already follows.
+	if name.Name == "_" || len(call.Args) < 1 {
 		return nil
 	}
 	bad := false
 	var footprint *Footprint
 	var traffic *Traffic
-	for _, opt := range call.Args[2:] {
+	for _, opt := range call.Args[1:] {
 		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithTraffic" {
 			traffic = trafficArg(dir, pkg, opt, errs)
 			// One instance, and the only caller is its own health check:
@@ -508,7 +501,7 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Var:       pkg.Name + "." + name.Name,
 		Package:   pkg.PkgPath,
 		Service:   pkg.Name + "-" + strings.ToLower(name.Name),
-		Binding:   singletonName,
+		Binding:   name.Name,
 		Footprint: footprint,
 		Traffic:   traffic,
 		Pos:       relPos(dir, pkg.Fset, name.Pos()),

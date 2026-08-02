@@ -9749,3 +9749,75 @@ considered and rejected: it would rename production infrastructure in
 every deployed app to win a consistency argument.
 
 **STOP — awaiting approval.**
+
+## X1 — one cron, one name: shipped (2026-08-02)
+
+Direction A, approved. The declaring variable is the identity; nothing
+is derived by reflection.
+
+**SDK delta** (the lock test caught it, as designed, and was regenerated
+deliberately — only these two lines moved):
+
+```
+- func (*TestApp).AdvanceCron(name string)      + func (*TestApp).AdvanceCron(cron Handler)
+- func Singleton(name string, fn, opts...)      + func Singleton(fn, opts...)
+```
+
+`Handler` gained an unexported `id` (declaration order, from 1, so a
+zero Handler is distinguishable and can be refused by name). `name`
+survives as what it honestly is — a log label. `nextHandlerID` reserves
+the id BEFORE the Handler is built, because the singleflight closure has
+to capture it.
+
+**The declared name reaches the SDK from the runtime**, not the other
+way round: `RegisterCron("Cleanup", …)` and `RegisterSingleton` already
+carried the analyzer's variable name, and now call
+`hooks.SetHandlerIdentity`. `leaseKey` resolves at invoke time.
+
+### Two things the work surfaced that the proposal had not
+
+**1. A real regression, caught by a golden.** Dropping Singleton's name
+argument shifted its function to `call.Args[0]`, and
+`analyzer.go` still read `funcArg(pkg, d.call, 1)` for the edge walk.
+Result: **every resource edge from `shop.Invoicer` disappeared** — and
+those edges are what derive IAM grants, so the singleton would have
+deployed and then been denied its own Datastore. The shop appgraph
+golden failed with the edges missing, which is exactly what goldens are
+for; after the fix the only diff is the intended `"binding"` rename.
+
+**2. The lease key is the one place a second name survives, on
+purpose.** The plan was an id-based fallback in tests. That broke
+gallery's `TestCleanupSingleflightCollapses`, which holds
+`tako.Lock("cron-cleanupOrphans")` to simulate an overlapping run — a
+legitimate thing to write, and `cron-#3` is not nameable. So
+`NewTestApp` now seeds identities from the FUNCTION name
+(`registerTestIdentities`), keeping the key writable in tests, while
+deployed services key on the declared name. Both are stable within their
+scope, which is all a lease requires; the divergence is internal and
+documented rather than hidden.
+
+### Tests
+
+`cron_identity_test.go`: the value is what runs; the wrong kind is
+refused with the route that handler DOES take ("workers run when their
+queue delivers…"); a zero Handler is refused by name; **two crons over
+one function stay distinct** — the case that motivated the direction,
+since reflection gave them `func1`/`func2` and RENUMBERED both when a
+cron was added above them; and the lease key follows the declared name
+once registered.
+
+The old failure mode cannot be reproduced in code that compiles, which
+is the point: `AdvanceCron("cleanupOrphans")` is now a build error.
+
+### Docs
+
+`testing.md`'s "Mind which name" section is DELETED, not reworded — it
+stopped being true. `cron.md` gains the identity paragraph and the
+transitional-deploy caveat about the lease key. `singleton.md`,
+`guide/local.md`, `guide/05-shop.md`, `validate/gallery.md` and the
+spec's §2.8 table migrated. `docs/task-log.md` and `api-review-1.md`
+keep the old signatures — they are records of what was true then.
+
+Migration was three `AdvanceCron` call sites, one `Singleton`
+declaration, and `compile_check_test.go`. Full suite green, six examples
+green, gofmt and vet clean.

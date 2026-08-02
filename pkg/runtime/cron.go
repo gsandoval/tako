@@ -53,6 +53,10 @@ func RegisterCron(name string, h tako.Handler) {
 		// the binary predates the declaration — fail loudly.
 		panic("tako: " + err.Error())
 	}
+	// The declared name reaches the SDK here: singleflight keys its
+	// lease on it, and it is the only identity stable across instances
+	// and deploys.
+	hooks.SetHandlerIdentity(hooks.HandlerID(h), name)
 	cronHandlers.Store(name, fn)
 	if cronInert {
 		// In the cloud the trigger is Cloud Scheduler → POST

@@ -64,7 +64,7 @@ leader, no lock, retry-safe.
 ## Singleton — exactly one, everywhere
 
 ```go
-var Invoicer = tako.Singleton("invoicer", assignInvoices)
+var Invoicer = tako.Singleton(assignInvoices)
 ```
 
 Bookkeeping-grade invoice numbers are strictly sequential — genuinely

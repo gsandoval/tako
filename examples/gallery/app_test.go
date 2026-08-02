@@ -139,7 +139,7 @@ func TestCronCleansNeverCompletedUploads(t *testing.T) {
 	}
 	app.DrainQueues()
 
-	app.AdvanceCron("cleanupOrphans")
+	app.AdvanceCron(Cleanup)
 
 	if _, err := photoStore.Get(ctx, ghost.Photo.ID); !tako.IsNotFound(err) {
 		t.Fatalf("ghost entity after cron: err = %v", err)

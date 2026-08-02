@@ -26,7 +26,7 @@ shop: 4 services
     entity sequences
     entity settle-shards
   service shop-invoicer (package shop, profile singleton)
-    singleton Invoicer — invoicer, exactly one everywhere (app.go:102)
+    singleton Invoicer — exactly one everywhere (app.go:102)
     entity products
     entity orders (indexes: Owner, Invoiced, Created)
     site ./web/dist
