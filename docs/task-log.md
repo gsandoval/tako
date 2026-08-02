@@ -10666,3 +10666,30 @@ var; `Absent` on a metric that cannot be absent).
    appetite for the feature?
 
 **STOP — awaiting approval on the shape and decisions 1–5.**
+
+## Y1 — owner decisions (2026-08-02)
+
+1. **Pub/Sub destination: IN.** `tako.PubSub(topic)` joins Email,
+   ChatSpace and Webhook. The caveat that stands: with `tako.Incident`
+   cut, the message body is Google's own incident JSON and the app
+   defines its own struct for it. `reference/alerts.md` will carry a
+   copy-pasteable struct with the fields that matter
+   (`incident.incident_id`, `.state`, `.summary`, `.url`,
+   `.condition_name`) — documented, not frozen into the SDK, so a
+   Google payload change is a doc edit rather than an API break.
+2. **`ErrorRate` extended to worker/subscriber services.** It accepts a
+   `*ServiceHandle` (the app service) or a `Handler` var — the
+   `AdvanceCron(cron Handler)` precedent — so
+   `tako.ErrorRate(MakeThumb)` alerts on the thumbnail worker's own
+   deployable.
+3. **`Runs(cron)`** — resolved by live probe rather than by choosing
+   blind (see the entry below).
+4. **Verification is instructions, not automation.** tako does not
+   drive channel verification or the Chat app install. When a channel
+   needs a human step, the deploy prints what to do next and a
+   **built console deep link** to the exact page. Same treatment as the
+   Identity Platform manual step (W6). This applies to every channel
+   type, not just email.
+5. **No local test surface: accepted**, with the honest consequence
+   recorded — alerting's correctness rests on analyzer goldens,
+   provisioner fake-server tests, and the live gate walk.
