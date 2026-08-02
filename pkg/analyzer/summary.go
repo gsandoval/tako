@@ -79,6 +79,14 @@ func ResourceLine(r Resource) string {
 	if r.Kind == "auth" {
 		return "auth (" + strings.Join(r.Providers, ", ") + ")"
 	}
+	if r.Kind == "channel" {
+		return "channel " + r.Name + " → " + r.ChannelKind + " " + r.Target
+	}
+	if r.Kind == "alert" {
+		// An alert nobody can see is an alert nobody trusts: name the
+		// condition and every destination it will wake.
+		return "alert " + r.Name + " — " + r.Condition + " → " + strings.Join(shortVars(r.Channels), ", ")
+	}
 	if r.TrustedHTML {
 		// The markdown opt-out is a security posture — visible wherever
 		// the site is described, never buried in the graph JSON.
@@ -109,4 +117,18 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// shortVars drops the package qualifier from declared var names for
+// display: "gallery.oncall" reads as "oncall" beside its own service.
+func shortVars(vars []string) []string {
+	out := make([]string, len(vars))
+	for i, v := range vars {
+		if dot := strings.LastIndexByte(v, '.'); dot >= 0 {
+			out[i] = v[dot+1:]
+			continue
+		}
+		out[i] = v
+	}
+	return out
 }

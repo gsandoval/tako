@@ -11643,3 +11643,62 @@ Defaults are per preset and documented, with an optional trailing
 `Window` on every one — defaulted, not hidden.
 
 Next: Y1b, the analyzer, against a settled surface.
+
+## Y1b — the analyzer learns alerts (2026-08-02)
+
+Channels and alerts are now AppGraph resources. They are **app-scoped**,
+like topics: they run nowhere, so they are never partitioned into a
+service.
+
+### Alerts resolve in a THIRD pass
+
+Resources, then handlers, then alerts — because a condition names
+handlers and routes (`CronMissed(Cleanup)`, `SlowerThan(Photos, …)`) and
+every handler must already be in the graph before a subject can be
+checked against it. This required hoisting the var scan out of the
+resource loop into `declsOf`, which is now walked twice.
+
+### Five rules, and why each exists
+
+| rule | catches |
+|---|---|
+| `const-name` | a destination computed at run time — read at analysis time or not at all |
+| `channel-binding` | `tako.Alert(cond, tako.Email("adhoc@…"))` — an inline channel tako never declared, so never created |
+| `channel-binding` | `tako.PubSub` over a topic that is not a package-level var: the deploy has to grant the notification agent publisher on a real topic |
+| `alert-subject` | **`CronMissed(Work)` where Work is a worker** |
+| `quantile` | `SlowerThan(…, 99)` and `Percentile(lat, 99)` — a quantile is a fraction |
+
+`alert-subject` is the one the type system cannot reach. Every async
+handler is a `tako.Handler`, so `CronMissed(aWorker)` compiles cleanly;
+only the graph knows which kind each var is. Verbatim:
+
+```
+app.go:28:41: tako.CronMissed watches a cron, but alerts.Work is a worker (tako/alert-subject)
+```
+
+The quantile rule earns its place by naming the mistake rather than the
+range — "0.99 is the 99th percentile, not 99" — because passing 99 is
+what everyone does once.
+
+### Visible in the summary
+
+An alert nobody can see is an alert nobody trusts, so `tako gen graph`
+and the dev banner name the condition and every destination it will
+wake:
+
+```
+    channel oncall → email ops@example.com
+    channel bus → pubsub incidents
+    alert Stuck — DeadLettered → oncall
+    alert Piling — Backlogged → oncall, bus
+    alert Missed — CronMissed → oncall
+```
+
+Verified end to end with the real CLI: four alerts across three preset
+kinds and two channel kinds, with the Pub/Sub channel resolving to its
+declared topic name.
+
+Next: Y1c — the provisioner. Four things the probes pinned that it must
+not rediscover: the `monitored_resource="generic_task"` matcher, the
+`_bucket` suffix for distributions, the `{domain}:{name}` mapping, and
+`duration: 0s` whenever a lookback exceeds 1d1h.

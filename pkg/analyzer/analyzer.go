@@ -106,6 +106,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	bucketVars := map[types.Object]string{}   // bucket var object → bucket name
 	resourceVars := map[types.Object]resRef{} // grant-relevant vars for the edge scan
 	endpointVars := map[types.Object]string{} // Endpoint vars (API/Page) → Var, for call edges
+	channelVars := map[types.Object]string{}  // alert destination vars → Var
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
 	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
 	sitePackages := map[string]string{}       // package path → package name (service-from-site)
@@ -114,35 +115,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	workersByQueue := map[string]*Handler{}   // queue name → its worker
 	jobVars := map[types.Object]string{}      // job var object → job name
 	jobsByName := map[string]*Handler{}       // job name → its handler
-	type varDecl struct {
-		name *ast.Ident
-		call *ast.CallExpr
-		ctor string
-	}
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
 			graph.Module = pkg.Module.Path
 		}
-		var decls []varDecl
-		for _, file := range pkg.Syntax {
-			for _, decl := range file.Decls {
-				gen, ok := decl.(*ast.GenDecl)
-				if !ok || gen.Tok != token.VAR {
-					continue
-				}
-				for _, spec := range gen.Specs {
-					vs := spec.(*ast.ValueSpec)
-					for i, name := range vs.Names {
-						if i >= len(vs.Values) {
-							continue
-						}
-						if call, ok := vs.Values[i].(*ast.CallExpr); ok {
-							decls = append(decls, varDecl{name: name, call: call, ctor: sdkConstructor(pkg, call)})
-						}
-					}
-				}
-			}
-		}
+		decls := declsOf(pkg)
 		// Resources first, so handler bindings resolve regardless of
 		// declaration order within the package.
 		for _, d := range decls {
@@ -222,6 +199,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					graph.Resources = append(graph.Resources, *r)
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "lock"}
 				}
+			case "Email", "ChatSpace", "Webhook", "PubSub":
+				if r := extractChannel(d.ctor, cfg.Dir, pkg, d.name, d.call, topicVars, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					channelVars[pkg.TypesInfo.Defs[d.name]] = r.Var
+				}
 			}
 		}
 		for _, d := range decls {
@@ -270,6 +252,24 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			}
 		}
 		checkPackageLevel(cfg.Dir, pkg, &errs)
+	}
+	// Alerts resolve LAST: a condition names handlers and routes, so
+	// every handler must already be in the graph before a subject can be
+	// checked against it.
+	handlersByVar := map[string]*Handler{}
+	for i := range graph.Handlers {
+		handlersByVar[graph.Handlers[i].Var] = &graph.Handlers[i]
+	}
+	for _, pkg := range pkgs {
+		for _, d := range declsOf(pkg) {
+			if d.ctor != "Alert" {
+				continue
+			}
+			if r := extractAlert(cfg.Dir, pkg, d.name, d.call, channelVars, handlersByVar, &errs); r != nil {
+				graph.Resources = append(graph.Resources, *r)
+			}
+		}
+		checkQuantiles(cfg.Dir, pkg, &errs)
 	}
 	for _, pkg := range pkgs {
 		scanQueries(cfg.Dir, pkg, entities, &errs)
@@ -628,5 +628,64 @@ func applyProfiles(graph *AppGraph, errs *ErrorList) {
 		if claim != "" {
 			svc.Profile = claim
 		}
+	}
+}
+
+// varDecl is one package-level var initialised by a constructor call.
+type varDecl struct {
+	name *ast.Ident
+	call *ast.CallExpr
+	ctor string
+}
+
+// declsOf lists every package-level var initialised by a call, with the
+// SDK constructor it names. Alerts need a second walk over these after
+// handlers are in the graph, so the scan is a function rather than a
+// loop body.
+func declsOf(pkg *packages.Package) []varDecl {
+	var decls []varDecl
+	for _, file := range pkg.Syntax {
+		for _, decl := range file.Decls {
+			gen, ok := decl.(*ast.GenDecl)
+			if !ok || gen.Tok != token.VAR {
+				continue
+			}
+			for _, spec := range gen.Specs {
+				vs := spec.(*ast.ValueSpec)
+				for i, name := range vs.Names {
+					if i >= len(vs.Values) {
+						continue
+					}
+					if call, ok := vs.Values[i].(*ast.CallExpr); ok {
+						decls = append(decls, varDecl{name: name, call: call, ctor: sdkConstructor(pkg, call)})
+					}
+				}
+			}
+		}
+	}
+	return decls
+}
+
+// checkQuantiles validates every quantile argument in the package —
+// Percentile's and SlowerThan's — wherever they appear.
+func checkQuantiles(dir string, pkg *packages.Package, errs *ErrorList) {
+	for _, file := range pkg.Syntax {
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			switch sdkConstructor(pkg, call) {
+			case "Percentile":
+				if len(call.Args) == 2 {
+					checkQuantile(dir, pkg, call.Args[1], "Percentile", errs)
+				}
+			case "SlowerThan":
+				if len(call.Args) >= 3 {
+					checkQuantile(dir, pkg, call.Args[2], "SlowerThan", errs)
+				}
+			}
+			return true
+		})
 	}
 }

@@ -97,6 +97,17 @@ type Resource struct {
 	// Type is the payload type for generic resources (Entity, Cache,
 	// Queue, Topic, Job), empty otherwise.
 	Type string `json:"type,omitempty"`
+	// ChannelKind is Google's notification-channel type for a "channel"
+	// resource: email, google_chat, webhook_tokenauth, pubsub.
+	ChannelKind string `json:"channel_kind,omitempty"`
+	// Target is a channel's destination — an address, a space, a URL, or
+	// the declared topic name for a pubsub channel.
+	Target string `json:"target,omitempty"`
+	// Condition is the constructor an "alert" resource was built with
+	// (Above, Absent, DeadLettered, CronMissed, …).
+	Condition string `json:"condition,omitempty"`
+	// Channels are the declared channel vars an alert notifies.
+	Channels []string `json:"channels,omitempty"`
 	// Indexes are the entity fields the app actually queries
 	// (Where/OrderBy call sites), in struct declaration order — the
 	// derived index set.
