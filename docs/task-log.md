@@ -11702,3 +11702,59 @@ Next: Y1c — the provisioner. Four things the probes pinned that it must
 not rediscover: the `monitored_resource="generic_task"` matcher, the
 `_bucket` suffix for distributions, the `{domain}:{name}` mapping, and
 `duration: 0s` whenever a lookback exceeds 1d1h.
+
+## Y1c — the query builder and the kinds; and a gap Y1b left (2026-08-02)
+
+### Shipped
+
+`pkg/provision/promql.go` turns a condition into the query Cloud
+Monitoring evaluates, and every decision in it is one the probes forced:
+
+- `promName` implements the documented mapping (first `/` → `:`, other
+  specials → `_`), tested against five real metric types.
+- Every selector carries `monitored_resource`, because a bare
+  custom-metric selector is refused outright.
+- Every histogram reading goes through `_bucket`/`_count`/`_sum`. A test
+  fails if any query uses the bare name, which resolves to zero series
+  WITH data present — the failure that looks exactly like "not firing
+  yet".
+- Percentiles keep `by (le)`; without it the buckets are summed away and
+  the result is a quantile of nothing.
+- Counters read through `increase`/`rate`, and a test refuses
+  `delta(`, `avg_over_time(` and `sum_over_time(` by name — all three
+  parse, so nothing but an explicit ban catches them.
+- Absence is `absent_over_time`, and a test refuses `== 0`.
+- `retestAllowed` caps at 25h, so a 26h lookback sends `duration: 0`.
+- Ranges render in seconds: `1h30m0s` is not a legal range selector.
+
+Eight tests, each pinning a fact that cost a live probe to learn.
+
+`KindAlertChannel` and `KindAlertPolicy` are in `reconcileOrder`, last
+and in that order: channels before policies because a policy names its
+channels, and both after everything because a half-built app with alerts
+already watching it would page on its own deploy.
+
+That reordering changed destroy, and correctly: alerts now come off
+FIRST. `TestDomainMappingPlansAfterItsService` asserted the domain
+mapping was `order[0]`; it now asserts the two things that actually
+matter — mapping before its service, and alerting before the mapping.
+An alert that outlives the app it watches pages about a teardown in
+progress.
+
+### The gap: Y1b stored the condition's NAME, not its parameters
+
+Starting Y1c surfaced it. The AppGraph records `Condition: "DeadLettered"`
+and the channel list — enough to render the summary and check the rules,
+and **not enough to build a query**. The provisioner needs the subject's
+metric type and label matchers, the reading, the threshold and the
+window, none of which the analyzer extracts today.
+
+So Y1b is complete for what it claimed (resources, rules, visibility)
+and incomplete for what Y1c needs. The remaining work is real analyzer
+work — reading each condition's arguments, resolving preset subjects to
+their metric types, and validating windows against the measured ceilings
+(`Every` 60s–90000s, `For` ≤24h on thresholds) — not a wiring detail.
+
+Stopping here rather than writing adapters against a graph that cannot
+feed them. Next: **Y1b2**, condition parameter extraction, then Y1c's
+adapters and fake-server tests on top of it.

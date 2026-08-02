@@ -56,11 +56,17 @@ func TestDomainMappingPlansAfterItsService(t *testing.T) {
 	if service < 0 || mapping < service {
 		t.Errorf("domain mapping must plan after its run service:\n%s", rendered)
 	}
-	// Destroy reverses reconcile order, so the mapping comes off first —
-	// before the service it points at stops existing.
+	// Destroy reverses reconcile order, so the mapping comes off before
+	// the service it points at stops existing. It is no longer FIRST:
+	// alerting is torn down ahead of everything, because an alert that
+	// outlives the app it watches pages about a teardown in progress.
 	order := DeleteOrder()
-	if order[0] != KindDomainMapping {
-		t.Errorf("destroy should remove the domain mapping first, got %s", order[0])
+	mapIdx, svcIdx := indexOfKind(order, KindDomainMapping), indexOfKind(order, KindRunService)
+	if mapIdx < 0 || svcIdx < 0 || mapIdx > svcIdx {
+		t.Errorf("destroy must remove the domain mapping before its run service: %v", order)
+	}
+	if indexOfKind(order, KindAlertPolicy) > mapIdx {
+		t.Errorf("destroy must silence alerts before dismantling what they watch: %v", order)
 	}
 }
 
@@ -122,4 +128,13 @@ func TestNoDomainNoMapping(t *testing.T) {
 			t.Fatalf("unexpected domain mapping %s", o.Name)
 		}
 	}
+}
+
+func indexOfKind(order []Kind, k Kind) int {
+	for i, got := range order {
+		if got == k {
+			return i
+		}
+	}
+	return -1
 }

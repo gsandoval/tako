@@ -29,6 +29,8 @@ const (
 	KindPushSubscription   Kind = "push subscription"
 	KindSchedulerJob       Kind = "scheduler job"
 	KindDomainMapping      Kind = "domain mapping"
+	KindAlertChannel       Kind = "alert channel"
+	KindAlertPolicy        Kind = "alert policy"
 )
 
 // reconcileOrder is additive-first (spec §4.6a): supporting objects
@@ -43,6 +45,11 @@ var reconcileOrder = []Kind{
 	KindRepo, KindServiceAccount, KindBucket, KindDatastoreIndex, KindTopic,
 	KindBucketNotification, KindPullSubscription, KindTasksQueue, KindRunService, KindRunJob,
 	KindIamGrants, KindPushSubscription, KindSchedulerJob, KindDomainMapping,
+	// Channels before policies: a policy names its channels by resource
+	// name, so they must exist first. Both come last — they observe the
+	// app rather than serve it, and a half-built app with alerts already
+	// watching it would page on its own deploy.
+	KindAlertChannel, KindAlertPolicy,
 }
 
 // DeleteOrder is reconcile order reversed — the order destroy walks.
