@@ -9196,3 +9196,135 @@ commands.
 
 P1 is the one to decide before release — it is user-visible behavior,
 not tidiness.
+
+## P1 — logging becomes cloud-shaped (DX proposal, 2026-08-01)
+
+From `docs/code-review-1.md`. Two defects, one slice: the framework
+installs no `slog` handler, so severity is lost in Cloud Logging; and
+`logRequests` still prints the dev-console format in production under a
+comment promising Phase E would replace it.
+
+**No new SDK surface.** `ctx.Log()` call sites do not change. This slice
+is entirely about where the bytes go and what shape they arrive in.
+
+### Verified first (2026-08-01, docs.cloud.google.com)
+
+Cloud Logging's special JSON fields, confirmed against the structured-
+logging reference rather than memory:
+
+| Purpose | Key | Value |
+|---|---|---|
+| severity | `severity` | a LogSeverity string — `DEBUG INFO NOTICE WARNING ERROR CRITICAL ALERT EMERGENCY` |
+| message | `message` | string |
+| timestamp | `time` | ISO 8601 |
+| trace | `logging.googleapis.com/trace` | `projects/<PROJECT-ID>/traces/<TRACE-ID>` |
+| span | `logging.googleapis.com/spanId` | string |
+| request | `httpRequest` | LogEntry HttpRequest record |
+
+The Cloud Run page confirms `logging.googleapis.com/trace` with the
+format `"projects/%s/traces/%s"` is what nests a container's log lines
+under their request in the Logs Explorer.
+
+**The load-bearing detail:** slog spells its levels `DEBUG INFO WARN
+ERROR`, and Cloud Logging wants `WARNING`, not `WARN`. A JSON handler
+alone does not fix severity — the rename is the fix.
+
+### The shape: the handler follows the backend
+
+- **`BootLocal`** (tako dev, tako test, NewTestApp) — unchanged. The dev
+  console is a product; JSON in it would be a regression.
+- **`BootGCP`** — `slog.SetDefault` with a JSON handler on stdout, whose
+  `ReplaceAttr` renames `level`→`severity` (with the value mapped),
+  `msg`→`message`, and `time`→ISO 8601.
+
+One seam, matching the one that already decides every other local/cloud
+difference. Nothing in between: no flag, no `tako.WithLogging`.
+
+### What a user sees
+
+Local, unchanged:
+
+```
+GET /api/photos → 200 (14.2ms)
+```
+
+Cloud, one line per request (wrapped here for reading):
+
+```json
+{"time":"2026-08-01T20:52:19.412504Z","severity":"INFO","message":"GET /api/photos → 200",
+ "httpRequest":{"requestMethod":"GET","requestUrl":"/api/photos","status":200,
+   "latency":"0.014s","responseSize":812,"userAgent":"curl/8.7.1","protocol":"HTTP/1.1"},
+ "logging.googleapis.com/trace":"projects/tako-test-01/traces/105445aa7843bc8bf206b12000100000"}
+```
+
+and a line the handler wrote, correlated with it:
+
+```json
+{"time":"2026-08-01T20:52:19.418113Z","severity":"ERROR","message":"notify failed",
+ "req":"r-8f2c1d","err":"dial tcp: i/o timeout",
+ "logging.googleapis.com/trace":"projects/tako-test-01/traces/105445aa7843bc8bf206b12000100000"}
+```
+
+In the Logs Explorer that second line nests under the first, and
+filtering `severity>=ERROR` finds it. Today neither is true.
+
+`tako logs` needs no change — its `severity` column starts carrying real
+values instead of `DEFAULT` for everything.
+
+### Trace correlation
+
+Cloud Run sends `X-Cloud-Trace-Context: TRACE_ID/SPAN_ID;o=1`. When
+present, the request's logger gains the trace and span fields;
+`TAKO_PROJECT` is already injected at deploy, so no metadata call is
+needed. Absent (local, tests, push deliveries), nothing is added — the
+existing `req` attribute keeps doing the correlating.
+
+Cron, job, singleton and push loggers keep their `cron=`/`job=`/
+`handler=` attributes and gain severity; they get no `httpRequest`,
+because they are not requests from a client.
+
+### The one open question — who owns the default logger?
+
+A generated main calls `runtime.Boot()` first and gives user code no
+seam before it, so a user who calls `slog.SetDefault` in an `init()`
+would be overwritten by `BootGCP`.
+
+**Recommended (A): tako sets it in the cloud, unconditionally, and the
+docs say so.** The framework already owns the service's shape, its
+identity and its wiring; owning the log format in the cloud is the same
+kind of derivation, and it is the only way `tako logs` and severity
+filtering mean anything by default. No example demands an override yet,
+and "no feature without an example demanding it" applies.
+
+**(B): the same, with `TAKO_LOG=raw` opting out** to Go's default
+handler. Five lines, and an env var that exists for a user who has not
+turned up yet.
+
+Recommending A.
+
+### Docs
+
+`reference/observability.md`'s Logging section is rewritten around the
+real behavior, and the two "Not yet" bullets this slice creates —
+severity not surviving, request logs unstructured — are deleted rather
+than reworded, because they stop being true.
+
+### Test plan
+
+- Unit: `ReplaceAttr` maps all four slog levels to LogSeverity strings
+  (the `WARN`→`WARNING` case is the regression that matters); a line
+  with a trace header carries the exact `projects/P/traces/T` string; a
+  line without one carries no trace key at all; local boot leaves the
+  default handler alone.
+- `validate/logging.md` (new): deploy gallery, curl an endpoint, read
+  the entries back with `gcloud logging read` and confirm severity is
+  `ERROR` not `DEFAULT`, `jsonPayload` is a record not a text blob, and
+  a handler line nests under its request in the Logs Explorer.
+
+### Non-goals
+
+`--follow` / streaming; log-based metrics or alert policies; sampling; a
+level knob; `httpRequest` on non-HTTP executions; changing anything
+about local output.
+
+**STOP — awaiting approval, and a pick on the open question.**
