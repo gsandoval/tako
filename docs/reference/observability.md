@@ -55,18 +55,59 @@ and push deliveries carry `handler` and `source`. Every line from one
 request is therefore greppable as a unit without you passing an id
 around.
 
-Nothing else is opinionated: tako installs no `slog` handler, so output
-goes wherever the process's default logger points — stderr, text
-format, `INFO` and above. Configure it as you would in any Go program,
-in your own package's `init` or before the handler runs:
+**Where the line goes depends on where the service runs**, and you
+write it the same way either way. Locally it is Go's default
+human-readable output next to the dev console's request lines.
+Deployed, tako installs a JSON handler and the same call arrives as a
+Cloud Logging record:
 
-```go
-slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+```json
+{"time":"2026-08-01T20:52:19.418113Z","severity":"ERROR","message":"notify failed",
+ "req":"r-8f2c1d","err":"dial tcp: i/o timeout",
+ "logging.googleapis.com/trace":"projects/my-project/traces/105445aa7843bc8bf206b12000100000"}
 ```
 
-Cloud Logging captures a Cloud Run container's stdout and stderr either
-way, so logs always arrive. What tako does **not** do yet is give them
-a severity: see [Not yet](#not-yet).
+Three things follow from that, and each is the point:
+
+- **`severity` is a real field**, so `severity>=ERROR` in the Logs
+  Explorer finds exactly the errors. Note the spelling: slog's `WARN`
+  is written out as Cloud Logging's `WARNING`, because those are the
+  only level names it recognizes.
+- **Your attributes stay yours.** `err` above is the handler's; only
+  slog's three built-ins (`level`, `msg`, `time`) are renamed to the
+  keys Google reads.
+- **The trace field nests the line under its request.** Cloud Run sends
+  `X-Cloud-Trace-Context`; every line a handler logs during that request
+  carries the matching trace, so the Logs Explorer groups them under the
+  request log rather than scattering them. Locally, and on push
+  deliveries where there is no trace, `req` does the correlating on its
+  own.
+
+Request logs follow the same split — the terse `GET /path → 200
+(14.2ms)` line locally, and deployed a structured `httpRequest` record
+that Cloud Logging renders as a request:
+
+```json
+{"time":"…","severity":"INFO","message":"GET /api/photos → 200",
+ "httpRequest":{"requestMethod":"GET","requestUrl":"/api/photos","status":200,
+   "latency":"0.014000s","responseSize":812,"userAgent":"curl/8.7.1","protocol":"HTTP/1.1"},
+ "logging.googleapis.com/trace":"projects/my-project/traces/1054…"}
+```
+
+Its severity follows the status: 5xx logs as `ERROR`, 4xx as `WARNING`,
+everything else `INFO` — so a burst of 500s is findable with the same
+filter as the handler errors behind them.
+
+**tako owns the default logger in a deployed service.** A generated main
+calls `Boot()` before any of your code runs, so a `slog.SetDefault` in
+your own `init()` is replaced there. That is deliberate: the log format
+in the cloud is derived the same way the service's shape is, and it is
+what makes severity mean anything without configuration. Locally
+nothing is installed, so `slog.SetDefault` is yours.
+
+Cron, job, and singleton lines get severity too — they carry their
+`cron=`/`job=`/`handler=` attribute instead of `httpRequest`, since an
+execution is not a request from a client.
 
 ## Local
 
@@ -265,20 +306,14 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
   metrics, you build the views.
 - Histogram bucket bounds are fixed (doubling, 1 to 262144) and not
   declarable.
-- **Log severity does not survive the trip to Cloud Logging.** Tako
-  installs no `slog` handler, so a deployed service writes Go's default
-  text lines, and Cloud Logging files everything a container prints as
-  severity `DEFAULT` unless the line is JSON carrying a `severity`
-  field. `ctx.Log().Error(…)` therefore reads the same as
-  `ctx.Log().Info(…)` once it lands — you can grep the text, but you
-  cannot filter or alert by level. Setting a JSON handler yourself
-  (above) gets you structured fields; it still won't map slog levels
-  onto Cloud Logging's severities without a `ReplaceAttr` that renames
-  `level` to `severity`.
-- Request logs are the dev-console format in the cloud too — one
-  `GET /path → 200 (1.4ms)` line per request on stdout, not structured
-  and not correlated with the trace.
-- `tako logs` fetches once — no `--follow`/streaming, and no severity
-  filter (there would be nothing to filter on, per the first point).
+- `tako logs` fetches once — no `--follow`/streaming, and no
+  `--severity` flag yet (the severities are there; the CLI does not
+  filter on them). The Logs Explorer does.
+- No log sampling and no level knob: a deployed service logs everything
+  `INFO` and above, and there is no `WithLogging` to change that.
+- No log-based metrics or alert policies are created for you.
+- Log volume is billed by Cloud Logging like any other. Structured
+  lines are slightly larger than the text they replaced; a chatty
+  handler on a wide-scaling service is the case to watch.
 - No secret versioning surface: services read `latest` at boot, and
   tako will not write versions for you (by design, not a gap).

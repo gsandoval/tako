@@ -168,8 +168,10 @@ func (a *TestApp) SetSecret(name, value string) {
 
 // AdvanceCron runs the named cron handler once, synchronously, as if its
 // schedule fired — tests own scheduled time (see Advance). name is the
-// handler function's name ("cleanupOrphans"), the same identity the
-// wiring uses.
+// handler FUNCTION's name ("cleanupOrphans"), which is not the identity
+// the deployed cron carries: Cloud Scheduler addresses the same cron by
+// its VARIABLE name (/_tako/cron/Cleanup). Logged as discovered work;
+// a failed lookup lists the names that do work.
 func (a *TestApp) AdvanceCron(name string) {
 	a.tb.Helper()
 	var crons []string

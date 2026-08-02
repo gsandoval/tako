@@ -64,6 +64,10 @@ func BootGCP() error {
 			return fmt.Errorf("%s is not set — tako deploy injects it, so this is a tako bug", name)
 		}
 	}
+	// Before anything else can log: from here on every line this process
+	// writes carries a severity Cloud Logging understands, and requests
+	// carry the trace that nests their handler's lines underneath them.
+	useCloudLogging(opts.Project)
 	c, err := gcpb.New(context.Background(), opts)
 	if err != nil {
 		return err

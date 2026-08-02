@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -44,7 +43,7 @@ func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Requ
 		defer cancel()
 		ctx := &requestCtx{
 			Context: base,
-			log:     slog.Default().With("req", reqID),
+			log:     requestLogger(r, reqID),
 		}
 		if session != nil {
 			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
@@ -175,24 +174,33 @@ func Serve(h http.Handler) {
 	}
 }
 
-// logRequests prints one terse line per request in dev; structured JSON
-// request logs become the default when the cloud runtime lands (Phase E).
+// logRequests emits one record per request. What that record IS depends
+// on where the service is running — a terse dev-console line locally, a
+// structured httpRequest in the cloud — and logRequest owns that choice
+// so this middleware stays about timing and status.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		fmt.Printf("%s %s → %d (%.1fms)\n",
-			r.Method, r.URL.Path, sw.status, float64(time.Since(start).Microseconds())/1000)
+		logRequest(r, sw.status, sw.written, time.Since(start))
 	})
 }
 
 type statusWriter struct {
 	http.ResponseWriter
-	status int
+	status  int
+	written int64
 }
 
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
+}
+
+// Write counts the body so the cloud record can carry responseSize.
+func (w *statusWriter) Write(b []byte) (int, error) {
+	n, err := w.ResponseWriter.Write(b)
+	w.written += int64(n)
+	return n, err
 }

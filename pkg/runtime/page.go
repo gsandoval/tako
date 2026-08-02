@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"html/template"
 	"io/fs"
-	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -267,7 +266,7 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// IsHTMX is the HX-Request header, nothing else (the F10 fence:
 		// a request-shape probe — the framework never switches modes on
 		// it by itself; handlers do).
-		ctx := &requestCtx{Context: rctx, log: slog.Default().With("req", reqID),
+		ctx := &requestCtx{Context: rctx, log: requestLogger(r, reqID),
 			isHTMX: r.Header.Get("HX-Request") == "true"}
 		if session != nil {
 			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}

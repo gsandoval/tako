@@ -9328,3 +9328,75 @@ level knob; `httpRequest` on non-HTTP executions; changing anything
 about local output.
 
 **STOP — awaiting approval, and a pick on the open question.**
+
+## P1 — logging becomes cloud-shaped (2026-08-01)
+
+Approved with option A: tako owns the default logger in a deployed
+service. Proposal above; what shipped matches it.
+
+**`pkg/runtime/logging.go`** (new) holds the whole seam. `BootGCP` calls
+`useCloudLogging(project)` before anything else can log; `BootLocal`
+deliberately does not, so the dev console is untouched.
+
+The load-bearing part is not the JSON — it is `ReplaceAttr`. slog spells
+its levels DEBUG/INFO/**WARN**/ERROR and Cloud Logging recognizes
+DEBUG/INFO/**WARNING**/ERROR, so a plain `slog.NewJSONHandler` would
+still have lost every warning. `severityOf` maps the four, rounding
+between-levels DOWN the way slog's own `Level.String` reports them
+(5 is "WARN+1", not ERROR). `level`→`severity`, `msg`→`message`,
+`time`→ISO 8601; everything the caller attached survives untouched.
+
+Field names verified against docs.cloud.google.com rather than recalled
+(both cloud.google.com URLs now 301 to it), and the test proves the
+rename is load-bearing: disabling the `slog.LevelKey` case fails
+`TestCloudLinesCarryTheRenamedKeys` with *"the line still carries
+'level' — the rename did not happen"*, and passes again restored.
+
+**Trace correlation.** `X-Cloud-Trace-Context: TRACE/SPAN;o=1` becomes
+`logging.googleapis.com/trace = projects/<TAKO_PROJECT>/traces/<TRACE>`,
+so every line a handler writes nests under its request in the Logs
+Explorer. `TAKO_PROJECT` was already injected, so no metadata call. With
+no project (local, tests) NO trace key is written at all — a trace field
+pointing at nothing is worse than none, and `TestNoTraceKeyWithoutCloudRun`
+pins that.
+
+**Request logs.** `logRequests` no longer decides the format; it hands
+`logRequest` the status, size and duration and that picks. Local: the
+same terse line as before, byte for byte. Cloud: an `httpRequest` record
+with method, url, status, latency, responseSize, userAgent, remoteIp and
+protocol, at a severity that follows the status (5xx→ERROR, 4xx→WARNING),
+so a burst of 500s is findable with the same filter as the handler errors
+behind them. `statusWriter` grew a `Write` to count the body — it only
+had `WriteHeader` before, so responseSize would have been 0 forever.
+
+Three copies of `slog.Default().With("req", reqID)` (http.go, blob.go,
+page.go) became one `requestLogger`, which is also what makes the trace
+arrive on all three kinds rather than whichever one got edited.
+
+Docs: observability.md's Logging section rewritten around real behavior,
+and the two "Not yet" bullets P1 created were DELETED, not reworded —
+they stopped being true. New `validate/logging.md` reads the entries back
+with `gcloud logging read` and checks `severity>=WARNING` returns
+something (before this slice that query returned nothing, ever) and that
+the payload is `jsonPayload`, not `textPayload`.
+
+### Discovered work (logged, not done)
+
+**A cron has two identities.** `var Cleanup = tako.Cron("every 24h",
+cleanupOrphans)` is addressed as `cleanupOrphans` from a test
+(`app.AdvanceCron`) and as `Cleanup` in the cloud (`RegisterCron`, and
+the Scheduler URI `/_tako/cron/Cleanup`) — the handler function's name
+in one place, the package-level variable's in the other. User-raised
+(2026-08-01): the tako-specific cron endpoint wants revisiting, with the
+HTTP endpoint derived from the VARIABLE name.
+
+Worth noting the endpoint already is the variable name; the divergence
+is on the test side, so unifying probably means `AdvanceCron` taking
+`"Cleanup"` — a breaking change to a test-facing method, which is why it
+is its own task and not a side effect of this one.
+
+It also had a documentation tail: `TestApp.AdvanceCron`'s doc comment
+claimed the function name was "the same identity the wiring uses", which
+is false, and that claim was copied into `docs/reference/testing.md`
+when that page was written earlier today. Both corrected to state the
+split plainly; the fix itself stays unscheduled.

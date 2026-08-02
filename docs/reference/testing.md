@@ -86,8 +86,14 @@ those are the contract under test.
 **Crons do not ride that clock.** `app.AdvanceCron("cleanupOrphans")`
 runs the body by name, because a cron test means *"this cron does the
 right thing when it runs"*, not *"time passed and whatever was due
-fired"*. The name is the handler function's name — the same identity
-the wiring uses. A wrong one fails with the list:
+fired"*.
+
+**Mind which name.** `AdvanceCron` takes the **handler function's**
+name, while the deployed cron is addressed by its **variable** name —
+so `var Cleanup = tako.Cron("every 24h", cleanupOrphans)` is
+`AdvanceCron("cleanupOrphans")` in a test and `/_tako/cron/Cleanup` in
+the cloud. That split is a known wart, logged for a fix; until then the
+error message is the reliable guide:
 
 ```
 tako: AdvanceCron("cleanup"): no such cron — declared crons: cleanupOrphans, rebuildFeed

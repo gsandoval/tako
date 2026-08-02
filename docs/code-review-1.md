@@ -64,7 +64,13 @@ Both fixed. Full suite green, all six examples green.
 
 ---
 
-## P1 — Logging never became cloud-shaped
+## P1 — Logging never became cloud-shaped — **SHIPPED 2026-08-01**
+
+> Fixed in the slice recorded in the task log: `BootGCP` installs a
+> JSON handler with the severity rename, request logs became
+> `httpRequest` records, and handler lines carry the trace that nests
+> them under their request. `validate/logging.md` is its gate script.
+> The description below is what was wrong.
 
 `pkg/runtime/http.go:178`:
 

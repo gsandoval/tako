@@ -3,7 +3,6 @@ package runtime
 import (
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -32,7 +31,7 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		}
 		ctx := &requestCtx{
 			Context: r.Context(),
-			log:     slog.Default().With("req", reqID),
+			log:     requestLogger(r, reqID),
 		}
 
 		if session != nil {
