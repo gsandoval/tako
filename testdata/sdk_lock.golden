@@ -66,11 +66,11 @@ const ToggleInherit Toggle
 const ToggleOff Toggle
 const ToggleOn Toggle
 func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Route) Endpoint[Req, Res]
-func Above(m Metric, threshold float64, sustained time.Duration) Condition
-func Absent(m Metric, window time.Duration) Condition
+func Above(m Metric, threshold float64, w Window) Condition
+func Absent(m Metric, w Window) Condition
 func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle
 func Auth(cfg AuthConfig) *AuthHandle
-func Below(m Metric, threshold float64, sustained time.Duration) Condition
+func Below(m Metric, threshold float64, w Window) Condition
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
 func ChatSpace(space string) *ChannelHandle
@@ -82,6 +82,7 @@ func Email(address string) *ChannelHandle
 func Entity[T any](name string) *EntityHandle[T]
 func ErrorRate(of Target) Metric
 func Errorf(status int, format string, args ...any) error
+func For(d time.Duration) Window
 func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
 func Job[T any](name string) *JobHandle[T]
@@ -89,11 +90,8 @@ func Lock(name string) *LockHandle
 func NewID() string
 func NewTestApp(tb testing.TB) *TestApp
 func NotFound() error
-func P05(h *HistogramHandle) Metric
-func P50(h *HistogramHandle) Metric
-func P95(h *HistogramHandle) Metric
-func P99(h *HistogramHandle) Metric
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
+func Percentile(h *HistogramHandle, q float64) Metric
 func Permanent(err error) error
 func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
@@ -155,3 +153,4 @@ type Toggle int
 type TopicHandle[T any] struct{}
 type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
 type User struct{ID string; Email string; Name string}
+type Window struct{For time.Duration; Every time.Duration}

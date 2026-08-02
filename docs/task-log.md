@@ -11244,3 +11244,57 @@ selector errors) and the `_bucket` suffix for distributions.
 **Decision for the owner: one model (PromQL) or two?** Recommendation:
 one. The split existed because of the order I discovered things, and
 every measured advantage now runs the same way.
+
+## Y1a amendment 2 — one model (PromQL), Percentile, Window (2026-08-02)
+
+Owner decided: one model. Everything compiles to PromQL, including the
+thresholds that were going to stay on `conditionThreshold`.
+
+### Surface
+
+sdk_lock 157 → **156**: four named percentile helpers become one
+function, and `Window`/`For` replace the bare duration.
+
+```
+- P99 / P95 / P50 / P05
++ Percentile(h *HistogramHandle, q float64) Metric
++ Window{For, Every} and For(d)
+~ Above / Below / Absent now take a Window
+```
+
+`Percentile(lat, 0.87)` is the point: it answers 473.17ms on the same
+data where the aligner path answers nothing, because Cloud Monitoring's
+`Aligner` enum has exactly four percentile members and PromQL's
+`histogram_quantile` has none of that limit. Y1a recorded "only four
+percentiles exist, and that is Google's limit, not a v1 scope cut" —
+that was true of the API I had picked and false of the platform. Kept as
+one function rather than one function PLUS named sugar: review 2's rule
+that one knob with two spellings is worse than a breaking change.
+
+### Window: the knobs are stated, not inferred
+
+`For` is how long a breach must persist; on `Absent` it is the lookback,
+since absence has nothing to sustain. `Every` is the period each series
+is reduced into — the rate window, the counting window, the percentile
+bucket. Zero derives 60s for rate/ratio/percentile readings, where the
+period only smooths. **Count has no default**: the period IS the count,
+so `Count` with no `Every` is an analysis error rather than a guess —
+the same call as making `Cache`'s TTL positional.
+
+### Why one model won
+
+Measured, all in this log: identical values to the aggregations path
+(509.0133333333333 / 362.6666666666667 to the last decimal), arbitrary
+quantiles, no duration ceiling (`[26h]`, `[7d]` both accepted), and no
+aligner/reducer compatibility matrix — the CUMULATIVE+DISTRIBUTION
+refusal that would have shipped a broken Y1a cannot arise.
+
+Cost accepted: a policy renders in the console as tako's generated
+query rather than an editable threshold form.
+
+Y1c must encode what the probes proved: `monitored_resource="generic_task"`
+on custom-metric selectors, the `_bucket` suffix for distributions, the
+`{domain}:{name}` mapping (first `/` → `:`, other specials → `_`), and
+`duration: 0s` whenever a lookback exceeds 1d1h.
+
+Next: Y1b (analyzer) on a single code path.

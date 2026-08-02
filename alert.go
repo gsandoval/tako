@@ -85,8 +85,10 @@ type metricRef struct {
 	// on distinguishes what a derived metric is measured against when
 	// more than one kind of subject is legal: "service" or "handler".
 	on string
-	// agg is the reading: rate, count, or p99/p95/p50/p05.
+	// agg is the reading: rate, count, percentile, ratio.
 	agg string
+	// q is the quantile when agg is "percentile".
+	q float64
 }
 
 // Rate is a counter's increase per second, summed across instances.
@@ -101,33 +103,26 @@ func Count(c *CounterHandle) Metric {
 	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "count"}}
 }
 
-// Percentiles of a histogram, across instances.
-//
-// These four are the whole set, and not by choice: Cloud Monitoring's
-// aligners offer the 99th, 95th, 50th and 5th percentile and nothing
-// else, so there is no P90 to add later. A histogram has no default
-// percentile — which one you mean is the question being asked, so it is
-// written at the call site rather than assumed.
-func P99(h *HistogramHandle) Metric { return percentile(h, "p99") }
-
-// P95 is the 95th percentile.
-func P95(h *HistogramHandle) Metric { return percentile(h, "p95") }
-
-// P50 is the median.
-func P50(h *HistogramHandle) Metric { return percentile(h, "p50") }
-
-// P05 is the 5th percentile — the fast tail, for spotting a workload
-// that got suspiciously cheap.
-func P05(h *HistogramHandle) Metric { return percentile(h, "p05") }
-
-func percentile(h *HistogramHandle, p string) Metric {
-	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: p}}
-}
-
-// derived is a platform metric tako writes the filter for.
+// derived is a metric expression tako writes the query for.
 type derived struct{ ref metricRef }
 
 func (d derived) metricSubject() metricRef { return d.ref }
+
+// Percentile is a histogram's q-quantile across instances, q in (0,1):
+// Percentile(thumbMs, 0.99) is the 99th.
+//
+// Any quantile works, which was not true of the first design. Cloud
+// Monitoring's aligner enum offers exactly four (99, 95, 50, 05), and
+// Y1a took that for a fact about metrics; it is a property of one API.
+// Compiled as PromQL, `histogram_quantile(0.87, …)` answers 473.17ms on
+// the same data where the aligner path answers nothing at all — measured,
+// not assumed (task log, 2026-08-02).
+//
+// A histogram has no default quantile: which one you mean IS the
+// question, so it is written at the call site.
+func Percentile(h *HistogramHandle, q float64) Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "percentile", q: q}}
+}
 
 // Target is something ErrorRate can be measured on: the package's app
 // service (tako.Service) or one async handler, which is its own
@@ -177,31 +172,60 @@ func Runs(cron Handler) Metric {
 	return derived{ref: metricRef{kind: "runs", id: cron.id, agg: "count"}}
 }
 
-// Condition is a metric compared against a threshold for a sustained
-// period. Both are required: an alert with no threshold has nothing to
-// compare, and one with no period fires on a single noisy sample.
+// Window is when a condition is measured. The knobs are deliberately
+// not hidden: which period a metric is reduced over changes what the
+// alert MEANS, so it is stated rather than inferred.
+type Window struct {
+	// For is how long the breach must persist before the alert fires.
+	//
+	// On an Absent condition it is the LOOKBACK instead — "no data for
+	// 26 hours" — because absence has nothing to sustain.
+	For time.Duration
+	// Every is the period each series is reduced into: the rate window
+	// for Rate, the counting window for Count, the bucket a Percentile
+	// is computed over.
+	//
+	// Zero derives it — 60s for rate, ratio and percentile readings,
+	// where the period only smooths. Count has no defensible default,
+	// because the period IS the count, so leaving Every zero there is an
+	// analysis error rather than a silent guess.
+	Every time.Duration
+}
+
+// For is the short spelling of Window{For: d}, for the common case where
+// the reduction period does not matter.
+func For(d time.Duration) Window { return Window{For: d} }
+
+// Condition is a metric compared against a threshold over a window.
+// Threshold and window are both required: an alert with no threshold has
+// nothing to compare, and one with no window fires on a single sample.
 type Condition struct {
 	op        string // above, below, absent
 	subject   metricRef
 	threshold float64
-	window    time.Duration
+	window    Window
 }
 
-// Above holds while the metric stays over threshold for the given period.
-func Above(m Metric, threshold float64, sustained time.Duration) Condition {
-	return Condition{op: "above", subject: m.metricSubject(), threshold: threshold, window: sustained}
+// Above holds while the metric stays over threshold for the window.
+func Above(m Metric, threshold float64, w Window) Condition {
+	return Condition{op: "above", subject: m.metricSubject(), threshold: threshold, window: w}
 }
 
-// Below holds while the metric stays under threshold for the given
-// period — the shape for "this stopped happening as often as it should".
-func Below(m Metric, threshold float64, sustained time.Duration) Condition {
-	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: sustained}
+// Below holds while the metric stays under threshold for the window —
+// the shape for "this stopped happening as often as it should".
+func Below(m Metric, threshold float64, w Window) Condition {
+	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: w}
 }
 
-// Absent holds when the metric receives no data at all for the given
-// window. It takes no threshold: absence is the condition.
-func Absent(m Metric, window time.Duration) Condition {
-	return Condition{op: "absent", subject: m.metricSubject(), window: window}
+// Absent holds when the metric receives no data at all across the
+// window's lookback. It takes no threshold: absence is the condition.
+//
+// This compiles to a PromQL absent_over_time, not to Cloud Monitoring's
+// conditionAbsent, which caps at 23h30m — shorter than a daily cron's
+// own period, so it could never watch one. A PromQL lookback has no such
+// ceiling: [26h] and [7d] are both accepted.
+func Absent(m Metric, w Window) Condition {
+	return Condition{op: "absent", subject: m.metricSubject(), window: w}
 }
 
 // AlertHandle is a declared alert. Like every declaration the variable
