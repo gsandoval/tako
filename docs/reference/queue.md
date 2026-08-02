@@ -19,8 +19,10 @@ and `WithFootprint` to shape the compute its service gets
 
 ```go
 MakeThumb = tako.Worker(thumbs, makeThumb,
-    tako.WithProfile(tako.Batch),
-    tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5}))
+    tako.Compute{
+        Profile:   tako.ProfileBatch,
+        Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
+    })
 ```
 
 ## Use
@@ -58,7 +60,7 @@ Every queue and topic has one, and `WithDelivery` overrides it
 field-by-field — zero fields inherit the framework's defaults:
 
 ```go
-var archive = tako.Queue[Expiry]("archive", tako.WithDelivery(tako.Delivery{
+var archive = tako.Queue[Expiry]("archive", tako.Delivery{
 	RateLimit:   2,                // deliveries per second (1–500)
 	MaxAttempts: 5,                // before dead-lettering (5–100)
 	MinBackoff:  30 * time.Second, // wait between attempts
@@ -182,9 +184,8 @@ things to the same message.
 ## Errors you'll meet
 
 - `queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out (tako/one-worker)`
-- `tako.WithTTL is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint) (tako/invalid-option)`
+- `tako.Compute takes one configuration value, got 2 — merge them into a single literal (tako/one-config)`
 - `tako.Queue name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
-- `tako.WithMaxSize is not a Publish option (Publish accepts WithDelay)` — at runtime, from `Publish`.
 - `queue "x" has no Cloud Tasks route — a WithDelay publish site the analyzer did not see? redeploy so the deploy can provision it` — a binary older than its deploy.
 - `delivery RateLimit must be 1–500 messages per second (Cloud Tasks' dispatch ceiling); got 501 (tako/delivery)`
 - `delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2 (tako/delivery)`

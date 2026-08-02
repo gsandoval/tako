@@ -56,7 +56,7 @@ Publish a post whose body is:
 **Judge:** the heading renders; the script and the handler VANISH
 (view source: no `<script`, no `onclick`, no escaped remnants —
 stripped, not escaped). This is the sanitized default; the opt-out is
-`tako.WithTrustedHTML()` and journal does not take it.
+`tako.SiteConfig{TrustedHTML: true}` and journal does not take it.
 
 ## 4. Sessions are records you can see and kill
 

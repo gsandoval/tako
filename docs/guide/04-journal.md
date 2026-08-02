@@ -7,13 +7,13 @@ Node in production.
 
 ```go
 var posts = tako.Entity[Post]("posts")
-var site  = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
-var auth  = tako.Auth(tako.WithGoogle())
+var site  = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
+var auth  = tako.Auth(tako.AuthConfig{Google: true})
 
 var Home    = tako.Page("GET /", home)
 var Read    = tako.Page("GET /p/{id}", read)
-var Save    = tako.Page("POST /p", save, tako.WithAuth())
-var Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
+var Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
+var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 ```
 
 ## Sites and pages
@@ -47,11 +47,11 @@ branch.
 `{{ markdown .Body }}` renders authored content with goldmark, then
 STRIPS scripts and handlers (bluemonday) — an XSS payload vanishes,
 not escapes. Trusting raw HTML is an explicit, graph-visible opt-out
-(`tako.WithTrustedHTML()`), never a default.
+(`tako.SiteConfig{TrustedHTML: true}`), never a default.
 
 ## Auth and sessions
 
-`tako.Auth(tako.WithGoogle())` is one declaration: `/api/_session*`
+`tako.Auth(tako.AuthConfig{Google: true})` is one declaration: `/api/_session*`
 routes mount, a framework sign-in page appears, `WithAuth` gates
 routes with a 401, `ctx.User()` is guaranteed past it, and ownership
 stays YOUR rule (`403 only the author can publish`). Sessions are

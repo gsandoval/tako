@@ -10250,3 +10250,224 @@ precedes alerting (recommended — alerting adds a family and the
   option-set table — belongs with the §2 fix whichever remedy is chosen.
   It is what makes the defect class unrepresentable rather than fixed
   once.
+
+## X2 — DX proposal: config structs replace the Option namespace (2026-08-02) — APPROVED
+
+Owner approved 2026-08-02: do this refactor before alerting; rewriting
+spec Part 1 rule 2 is accepted; the targeted renames are accepted with
+the names below. Follows `docs/api-review-3.md`.
+
+### The shape
+
+**Seven optionless constructors lose the variadic entirely.** This is
+the review's §2 defect fixed by construction, not by a new check:
+`tako.Bucket("photos", tako.WithTTL(x))` becomes a compile error
+("too many arguments"), unrepresentable rather than merely detected.
+
+```go
+tako.Bucket("photos")
+tako.Entity[Photo]("album")
+tako.Job[Params]("settle")
+tako.Secret("notifier-key")
+tako.Counter("uploads")
+tako.Histogram("thumb_ms")
+tako.Lock("nightly")
+```
+
+**Carriers take the struct they already had.** `Delivery` was always a
+config struct wrapped in a `With…` to satisfy a variadic; the wrapper
+goes:
+
+```go
+tako.Queue[Thumb]("thumbs", tako.Delivery{MaxAttempts: 10})
+tako.Topic[Uploaded]("uploaded")                  // zero value = defaults
+tako.Cache[FeedPage]("feed", time.Minute)         // 0 = never expires
+```
+
+**Handlers and services take one config struct each:**
+
+```go
+tako.API("GET /photos", list)
+tako.API("POST /photos", create, tako.Route{SignIn: true})
+tako.API("POST /charge", charge, tako.Route{Private: true})
+tako.Page("GET /p/{slug}", show, tako.Route{SignIn: true})
+
+tako.Service(tako.ServiceConfig{Domain: "shop.example.com", Profile: tako.ProfileLatency})
+tako.Worker(thumbs, makeThumb, tako.Compute{Profile: tako.ProfileBatch})
+tako.Subscribe(uploaded, warmFeed, tako.Compute{})
+tako.Cron("every 24h", cleanup, tako.CronConfig{Singleflight: true, Timezone: "America/Mexico_City"})
+tako.Runner(settle, settleOrders, tako.RunnerConfig{Parallel: 8, Attempts: 3})
+tako.Singleton(invoice, tako.Footprint{Memory: "512Mi"})
+tako.Site("web", tako.SiteConfig{SPA: true, Build: tako.Build{Command: "npm run build", Out: "dist"}})
+tako.Auth(tako.AuthConfig{Google: true})
+```
+
+**Operations lose their option tier**, which deletes the runtime-error
+class the review found (an illegal option reaching production as a 500):
+
+```go
+jobs.Publish(ctx, msg)
+jobs.PublishAfter(ctx, msg, 4*time.Hour)
+
+policy := tako.PutPolicy{MaxSize: 5 << 20, ContentType: "image/*"}
+url, err := photos.SignedPut(ctx, key, time.Minute, policy)
+headers := policy.Headers()        // was the free function UploadHeaders
+```
+
+### Type-naming convention (stated once, applies forever)
+
+- **Bare noun** when the struct is shared by more than one constructor:
+  `Route` (API, Page), `Delivery` (Queue, Topic), `Compute` (Worker,
+  Subscribe), plus the existing shared value types `Footprint`,
+  `Traffic`, `Build`, `PutPolicy`.
+- **`<Ctor>Config`** when it serves exactly one constructor:
+  `ServiceConfig`, `CronConfig`, `RunnerConfig`, `SiteConfig`,
+  `AuthConfig`.
+
+Fields are flattened rather than embedded — `CronConfig{Singleflight:
+true, Profile: …}` reads better at the call site than a nested
+`Compute:` field, and the duplication lives in the type definitions
+where no user sees it.
+
+### Renames (the residual that config structs cannot reach)
+
+| From | To | Why |
+|---|---|---|
+| `JobHandler` | `Runner` | the only handler constructor named `<Noun>Handler`; `JobConfig` would also read as config for `tako.Job`. Renaming resolves both |
+| `Default`, `Latency`, `Batch` | `ProfileDefault`, `ProfileLatency`, `ProfileBatch` | `tako.Default` is indefensible in a package namespace, and doubly so beside structs whose zero value already means default |
+| `On`, `Off`, `Inherit` | `ToggleOn`, `ToggleOff`, `ToggleInherit` | three more generic words reclaimed |
+| `WithRetries` | `RunnerConfig.Attempts` | one concept, one word, aligned with `Delivery.MaxAttempts` (ranges stay different and documented) |
+
+`Redirect` and `Email` are freed as a side effect — the first for page
+handlers, the second for alerting's notification channel.
+
+### Namespace arithmetic
+
+Deleted: 23 option funcs + the `Option` type = **24**.
+Added: `Route`, `ServiceConfig`, `Compute`, `CronConfig`, `RunnerConfig`,
+`SiteConfig`, `AuthConfig`, `Build`, `PutPolicy` = **9**.
+**Net −15**, and every remaining name is either a constructor, a type,
+or a helper — no more free-floating adjectives.
+
+Two analyzer rules die outright: `invalid-option` and `service-option`.
+Field-level range validation (`Attempts` 0–10, `Deadline` 15s–30m,
+`Timezone` a real IANA zone, `Delivery` ranges) stays — that is domain
+validation, not "does this option belong here".
+
+### Slices
+
+1. **X2a — SDK surface.** New types, new signatures, `Option` deleted;
+   `sdk_lock.golden` regenerated. Root package only.
+2. **X2b — analyzer.** Read composite literals instead of option calls;
+   delete the two rules; update goldens and `docs/reference/errors.md`.
+3. **X2c — codegen, runtime, devserver.** Whatever reads options today.
+4. **X2d — examples.** All six plus their tests; they are the
+   acceptance suite.
+5. **X2e — docs.** `reference/`, `guide/`, and spec Part 1 rule 2.
+   Historical records (`api-review-1/2/3`, `task-log`,
+   `stage7-handoff`, `tako-implementation-plan`) keep the old names —
+   they record what was true then.
+6. **X2f — validate scripts**, then full suite + conformance(local).
+
+Blast radius measured before starting: **343 call sites across 83
+files**, of which the historical docs are excluded by the rule above.
+
+### Non-goals
+
+Alerting (next, on the new surface). Any behavior change: this refactor
+moves knobs, it does not alter what they do. The one deliberate
+exception is the seven constructors that lose their variadic, where the
+behavior change is "an illegal call no longer compiles".
+
+## X2 — implemented: config structs replace the Option namespace (2026-08-02)
+
+Shipped all six slices. `Option` and its 23 constructors are gone;
+`invalid-option` and `service-option` are gone with them.
+
+### The surface
+
+sdk_lock: **148 → 134 entries**. Deleted 24 (23 option funcs + the
+`Option` type), added 10 (`Route`, `Compute`, `ServiceConfig`,
+`CronConfig`, `RunnerConfig`, `SingletonConfig`, `SiteConfig`,
+`AuthConfig`, `Build`, `PutPolicy`) plus `PublishAfter` and
+`PutPolicy.Headers`.
+
+Renames landed as proposed: `JobHandler` → `Runner`,
+`Default/Latency/Batch` → `ProfileDefault/Latency/Batch`,
+`On/Off/Inherit` → `ToggleOn/Off/Inherit`, `WithRetries` →
+`RunnerConfig.Attempts`. `Redirect` and `Email` are freed.
+
+### The defect is unrepresentable now, not fixed
+
+The seven optionless constructors lost their config parameter, so
+api-review-3 §2 is a compile error rather than a rule:
+
+```
+$ tako gen graph
+tako: app.go:14:33: too many arguments in call to tako.Bucket
+	have (string, tako.PutPolicy)
+	want (string)
+```
+
+And a route that tries to size its service — the old `service-option`
+rule — is now Go's own:
+
+```
+app.go:5:54: unknown field Footprint in struct literal of type tako.Route
+```
+
+Caught earlier, says less: the analyzer used to point at `tako.Service`
+by name. That trade is written down in `reference/errors.md` rather than
+left for someone to discover.
+
+### Two corrections to the approved proposal
+
+**The proposal would have silently removed a capability.** It said
+`Singleton` takes a bare `tako.Footprint` and `RunnerConfig` has no
+traffic settings. But the old analyzer accepted `WithTraffic` on both
+and honored its Timeout — so shipping the proposal as written would have
+deleted the job task timeout and the singleton loop timeout with no
+error anywhere. Both configs gained a plain `Timeout time.Duration`
+(and `SingletonConfig` exists after all). The two `traffic` rules that
+policed "a job's only traffic setting is Timeout" are now structural:
+there is no `SessionAffinity` field to set.
+
+**`footprintvalue` had silently stopped testing footprint values.** Its
+six golden lines were all `service-option` — when V1 moved footprints
+off routes, the fixture kept passing while checking nothing about
+footprints. Rewritten to declare them where they are legal; it now
+asserts five real value errors (CPU 3, Memory "1GB", Concurrency 2000,
+non-constant Memory, min>max). Coverage restored, not added.
+
+### Fixtures
+
+Deleted 8 whose rule no longer exists (cronopt, lockopt, siteopt,
+subscribeopt, workeropt, invalidoption, serviceoption, mixedprofile) —
+every one is a compile error today. Added 2 for the rules that replaced
+them: `configliteral` (a config held in a variable; a computed field)
+and `oneconfig` (two configs where one is read — the one mistake the
+variadic still allows, and silently-dropped configuration is what X2
+existed to end).
+
+### Validation
+
+`go test ./...` green including conformance(local) 15.4s; all six
+examples green; `go vet` and `gofmt` clean; sdk_lock, runtime_lock,
+codegen and appgraph goldens regenerated and diffed line by line — the
+gallery graph's only change is line numbers from the multi-line
+`tako.Compute` literal, with profile, footprint and singleflight intact.
+
+Live: `tako dev` on hello analyzed, generated, and served
+`GET /hello → 200 (0.2ms)`.
+
+Docs: every `reference/` and `guide/` page migrated, spec Part 1 rule 2
+rewritten (with the X2 amendment note and the 7%-legal figure),
+`reference/errors.md` rebuilt around `config-literal`/`one-config` plus
+the new "some mistakes now belong to the compiler" section, and every
+`validate/` script updated. Historical records keep the old names.
+
+### Discovered work
+
+`tako.Cache`'s TTL became a required positional parameter (0 = never
+expires). That is a real ergonomic change beyond "move the knobs" and
+should be called out in the release notes rather than buried here.

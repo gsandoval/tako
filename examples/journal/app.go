@@ -16,12 +16,12 @@ var (
 
 	// site serves ./web embedded in the service binary; its templates/
 	// subtree backs site.Render and is never served statically.
-	site = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
+	site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
 
 	// auth injects /api/_session (Identity Platform's Google flow in the
 	// cloud; the dev bar's test users locally). Sessions are revocable
 	// records in the entity store.
-	auth = tako.Auth(tako.WithGoogle())
+	auth = tako.Auth(tako.AuthConfig{Google: true})
 )
 
 type Post struct {
@@ -37,8 +37,8 @@ var (
 	Home    = tako.Page("GET /", home)
 	Read    = tako.Page("GET /p/{id}", read)
 	Write   = tako.Page("GET /write", writeForm)
-	Save    = tako.Page("POST /p", save, tako.WithAuth())
-	Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
+	Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
+	Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 )
 
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
@@ -94,7 +94,7 @@ type PublishReq struct {
 }
 
 // publish toggles visibility and swaps JUST the button under htmx;
-// the no-JS path returns to the post page. WithAuth guarantees a user;
+// the no-JS path returns to the post page. Route{SignIn: true} guarantees a user;
 // ownership is the handler's own rule.
 func publish(ctx tako.Ctx, req PublishReq) (tako.HTML, error) {
 	current, err := posts.Get(ctx, req.ID)

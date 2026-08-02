@@ -1,2 +1,2 @@
-app.go:9:3: a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; WithParallel sets the fan-out and WithRetries the attempts (tako/footprint)
-app.go:11:3: a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone (tako/footprint)
+app.go:9:32: a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; RunnerConfig.Parallel sets the fan-out and RunnerConfig.Attempts the attempts (tako/footprint)
+app.go:11:35: a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone (tako/footprint)

@@ -1,4 +1,4 @@
-# job.md — `tako.Job` + `tako.JobHandler`
+# job.md — `tako.Job` + `tako.Runner`
 
 Long-running compute (§2.7): work that outlives request timeouts. In the
 cloud an execution is a Cloud Run **Job** — no request deadline exists;
@@ -16,20 +16,20 @@ Two vars, from [examples/shop](../../examples/shop/app.go):
 // execution locally.
 settle = tako.Job[SettleParams]("settle")
 
-Settle = tako.JobHandler(settle, runSettle)
+Settle = tako.Runner(settle, runSettle)
 ```
 
 `tako.Job[T](name)` declares the job and its parameter type; the name
-must be a string constant (analyzer-enforced). `tako.JobHandler` binds
+must be a string constant (analyzer-enforced). `tako.Runner` binds
 the body — like every async handler it is `func(Ctx, T) error`, and a
 job has exactly one body. Options on `JobHandler`:
 
-- `tako.WithParallel(n)` — fans an execution out across n parallel
+- `RunnerConfig.Parallel` — fans an execution out across n parallel
   tasks (Cloud Run's `taskCount`; the same n tasks run joined
   locally). Inside the body, `ctx.Task()` reports `(index, count)` —
   shard by them (hash the key, take your share); everywhere else it
   is `(0, 1)`.
-- `tako.WithFootprint(tako.Footprint{CPU: …, Memory: …})` — task
+- `RunnerConfig.Footprint` (CPU and Memory only) — task
   compute; only CPU and Memory apply (see [footprint.md](footprint.md)).
 
 ## Use
@@ -55,10 +55,13 @@ completion.
 ### Retries and timeout
 
 ```go
-var Settle = tako.JobHandler(settle, runSettle,
-	tako.WithParallel(4),
-	tako.WithRetries(1),
-	tako.WithFootprint(tako.Footprint{Memory: "4Gi", Timeout: 2 * time.Hour}))
+var Settle = tako.Runner(settle, runSettle,
+	tako.RunnerConfig{
+		Parallel:  4,
+		Attempts:  1,
+		Timeout:   2 * time.Hour,
+		Footprint: tako.Footprint{Memory: "4Gi"},
+	})
 ```
 
 `WithRetries(n)` sets how many times a failed task is retried before the
@@ -114,18 +117,15 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 
 - `a job footprint sets CPU and Memory only — executions are tasks, not
   serving instances, so there is no concurrency, no scaling, no idle CPU
-  to throttle and no cold start to boost; WithParallel sets the fan-out
-  and WithRetries the attempts (tako/footprint)`
-- `a job's only traffic setting is Timeout — an execution serves nobody,
-  so there are no clients to keep affinity with and no connections to
-  negotiate HTTP/2 over (tako/traffic)`
-- `tako.WithRetries takes a constant 0–10 attempts after the first — a
+  to throttle and no cold start to boost; RunnerConfig.Parallel sets the
+  fan-out and RunnerConfig.Attempts the attempts (tako/footprint)`
+- `tako.RunnerConfig.Attempts takes a constant 0–10 attempts after the first — a
   task that fails 10 times is not going to pass on the 11th, and jobs
   have no dead letter to catch it (tako/retries)`
 - A second `JobHandler` on the same job:
   `job "settle" already has handler shop.Settle (app.go:99) — a job has
   exactly one body (tako/one-job-handler)`
-- `tako.WithTTL is not a tako.JobHandler option (tako.JobHandler
+- `tako.RunnerConfig must be written as a literal (tako.Runner
   accepts WithParallel, WithRetries, WithProfile, WithFootprint)
   (tako/invalid-option)`
 - `Run` in a bare test panics: `tako: no queue backend wired — run via

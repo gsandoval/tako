@@ -6,7 +6,7 @@ import "github.com/gsandoval/tako"
 // nothing here serves public traffic, so the name would answer nothing.
 var (
 	jobs = tako.Queue[string]("jobs")
-	svc  = tako.Service(tako.WithDomain("blog.example.com"))
+	svc  = tako.Service(tako.ServiceConfig{Domain: "blog.example.com"})
 	Work = tako.Worker(jobs, work)
 )
 

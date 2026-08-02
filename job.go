@@ -10,15 +10,14 @@ import (
 
 // Job declares long-running compute with parameters of type T, run outside
 // request timeouts. The name must be a string constant (analyzer-enforced).
-func Job[T any](name string, opts ...Option) *JobHandle[T] {
-	return &JobHandle[T]{name: name, opts: opts}
+func Job[T any](name string) *JobHandle[T] {
+	return &JobHandle[T]{name: name}
 }
 
-// JobHandle is a declared job. Bind its body with tako.JobHandler; trigger
+// JobHandle is a declared job. Bind its body with tako.Runner; trigger
 // it from any handler with Run.
 type JobHandle[T any] struct {
 	name string
-	opts []Option
 }
 
 // Run starts an execution of the job with the given parameters and
@@ -42,15 +41,14 @@ func (j *JobHandle[T]) Run(ctx Ctx, params T) error {
 	return hooks.Queue.Publish(ctx, hooks.JobQueue(j.name), raw, backends.PublishOptions{})
 }
 
-// JobHandler binds fn as the body of job. Like every async handler it is
-// func(Ctx, T) error; WithParallel fans the execution out across tasks.
-func JobHandler[T any](job *JobHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
+// Runner binds fn as the body of job. Like every async handler it is
+// func(Ctx, T) error; RunnerConfig.Parallel fans the execution out
+// across tasks.
+func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler {
 	parallel := 1
-	for _, o := range opts {
-		if o.name == "parallel" {
-			if n, ok := o.args[0].(int); ok && n > 1 {
-				parallel = n
-			}
+	for _, c := range cfg {
+		if c.Parallel > 1 {
+			parallel = c.Parallel
 		}
 	}
 	return register(Handler{

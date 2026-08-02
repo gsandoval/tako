@@ -1,1 +1,1 @@
-app.go:6:5: service mixedingress mixes private and public routes — Cloud Run enforces WithPrivate at the service level, so private endpoints need their own package (tako/mixed-ingress)
+app.go:6:5: service mixedingress mixes private and public routes — Cloud Run enforces Route.Private at the service level, so private endpoints need their own package (tako/mixed-ingress)

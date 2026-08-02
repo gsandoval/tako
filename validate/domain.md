@@ -1,6 +1,6 @@
 # validate/domain.md — U1: a service answers on your domain
 
-The claim: `tako.WithDomain("blog.example.com")` puts a service on a
+The claim: `tako.ServiceConfig{Domain: "blog.example.com"}` puts a service on a
 custom domain with a Google-managed certificate, at no standing cost;
 the two steps that are genuinely yours (proving ownership, publishing
 DNS) are named before anything is built and narrated until they're done;
@@ -23,7 +23,7 @@ and every routine deploy. Add the option for the walk, remove it after
 Add to `examples/blog/app.go`, as a new package-level var:
 
 ```go
-var web = tako.Service(tako.WithDomain("<your-domain>"))
+var web = tako.Service(tako.ServiceConfig{Domain: "<your-domain>"})
 ```
 
 Note this also RENAMES the service to `blog-web` (V4) — expect every
@@ -140,7 +140,7 @@ domain at a different service is a ONE-WORD edit — no second package
 needed. Rename the var in `examples/blog/app.go`:
 
 ```go
-var api = tako.Service(tako.WithDomain("<your-domain>"))   // was: web
+var api = tako.Service(tako.ServiceConfig{Domain: "<your-domain>"})   // was: web
 ```
 
 That renames the service `blog-web` → `blog-api`, so the mapping's
@@ -191,7 +191,7 @@ takes one just as well. Restore blog, then in `examples/shortlink` add
 to ONE endpoint only:
 
 ```go
-var api = tako.Service(tako.WithDomain("<your-api-domain>"))
+var api = tako.Service(tako.ServiceConfig{Domain: "<your-api-domain>"})
 ```
 
 ```
@@ -216,7 +216,7 @@ Then destroy `--env u1` and put shortlink back.
 
 ## 9. Put the example back
 
-Remove the `tako.WithDomain(...)` line from `examples/blog/app.go` and
+Remove the `Domain:` field from `examples/blog/app.go` and
 confirm `git status` is clean under `examples/`, then:
 
 ```

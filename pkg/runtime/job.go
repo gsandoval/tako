@@ -15,7 +15,7 @@ import (
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
-// RegisterJob wires a tako.JobHandler for the LOCAL path: executions
+// RegisterJob wires a tako.Runner for the LOCAL path: executions
 // ride the queue dispatcher in-process (dev and tests). In the cloud
 // this is a no-op — Run creates a real Cloud Run Job execution, and
 // the job's own generated main (RunJobMain) does the work.

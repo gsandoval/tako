@@ -1,0 +1,2 @@
+app.go:16:3: tako.Compute takes one configuration value, got 2 — merge them into a single literal (tako/one-config)
+app.go:20:3: tako.Queue takes one tako.Delivery, got 2 — merge them into a single literal (tako/one-config)

@@ -57,10 +57,10 @@ the test fails with a seed that reproduces the run.
 ## Time and pace (T3)
 
 Two more queues showed up when Cloud Tasks landed: TTL'd links
-publish their OWN expiry with `tako.WithDelay(ttl)` — delivered when
+publish their OWN expiry with `expiries.PublishAfter(ctx, e, ttl)` — delivered when
 due, by a timer locally and Cloud Tasks in the cloud, with a re-claim
 guard because an expiry is a claim about one link, not a slug — and
-the archive queue declares `tako.WithDelivery(tako.Delivery{RateLimit: 2, …})`, pacing dispatch
+the archive queue declares `tako.Delivery{RateLimit: 2, …}`, pacing dispatch
 at 2/s everywhere. Same Publish/Worker API; the provisioner picks the
 broker. One trade to know: Tasks-routed messages have no dead letter
 ([queue.md](../reference/queue.md)).

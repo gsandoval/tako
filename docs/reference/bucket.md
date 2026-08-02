@@ -42,15 +42,15 @@ allowed), enforced when the client uploads, not when the URL is
 minted. `SignedGet` shapes downloads the same way.
 
 A `WithMaxSize` URL signs a size-range condition into the request, so
-the PUT **must carry the matching header** — `tako.UploadHeaders`
+the PUT **must carry the matching header** — `PutPolicy.Headers`
 builds it from the same options, and both backends refuse a PUT
 without it (local says so with a pointer; GCS fails the signature):
 
 ```go
-var uploadLimits = []tako.Option{tako.WithContentType("image/*"), tako.WithMaxSize(20 << 20)}
+var uploadLimits = tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20}
 
 url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits...)
-ticket := UploadTicket{UploadURL: url, UploadHeaders: tako.UploadHeaders(uploadLimits...)}
+ticket := UploadTicket{UploadURL: url, UploadHeaders: uploadLimits.Headers()}
 ```
 
 **Every successful write fires `Uploaded`** — through-service `Put` or
@@ -95,7 +95,6 @@ pinned over real HTTP in
 ## Errors you'll meet
 
 - `tako.Bucket name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
-- `tako.WithTTL is not a SignedPut option (SignedPut accepts WithMaxSize, WithContentType)` — at runtime, from `SignedPut`.
 - Signed upload rejections, at upload time, with honest texts:
   `{"error":"content type \"text/plain\" does not match required \"image/*\""}` (415),
   `{"error":"upload is 20 bytes; the signed URL allows at most 16"}` (413), and — for chunked

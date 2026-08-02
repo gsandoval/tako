@@ -49,7 +49,7 @@ a. Change the `Greet` route to `"GET /greet"` (keep the `path:"name"`
    tag) → `tako/route-params` (tag without parameter).
 b. Change the tag to `path:"nick"` (keep `{name}` in the route) → two
    `tako/route-params` errors (missing + extra).
-c. Add `tako.WithTTL(time.Minute)` to `Hello`'s options →
+c. Add a second `tako.Route{}` to `Hello` →
    `tako/invalid-option`, message lists what tako.API accepts.
 d. Add an untagged field `Extra string` to `GreetReq` →
    `tako/body-on-get`.

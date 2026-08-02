@@ -1,4 +1,4 @@
-module lockopt
+module oneconfig
 
 go 1.26
 

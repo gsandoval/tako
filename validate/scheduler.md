@@ -11,7 +11,7 @@ singleflight). The fast-cron observation (§4) uses a scratch app.
 ## 1. The declaration is the whole story
 
 `gallery.Cleanup = tako.Cron("every 24h", cleanupOrphans,
-tako.WithSingleflight())` — nothing else. Schedules also take 5-field
+tako.CronConfig{Singleflight: true})` — nothing else. Schedules also take 5-field
 cron expressions ("0 3 * * *"); intervals unix-cron can't express are
 refused at analysis time (break it: "every 7m" → the grammar rule,
 "0 25 * * *" → the field judgment; golden-tested).
@@ -47,7 +47,7 @@ handler, on demand.
 
 ## 4. Observation: a fast cron fires ITSELF, and overlap collapses
 
-Scratch app (`tako.Cron("every 1m", tick, tako.WithSingleflight())`,
+Scratch app (`tako.Cron("every 1m", tick, tako.CronConfig{Singleflight: true})`,
 handler writes a tick entity then sleeps 90s), deployed to the test
 project. Wait ~4 minutes:
 

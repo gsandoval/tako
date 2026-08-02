@@ -87,7 +87,7 @@ initialized, the email provider enabled when declared, sign-in
 domains registered per deploy.
 
 **A genuinely manual step** — only when your app declares
-`tako.WithGoogle()` — is enabling the Google provider, because Google
+`tako.AuthConfig{Google: true}` — is enabling the Google provider, because Google
 has no public API for creating external OAuth clients:
 
 > Firebase console → your project → Authentication → Sign-in method →
@@ -101,7 +101,7 @@ Secrets are the other human input: `tako.Secret("name")` must exist
 in Secret Manager; preflight prints the exact command.
 
 **Custom domains add two more**, and only when you declare
-`tako.WithDomain(...)` — both because they are yours to prove and yours
+`tako.ServiceConfig{Domain: ...}` — both because they are yours to prove and yours
 to publish, not tako's to fake:
 
 1. **Ownership**, once per project. Preflight refuses until it's done:

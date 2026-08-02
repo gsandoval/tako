@@ -27,7 +27,7 @@ var (
 	// TTL cache, uploads are counted, thumbnail latency is observed, and
 	// the notifier authenticates with a startup-resolved secret (.env
 	// locally, Secret Manager in the cloud).
-	feed     = tako.Cache[[]Photo]("feed", tako.WithTTL(time.Minute))
+	feed     = tako.Cache[[]Photo]("feed", time.Minute)
 	notifier = tako.Secret("notifier-key")
 	ups      = tako.Counter("uploads")
 	thumbMs  = tako.Histogram("thumb_ms")
@@ -76,11 +76,13 @@ var (
 	// the profile can't know: image decodes are memory-hungry per
 	// request, so more headroom, fewer per instance, capped fan-out.
 	MakeThumb = tako.Worker(thumbs, makeThumb,
-		tako.WithProfile(tako.Batch),
-		tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5}))
+		tako.Compute{
+			Profile:   tako.ProfileBatch,
+			Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
+		})
 	NotifyOwner = tako.Subscribe(ready, notifyOwner)
 	WarmFeed    = tako.Subscribe(ready, warmFeed)
-	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 )
 
 // A tako.Blob field makes the request multipart: img streams from the
@@ -114,22 +116,22 @@ type StartUploadReq struct {
 type UploadTicket struct {
 	Photo     Photo  `json:"photo"`
 	UploadURL string `json:"uploadURL"`
-	// UploadHeaders must ride the PUT: a WithMaxSize URL signs a size
+	// UploadHeaders must ride the PUT: a MaxSize policy signs a size
 	// condition the storage backend enforces, local and cloud alike.
 	UploadHeaders map[string]string `json:"uploadHeaders"`
 }
 
-// uploadLimits guard the direct-upload URL; UploadHeaders derives the
+// uploadLimits guard the direct-upload URL; Headers derives the
 // headers the client must send from the same list.
-var uploadLimits = []tako.Option{tako.WithContentType("image/*"), tako.WithMaxSize(20 << 20)}
+var uploadLimits = tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20}
 
 func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
 	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return UploadTicket{}, err
 	}
-	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits...)
-	return UploadTicket{Photo: p, UploadURL: url, UploadHeaders: tako.UploadHeaders(uploadLimits...)}, err
+	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits)
+	return UploadTicket{Photo: p, UploadURL: url, UploadHeaders: uploadLimits.Headers()}, err
 }
 
 type DownloadReq struct {

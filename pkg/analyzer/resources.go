@@ -324,43 +324,24 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		})
 		return nil
 	}
-	// Declaration options are validated per kind — an option that is
-	// accepted and silently dropped is worse than an error (the S6
-	// audit found WithRateLimit doing exactly that).
-	carrierOptions := map[string]map[string]bool{
-		"cache": {"WithTTL": true},
-		"queue": {"WithDelivery": true},
-		"topic": {"WithDelivery": true},
-	}
+	// Only the carriers take configuration, and the type says which:
+	// Queue and Topic take a tako.Delivery, every other constructor
+	// through here has no config parameter at all. The swallowed-option
+	// class this code used to police (S6's WithRateLimit, and the Bucket
+	// and Entity leaks api-review-3 found) cannot be written down now.
 	bad := false
 	var delivery *Delivery
-	for _, opt := range call.Args[1:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if !isOpt {
-			continue
-		}
-		if (kind == "queue" || kind == "topic") && optName == "WithDelivery" {
-			d := deliveryArg(dir, pkg, opt, kind, errs)
-			if d == nil {
-				bad = true
-				continue
-			}
-			delivery = d
-			continue
-		}
-		if !carrierOptions[kind][optName] {
-			accepts := "no options"
-			switch kind {
-			case "cache":
-				accepts = "WithTTL"
-			case "queue", "topic":
-				accepts = "WithDelivery"
-			}
+	if (kind == "queue" || kind == "topic") && len(call.Args) > 1 {
+		if len(call.Args) > 2 {
 			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a %s option (%s accepts %s)", optName, ctor, ctor, accepts),
-				Rule: "invalid-option",
+				Pos:  relPos(dir, pkg.Fset, call.Args[2].Pos()),
+				Msg:  fmt.Sprintf("%s takes one tako.Delivery, got %d — merge them into a single literal", ctor, len(call.Args)-1),
+				Rule: "one-config",
 			})
+			bad = true
+		} else if d := deliveryArg(dir, pkg, call.Args[1], kind, errs); d != nil {
+			delivery = d
+		} else {
 			bad = true
 		}
 	}

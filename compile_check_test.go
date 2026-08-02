@@ -18,13 +18,13 @@ import (
 var (
 	photos     = tako.Bucket("photos")
 	photoStore = tako.Entity[Photo]("photos")
-	feed       = tako.Cache[FeedPage]("feed", tako.WithTTL(time.Minute))
+	feed       = tako.Cache[FeedPage]("feed", time.Minute)
 	thumbs     = tako.Queue[ThumbJob]("thumbnails")
 	ready      = tako.Topic[PhotoReady]("photo-ready")
 	relock     = tako.Lock("reindex")
 	stripe     = tako.Secret("stripe-key")
-	authn      = tako.Auth(tako.WithGoogle(), tako.WithEmail())
-	site       = tako.Site("./web", tako.SPA())
+	authn      = tako.Auth(tako.AuthConfig{Google: true, Password: true})
+	site       = tako.Site("./web", tako.SiteConfig{SPA: true})
 	reidx      = tako.Job[ReindexParams]("reindex")
 	ups        = tako.Counter("uploads")
 	lat        = tako.Histogram("thumb_ms")
@@ -42,16 +42,16 @@ type PhotoReady struct{ PhotoID, Owner string }
 type ReindexParams struct{ Since time.Time }
 
 var (
-	StartUpload = tako.API("POST /api/photos", startUpload, tako.WithAuth())
+	StartUpload = tako.API("POST /api/photos", startUpload, tako.Route{SignIn: true})
 	List        = tako.API("GET /api/photos", list)
 	Image       = tako.API("GET /api/photos/{id}/image", image)
 	PhotoPage   = tako.Page("GET /p/{id}", photoPage)
 
 	OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
-	MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
+	MakeThumb   = tako.Worker(thumbs, makeThumb, tako.Compute{Profile: tako.ProfileBatch})
 	NotifyOwner = tako.Subscribe(ready, notifyOwner)
-	Reindex     = tako.JobHandler(reidx, reindex, tako.WithParallel(10))
-	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+	Reindex     = tako.Runner(reidx, reindex, tako.RunnerConfig{Parallel: 10})
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 	Loop        = tako.Singleton(loop)
 )
 
@@ -69,7 +69,7 @@ func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
 		return UploadTicket{}, err
 	}
 	url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
-		tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
+		tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20})
 	return UploadTicket{Photo: p, UploadURL: url}, err
 }
 
@@ -171,7 +171,7 @@ var _ = func() error {
 		_ = tx.Put(b)
 		return tx.Delete("id3")
 	})
-	_ = thumbs.Publish(ctx, ThumbJob{}, tako.WithDelay(4*time.Hour))
+	_ = thumbs.PublishAfter(ctx, ThumbJob{}, 4*time.Hour)
 	_, _ = site.Markdown(ctx, "# hi")
 	return tako.Errorf(409, "conflict on %s", "x")
 }

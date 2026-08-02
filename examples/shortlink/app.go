@@ -22,12 +22,12 @@ var (
 	// the local dispatcher paces to the same number. Archiving is
 	// idempotent and never urgent, so it gets fewer, slower retries than
 	// the framework default.
-	archive = tako.Queue[Expiry]("archive", tako.WithDelivery(tako.Delivery{
+	archive = tako.Queue[Expiry]("archive", tako.Delivery{
 		RateLimit:   2,
 		MaxAttempts: 5,
 		MinBackoff:  30 * time.Second,
 		MaxBackoff:  10 * time.Minute,
-	}))
+	})
 )
 
 // Link's schema comes from the struct: entity:"id" is the key,
@@ -97,9 +97,9 @@ func create(ctx tako.Ctx, req CreateReq) (Link, error) {
 	}
 	if req.TTLSeconds > 0 {
 		ttl := time.Duration(req.TTLSeconds) * time.Second
-		if err := expiries.Publish(ctx,
+		if err := expiries.PublishAfter(ctx,
 			Expiry{ID: tako.NewID(), Slug: link.Slug, Created: link.Created},
-			tako.WithDelay(ttl)); err != nil {
+			ttl); err != nil {
 			return Link{}, err
 		}
 	}

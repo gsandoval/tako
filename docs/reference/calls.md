@@ -17,7 +17,7 @@ From [examples/shop/billing](../../examples/shop/billing/billing.go):
 // visible at the call site, no client code to maintain. WithPrivate
 // closes the front door: only granted service identities invoke
 // (browsers and curl get 403 from Cloud Run itself).
-var Charge = tako.API("POST /charge", charge, tako.WithPrivate())
+var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 ```
 
 `WithPrivate` is IAM-only ingress, **not** network-internal — a settled
@@ -68,7 +68,7 @@ summary shows it — billing reads `ingress: IAM-only (callers: shop-sa)`.
 Deploy prices sync hops honestly (`warnCallEdges` in cmd/tako/deploy.go):
 
 ```
-⚠ sync call shop → billing lands on a scale-to-zero service — cold starts bill the caller's latency; give billing tako.WithProfile(tako.Latency) (min-instance cost) or make the interaction async
+⚠ sync call shop → billing lands on a scale-to-zero service — cold starts bill the caller's latency; give billing tako.Service(tako.ServiceConfig{Profile: tako.ProfileLatency}) (min-instance cost) or make the interaction async
 ⚠ sync call chain a → b → c — waiting callers hold their own request slots and couple the services' autoscaling; prefer events past one hop
 ```
 

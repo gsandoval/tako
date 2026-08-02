@@ -65,13 +65,9 @@ func deliveryArg(dir string, pkg *packages.Package, opt ast.Expr, kind string, e
 		*errs = append(*errs, &Error{Pos: relPos(dir, pkg.Fset, pos.Pos()), Msg: msg, Rule: "delivery"})
 		bad = true
 	}
-	call, ok := opt.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return nil
-	}
-	lit, ok := call.Args[0].(*ast.CompositeLit)
+	lit, ok := opt.(*ast.CompositeLit)
 	if !ok {
-		fail(call.Args[0], "tako.WithDelivery takes a tako.Delivery literal with constant fields — the contract is read at analysis time, not run time")
+		fail(opt, "tako.Delivery must be written as a literal with constant fields — the contract is read at analysis time, not run time")
 		return nil
 	}
 	d := &Delivery{}

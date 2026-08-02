@@ -7,15 +7,15 @@ and specific. Prefer the profile; pin only what the profile can't know.
 
 ## Declare
 
-`tako.WithProfile(p)` on an API, Page, Worker, or Subscribe handler
+A `Profile` field on `tako.ServiceConfig` or `tako.Compute`
 selects its service's scaling profile (one service, one profile). The
 knobs (`ProfileKnobs`, spec §4.6):
 
 | profile           | CPU | Memory | Concurrency | Min | Max | Timeout | CPU between requests | Startup boost |
 |-------------------|-----|--------|-------------|-----|-----|---------|----------------------|---------------|
-| `tako.Default`    | 1   | 512Mi  | 80          | 0   | 20  | 300s    | throttled            | no            |
-| `tako.Latency`    | 2   | 1Gi    | 40          | 1   | 100 | 300s    | **always allocated** | **yes**       |
-| `tako.Batch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            | no            |
+| `tako.ProfileDefault`    | 1   | 512Mi  | 80          | 0   | 20  | 300s    | throttled            | no            |
+| `tako.ProfileLatency`    | 2   | 1Gi    | 40          | 1   | 100 | 300s    | **always allocated** | **yes**       |
+| `tako.ProfileBatch`      | 2   | 2Gi    | 10          | 0   | 10  | 900s    | throttled            | no            |
 | *(singleton)*     | 1   | 512Mi  | 1           | 1   | 1   | 3600s   | **always allocated** | no            |
 
 Default scales to zero; Latency keeps an instance warm — min=1 bills
@@ -41,7 +41,7 @@ handler IS the service). They are refused on `API` and `Page`
 (`tako/service-option`) — a service has many routes and none is an
 honest place for a service-wide claim.
 
-`tako.WithFootprint(tako.Footprint{…})` (S1) overrides field-by-field:
+A `Footprint` field (S1) overrides the profile field-by-field:
 
 ```go
 type Footprint struct {
@@ -80,7 +80,7 @@ refusals: 60m for a service (past that you want a
 `CPUAlwaysOn` is a three-state `Toggle`, not a `bool`, because a struct
 whose zero value means "inherit" cannot otherwise express "explicitly
 off". `tako.On` forces allocation on a Default-profile service;
-`tako.Off` forces it off on Latency.
+`tako.ToggleOff` forces it off on Latency.
 
 `StartupBoost` gives a starting instance extra CPU until it is serving.
 It is the one knob that moves cold-start latency, which is why Latency
@@ -156,8 +156,10 @@ The layering, from [examples/gallery](../../examples/gallery/app.go):
 // the profile can't know: image decodes are memory-hungry per
 // request, so more headroom, fewer per instance, capped fan-out.
 MakeThumb = tako.Worker(thumbs, makeThumb,
-	tako.WithProfile(tako.Batch),
-	tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5}))
+	tako.Compute{
+		Profile:   tako.ProfileBatch,
+		Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
+	})
 ```
 
 CPU and min-instances are NOT pinned — they inherit from batch. That
@@ -205,7 +207,7 @@ The claims live in golden tests —
 - `footprint CPU must be 1, 2, 4, or 8 vCPUs; got 3 (tako/footprint)`
 - `footprint Memory must be like "512Mi" or "4Gi", between 128Mi and 32Gi; got "1GB" (tako/footprint)`
 - `footprint Memory must be a constant — footprints are read at analysis time, not run time (tako/footprint)`
-- `footprint sets nothing — drop tako.WithFootprint or pin at least one field (tako/footprint)`
+- `footprint sets nothing — drop the Footprint field or pin at least one setting (tako/footprint)`
 - Resolved judgments: `service footprintresolve-bigcpu resolves to
   8 vCPUs with 512Mi memory — 8 vCPUs need at least 4Gi; pin Memory too
   (tako/footprint)` — likewise memory-over-CPU and
@@ -219,12 +221,15 @@ The claims live in golden tests —
   profiles (tako/mixed-profile)`
 - Scoping: `a job footprint sets CPU and Memory only — executions are
   tasks, not serving instances, so there is no concurrency, no scaling,
-  no idle CPU to throttle and no cold start to boost; WithParallel sets
-  the fan-out and WithRetries the attempts (tako/footprint)`, its
-  traffic twin `a job's only traffic setting is Timeout — an execution
-  serves nobody, so there are no clients to keep affinity with and no
-  connections to negotiate HTTP/2 over (tako/traffic)`, and for a
-  singleton `a singleton footprint cannot set MaxInstances — … (tako/singleton-max)`
+  no idle CPU to throttle and no cold start to boost;
+  RunnerConfig.Parallel sets the fan-out and RunnerConfig.Attempts the
+  attempts (tako/footprint)`, and for a singleton `a singleton
+  footprint cannot set MaxInstances — … (tako/singleton-max)`.
+
+  The traffic twin of that rule is gone, and structurally:
+  `RunnerConfig` and `SingletonConfig` carry a plain `Timeout` and no
+  `Traffic` at all, so a job or singleton cannot claim session affinity
+  or HTTP/2 in the first place.
 - Ceilings: `service slow resolves to a 2h0m0s request timeout — Cloud
   Run caps a request at 60m; for work that outlives a request use a
   tako.Job (docs/reference/job.md) (tako/footprint)`

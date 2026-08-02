@@ -10,10 +10,10 @@ var thumbs     = tako.Queue[ThumbJob]("thumbnails")
 var ready      = tako.Topic[PhotoReady]("photo-ready")
 
 var OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
-var MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
+var MakeThumb   = tako.Worker(thumbs, makeThumb, tako.Compute{Profile: tako.ProfileBatch})
 var NotifyOwner = tako.Subscribe(ready, notifyOwner)
 var WarmFeed    = tako.Subscribe(ready, warmFeed)
-var Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+var Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 ```
 
 ## The pipeline
@@ -26,7 +26,7 @@ dead letter — one failing never delays another.
 
 ## Direct uploads (signed URLs)
 
-`photos.SignedPut(ctx, key, 15*time.Minute, tako.WithContentType("image/*"), ...)`
+`photos.SignedPut(ctx, key, 15*time.Minute, tako.PutPolicy{ContentType: "image/*", ...})`
 returns a URL the browser PUTs to directly — no 32MB request cap, no
 proxying. The signed upload fires the same `photos.Uploaded` event,
 so the pipeline doesn't know or care how bytes arrived. Signed GETs
@@ -39,7 +39,7 @@ shape downloads the same way.
 - `tako.Secret("notifier-key")` resolves ONCE at startup — a missing
   secret refuses boot; `Value()` can never fail at request time.
 - `tako.Counter` / `tako.Histogram` for metrics.
-- `tako.WithProfile(tako.Batch)` on the thumb worker: its service
+- `tako.Compute{Profile: tako.ProfileBatch}` on the thumb worker: its service
   gets batch scaling knobs (2 cpu, 2Gi, low concurrency).
 
 ## Coordination

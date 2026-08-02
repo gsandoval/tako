@@ -1,0 +1,2 @@
+app.go:14:34: tako.Compute must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "shared" (tako/config-literal)
+app.go:17:67: tako.CronConfig.Timezone must be a string constant — it is read at analysis time, not run time; got a call expression (tako/config-literal)

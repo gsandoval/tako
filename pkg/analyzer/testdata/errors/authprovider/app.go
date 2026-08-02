@@ -2,7 +2,7 @@ package authprovider
 
 import "github.com/gsandoval/tako"
 
-var auth = tako.Auth()
+var auth = tako.Auth(tako.AuthConfig{})
 
 var Ping = tako.API("GET /api/ping", ping)
 

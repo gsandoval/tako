@@ -7,7 +7,7 @@ cloud (T2), one declaration for both.
 ## Declare
 
 ```go
-var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 ```
 
 The schedule must be a string constant (analyzer-enforced), in either
@@ -40,9 +40,11 @@ of a failed run, the schedule itself is the retry.
 
 ```go
 var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans,
-	tako.WithSingleflight(),
-	tako.WithTimezone("America/Mexico_City"),
-	tako.WithDeadline(10*time.Minute))
+	tako.CronConfig{
+		Singleflight: true,
+		Timezone:     "America/Mexico_City",
+		Deadline:     10 * time.Minute,
+	})
 ```
 
 Schedules run in **UTC** unless `WithTimezone` says otherwise — nine
@@ -132,7 +134,7 @@ app.AdvanceCron(Cleanup) // collapses into the held run
 
 - `tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23 (tako/cron-schedule)`
 - `"every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression (tako/cron-schedule)`
-- `tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithProfile, WithFootprint) (tako/invalid-option)`
+- `tako.CronConfig.Timezone does not know the zone "Mars/Olympus" — use an IANA name like "America/Mexico_City" or "Europe/Madrid" (tako/timezone)`
 - `tako: AdvanceCron: that is a worker, not a cron — workers run when their queue delivers, so publish to the queue and DrainQueues` — passing a handler that isn't a cron. Passing a var that was never assigned a constructor gives `tako: AdvanceCron: the handler is empty — pass the var a tako.Cron was assigned to, like app.AdvanceCron(Cleanup)`. A *mistyped* cron is no longer possible: it does not compile.
 
 ## Not yet

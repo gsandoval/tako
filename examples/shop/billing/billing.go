@@ -14,7 +14,7 @@ import (
 // visible at the call site, no client code to maintain. WithPrivate
 // closes the front door: only granted service identities invoke
 // (browsers and curl get 403 from Cloud Run itself).
-var Charge = tako.API("POST /charge", charge, tako.WithPrivate())
+var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 
 type ChargeReq struct {
 	OrderID     string `json:"orderId"`

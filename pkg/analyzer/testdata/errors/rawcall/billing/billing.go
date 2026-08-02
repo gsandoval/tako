@@ -2,7 +2,7 @@ package billing
 
 import "github.com/gsandoval/tako"
 
-var Charge = tako.API("POST /charge", ChargeFn, tako.WithPrivate())
+var Charge = tako.API("POST /charge", ChargeFn, tako.Route{Private: true})
 
 // ChargeFn is exported by mistake — handler bodies are usually
 // unexported, which makes this error impossible to write.

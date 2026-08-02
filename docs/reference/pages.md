@@ -13,8 +13,8 @@ returns `tako.HTML`:
 ```go
 var Home    = tako.Page("GET /", home)
 var Read    = tako.Page("GET /p/{id}", read)
-var Save    = tako.Page("POST /p", save, tako.WithAuth())
-var Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
+var Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
+var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 ```
 
 Page takes the same options as `tako.API` — `WithAuth` and
@@ -58,7 +58,7 @@ carry their own token, so a stolen anonymous token cannot ride one.
 `{{ markdown .Body }}` renders authored markdown with goldmark, then
 sanitizes with bluemonday — an XSS payload vanishes, not escapes;
 `site.Markdown(ctx, src)` is the same pipeline as a fragment.
-`tako.WithTrustedHTML()` on the Site is the explicit, graph-visible
+`tako.SiteConfig{TrustedHTML: true}` on the Site is the explicit, graph-visible
 opt-out for content that is never user-supplied.
 
 ## Local

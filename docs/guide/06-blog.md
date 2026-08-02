@@ -9,7 +9,7 @@ comments.
 var comments = tako.Entity[Comment]("comments")
 
 var site = tako.Site("./site/public",
-    tako.WithBuild("cd site && hugo --minify", "./site/public"))
+    tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
 
 var Comments   = tako.Page("GET /frag/comments", listComments)
 var AddComment = tako.Page("POST /frag/comments", addComment)

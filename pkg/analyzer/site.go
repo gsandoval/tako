@@ -5,14 +5,15 @@ import (
 	"go/ast"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
 )
 
 // extractSite validates one tako.Site declaration: the served directory
-// (a string constant), and its options — SPA(), WithBuild(cmd, out),
-// WithDevProxy(url), WithRedirect(from, to), WithDomain(fqdn).
+// (a string constant) and its tako.SiteConfig — SPA, Build, DevProxy,
+// Redirects, TrustedHTML.
 func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" || len(call.Args) < 1 {
 		return nil
@@ -42,62 +43,53 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		Dir: moduleRel(dir, pkg, siteDir),
 		Pos: relPos(dir, pkg.Fset, name.Pos()),
 	}
-	for _, opt := range call.Args[1:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		optCall, _ := opt.(*ast.CallExpr)
-		if !isOpt || optCall == nil {
+	cfg, cok := configFields(dir, pkg, call.Args[1:], "SiteConfig", errs)
+	if !cok {
+		bad = true
+	}
+	r.SPA = boolField(dir, pkg, cfg, "SPA", "SiteConfig", errs)
+	// The markdown opt-out: raw HTML passes through. Recorded on the
+	// graph so the posture is visible in review.
+	r.TrustedHTML = boolField(dir, pkg, cfg, "TrustedHTML", "SiteConfig", errs)
+	if u, set := stringField(dir, pkg, cfg, "DevProxy", "SiteConfig", errs); set {
+		r.DevProxy = u
+	}
+	if b, set := nestedLit(dir, pkg, cfg, "Build", "Build", errs); set {
+		cmd, ok1 := stringField(dir, pkg, b, "Command", "Build", errs)
+		out, ok2 := stringField(dir, pkg, b, "Out", "Build", errs)
+		if ok1 && ok2 {
+			r.Build, r.BuildOut = cmd, moduleRel(dir, pkg, out)
+		}
+	}
+	if e, set := fieldOf(cfg, "Redirects"); set {
+		lit, ok := e.(*ast.CompositeLit)
+		if !ok {
 			fail(&Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML; got %s", describeExpr(opt)),
-				Rule: "invalid-option",
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.SiteConfig.Redirects must be a map literal with constant keys and values — redirects are read at analysis time, not run time",
+				Rule: "config-literal",
 			})
-			continue
-		}
-		constArg := func(i int) (string, bool) {
-			if i >= len(optCall.Args) {
-				return "", false
-			}
-			s, err := constString(pkg, optCall.Args[i])
-			if err != nil {
-				fail(&Error{
-					Pos: relPos(dir, pkg.Fset, optCall.Args[i].Pos()),
-					Msg: fmt.Sprintf("tako.%s arguments must be string constants — they are read at analysis time; got %s",
-						optName, describeExpr(optCall.Args[i])),
-					Rule: "const-name",
-				})
-				return "", false
-			}
-			return s, true
-		}
-		switch optName {
-		case "SPA":
-			r.SPA = true
-		case "WithTrustedHTML":
-			// The markdown opt-out: raw HTML passes through. Recorded on
-			// the graph so the posture is visible in review.
-			r.TrustedHTML = true
-		case "WithBuild":
-			cmd, ok1 := constArg(0)
-			out, ok2 := constArg(1)
-			if ok1 && ok2 {
-				r.Build, r.BuildOut = cmd, moduleRel(dir, pkg, out)
-			}
-		case "WithDevProxy":
-			if u, ok := constArg(0); ok {
-				r.DevProxy = u
-			}
-		case "WithRedirect":
-			from, ok1 := constArg(0)
-			to, ok2 := constArg(1)
-			if ok1 && ok2 {
+		} else {
+			for _, el := range lit.Elts {
+				kv, ok := el.(*ast.KeyValueExpr)
+				if !ok {
+					continue
+				}
+				from, ferr := constString(pkg, kv.Key)
+				to, terr := constString(pkg, kv.Value)
+				if ferr != nil || terr != nil {
+					fail(&Error{
+						Pos:  relPos(dir, pkg.Fset, kv.Pos()),
+						Msg:  "tako.SiteConfig.Redirects keys and values must be string constants — they are read at analysis time",
+						Rule: "const-name",
+					})
+					continue
+				}
 				r.Redirects = append(r.Redirects, SiteRedirect{From: from, To: to})
 			}
-		default:
-			fail(&Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML)", optName),
-				Rule: "invalid-option",
-			})
+			// Map iteration order is not source order; sort so the graph
+			// (and every hash derived from it) is deterministic.
+			sort.Slice(r.Redirects, func(i, j int) bool { return r.Redirects[i].From < r.Redirects[j].From })
 		}
 	}
 
@@ -107,7 +99,7 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		if abs := filepath.Join(pkgDir(pkg), siteDir); !dirExists(abs) {
 			fail(&Error{
 				Pos:  relPos(dir, pkg.Fset, call.Args[0].Pos()),
-				Msg:  fmt.Sprintf("tako.Site directory %s does not exist (add it, or use WithBuild if a generator creates it)", siteDir),
+				Msg:  fmt.Sprintf("tako.Site directory %s does not exist (add it, or set SiteConfig.Build if a generator creates it)", siteDir),
 				Rule: "site-dir",
 			})
 		}
@@ -146,9 +138,6 @@ func dirExists(path string) bool {
 	return err == nil && info.IsDir()
 }
 
-// authProviders maps Auth options to provider names.
-var authProviders = map[string]string{"WithGoogle": "google", "WithEmail": "email"}
-
 // extractAuth validates one tako.Auth declaration.
 func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" {
@@ -162,24 +151,20 @@ func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
 	bad := false
-	for _, opt := range call.Args {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		provider, known := authProviders[optName]
-		if !isOpt || !known {
-			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Auth accepts WithGoogle, WithEmail; got %s", describeExpr(opt)),
-				Rule: "invalid-option",
-			})
-			bad = true
-			continue
-		}
-		r.Providers = append(r.Providers, provider)
+	cfg, ok := configFields(dir, pkg, call.Args, "AuthConfig", errs)
+	if !ok {
+		bad = true
+	}
+	if boolField(dir, pkg, cfg, "Google", "AuthConfig", errs) {
+		r.Providers = append(r.Providers, "google")
+	}
+	if boolField(dir, pkg, cfg, "Password", "AuthConfig", errs) {
+		r.Providers = append(r.Providers, "email")
 	}
 	if len(r.Providers) == 0 && !bad {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, call.Pos()),
-			Msg:  "tako.Auth needs at least one provider (WithGoogle, WithEmail)",
+			Msg:  "tako.Auth needs at least one provider (AuthConfig{Google: true} or AuthConfig{Password: true})",
 			Rule: "auth-provider",
 		})
 		bad = true

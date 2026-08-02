@@ -327,7 +327,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:81:2"
+      "pos": "app.go:83:2"
     },
     {
       "kind": "subscribe",
@@ -336,7 +336,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:82:2"
+      "pos": "app.go:84:2"
     },
     {
       "kind": "cron",
@@ -345,7 +345,7 @@
       "service": "gallery",
       "schedule": "every 24h",
       "singleflight": true,
-      "pos": "app.go:83:2"
+      "pos": "app.go:85:2"
     }
   ],
   "edges": [

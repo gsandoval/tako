@@ -11,21 +11,6 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
-// apiOptions is the option set tako.API accepts; anything else is
-// tako/invalid-option.
-// serviceLevelOptions describe a whole deployable. On a worker or a job
-// the single handler IS the service, so they stay honest there; on an
-// API or Page they would sit on an arbitrary route, which is what
-// tako.Service exists to fix.
-var serviceLevelOptions = map[string]bool{
-	"WithProfile": true, "WithFootprint": true, "WithTraffic": true, "WithDomain": true,
-}
-
-var apiOptions = map[string]bool{
-	"WithAuth":    true,
-	"WithPrivate": true,
-}
-
 // bindableTypes are the field types path:/query:/form: tags may bind in
 // v0.
 var bindableTypes = map[string]string{
@@ -69,39 +54,16 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 	method, params := parseRoute(route)
 
-	requiresAuth := false
-	private := false
-	for _, opt := range call.Args[2:] {
-		optName, ok := sdkOptionCall(pkg, opt)
-		if ok && optName == "WithAuth" {
-			requiresAuth = true
-			continue
-		}
-		if ok && optName == "WithPrivate" {
-			private = true
-			continue
-		}
-		if ok && serviceLevelOptions[optName] {
-			// These describe the whole SERVICE, and a service has many
-			// routes — there is no honest reason for one of them to carry
-			// the claim. tako.Service is the home (V1).
-			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.%s(…))",
-					optName, optName),
-				Rule: "service-option",
-			})
-			continue
-		}
-		if ok && !apiOptions[optName] {
-			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.%s option (tako.%s accepts WithAuth, WithPrivate)",
-					optName, ctor, ctor),
-				Rule: "invalid-option",
-			})
-		}
+	// tako.Route carries the two settings that belong to ONE route.
+	// Service-wide settings are not fields on it, so a route that tries
+	// to size its service no longer compiles — the check that used to
+	// live here (service-option) is the type now.
+	cfg, ok := configFields(dir, pkg, call.Args[2:], "Route", errs)
+	if !ok {
+		bad = true
 	}
+	requiresAuth := boolField(dir, pkg, cfg, "SignIn", "Route", errs)
+	private := boolField(dir, pkg, cfg, "Private", "Route", errs)
 
 	req, reqErr := reqStruct(pkg, call.Args[1])
 	if reqErr != "" {
@@ -364,20 +326,6 @@ func reqStruct(pkg *packages.Package, fnExpr ast.Expr) (reqInfo, string) {
 		})
 	}
 	return info, ""
-}
-
-// sdkOptionCall reports the SDK option a constructor argument invokes
-// (e.g. "WithTTL"), when it is one.
-func sdkOptionCall(pkg *packages.Package, arg ast.Expr) (string, bool) {
-	call, ok := arg.(*ast.CallExpr)
-	if !ok {
-		return "", false
-	}
-	name := sdkConstructor(pkg, call)
-	if name == "" {
-		return "", false
-	}
-	return name, strings.HasPrefix(name, "With") || name == "SPA"
 }
 
 // parseRoute splits a net/http pattern into its method and path

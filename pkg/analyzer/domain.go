@@ -47,25 +47,21 @@ func domainProblem(d string) string {
 // domainArg reads and validates a WithDomain option's argument. It
 // returns "" (and appends the positioned error) when the argument is not
 // a valid constant domain.
-func domainArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorList) string {
-	call, ok := opt.(*ast.CallExpr)
-	if !ok || len(call.Args) < 1 {
-		return ""
-	}
-	d, err := constString(pkg, call.Args[0])
+func domainArg(dir string, pkg *packages.Package, e ast.Expr, errs *ErrorList) string {
+	d, err := constString(pkg, e)
 	if err != nil {
 		*errs = append(*errs, &Error{
-			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg: fmt.Sprintf("tako.WithDomain argument must be a string constant — it is read at analysis time; got %s",
-				describeExpr(call.Args[0])),
+			Pos: relPos(dir, pkg.Fset, e.Pos()),
+			Msg: fmt.Sprintf("tako.ServiceConfig.Domain must be a string constant — it is read at analysis time; got %s",
+				describeExpr(e)),
 			Rule: "const-name",
 		})
 		return ""
 	}
 	if why := domainProblem(d); why != "" {
 		*errs = append(*errs, &Error{
-			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-			Msg:  "tako.WithDomain " + why,
+			Pos:  relPos(dir, pkg.Fset, e.Pos()),
+			Msg:  "tako.ServiceConfig.Domain " + why,
 			Rule: "domain",
 		})
 		return ""
@@ -138,38 +134,25 @@ func extractService(dir string, pkg *packages.Package, name *ast.Ident, call *as
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
 	bad := false
-	for _, opt := range call.Args {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if !isOpt {
-			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic; got %s", describeExpr(opt)),
-				Rule: "invalid-option",
-			})
-			bad = true
-			continue
-		}
-		switch optName {
-		case "WithDomain":
-			if d := domainArg(dir, pkg, opt, errs); d != "" {
-				r.Domain = d
-			} else {
-				bad = true
-			}
-		case "WithProfile":
-			r.Profile = profileArg(pkg, opt)
-		case "WithFootprint":
-			r.Footprint = footprintArg(dir, pkg, opt, errs)
-		case "WithTraffic":
-			r.Traffic = trafficArg(dir, pkg, opt, errs)
-		default:
-			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-				Msg:  fmt.Sprintf("tako.%s is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic)", optName),
-				Rule: "invalid-option",
-			})
+	cfg, ok := configFields(dir, pkg, call.Args, "ServiceConfig", errs)
+	if !ok {
+		bad = true
+	}
+	if e, set := fieldOf(cfg, "Domain"); set {
+		if d := domainArg(dir, pkg, e, errs); d != "" {
+			r.Domain = d
+		} else {
 			bad = true
 		}
+	}
+	if e, set := fieldOf(cfg, "Profile"); set {
+		r.Profile = profileArg(pkg, e)
+	}
+	if e, set := fieldOf(cfg, "Footprint"); set {
+		r.Footprint = footprintArg(dir, pkg, e, errs)
+	}
+	if e, set := fieldOf(cfg, "Traffic"); set {
+		r.Traffic = trafficArg(dir, pkg, e, errs)
 	}
 	if bad {
 		return nil

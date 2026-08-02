@@ -173,7 +173,7 @@ func TestExpiryDeletesTheLinkItWasPublishedFor(t *testing.T) {
 	}
 	// A stale expiry for the FIRST "keep" arriving now must not delete
 	// the new claimant — simulate by publishing it directly, due now.
-	if err := expiries.Publish(ctx, Expiry{ID: tako.NewID(), Slug: "keep", Created: time.Now().Add(-time.Hour)}, tako.WithDelay(time.Second)); err != nil {
+	if err := expiries.PublishAfter(ctx, Expiry{ID: tako.NewID(), Slug: "keep", Created: time.Now().Add(-time.Hour)}, time.Second); err != nil {
 		t.Fatal(err)
 	}
 	app.Advance(2 * time.Second)

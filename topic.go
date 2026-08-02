@@ -10,14 +10,14 @@ import (
 // Topic declares an event topic for payloads of type T: broadcast fan-out,
 // any number of Subscribe handlers, each with independent retries. The name
 // must be a string constant (analyzer-enforced).
-func Topic[T any](name string, opts ...Option) *TopicHandle[T] {
-	return &TopicHandle[T]{name: name, opts: opts}
+func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T] {
+	return &TopicHandle[T]{name: name, delivery: cfg}
 }
 
 // TopicHandle is a declared event topic, usable as a Subscribe binding.
 type TopicHandle[T any] struct {
-	name string
-	opts []Option
+	name     string
+	delivery []Delivery
 }
 
 // Publish broadcasts event to every subscriber of the topic. A topic with

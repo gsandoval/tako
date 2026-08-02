@@ -20,7 +20,7 @@ var (
 	// The fragment templates ride Hugo's static/ dir into
 	// public/templates — the one subtree a Site never serves raw.
 	site = tako.Site("./site/public",
-		tako.WithBuild("cd site && hugo --minify", "./site/public"))
+		tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
 )
 
 // Comment hangs off a post by the post's own URL path — the one stable

@@ -9,7 +9,7 @@ import (
 )
 
 // Lock declares a distributed mutual-exclusion lock. Most apps never touch
-// Lock directly — Cron's WithSingleflight and Singleton are built on the
+// Lock directly — CronConfig.Singleflight and Singleton are built on the
 // same mechanism. The name must be a string constant (analyzer-enforced).
 //
 // Lock guards critical SECTIONS — cross-entity rebuilds, calls into
@@ -17,14 +17,13 @@ import (
 // atomicity: that is Tx's job, cheaper and contention-free. Locks are
 // not reentrant, and a crash needs no cleanup — the lease's TTL (30s)
 // expires and the next campaigner takes over.
-func Lock(name string, opts ...Option) *LockHandle {
-	return &LockHandle{name: name, opts: opts}
+func Lock(name string) *LockHandle {
+	return &LockHandle{name: name}
 }
 
 // LockHandle is a declared distributed lock.
 type LockHandle struct {
 	name string
-	opts []Option
 }
 
 // Do blocks until the lock is held, runs fn while holding it, and releases

@@ -2,7 +2,6 @@ package tako
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -12,30 +11,30 @@ import (
 // Queue declares a work queue for payloads of type T: competing consumers,
 // exactly one Worker. The name must be a string constant
 // (analyzer-enforced).
-func Queue[T any](name string, opts ...Option) *QueueHandle[T] {
-	return &QueueHandle[T]{name: name, opts: opts}
+func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T] {
+	return &QueueHandle[T]{name: name, delivery: cfg}
 }
 
 // QueueHandle is a declared work queue. Publish enqueues work; exactly one
 // tako.Worker consumes it (two workers on one queue is an analysis error).
 type QueueHandle[T any] struct {
-	name string
-	opts []Option
+	name     string
+	delivery []Delivery
 }
 
-// Publish enqueues msg for the queue's worker. WithDelay defers the
-// first delivery; using it selects a scheduling-capable backend in the
-// cloud — same API, provisioner's choice.
-func (q *QueueHandle[T]) Publish(ctx Ctx, msg T, opts ...Option) error {
-	var po backends.PublishOptions
-	for _, o := range opts {
-		switch o.name {
-		case "delay":
-			po.Delay = o.args[0].(time.Duration)
-		default:
-			return fmt.Errorf("tako.%s is not a Publish option (Publish accepts WithDelay)", optionDisplayName(o.name))
-		}
-	}
+// Publish enqueues msg for the queue's worker.
+func (q *QueueHandle[T]) Publish(ctx Ctx, msg T) error {
+	return q.publish(ctx, msg, backends.PublishOptions{})
+}
+
+// PublishAfter enqueues msg for delivery no earlier than delay from now.
+// Using it selects a scheduling-capable backend in the cloud — same API,
+// provisioner's choice.
+func (q *QueueHandle[T]) PublishAfter(ctx Ctx, msg T, delay time.Duration) error {
+	return q.publish(ctx, msg, backends.PublishOptions{Delay: delay})
+}
+
+func (q *QueueHandle[T]) publish(ctx Ctx, msg T, po backends.PublishOptions) error {
 	raw, err := json.Marshal(msg)
 	if err != nil {
 		return err

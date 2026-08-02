@@ -1,1 +1,1 @@
-app.go:5:12: tako.Auth needs at least one provider (WithGoogle, WithEmail) (tako/auth-provider)
+app.go:5:12: tako.Auth needs at least one provider (AuthConfig{Google: true} or AuthConfig{Password: true}) (tako/auth-provider)

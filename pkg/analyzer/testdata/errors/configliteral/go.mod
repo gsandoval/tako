@@ -1,4 +1,4 @@
-module siteopt
+module configliteral
 
 go 1.26
 

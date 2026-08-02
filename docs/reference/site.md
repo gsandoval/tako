@@ -10,7 +10,7 @@ chapters teach the two shapes.
 ```go
 // site serves ./web embedded in the service binary; its templates/
 // subtree backs site.Render and is never served statically.
-var site = tako.Site("./web", tako.WithRedirect("/about-us", "/about"))
+var site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
 ```
 
 `WithBuild(command, outDir)` runs a real generator and serves its
@@ -19,10 +19,13 @@ in [examples/shop](../../examples/shop/app.go):
 
 ```go
 var site = tako.Site("./site/public",
-	tako.WithBuild("cd site && hugo --minify", "./site/public"))
+	tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
 
 var site = tako.Site("./web/dist",
-	tako.WithBuild("cd web && npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js && cp index.html dist/", "./web/dist"))
+	tako.SiteConfig{Build: tako.Build{
+		Command: "cd web && npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js && cp index.html dist/",
+		Out:     "./web/dist",
+	}})
 ```
 
 `SPA()` serves index.html for unknown paths (single-page apps own
@@ -69,7 +72,7 @@ deployed site never proxies. Blog needs Hugo on your machine
 bill; the site scales to zero with its service. Node and Hugo never
 reach production.
 
-`tako.Service(tako.WithDomain("blog.example.com"))` puts the service on a custom domain
+`tako.Service(tako.ServiceConfig{Domain: "blog.example.com"})` puts the service on a custom domain
 with a Google-managed certificate, via a Cloud Run domain mapping — no
 standing infrastructure charge, but two manual steps that are yours
 (proving ownership, publishing DNS). [domains.md](domains.md) has the
@@ -98,8 +101,8 @@ HTML, `public, max-age=31536000, immutable` on fingerprinted assets.
 At analysis time:
 
 ```
-tako.Site directory ./web does not exist (add it, or use WithBuild if a generator creates it) (tako/site-dir)
-tako.WithTTL is not a tako.Site option (tako.Site accepts SPA, WithBuild, WithDevProxy, WithRedirect, WithTrustedHTML, WithDomain) (tako/invalid-option)
+tako.Site directory ./web does not exist (add it, or set SiteConfig.Build if a generator creates it) (tako/site-dir)
+tako.SiteConfig.Redirects must be a map literal with constant keys and values — redirects are read at analysis time, not run time (tako/config-literal)
 a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two (tako/one-site)
 ```
 

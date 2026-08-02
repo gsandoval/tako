@@ -10,9 +10,11 @@ those settings no longer ride whichever endpoint happened to be first.
 package blog
 
 var web = tako.Service(
-	tako.WithDomain("blog.example.com"),
-	tako.WithProfile(tako.Latency),
-	tako.WithFootprint(tako.Footprint{Memory: "1Gi"}),
+	tako.ServiceConfig{
+		Domain:    "blog.example.com",
+		Profile:   tako.ProfileLatency,
+		Footprint: tako.Footprint{Memory: "1Gi"},
+	},
 )
 ```
 
@@ -52,12 +54,14 @@ IS the service and remains the honest place for their settings.
 
 ```go
 // The app service's settings.
-var api = tako.Service(tako.WithProfile(tako.Latency))
+var api = tako.Service(tako.ServiceConfig{Profile: tako.ProfileLatency})
 
 // This worker's own service — its own settings, on itself.
 var MakeThumb = tako.Worker(thumbs, makeThumb,
-	tako.WithProfile(tako.Batch),
-	tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4}))
+	tako.Compute{
+		Profile:   tako.ProfileBatch,
+		Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4},
+	})
 ```
 
 | option | `tako.Service` | Worker / Subscribe / Job / Singleton | API / Page |
@@ -86,8 +90,8 @@ graph, _ := analyzer.Analyze(analyzer.Config{Dir: "."})
 
 ```
 a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two (tako/one-service)
-tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)
-tako.WithTTL is not a tako.Service option (tako.Service accepts WithDomain, WithProfile, WithFootprint, WithTraffic) (tako/invalid-option)
+tako.ServiceConfig must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "cfg" (tako/config-literal)
+tako.ServiceConfig takes one configuration value, got 2 — merge them into a single literal (tako/one-config)
 ```
 
 The `tako/service-option` text is the migration note for code written

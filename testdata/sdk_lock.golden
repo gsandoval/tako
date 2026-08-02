@@ -4,7 +4,7 @@
     func (*BucketHandle).List(ctx Ctx, prefix string) Iter[ObjectInfo]
     func (*BucketHandle).Put(ctx Ctx, key string, blob Blob) error
     func (*BucketHandle).SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error)
-    func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, opts ...Option) (string, error)
+    func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error)
     func (*CacheHandle[T]).Delete(ctx Ctx, key string) error
     func (*CacheHandle[T]).Exists(ctx Ctx, key string) (bool, error)
     func (*CacheHandle[T]).Get(ctx Ctx, key string) (T, error)
@@ -30,7 +30,8 @@
     func (*JobHandle[T]).Run(ctx Ctx, params T) error
     func (*LockHandle).Do(ctx Ctx, fn func(Ctx) error) error
     func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
-    func (*QueueHandle[T]).Publish(ctx Ctx, msg T, opts ...Option) error
+    func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
+    func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
     func (*SecretHandle).Value() string
     func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
@@ -53,73 +54,54 @@
     func (EntityTx[T any]).Delete(id string) error
     func (EntityTx[T any]).Get(id string) (T, error)
     func (EntityTx[T any]).Put(entity T) error
+    func (PutPolicy).Headers() map[string]string
     func (context.Context).Deadline() (deadline time.Time, ok bool)
     func (context.Context).Done() <-chan struct{}
     func (context.Context).Err() error
     func (context.Context).Value(key any) any
-const Batch Profile
-const Default Profile
-const Inherit Toggle
-const Latency Profile
-const Off Toggle
-const On Toggle
-func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res]
-func Auth(opts ...Option) *AuthHandle
-func Bucket(name string, opts ...Option) *BucketHandle
-func Cache[T any](name string, opts ...Option) *CacheHandle[T]
-func Counter(name string, opts ...Option) *CounterHandle
-func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler
-func Entity[T any](name string, opts ...Option) *EntityHandle[T]
+const ProfileBatch Profile
+const ProfileDefault Profile
+const ProfileLatency Profile
+const ToggleInherit Toggle
+const ToggleOff Toggle
+const ToggleOn Toggle
+func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Route) Endpoint[Req, Res]
+func Auth(cfg AuthConfig) *AuthHandle
+func Bucket(name string) *BucketHandle
+func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
+func Counter(name string) *CounterHandle
+func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
+func Entity[T any](name string) *EntityHandle[T]
 func Errorf(status int, format string, args ...any) error
-func Histogram(name string, opts ...Option) *HistogramHandle
+func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
-func JobHandler[T any](job *JobHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
-func Job[T any](name string, opts ...Option) *JobHandle[T]
-func Lock(name string, opts ...Option) *LockHandle
+func Job[T any](name string) *JobHandle[T]
+func Lock(name string) *LockHandle
 func NewID() string
 func NewTestApp(tb testing.TB) *TestApp
 func NotFound() error
-func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML]
+func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
 func Permanent(err error) error
-func Queue[T any](name string, opts ...Option) *QueueHandle[T]
+func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
 func Redirect(target string) (HTML, error)
-func SPA() Option
-func Secret(name string, opts ...Option) *SecretHandle
-func Service(opts ...Option) *ServiceHandle
-func Singleton(fn func(Ctx) error, opts ...Option) Handler
-func Site(dir string, opts ...Option) *SiteHandle
-func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler
-func Topic[T any](name string, opts ...Option) *TopicHandle[T]
-func UploadHeaders(opts ...Option) map[string]string
-func WithAuth() Option
-func WithBuild(command string, outDir string) Option
-func WithContentType(pattern string) Option
-func WithDeadline(d time.Duration) Option
-func WithDelay(d time.Duration) Option
-func WithDelivery(d Delivery) Option
-func WithDevProxy(url string) Option
-func WithDomain(domain string) Option
-func WithEmail() Option
-func WithFootprint(f Footprint) Option
-func WithGoogle() Option
-func WithMaxSize(bytes int64) Option
-func WithParallel(n int) Option
-func WithPrivate() Option
-func WithProfile(p Profile) Option
-func WithRedirect(from string, to string) Option
-func WithRetries(n int) Option
-func WithSingleflight() Option
-func WithTTL(d time.Duration) Option
-func WithTimezone(zone string) Option
-func WithTraffic(t Traffic) Option
-func WithTrustedHTML() Option
-func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler
+func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
+func Secret(name string) *SecretHandle
+func Service(cfg ...ServiceConfig) *ServiceHandle
+func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
+func Site(dir string, cfg ...SiteConfig) *SiteHandle
+func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
+func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+type AuthConfig struct{Google bool; Password bool}
 type AuthHandle struct{}
 type Blob struct{Reader io.Reader; ContentType string; Size int64}
 type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}
+type Build struct{Command string; Out string}
 type CacheHandle[T any] struct{}
+type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
 type CounterHandle struct{}
+type CronConfig struct{Singleflight bool; Timezone string; Deadline time.Duration; Profile Profile; Footprint Footprint}
 type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
 type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
 type Endpoint[Req any, Res any] struct{}
@@ -135,11 +117,16 @@ type Iter[T any] struct{}
 type JobHandle[T any] struct{}
 type LockHandle struct{}
 type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
-type Option struct{}
 type Profile int
+type PutPolicy struct{MaxSize int64; ContentType string}
 type QueueHandle[T any] struct{}
+type Route struct{SignIn bool; Private bool}
+type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
+type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
 type ServiceHandle struct{}
+type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
+type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool}
 type SiteHandle struct{}
 type TestApp struct{}
 type Toggle int

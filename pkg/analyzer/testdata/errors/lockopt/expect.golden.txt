@@ -1,1 +1,0 @@
-app.go:9:35: tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned (tako/invalid-option)

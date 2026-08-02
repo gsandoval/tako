@@ -21,8 +21,10 @@ examples/gallery/app.go — the resizer:
 
 ```go
 MakeThumb = tako.Worker(thumbs, makeThumb,
-    tako.WithProfile(tako.Batch),
-    tako.WithFootprint(tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5}))
+    tako.Compute{
+        Profile:   tako.ProfileBatch,
+        Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
+    })
 ```
 
 **Judge:** the profile carries the intent (batch work), the footprint
@@ -95,11 +97,11 @@ not accept. Note it points at line 78, the handler, not at the field.
 Add an option to `NotifyOwner` on line 81:
 
 ```go
-NotifyOwner = tako.Subscribe(ready, notifyOwner, tako.WithTraffic(tako.Traffic{}))
+NotifyOwner = tako.Subscribe(ready, notifyOwner, tako.Compute{Traffic: tako.Traffic{}})
 ```
 
 ```
-app.go:81:68: traffic sets nothing — drop tako.WithTraffic or pin at least one field (tako/traffic)
+app.go:81:68: traffic sets nothing — drop the Traffic field or pin at least one setting (tako/traffic)
 ```
 
 Then `tako.Traffic{Timeout: 500 * time.Millisecond}` (add `"time"` to
@@ -143,9 +145,9 @@ two packages.
 gallery has one cron. Add a second, on line 84:
 
 ```go
-	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
-	Cleanup2    = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
-		tako.WithFootprint(tako.Footprint{CPU: 2}))
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
+	Cleanup2    = tako.Cron("every 24h", cleanupOrphans,
+		tako.CronConfig{Singleflight: true, Footprint: tako.Footprint{CPU: 2}})
 ```
 
 Run `gen graph` and note that **this is not an error yet**:
@@ -161,10 +163,10 @@ to conflict with, because `Cleanup` pins nothing.
 Now give `Cleanup` a DIFFERENT footprint:
 
 ```go
-	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
-		tako.WithFootprint(tako.Footprint{CPU: 4, Memory: "2Gi"}))
-	Cleanup2    = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
-		tako.WithFootprint(tako.Footprint{CPU: 2}))
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans,
+		tako.CronConfig{Singleflight: true, Footprint: tako.Footprint{CPU: 4, Memory: "2Gi"}})
+	Cleanup2    = tako.Cron("every 24h", cleanupOrphans,
+		tako.CronConfig{Singleflight: true, Footprint: tako.Footprint{CPU: 2}})
 ```
 
 ```
@@ -287,10 +289,10 @@ service and orphan it mid-walk. In `examples/gallery/app.go`:
 
 ```go
 NotifyOwner = tako.Subscribe(photoReady, notifyOwner,
-	tako.WithTraffic(tako.Traffic{
+	tako.ServiceConfig{Traffic: tako.Traffic{
 		Timeout:         45 * time.Second,
-		SessionAffinity: tako.On,
-		HTTP2:           tako.On,
+		SessionAffinity: tako.ToggleOn,
+		HTTP2:           tako.ToggleOn,
 	}))
 ```
 

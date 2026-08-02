@@ -10,12 +10,12 @@ package tako
 // names the service <package>-<var> instead, the same shape workers and
 // subscribers already use.
 //
-//	var api = tako.Service(tako.WithDomain("api.example.com"))
+//	var api = tako.Service(tako.ServiceConfig{Domain: "api.example.com"})
 //
-// One per package. It accepts WithDomain, WithProfile and WithFootprint:
+// One per package. Its ServiceConfig carries Domain, Profile, Footprint and Traffic:
 // every setting that describes the whole service rather than one route.
-func Service(opts ...Option) *ServiceHandle { return &ServiceHandle{opts: opts} }
+func Service(cfg ...ServiceConfig) *ServiceHandle { return &ServiceHandle{cfg: cfg} }
 
 // ServiceHandle is the app service's declaration. It carries no methods:
 // the declaration IS the value, read at analysis time.
-type ServiceHandle struct{ opts []Option }
+type ServiceHandle struct{ cfg []ServiceConfig }

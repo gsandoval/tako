@@ -3,8 +3,8 @@
 ## Declare
 
 ```go
-auth = tako.Auth(tako.WithGoogle())   // journal: Google sign-in
-auth = tako.Auth(tako.WithEmail())    // shop: email/password
+auth = tako.Auth(tako.AuthConfig{Google: true})   // journal: Google sign-in
+auth = tako.Auth(tako.AuthConfig{Password: true})    // shop: email/password
 ```
 
 One declaration injects the session surface: `POST /api/_session`
@@ -27,8 +27,8 @@ on an unauthenticated request panics. From
 [examples/journal](../../examples/journal/app.go):
 
 ```go
-Save    = tako.Page("POST /p", save, tako.WithAuth())
-Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
+Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
+Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 ```
 
 ```go
@@ -65,7 +65,7 @@ registering sign-in domains per deploy — and the deploy injects
 into every service; the sign-in page uses them to run the browser flow
 and POST the resulting ID token to `/api/_session`.
 
-The one genuinely manual step — only with `tako.WithGoogle()` — from
+The one genuinely manual step — only with `tako.AuthConfig{Google: true}` — from
 [the cloud guide](../guide/cloud.md):
 
 > Firebase console → your project → Authentication → Sign-in method →

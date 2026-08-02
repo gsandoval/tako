@@ -26,7 +26,7 @@ func NewCtx(parent context.Context) tako.Ctx {
 
 func (c *requestCtx) User() tako.User {
 	if c.user == nil {
-		panic("tako: ctx.User on a request with no authenticated user — auth is declared with tako.Auth and required per-route with tako.WithAuth")
+		panic("tako: ctx.User on a request with no authenticated user — auth is declared with tako.Auth and required per-route with tako.Route{SignIn: true}")
 	}
 	return *c.user
 }

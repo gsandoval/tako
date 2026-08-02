@@ -22,7 +22,7 @@ import (
 // (the derived self-tokenCreator grant authorizes it). Enforcement:
 // identity, expiry, an EXACT content type (signed into the URL —
 // clients send Content-Type naturally), and MaxSize via the signed
-// x-goog-content-length-range header (tako.UploadHeaders hands clients
+// x-goog-content-length-range header (PutPolicy.Headers hands clients
 // the required value; T1). A WILDCARD content type is the one remaining
 // platform gap — GCS cannot condition on a prefix, so it falls through
 // to the pipeline's safety net (decode failures dead-letter, the cron
@@ -162,7 +162,7 @@ func (s *Signer) SignPut(ctx context.Context, bucket, key string, ttl time.Durat
 	}
 	// MaxSize signs GCS's size-range condition. Signing the header makes
 	// it REQUIRED: a PUT that omits it fails the signature, one that
-	// sends it is capped by GCS itself. tako.UploadHeaders gives clients
+	// sends it is capped by GCS itself. PutPolicy.Headers gives clients
 	// the exact value.
 	if c.MaxSize > 0 {
 		headers["x-goog-content-length-range"] = fmt.Sprintf("0,%d", c.MaxSize)

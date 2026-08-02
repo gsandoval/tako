@@ -33,7 +33,7 @@ func NewTestApp(tb testing.TB) *TestApp {
 		tb.Fatalf("tako: NewTestApp: %v", err)
 	}
 	// Delayed publishes wait on a fake clock only Advance moves — a test
-	// never sleeps out a WithDelay.
+	// never sleeps out a PublishAfter delay.
 	app.Dispatcher.UseManualClock()
 	ta := &TestApp{tb: tb, app: app}
 	registerTestIdentities()
@@ -50,7 +50,7 @@ func NewTestApp(tb testing.TB) *TestApp {
 			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, h.name))
 		case "job":
 			// Jobs ride the dispatcher locally: DrainQueues waits for
-			// them, failures dead-letter inspectably. WithParallel runs
+			// them, failures dead-letter inspectably. RunnerConfig.Parallel runs
 			// its N tasks (ctx.Task() shards) joined per execution.
 			par, invoke, name := h.parallel, h.invoke, h.name
 			if par < 1 {
@@ -112,7 +112,7 @@ type TestApp struct {
 }
 
 // SignIn returns a stub identity for name — identity injection for
-// tests, not auth enforcement (WithAuth middleware arrives with the
+// tests, not auth enforcement (sign-in middleware arrives with the
 // auth feature).
 func (a *TestApp) SignIn(name string) User {
 	return User{ID: name, Email: name + "@example.test", Name: name}
@@ -160,7 +160,7 @@ func (a *TestApp) DrainQueues() {
 }
 
 // Advance moves the app's fake clock forward, releasing every delayed
-// queue message (WithDelay) that has come due. It moves scheduled time
+// queue message (PublishAfter) that has come due. It moves scheduled time
 // only — retry backoff and chaos reordering keep their real
 // (millisecond) timers — and DrainQueues treats not-yet-due messages as
 // idle rather than waiting out their delays. Crons never ride this

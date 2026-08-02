@@ -11,11 +11,11 @@ var (
 	qc = tako.Queue[string]("qc")
 
 	// CPU 8 over the default profile's 512Mi.
-	BigCPU = tako.Worker(qa, work, tako.WithFootprint(tako.Footprint{CPU: 8}))
+	BigCPU = tako.Worker(qa, work, tako.Compute{Footprint: tako.Footprint{CPU: 8}})
 	// 8Gi over the default profile's 1 vCPU.
-	BigMem = tako.Worker(qb, work, tako.WithFootprint(tako.Footprint{Memory: "8Gi"}))
+	BigMem = tako.Worker(qb, work, tako.Compute{Footprint: tako.Footprint{Memory: "8Gi"}})
 	// Min 30 over the default profile's max 20.
-	BigMin = tako.Worker(qc, work, tako.WithFootprint(tako.Footprint{MinInstances: 30}))
+	BigMin = tako.Worker(qc, work, tako.Compute{Footprint: tako.Footprint{MinInstances: 30}})
 )
 
 func work(ctx tako.Ctx, s string) error { return nil }

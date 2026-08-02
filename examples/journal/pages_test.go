@@ -151,7 +151,7 @@ func TestWritePublishReadRoundTrip(t *testing.T) {
 func TestAuthAndCSRFGates(t *testing.T) {
 	srv := servePages(t)
 
-	// Anonymous write → 401 with the exact text (WithAuth's gate).
+	// Anonymous write → 401 with the exact text (Route{SignIn: true}'s gate).
 	anon := client(t, srv)
 	res, err := anon.PostForm(srv.URL+"/p", url.Values{"title": {"x"}, "body": {"y"}})
 	if err != nil {

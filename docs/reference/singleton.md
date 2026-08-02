@@ -20,7 +20,7 @@ Invoicer = tako.Singleton(assignInvoices)
 ```
 
 `Singleton` takes only its loop: the declaring variable is the identity — `Invoicer` deploys as `shop-invoicer` — which is the same rule that names every other service tako creates. `Singleton`
-accepts exactly one option, `tako.WithFootprint`, and only its CPU and
+accepts a `tako.SingletonConfig` whose Footprint honors only CPU and
 Memory fields — the scaling knobs (min=1/max=1/concurrency=1) are the
 exactly-one machinery and are framework-owned.
 
@@ -105,10 +105,6 @@ never rewinds.
   `a singleton footprint sets CPU, Memory and StartupBoost only — min=1
   and concurrency=1 are what keep the loop's host alive and alone
   (tako/footprint)`
-- A singleton traffic claim beyond the timeout:
-  `a singleton's only traffic setting is Timeout — exactly one instance
-  serving nothing but its own health check has no clients to keep
-  affinity with or negotiate HTTP/2 over (tako/traffic)`
 - A non-constant name: `tako.Singleton name must be a string constant —
   names are read at analysis time, not run time; got …` (tako/const-name)
 

@@ -9,14 +9,13 @@ import (
 // string constant (analyzer-enforced). Locally every Add is one
 // structured log line (and a 📈 line in the dev console); Cloud
 // Monitoring export is a later backend behind the same call sites.
-func Counter(name string, opts ...Option) *CounterHandle {
-	return &CounterHandle{name: name, opts: opts}
+func Counter(name string) *CounterHandle {
+	return &CounterHandle{name: name}
 }
 
 // CounterHandle is a declared counter metric.
 type CounterHandle struct {
 	name string
-	opts []Option
 }
 
 // Add increments the counter by delta. Fire-and-forget: recording never
@@ -27,14 +26,13 @@ func (c *CounterHandle) Add(ctx Ctx, delta int64) {
 
 // Histogram declares a distribution metric. The name must be a string
 // constant (analyzer-enforced).
-func Histogram(name string, opts ...Option) *HistogramHandle {
-	return &HistogramHandle{name: name, opts: opts}
+func Histogram(name string) *HistogramHandle {
+	return &HistogramHandle{name: name}
 }
 
 // HistogramHandle is a declared histogram metric.
 type HistogramHandle struct {
 	name string
-	opts []Option
 }
 
 // Observe records one sample. Fire-and-forget, like Counter.Add.

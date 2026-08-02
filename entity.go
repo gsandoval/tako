@@ -14,8 +14,8 @@ import (
 // database". Schema comes from the struct: `entity:"id"` marks the key
 // field, `entity:"index"` marks queryable fields. The name is the store's
 // stable identity and must be a string constant (analyzer-enforced).
-func Entity[T any](name string, opts ...Option) *EntityHandle[T] {
-	return &EntityHandle[T]{name: name, opts: opts}
+func Entity[T any](name string) *EntityHandle[T] {
+	return &EntityHandle[T]{name: name}
 }
 
 // EntityHandle is a declared entity store for values of type T. Keyed like
@@ -23,7 +23,6 @@ func Entity[T any](name string, opts ...Option) *EntityHandle[T] {
 // methods on the store, never framework-level globals.
 type EntityHandle[T any] struct {
 	name string
-	opts []Option
 
 	schemaOnce sync.Once
 	schema     *entitySchema

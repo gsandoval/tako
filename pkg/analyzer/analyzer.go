@@ -253,8 +253,8 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
-			case "JobHandler":
-				if h := extractJobHandler(cfg.Dir, pkg, d.name, d.call, jobVars, jobsByName, &errs); h != nil {
+			case "Runner":
+				if h := extractRunner(cfg.Dir, pkg, d.name, d.call, jobVars, jobsByName, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 				}
@@ -366,7 +366,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		if r.Kind == "job" && jobsByName[r.Name] == nil {
 			errs = append(errs, &Error{
 				Pos:  r.Pos,
-				Msg:  fmt.Sprintf("job %q has no body — bind one with tako.JobHandler", r.Name),
+				Msg:  fmt.Sprintf("job %q has no body — bind one with tako.Runner", r.Name),
 				Rule: "job-binding",
 			})
 		}
@@ -427,7 +427,7 @@ func checkMixedIngress(handlers []Handler, errs *ErrorList) {
 		if public[svc] {
 			*errs = append(*errs, &Error{
 				Pos:  h.Pos,
-				Msg:  fmt.Sprintf("service %s mixes private and public routes — Cloud Run enforces WithPrivate at the service level, so private endpoints need their own package", svc),
+				Msg:  fmt.Sprintf("service %s mixes private and public routes — Cloud Run enforces Route.Private at the service level, so private endpoints need their own package", svc),
 				Rule: "mixed-ingress",
 			})
 		}
@@ -507,7 +507,7 @@ func partition(handlers []Handler) []Service {
 	services := make([]Service, 0, len(order))
 	for _, name := range order {
 		svc := *byService[name]
-		// A deployable whose one handler is a JobHandler provisions as
+		// A deployable whose one handler is a Runner provisions as
 		// a Cloud Run JOB; a Singleton's provisions min=1/max=1.
 		// Their profiles are DEFAULTS here rather than overwrites at
 		// provision time, so WithProfile can still move them (V2).

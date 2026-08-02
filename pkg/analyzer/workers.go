@@ -13,8 +13,27 @@ import (
 	"github.com/gsandoval/tako/internal/schedule"
 )
 
-// workerOptions is the option set tako.Worker accepts.
-var workerOptions = map[string]bool{"WithProfile": true, "WithFootprint": true, "WithTraffic": true}
+// computeConfig reads a tako.Compute argument — the sizing every async
+// handler that IS its own service shares.
+func computeConfig(dir string, pkg *packages.Package, args []ast.Expr, errs *ErrorList) (string, *Footprint, *Traffic) {
+	cfg, ok := configFields(dir, pkg, args, "Compute", errs)
+	if !ok {
+		return "", nil, nil
+	}
+	profile := ""
+	if e, set := fieldOf(cfg, "Profile"); set {
+		profile = profileArg(pkg, e)
+	}
+	var footprint *Footprint
+	if e, set := fieldOf(cfg, "Footprint"); set {
+		footprint = footprintArg(dir, pkg, e, errs)
+	}
+	var traffic *Traffic
+	if e, set := fieldOf(cfg, "Traffic"); set {
+		traffic = trafficArg(dir, pkg, e, errs)
+	}
+	return profile, footprint, traffic
+}
 
 // extractWorker validates one tako.Worker declaration. Workers partition
 // into their own service (package = service, but each worker scales and
@@ -36,36 +55,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		return nil
 	}
 
-	profile := ""
-	var footprint *Footprint
-	var traffic *Traffic
-	for _, opt := range call.Args[2:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if isOpt && optName == "WithProfile" {
-			profile = profileArg(pkg, opt)
-			continue
-		}
-		if isOpt && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && optName == "WithTraffic" {
-			traffic = trafficArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && optName == "WithTraffic" {
-			traffic = trafficArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && !workerOptions[optName] {
-			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Worker option (tako.Worker accepts WithProfile, WithFootprint, WithTraffic)",
-					optName),
-				Rule: "invalid-option",
-			})
-		}
-	}
+	profile, footprint, traffic := computeConfig(dir, pkg, call.Args[2:], errs)
 
 	if prior := workersByQueue[queueName]; prior != nil {
 		fail(&Error{
@@ -94,9 +84,6 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	return h
 }
 
-// subscribeOptions is the option set tako.Subscribe accepts.
-var subscribeOptions = map[string]bool{"WithProfile": true, "WithFootprint": true, "WithTraffic": true}
-
 // extractSubscribe validates one tako.Subscribe declaration. Subscribers
 // partition into their own service, and any number may bind one source —
 // fan-out with independent retries is the point (contrast one-worker).
@@ -117,32 +104,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		return nil
 	}
 
-	profile := ""
-	var footprint *Footprint
-	var traffic *Traffic
-	for _, opt := range call.Args[2:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if isOpt && optName == "WithProfile" {
-			profile = profileArg(pkg, opt)
-			continue
-		}
-		if isOpt && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && optName == "WithTraffic" {
-			traffic = trafficArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && !subscribeOptions[optName] {
-			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Subscribe option (tako.Subscribe accepts WithProfile, WithFootprint, WithTraffic)",
-					optName),
-				Rule: "invalid-option",
-			})
-		}
-	}
+	profile, footprint, traffic := computeConfig(dir, pkg, call.Args[2:], errs)
 	if bad {
 		return nil
 	}
@@ -160,12 +122,6 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 		Pos:         relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
-
-// cronOptions is the option set tako.Cron accepts. Profile/footprint
-// (S6 amendment) shape the HOSTING service — the one a cron-only
-// package would otherwise have no way to control.
-var cronOptions = map[string]bool{"WithSingleflight": true, "WithProfile": true, "WithFootprint": true,
-	"WithTimezone": true, "WithDeadline": true}
 
 // extractCron validates one tako.Cron declaration. Cron handlers run in
 // the package's app service (spec §4.1 partitioning), not their own.
@@ -194,69 +150,47 @@ func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		})
 	}
 
-	singleflight := false
-	profile := ""
+	cfg, ok := configFields(dir, pkg, call.Args[2:], "CronConfig", errs)
+	if !ok {
+		bad = true
+	}
+	singleflight := boolField(dir, pkg, cfg, "Singleflight", "CronConfig", errs)
 	timezone := ""
-	deadline := 0
-	var footprint *Footprint
-	var traffic *Traffic
-	for _, opt := range call.Args[2:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if isOpt && optName == "WithSingleflight" {
-			singleflight = true
-			continue
-		}
-		if isOpt && optName == "WithTimezone" {
-			zone, ok := stringOptionArg(pkg, opt)
-			// The tz database is right here at analysis time, so a
-			// misspelled zone is a build error, not a 3am surprise.
-			if !ok {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "tako.WithTimezone takes a constant IANA zone name — schedules are read at analysis time, not run time",
-					Rule: "const-name",
-				})
-			} else if _, err := time.LoadLocation(zone); err != nil {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  fmt.Sprintf("tako.WithTimezone does not know the zone %q — use an IANA name like \"America/Mexico_City\" or \"Europe/Madrid\"", zone),
-					Rule: "timezone",
-				})
-			} else {
-				timezone = zone
-			}
-			continue
-		}
-		if isOpt && optName == "WithDeadline" {
-			n, ok := intOptionArg(pkg, opt)
-			secs := n / int(time.Second)
-			if !ok || secs < 15 || secs > 1800 {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "tako.WithDeadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job",
-					Rule: "deadline",
-				})
-			}
-			deadline = secs
-			continue
-		}
-		if isOpt && optName == "WithProfile" {
-			profile = profileArg(pkg, opt)
-			continue
-		}
-		if isOpt && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			continue
-		}
-		if isOpt && !cronOptions[optName] {
+	if zone, set := stringField(dir, pkg, cfg, "Timezone", "CronConfig", errs); set {
+		// The tz database is right here at analysis time, so a misspelled
+		// zone is a build error, not a 3am surprise.
+		if _, err := time.LoadLocation(zone); err != nil {
 			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithTimezone, WithDeadline, WithProfile, WithFootprint)",
-					optName),
-				Rule: "invalid-option",
+				Pos:  relPos(dir, pkg.Fset, cfg["Timezone"].Pos()),
+				Msg:  fmt.Sprintf("tako.CronConfig.Timezone does not know the zone %q — use an IANA name like \"America/Mexico_City\" or \"Europe/Madrid\"", zone),
+				Rule: "timezone",
 			})
+		} else {
+			timezone = zone
 		}
 	}
+	deadline := 0
+	if e, set := fieldOf(cfg, "Deadline"); set {
+		n, dok := constInt(pkg, e)
+		secs := n / int(time.Second)
+		if !dok || secs < 15 || secs > 1800 {
+			fail(&Error{
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.CronConfig.Deadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job",
+				Rule: "deadline",
+			})
+		}
+		deadline = secs
+	}
+	profile := ""
+	if e, set := fieldOf(cfg, "Profile"); set {
+		profile = profileArg(pkg, e)
+	}
+	var footprint *Footprint
+	if e, set := fieldOf(cfg, "Footprint"); set {
+		footprint = footprintArg(dir, pkg, e, errs)
+	}
+	var traffic *Traffic
 	if bad {
 		return nil
 	}
@@ -319,14 +253,10 @@ func resolveQueueVar(pkg *packages.Package, arg ast.Expr, queueVars map[types.Ob
 	return name, ok
 }
 
-// jobOptions is the option set tako.JobHandler accepts.
-var jobOptions = map[string]bool{"WithParallel": true, "WithFootprint": true,
-	"WithRetries": true, "WithProfile": true}
-
-// extractJobHandler validates one tako.JobHandler declaration: its own
+// extractRunner validates one tako.Runner declaration: its own
 // deployable (a Cloud Run JOB — no routes, no request timeout), bound
 // to exactly one declared tako.Job.
-func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, jobVars map[types.Object]string, jobsByName map[string]*Handler, errs *ErrorList) *Handler {
+func extractRunner(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, jobVars map[types.Object]string, jobsByName map[string]*Handler, errs *ErrorList) *Handler {
 	if name.Name == "_" || len(call.Args) < 2 {
 		return nil
 	}
@@ -337,77 +267,64 @@ func extractJobHandler(dir string, pkg *packages.Package, name *ast.Ident, call 
 	if !ok {
 		fail(&Error{
 			Pos:  relPos(dir, pkg.Fset, call.Args[0].Pos()),
-			Msg:  "tako.JobHandler must bind a job declared as a package-level var in this module",
+			Msg:  "tako.Runner must bind a job declared as a package-level var in this module",
 			Rule: "job-binding",
 		})
 		return nil
 	}
+	cfg, ok := configFields(dir, pkg, call.Args[2:], "RunnerConfig", errs)
+	if !ok {
+		bad = true
+	}
 	parallel := 0
+	if e, set := fieldOf(cfg, "Parallel"); set {
+		if n, nok := constInt(pkg, e); nok {
+			parallel = n
+		}
+	}
 	retries := 0
-	profile := ""
-	var footprint *Footprint
-	var traffic *Traffic
-	for _, opt := range call.Args[2:] {
-		optName, isOpt := sdkOptionCall(pkg, opt)
-		if isOpt && optName == "WithProfile" {
-			profile = profileArg(pkg, opt)
-			continue
-		}
-		if isOpt && optName == "WithTraffic" {
-			traffic = trafficArg(dir, pkg, opt, errs)
-			// A job task HAS a timeout — 24h of it. What it does not have
-			// is clients: nothing connects to an execution, so there is
-			// nobody to keep affinity with and no connection to negotiate
-			// a protocol over.
-			if traffic != nil && (traffic.SessionAffinity != ToggleInherit || traffic.HTTP2 != ToggleInherit) {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job's only traffic setting is Timeout — an execution serves nobody, so there are no clients to keep affinity with and no connections to negotiate HTTP/2 over",
-					Rule: "traffic",
-				})
-			}
-			continue
-		}
-		if isOpt && optName == "WithRetries" {
-			n, ok := intOptionArg(pkg, opt)
-			if !ok || n < 0 || n > 10 {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "tako.WithRetries takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it",
-					Rule: "retries",
-				})
-			}
-			retries = n
-			continue
-		}
-		if isOpt && optName == "WithParallel" {
-			if optCall, ok := opt.(*ast.CallExpr); ok && len(optCall.Args) == 1 {
-				if tv, ok := pkg.TypesInfo.Types[optCall.Args[0]]; ok && tv.Value != nil {
-					if n, ok := constant.Int64Val(tv.Value); ok {
-						parallel = int(n)
-					}
-				}
-			}
-			continue
-		}
-		if isOpt && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.StartupBoost != ToggleInherit) {
-				fail(&Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; WithParallel sets the fan-out and WithRetries the attempts",
-					Rule: "footprint",
-				})
-			}
-			continue
-		}
-		if isOpt && !jobOptions[optName] {
+	if e, set := fieldOf(cfg, "Attempts"); set {
+		n, nok := constInt(pkg, e)
+		if !nok || n < 0 || n > 10 {
 			fail(&Error{
-				Pos: relPos(dir, pkg.Fset, opt.Pos()),
-				Msg: fmt.Sprintf("tako.%s is not a tako.JobHandler option (tako.JobHandler accepts WithParallel, WithRetries, WithProfile, WithFootprint)",
-					optName),
-				Rule: "invalid-option",
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.RunnerConfig.Attempts takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it",
+				Rule: "retries",
 			})
+		}
+		retries = n
+	}
+	profile := ""
+	if e, set := fieldOf(cfg, "Profile"); set {
+		profile = profileArg(pkg, e)
+	}
+	var footprint *Footprint
+	if e, set := fieldOf(cfg, "Footprint"); set {
+		footprint = footprintArg(dir, pkg, e, errs)
+		if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0 || footprint.MaxInstances != 0 || footprint.CPUAlwaysOn != ToggleInherit || footprint.StartupBoost != ToggleInherit) {
+			fail(&Error{
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; RunnerConfig.Parallel sets the fan-out and RunnerConfig.Attempts the attempts",
+				Rule: "footprint",
+			})
+		}
+	}
+	// A job task HAS a timeout — 24h of it. What it does not have is
+	// clients: nothing connects to an execution, so there is nobody to
+	// keep affinity with and no connection to negotiate a protocol over.
+	// RunnerConfig.Timeout is that one setting; the rest of tako.Traffic
+	// is not offered, which is why this needs no rule.
+	var traffic *Traffic
+	if e, set := fieldOf(cfg, "Timeout"); set {
+		n, nok := constInt(pkg, e)
+		if !nok {
+			fail(&Error{
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.RunnerConfig.Timeout must be a constant duration — it is read at analysis time, not run time",
+				Rule: "config-literal",
+			})
+		} else {
+			traffic = &Traffic{TimeoutSeconds: n / int(time.Second)}
 		}
 	}
 	if prior := jobsByName[jobName]; prior != nil {
@@ -448,50 +365,47 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 		return nil
 	}
 	bad := false
-	var footprint *Footprint
-	var traffic *Traffic
-	for _, opt := range call.Args[1:] {
-		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithTraffic" {
-			traffic = trafficArg(dir, pkg, opt, errs)
-			// One instance, and the only caller is its own health check:
-			// affinity has nothing to choose between and there is no
-			// client conversation to upgrade.
-			if traffic != nil && (traffic.SessionAffinity != ToggleInherit || traffic.HTTP2 != ToggleInherit) {
-				*errs = append(*errs, &Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton's only traffic setting is Timeout — exactly one instance serving nothing but its own health check has no clients to keep affinity with or negotiate HTTP/2 over",
-					Rule: "traffic",
-				})
-				bad = true
-			}
-			continue
-		}
-		if optName, isOpt := sdkOptionCall(pkg, opt); isOpt && optName == "WithFootprint" {
-			footprint = footprintArg(dir, pkg, opt, errs)
-			if footprint != nil && footprint.MaxInstances != 0 {
-				*errs = append(*errs, &Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and StartupBoost are yours",
-					Rule: "singleton-max",
-				})
-				bad = true
-			}
-			if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
-				*errs = append(*errs, &Error{
-					Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-					Msg:  "a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
-					Rule: "footprint",
-				})
-				bad = true
-			}
-			continue
-		}
-		*errs = append(*errs, &Error{
-			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-			Msg:  "tako.Singleton accepts only WithFootprint — min=1/max=1 plus the lease is the rest of the contract",
-			Rule: "invalid-option",
-		})
+	// tako.Singleton takes a tako.Footprint directly: min=1/max=1 plus
+	// the lease is the rest of the contract, so there is nothing else to
+	// configure. Traffic is not offered — exactly one instance serving
+	// nothing but its own health check has no clients to keep affinity
+	// with or negotiate HTTP/2 over.
+	cfg, cok := configFields(dir, pkg, call.Args[1:], "SingletonConfig", errs)
+	if !cok {
 		bad = true
+	}
+	var traffic *Traffic
+	if e, set := fieldOf(cfg, "Timeout"); set {
+		if n, nok := constInt(pkg, e); nok {
+			traffic = &Traffic{TimeoutSeconds: n / int(time.Second)}
+		} else {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.SingletonConfig.Timeout must be a constant duration — it is read at analysis time, not run time",
+				Rule: "config-literal",
+			})
+			bad = true
+		}
+	}
+	var footprint *Footprint
+	if fe, set := fieldOf(cfg, "Footprint"); set {
+		footprint = footprintArg(dir, pkg, fe, errs)
+		if footprint != nil && footprint.MaxInstances != 0 {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, fe.Pos()),
+				Msg:  "a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and StartupBoost are yours",
+				Rule: "singleton-max",
+			})
+			bad = true
+		}
+		if footprint != nil && (footprint.Concurrency != 0 || footprint.MinInstances != 0) {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, fe.Pos()),
+				Msg:  "a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone",
+				Rule: "footprint",
+			})
+			bad = true
+		}
 	}
 	if bad {
 		return nil
@@ -508,15 +422,21 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 	}
 }
 
-// profileArg reads WithProfile's constant argument ("", "latency",
-// "batch") — tako.Default, tako.Latency, tako.Batch are typed int
-// constants in the SDK.
-func profileArg(pkg *packages.Package, opt ast.Expr) string {
-	call, ok := opt.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return ""
+// constInt reads a constant integer expression.
+func constInt(pkg *packages.Package, e ast.Expr) (int, bool) {
+	tv, ok := pkg.TypesInfo.Types[e]
+	if !ok || tv.Value == nil {
+		return 0, false
 	}
-	tv, ok := pkg.TypesInfo.Types[call.Args[0]]
+	n, ok := constant.Int64Val(tv.Value)
+	return int(n), ok
+}
+
+// profileArg reads a Profile field's constant value ("", "latency",
+// "batch") — tako.ProfileDefault/Latency/Batch are typed int constants
+// in the SDK.
+func profileArg(pkg *packages.Package, e ast.Expr) string {
+	tv, ok := pkg.TypesInfo.Types[e]
 	if !ok || tv.Value == nil {
 		return ""
 	}

@@ -22,7 +22,7 @@ fetch. Private endpoints are EXCLUDED with the reason printed.
 
 ```go
 // billing/billing.go — a new package, therefore a new service
-var Charge = tako.API("POST /charge", charge, tako.WithPrivate())
+var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 
 // shop/app.go
 receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{...})
@@ -43,7 +43,7 @@ Calls never silently retry, and the deploy prices sync hops honestly
 
 ```go
 var settle = tako.Job[SettleParams]("settle")
-var Settle = tako.JobHandler(settle, runSettle)
+var Settle = tako.Runner(settle, runSettle)
 
 settle.Run(ctx, SettleParams{Day: day})   // hands off, returns now
 ```
@@ -54,7 +54,7 @@ queue dispatcher, so `DrainQueues` waits for them in tests.
 
 ### Sharding (T4)
 
-`Settle` declares `tako.WithParallel(4)`: four tasks per execution,
+`Settle` declares `tako.RunnerConfig{Parallel: 4}`: four tasks per execution,
 each asking `ctx.Task()` for its `(index, count)` and taking the
 orders whose ID hashes to its shard. Each task writes an idempotent
 per-shard subtotal; every task then attempts the merge, and whoever

@@ -8,7 +8,7 @@ no cross-instance invalidation — which is also why it costs nothing.
 From [examples/gallery](../../examples/gallery/app.go):
 
 ```go
-var feed = tako.Cache[[]Photo]("feed", tako.WithTTL(time.Minute))
+var feed = tako.Cache[[]Photo]("feed", time.Minute)
 ```
 
 The name must be a string constant (analyzer-enforced). `WithTTL` is
@@ -62,7 +62,7 @@ the cache is exercised through the endpoints, never poked directly.
 ## Errors you'll meet
 
 Passing any option but `WithTTL` fails with, e.g.,
-`tako.WithMaxSize is not a Cache option (Cache accepts WithTTL)`.
+a wrong-typed TTL, which the compiler refuses outright.
 A non-constant name is the same `tako/const-name` analysis error every
 resource gets (see [entity.md](entity.md)). Outside a wired app:
 `tako: no cache backend wired — run via tako dev, a generated service,

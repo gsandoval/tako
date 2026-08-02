@@ -1,4 +1,4 @@
-# tako.WithDomain
+# tako.ServiceConfig.Domain
 
 A custom domain with a Google-managed certificate, at no standing
 infrastructure cost. It is the one option that belongs to no single
@@ -13,14 +13,14 @@ app-service declaration. Both of these are complete:
 ```go
 // A site's service.
 var (
-	web  = tako.Service(tako.WithDomain("blog.example.com"))
+	web  = tako.Service(tako.ServiceConfig{Domain: "blog.example.com"})
 	site = tako.Site("./site/public",
-		tako.WithBuild("cd site && hugo --minify", "./site/public"))
+		tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
 )
 
 // An API-only service — no tako.Site anywhere in the package.
 var (
-	api     = tako.Service(tako.WithDomain("api.example.com"))
+	api     = tako.Service(tako.ServiceConfig{Domain: "api.example.com"})
 	Create  = tako.API("POST /api/links", create)
 	Resolve = tako.API("GET /api/links/{slug}", resolve)
 	List    = tako.API("GET /api/links", list)
@@ -148,18 +148,17 @@ graph, _ := analyzer.Analyze(analyzer.Config{Dir: "."})
 At analysis time:
 
 ```
-tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)
-tako.WithDomain needs a fully-qualified domain — "blog" has no dot (tako/domain)
-tako.WithDomain does not support wildcards — got "*.example.com"; declare each subdomain on its own service (tako/domain)
+tako.ServiceConfig.Domain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)
+tako.ServiceConfig.Domain needs a fully-qualified domain — "blog" has no dot (tako/domain)
+tako.ServiceConfig.Domain does not support wildcards — got "*.example.com"; declare each subdomain on its own service (tako/domain)
 this package declares the domain "blog.example.com", but nothing here serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API, Page or Site route here, or move the domain to the package that has one (tako/domain-unreachable)
-tako.WithDomain describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithDomain(…)) (tako/service-option)
 a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two (tako/one-service)
 ```
 
 At deploy time, before anything is built:
 
 ```
-Cloud Run domain mappings are not available in europe-west2 — deploy to one of asia-east1, asia-northeast1, asia-southeast1, europe-north1, europe-west1, europe-west4, us-central1, us-east1, us-east4, us-west1 (tako deploy --region <region>), or drop tako.WithDomain and use the run.app URL
+Cloud Run domain mappings are not available in europe-west2 — deploy to one of asia-east1, asia-northeast1, asia-southeast1, europe-north1, europe-west1, europe-west4, us-central1, us-east1, us-east4, us-west1 (tako deploy --region <region>), or drop the Domain field and use the run.app URL
 blog.example.com is not verified for tako-test-02 — prove you own it once: gcloud domains verify example.com (this opens Search Console), then re-run tako deploy
 ```
 

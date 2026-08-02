@@ -419,7 +419,7 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			public[o.Name], _ = o.Spec["public"].(bool)
 		}
 	}
-	// Private ROUTE services (WithPrivate) close ingress like async
+	// Private ROUTE services (Route.Private) close ingress like async
 	// services, but the honest text names the granted callers instead
 	// of the push identity.
 	privateRoutes := map[string]bool{}
@@ -454,12 +454,12 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 			ingress = "public ingress on " + svc.Domain + " AND its run.app URL (a domain mapping adds an address, it does not close one)"
 		}
 		if !public[cfg.Name(svc.Name)] {
-			// The attempt count is declared now (WithDelivery), so the
+			// The attempt count is declared now (tako.Delivery), so the
 			// summary reads the carrier rather than reciting a default.
 			ingress = fmt.Sprintf("ingress: OIDC push from its own SA only · redelivery: %d attempts with backoff, then dead-letter",
 				deliveryAttemptsOf(graph, svc.Name))
 			if svc.Job {
-				// The retry count is declared now (WithRetries), so the
+				// The retry count is declared now (RunnerConfig.Attempts), so the
 				// summary must read it rather than recite the default.
 				ingress = fmt.Sprintf("a Cloud Run Job — no ingress; executions run on demand (retries: %d, then the execution fails)",
 					jobRetriesOf(graph, svc.Name))
@@ -508,7 +508,7 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 				}
 			}
 			if len(open) > 0 {
-				fmt.Printf("    ⚠ %d mutating route(s) without WithAuth: %s — anyone on the internet can call these\n",
+				fmt.Printf("    ⚠ %d mutating route(s) without Route{SignIn: true}: %s — anyone on the internet can call these\n",
 					len(open), strings.Join(open, ", "))
 			}
 		}
@@ -596,7 +596,7 @@ func warnCallEdges(graph *analyzer.AppGraph) {
 	sort.Slice(pairs, func(i, j int) bool { return pairs[i][0]+pairs[i][1] < pairs[j][0]+pairs[j][1] })
 	for _, p := range pairs {
 		if profile[p[1]] == "default" {
-			fmt.Printf("  ⚠ sync call %s → %s lands on a scale-to-zero service — cold starts bill the caller's latency; give %s tako.WithProfile(tako.Latency) (min-instance cost) or make the interaction async\n",
+			fmt.Printf("  ⚠ sync call %s → %s lands on a scale-to-zero service — cold starts bill the caller's latency; give %s tako.Service(tako.ServiceConfig{Profile: tako.ProfileLatency}) (min-instance cost) or make the interaction async\n",
 				p[0], p[1], p[1])
 		}
 		for _, q := range pairs {

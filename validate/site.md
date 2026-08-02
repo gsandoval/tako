@@ -35,8 +35,8 @@ point is tako runs YOUR command and serves YOUR output dir:
 
 ```
 # temporary edit to examples/journal/app.go:
-#   tako.Site("./web", tako.WithBuild("hugo --minify", "public"))   (hugo)
-#   tako.Site("./web", tako.WithBuild("sh build.sh", "dist"))       (any script)
+#   tako.Site("./web", tako.SiteConfig{Build: tako.Build{Command: "hugo --minify", Out: "public"}})   (hugo)
+#   tako.Site("./web", tako.SiteConfig{Build: tako.Build{Command: "sh build.sh", Out: "dist"}})       (any script)
 PORT=8090 go run ../../cmd/tako dev      # observe: ⛅ site  <cmd> → <out> (N files), then serving
 ```
 
@@ -48,7 +48,7 @@ the its-output-dir-is-empty text. Revert the edit.
 ## 3. WithDevProxy — HMR dev servers
 
 ```
-# temporary: tako.Site("./web", tako.WithDevProxy("http://localhost:1313"))
+# temporary: tako.Site("./web", tako.SiteConfig{DevProxy: "http://localhost:1313"})
 hugo server -p 1313 &     # or any dev server (vite, astro, python -m http.server)
 PORT=8090 go run ../../cmd/tako dev      # site requests proxy through; deploy ignores the proxy
 ```

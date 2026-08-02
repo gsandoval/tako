@@ -150,13 +150,9 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 		})
 		bad = true
 	}
-	call, ok := opt.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return nil
-	}
-	lit, ok := call.Args[0].(*ast.CompositeLit)
+	lit, ok := opt.(*ast.CompositeLit)
 	if !ok {
-		fail(call.Args[0], "tako.WithFootprint takes a tako.Footprint literal with constant fields — footprints are read at analysis time, not run time")
+		fail(opt, "tako.Footprint must be written as a literal with constant fields — footprints are read at analysis time, not run time")
 		return nil
 	}
 	f := &Footprint{}
@@ -198,10 +194,10 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 	// which it is looking at. It rejects what is impossible everywhere;
 	// applyFootprints rejects what is impossible for THIS service.
 	if f.CPUAlwaysOn < 0 || f.CPUAlwaysOn > 2 {
-		fail(lit, "footprint CPUAlwaysOn must be tako.Inherit, tako.On, or tako.Off")
+		fail(lit, "footprint CPUAlwaysOn must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff")
 	}
 	if f.StartupBoost < 0 || f.StartupBoost > 2 {
-		fail(lit, "footprint StartupBoost must be tako.Inherit, tako.On, or tako.Off")
+		fail(lit, "footprint StartupBoost must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff")
 	}
 	switch f.CPU {
 	case 0, 1, 2, 4, 8:
@@ -229,7 +225,7 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 		return nil
 	}
 	if (*f == Footprint{}) {
-		fail(lit, "footprint sets nothing — drop tako.WithFootprint or pin at least one field")
+		fail(lit, "footprint sets nothing — drop the Footprint field or pin at least one setting")
 		return nil
 	}
 	return f
@@ -410,13 +406,9 @@ func trafficArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorList
 		*errs = append(*errs, &Error{Pos: relPos(dir, pkg.Fset, pos.Pos()), Msg: msg, Rule: "traffic"})
 		bad = true
 	}
-	call, ok := opt.(*ast.CallExpr)
-	if !ok || len(call.Args) != 1 {
-		return nil
-	}
-	lit, ok := call.Args[0].(*ast.CompositeLit)
+	lit, ok := opt.(*ast.CompositeLit)
 	if !ok {
-		fail(call.Args[0], "tako.WithTraffic takes a tako.Traffic literal with constant fields — traffic settings are read at analysis time, not run time")
+		fail(opt, "tako.Traffic must be written as a literal with constant fields — traffic settings are read at analysis time, not run time")
 		return nil
 	}
 	t := &Traffic{}
@@ -456,16 +448,16 @@ func trafficArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorList
 		fail(lit, fmt.Sprintf("traffic Timeout must be between 1s and 24h; got %s", time.Duration(t.TimeoutSeconds)*time.Second))
 	}
 	if t.SessionAffinity < 0 || t.SessionAffinity > 2 {
-		fail(lit, "traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off")
+		fail(lit, "traffic SessionAffinity must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff")
 	}
 	if t.HTTP2 < 0 || t.HTTP2 > 2 {
-		fail(lit, "traffic HTTP2 must be tako.Inherit, tako.On, or tako.Off")
+		fail(lit, "traffic HTTP2 must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff")
 	}
 	if bad {
 		return nil
 	}
 	if (*t == Traffic{}) {
-		fail(lit, "traffic sets nothing — drop tako.WithTraffic or pin at least one field")
+		fail(lit, "traffic sets nothing — drop the Traffic field or pin at least one setting")
 		return nil
 	}
 	return t

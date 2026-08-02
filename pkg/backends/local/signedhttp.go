@@ -63,12 +63,12 @@ func servePut(w http.ResponseWriter, r *http.Request, c signedClaims, store *Buc
 	}
 	// Contract parity with GCS: a MaxSize URL signs the size-range
 	// header, so the PUT must carry it — enforced HERE too, so an app
-	// that forgets tako.UploadHeaders fails in dev, not in production.
+	// that forgets the policy headers fails in dev, not in production.
 	if c.MaxSize > 0 {
 		want := fmt.Sprintf("0,%d", c.MaxSize)
 		if got := r.Header.Get("X-Goog-Content-Length-Range"); got != want {
 			signedError(w, http.StatusForbidden,
-				fmt.Sprintf("this URL was minted with WithMaxSize: the PUT must send x-goog-content-length-range: %s (tako.UploadHeaders builds it); got %q", want, got))
+				fmt.Sprintf("this URL was minted with a PutPolicy MaxSize: the PUT must send x-goog-content-length-range: %s (PutPolicy.Headers builds it); got %q", want, got))
 			return
 		}
 	}

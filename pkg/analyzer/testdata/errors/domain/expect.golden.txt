@@ -1,1 +1,1 @@
-app.go:8:24: tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)
+app.go:8:51: tako.ServiceConfig.Domain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/" (tako/domain)

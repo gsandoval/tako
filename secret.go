@@ -11,15 +11,14 @@ import (
 // constant (analyzer-enforced). Boot refuses to start a service with any
 // declared secret unset, which is what lets Value never fail at request
 // time.
-func Secret(name string, opts ...Option) *SecretHandle {
+func Secret(name string) *SecretHandle {
 	registerSecret(name)
-	return &SecretHandle{name: name, opts: opts}
+	return &SecretHandle{name: name}
 }
 
 // SecretHandle is a declared secret.
 type SecretHandle struct {
 	name string
-	opts []Option
 }
 
 // Value returns the secret's value. It takes no Ctx and cannot fail at

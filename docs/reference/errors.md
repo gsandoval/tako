@@ -80,7 +80,7 @@ edge the analyzer follows to derive IAM.
 |---|---|---|
 | `worker-binding` | `tako.Worker` binds something that isn't a package-level queue | [queue.md](queue.md) |
 | `subscribe-binding` | `tako.Subscribe` binds something that isn't a topic or bucket event | [topic.md](topic.md) |
-| `job-binding` | `tako.JobHandler` binds no package-level job, or a job has no body | [job.md](job.md) |
+| `job-binding` | `tako.Runner` binds no package-level job, or a job has no body | [job.md](job.md) |
 | `one-worker` | two workers claim one queue | [queue.md](queue.md) |
 | `one-job-handler` | two handlers claim one job | [job.md](job.md) |
 | `raw-call` | a cross-service call goes to the function, not the Endpoint | [calls.md](calls.md) |
@@ -88,8 +88,8 @@ edge the analyzer follows to derive IAM.
 ```
 tako.Worker must bind a queue declared as a package-level var in this module
 tako.Subscribe must bind a topic or bucket event declared as a package-level var in this module
-tako.JobHandler must bind a job declared as a package-level var in this module
-job "reindex" has no body — bind one with tako.JobHandler
+tako.Runner must bind a job declared as a package-level var in this module
+job "reindex" has no body — bind one with tako.Runner
 queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out
 job "reindex" already has handler Reindex (app.go:9) — a job has exactly one body
 ChargeFn is a handler function — cross-service calls go through the Endpoint var (billing.Charge.Call(ctx, req)) so the RPC boundary stays visible
@@ -104,48 +104,66 @@ only have one of is enforced at the package.
 |---|---|---|
 | `one-service` | two `tako.Service` declarations in a package | [service.md](service.md) |
 | `one-site` | two `tako.Site` declarations in a package | [site.md](site.md) |
-| `mixed-ingress` | public and `WithPrivate` routes share a package | [calls.md](calls.md) |
+| `mixed-ingress` | public and `Route{Private: true}` routes share a package | [calls.md](calls.md) |
 
 ```
 a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two
 a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two
-service mixedingress mixes private and public routes — Cloud Run enforces WithPrivate at the service level, so private endpoints need their own package
+service mixedingress mixes private and public routes — Cloud Run enforces Route.Private at the service level, so private endpoints need their own package
 ```
 
-## Options apply where they mean something
+## Configuration applies where it means something
 
-`Option` is one type so the SDK stays small, which puts the burden on
-the analyzer to say exactly which options each constructor takes — and
-to list them, so the message is also the documentation.
+Every constructor takes at most one config struct — `tako.Route`,
+`tako.Compute`, `tako.CronConfig` and friends. A setting can only be
+written where it has a field, so "this option does not belong here" is
+a **compile** error now, not an analysis one, and the two rules that
+used to say it (`invalid-option`, `service-option`) are gone.
+
+What the analyzer still owns is everything a struct field cannot check:
+that the value is written as a literal, and that it is in range.
 
 | Rule | Fires when | Page |
 |---|---|---|
-| `invalid-option` | an option is passed to a constructor that has no use for it | each feature page |
-| `service-option` | a service-wide option is declared on one route | [service.md](service.md) |
-| `retries` | `WithRetries` is outside 0–10, or not constant | [job.md](job.md) |
-| `timezone` | `WithTimezone` is not a constant IANA zone, or unknown | [cron.md](cron.md) |
-| `deadline` | `WithDeadline` is outside 15s–30m | [cron.md](cron.md) |
+| `config-literal` | a config is held in a variable, or a field is computed | each feature page |
+| `one-config` | two config values are passed where one is read | each feature page |
+| `retries` | `RunnerConfig.Attempts` is outside 0–10, or not constant | [job.md](job.md) |
+| `timezone` | `CronConfig.Timezone` is not a constant IANA zone, or unknown | [cron.md](cron.md) |
+| `deadline` | `CronConfig.Deadline` is outside 15s–30m | [cron.md](cron.md) |
 | `cron-schedule` | a schedule can't map onto unix-cron | [cron.md](cron.md) |
 | `delivery` | a `Delivery` field is out of range or wrong for the carrier | [queue.md](queue.md) |
 | `auth-provider` | `tako.Auth` declares no provider | [auth.md](auth.md) |
 | `site-dir` | a site's directory doesn't exist and nothing builds it | [site.md](site.md) |
 
 ```
-tako.WithTTL is not a tako.Queue option (tako.Queue accepts WithDelivery)
-tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithTimezone, WithDeadline, WithProfile, WithFootprint)
-tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned
-tako.WithFootprint describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithFootprint(…))
-tako.WithRetries takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it
-tako.WithTimezone does not know the zone "Mars/Olympus" — use an IANA name like "America/Mexico_City" or "Europe/Madrid"
-tako.WithDeadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job
+tako.Compute must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "shared"
+tako.CronConfig.Timezone must be a string constant — it is read at analysis time, not run time; got a call expression
+tako.Compute takes one configuration value, got 2 — merge them into a single literal
+tako.Queue takes one tako.Delivery, got 2 — merge them into a single literal
+tako.RunnerConfig.Attempts takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it
+tako.CronConfig.Timezone does not know the zone "Mars/Olympus" — use an IANA name like "America/Mexico_City" or "Europe/Madrid"
+tako.CronConfig.Deadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job
 tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23
 "every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression
 delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2
 delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink
 delivery RateLimit is a queue setting — a topic fans out to subscribers with independent fates, so there is no single consumer to pace; cap the queue each subscriber feeds instead
-tako.Auth needs at least one provider (WithGoogle, WithEmail)
-tako.Site directory ./web does not exist (add it, or use WithBuild if a generator creates it)
+tako.Auth needs at least one provider (AuthConfig{Google: true} or AuthConfig{Password: true})
+tako.Site directory ./web does not exist (add it, or set SiteConfig.Build if a generator creates it)
 ```
+
+**Some mistakes now belong to the compiler.** Putting a service-wide
+setting on one route used to be `tako/service-option`; today
+`tako.Route` has no `Footprint` field, so Go answers first:
+
+```
+unknown field Footprint in struct literal of type tako.Route
+```
+
+That is caught earlier and says less — it does not point you at
+`tako.Service` the way the analyzer's message did. The trade was
+deliberate: a whole class of silently-dropped configuration disappears
+with it (see [api-review-3](../api-review-3.md)).
 
 ## Sizing has to resolve to one answer
 
@@ -166,13 +184,12 @@ and the resolved numbers have to be ones Cloud Run will accept. See
 service footprintresolve-bigcpu resolves to 8 vCPUs with 512Mi memory — 8 vCPUs need at least 4Gi; pin Memory too
 service footprintresolve-bigmem resolves to 8Gi memory with 1 vCPU — over 4Gi needs at least 2 vCPUs; pin CPU too
 service footprintresolve-bigmin resolves to MinInstances 30 over MaxInstances 20 (profile default) — pin MaxInstances too
-a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; WithParallel sets the fan-out and WithRetries the attempts
+a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; RunnerConfig.Parallel sets the fan-out and RunnerConfig.Attempts the attempts
 a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone
 a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and StartupBoost are yours
 traffic Timeout must be at least one second; got 500ms
-traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off
-traffic sets nothing — drop tako.WithTraffic or pin at least one field
-a job's only traffic setting is Timeout — an execution serves nobody, so there are no clients to keep affinity with and no connections to negotiate HTTP/2 over
+traffic SessionAffinity must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff
+traffic sets nothing — drop the Traffic field or pin at least one setting
 service mixedfootprint cannot carry both footprint (cpu 2) from Sweep and footprint (cpu 4, memory 2Gi) from Purge — one service scales one way; split the packages or align the footprints
 service X cannot be both latency (Web) and batch (Sweep) — one service scales one way; split the packages or align the profiles
 service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) from Api — one service answers one way; split the packages or align the settings
@@ -205,7 +222,7 @@ the tag is both the fix and the provisioning input.
 | `domain-unreachable` | the package holding the domain serves no public traffic | [domains.md](domains.md) |
 
 ```
-tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/"
+tako.ServiceConfig.Domain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/"
 this package declares the domain "blog.example.com", but nothing here serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API, Page or Site route here, or move the domain to the package that has one
 ```
 

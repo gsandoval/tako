@@ -1,7 +1,6 @@
 package tako
 
 import (
-	"fmt"
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -10,8 +9,8 @@ import (
 
 // Bucket declares an object store. The name is the bucket's stable identity
 // and must be a string constant (analyzer-enforced).
-func Bucket(name string, opts ...Option) *BucketHandle {
-	b := &BucketHandle{name: name, opts: opts}
+func Bucket(name string) *BucketHandle {
+	b := &BucketHandle{name: name}
 	b.Uploaded = BucketEvent{bucket: b}
 	return b
 }
@@ -24,7 +23,6 @@ type BucketHandle struct {
 	Uploaded BucketEvent
 
 	name string
-	opts []Option
 }
 
 // Get returns the object stored under key. tako.IsNotFound reports absence.
@@ -70,19 +68,14 @@ func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
 
 // SignedPut returns a URL that lets a client upload directly to key for the
 // given duration, bypassing the service's request-size cap. Constrain
-// uploads with WithMaxSize and WithContentType; constraints are enforced
-// when the client uploads, not when the URL is minted.
-func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, opts ...Option) (string, error) {
+// uploads with a PutPolicy; constraints are enforced when the client
+// uploads, not when the URL is minted — and PutPolicy.Headers gives the
+// uploader exactly what this URL was signed to expect.
+func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error) {
 	var c backends.SignConstraints
-	for _, opt := range opts {
-		switch opt.name {
-		case "max_size":
-			c.MaxSize = opt.args[0].(int64)
-		case "content_type":
-			c.ContentType = opt.args[0].(string)
-		default:
-			return "", fmt.Errorf("tako.%s is not a SignedPut option (SignedPut accepts WithMaxSize, WithContentType)", optionDisplayName(opt.name))
-		}
+	for _, p := range policy {
+		c.MaxSize = p.MaxSize
+		c.ContentType = p.ContentType
 	}
 	return signerBackend(ctx).SignPut(ctx, b.name, key, ttl, c)
 }
@@ -91,22 +84,6 @@ func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, opts ..
 // given duration.
 func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error) {
 	return signerBackend(ctx).SignGet(ctx, b.name, key, ttl)
-}
-
-// UploadHeaders returns the headers a client MUST send with its PUT to a
-// SignedPut URL minted with the same options. A URL carrying WithMaxSize
-// signs a size-range condition into the request — a PUT without the
-// header (or exceeding the range) is refused by the storage backend
-// itself, local and cloud alike. Hand the map to the uploader alongside
-// the URL; empty when the options need none.
-func UploadHeaders(opts ...Option) map[string]string {
-	h := map[string]string{}
-	for _, opt := range opts {
-		if opt.name == "max_size" {
-			h["x-goog-content-length-range"] = fmt.Sprintf("0,%d", opt.args[0].(int64))
-		}
-	}
-	return h
 }
 
 // BucketEvent is a bucket's event source, usable as a Subscribe binding.

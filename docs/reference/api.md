@@ -15,8 +15,8 @@ var Greet = tako.API("GET /greet/{name}", greet)
 var Echo = tako.API("POST /echo", echo)
 ```
 
-The only options: `tako.WithAuth()` (401 without a session;
-`ctx.User()` guaranteed past it) and `tako.WithPrivate()` (IAM-only
+The only two settings, both on `tako.Route`: `SignIn` (401 without a session;
+`ctx.User()` guaranteed past it) and `Private` (IAM-only
 ingress — other services, not the public internet). Both describe the
 ROUTE they sit on.
 
@@ -27,7 +27,7 @@ service-wide fact:
 
 ```go
 var (
-	api     = tako.Service(tako.WithDomain("api.example.com"), tako.WithProfile(tako.Latency))
+	api     = tako.Service(tako.ServiceConfig{Domain: "api.example.com", Profile: tako.ProfileLatency})
 	Create  = tako.API("POST /api/links", create)
 	Resolve = tako.API("GET /api/links/{slug}", resolve)
 	List    = tako.API("GET /api/links", list)
@@ -121,8 +121,7 @@ field When: query:-tagged fields must be string, bool, int, int64, or float64; g
 GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag (tako/body-on-get)
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
-tako.WithTTL is not a tako.API option (tako.API accepts WithAuth, WithPrivate) (tako/invalid-option)
-tako.WithProfile describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithProfile(…)) (tako/service-option)
+tako.Route must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "cfg" (tako/config-literal)
 ```
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,

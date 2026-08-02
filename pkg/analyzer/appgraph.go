@@ -32,7 +32,7 @@ type Service struct {
 	// "batch".
 	Profile string `json:"profile"`
 	// Job marks a deployable that provisions as a Cloud Run JOB (a
-	// tako.JobHandler), not a service: no routes, no ingress, no
+	// tako.Runner), not a service: no routes, no ingress, no
 	// request timeout.
 	Job bool `json:"job,omitempty"`
 	// Singleton marks a min=1/max=1 service running a lease-guarded
@@ -169,9 +169,9 @@ type Handler struct {
 	Route string `json:"route,omitempty"`
 	// Schedule is the schedule for Cron handlers.
 	Schedule string `json:"schedule,omitempty"`
-	// Parallel is a JobHandler's WithParallel task fan-out (0 = one task).
+	// Parallel is a Runner's RunnerConfig.Parallel fan-out (0 = one task).
 	Parallel int `json:"parallel,omitempty"`
-	// Retries is a JobHandler's WithRetries claim (0 = Cloud Run's 3).
+	// Retries is a Runner's RunnerConfig.Attempts claim (0 = Cloud Run's 3).
 	Retries int `json:"retries,omitempty"`
 	// Profile is the handler's WithProfile claim ("latency", "batch";
 	// empty = default). The service inherits it — mixed claims within
@@ -188,7 +188,7 @@ type Handler struct {
 	Timezone string `json:"timezone,omitempty"`
 	// DeadlineSeconds is a Cron's WithDeadline claim; 0 = 180s.
 	DeadlineSeconds int `json:"deadline_seconds,omitempty"`
-	// Singleflight marks a Cron declared with tako.WithSingleflight:
+	// Singleflight marks a Cron declared with CronConfig.Singleflight:
 	// the handler runs under the §4.4 lease, collapsing overlapping
 	// runs across instances.
 	Singleflight bool `json:"singleflight,omitempty"`
@@ -196,10 +196,10 @@ type Handler struct {
 	// handlers: the queue or topic name, or "<bucket>.Uploaded" for
 	// bucket-event subscribers.
 	Binding string `json:"binding,omitempty"`
-	// RequiresAuth marks a route declared with tako.WithAuth: the shim
+	// RequiresAuth marks a route declared with Route.SignIn: the shim
 	// guarantees ctx.User past a 401 gate.
 	RequiresAuth bool `json:"requires_auth,omitempty"`
-	// Private marks a route declared with tako.WithPrivate: IAM-only
+	// Private marks a route declared with Route.Private: IAM-only
 	// ingress, unreachable by browsers (excluded from generated
 	// browser clients; enforced at deploy from Phase H's service
 	// slice).

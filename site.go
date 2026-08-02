@@ -7,19 +7,19 @@ import (
 )
 
 // Site declares the app's web-serving story rooted at dir: static assets,
-// templates (in dir/templates), frontend builds (WithBuild, WithDevProxy),
+// templates (in dir/templates), frontend builds (SiteConfig.Build, DevProxy),
 // caching and security headers, and redirects. The site is embedded in the
 // app service's binary — one service, one URL — so a site's static assets
-// and its dynamic handlers always answer on the same origin. WithDomain puts
+// and its dynamic handlers always answer on the same origin. ServiceConfig.Domain puts
 // that origin on a custom domain.
-func Site(dir string, opts ...Option) *SiteHandle {
-	return &SiteHandle{dir: dir, opts: opts}
+func Site(dir string, cfg ...SiteConfig) *SiteHandle {
+	return &SiteHandle{dir: dir, cfg: cfg}
 }
 
 // SiteHandle is the app's declared site.
 type SiteHandle struct {
-	dir  string
-	opts []Option
+	dir string
+	cfg []SiteConfig
 }
 
 // Render renders the named template with data inside the site's layout
@@ -49,7 +49,7 @@ func (s *SiteHandle) Fragment(ctx Ctx, template string, data any) (HTML, error) 
 }
 
 // Markdown renders markdown source to HTML. Output is sanitized by default
-// because user-supplied markdown is an XSS vector; WithTrustedHTML on the
+// because user-supplied markdown is an XSS vector; SiteConfig.TrustedHTML on the
 // site is the explicit opt-out. The result serves as a fragment (htmx
 // preview endpoints render it directly).
 func (s *SiteHandle) Markdown(ctx Ctx, src string) (HTML, error) {

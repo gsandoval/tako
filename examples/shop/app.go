@@ -30,12 +30,12 @@ var (
 	// machine (tako dev / tako deploy), writes web/dist, and THAT is
 	// what ships embedded in the binary.
 	site = tako.Site("./web/dist",
-		tako.WithBuild("cd web && npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js && cp index.html dist/", "./web/dist"))
+		tako.SiteConfig{Build: tako.Build{Command: "cd web && npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js && cp index.html dist/", Out: "./web/dist"}})
 
 	// auth: email/password — the one provider whose whole flow is
 	// machine-testable (no OAuth popup). The declaration auto-enables
 	// the provider in Identity Platform on deploy.
-	auth = tako.Auth(tako.WithEmail())
+	auth = tako.Auth(tako.AuthConfig{Password: true})
 
 	// settle is long-running compute (§2.7): a Cloud Run JOB in the
 	// cloud — no request timeout to outlive — and a tracked in-process
@@ -92,13 +92,13 @@ type Sequence struct {
 var (
 	ListProducts = tako.API("GET /api/products", listProducts)
 	GetProduct   = tako.API("GET /api/products/{id}", getProduct)
-	AddProduct   = tako.API("POST /api/products", addProduct, tako.WithAuth())
-	PlaceOrder   = tako.API("POST /api/orders", placeOrder, tako.WithAuth())
-	ListOrders   = tako.API("GET /api/orders", listOrders, tako.WithAuth())
-	StartSettle  = tako.API("POST /api/settle", startSettle, tako.WithAuth())
+	AddProduct   = tako.API("POST /api/products", addProduct, tako.Route{SignIn: true})
+	PlaceOrder   = tako.API("POST /api/orders", placeOrder, tako.Route{SignIn: true})
+	ListOrders   = tako.API("GET /api/orders", listOrders, tako.Route{SignIn: true})
+	StartSettle  = tako.API("POST /api/settle", startSettle, tako.Route{SignIn: true})
 	Me           = tako.API("GET /api/me", me)
 
-	Settle   = tako.JobHandler(settle, runSettle, tako.WithParallel(4))
+	Settle   = tako.Runner(settle, runSettle, tako.RunnerConfig{Parallel: 4})
 	Invoicer = tako.Singleton(assignInvoices)
 )
 

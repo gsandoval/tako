@@ -13,7 +13,7 @@ type Ctx interface {
 	context.Context
 
 	// User returns the authenticated user. It is guaranteed to be present on
-	// routes declared with WithAuth; calling it on an unauthenticated request
+	// routes declared with Route{SignIn: true}; calling it on an unauthenticated request
 	// panics — use MaybeUser on public routes.
 	User() User
 
@@ -29,7 +29,7 @@ type Ctx interface {
 
 	// Task reports this execution's shard: (index, count). Everywhere
 	// except inside a parallel job task it is (0, 1); inside one, index
-	// is this task's 0-based number and count the WithParallel fan-out —
+	// is this task's 0-based number and count the RunnerConfig.Parallel fan-out —
 	// shard work by them (hash the key, take index's share).
 	Task() (index, count int)
 }

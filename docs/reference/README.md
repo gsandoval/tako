@@ -53,7 +53,7 @@ Two consequences worth knowing:
   frontend builds (`WithBuild`), SPA, redirects
 - [service.md](service.md) — `tako.Service`: the app service declared —
   its name and its service-wide settings
-- [domains.md](domains.md) — `tako.WithDomain`: a custom domain with
+- [domains.md](domains.md) — `ServiceConfig.Domain`: a custom domain with
   managed TLS on any service, site or API-only
 
 ## Data
@@ -77,7 +77,7 @@ Two consequences worth knowing:
 
 ## Compute
 
-- [job.md](job.md) — `tako.Job` + `tako.JobHandler`: work that
+- [job.md](job.md) — `tako.Job` + `tako.Runner`: work that
   outlives requests, `WithParallel`
 - [singleton.md](singleton.md) — `tako.Singleton`: exactly-one loops
 - [calls.md](calls.md) — cross-service `Endpoint.Call`,

@@ -436,19 +436,19 @@ func TestSignedUploadRejections(t *testing.T) {
 	srv := serve(t)
 	ctx := runtime.NewCtx(t.Context())
 
-	signed, err := photos.SignedPut(ctx, "guarded", time.Minute,
-		tako.WithContentType("image/*"), tako.WithMaxSize(16))
+	guarded := tako.PutPolicy{ContentType: "image/*", MaxSize: 16}
+	signed, err := photos.SignedPut(ctx, "guarded", time.Minute, guarded)
 	if err != nil {
 		t.Fatal(err)
 	}
 	target := signedPath(t, srv, signed)
-	sizeHeader := tako.UploadHeaders(tako.WithMaxSize(16))
+	sizeHeader := guarded.Headers()
 
 	t.Run("missing size header is 403 with the pointer", func(t *testing.T) {
 		req, _ := http.NewRequest(http.MethodPut, target, strings.NewReader("ok"))
 		req.Header.Set("Content-Type", "image/jpeg")
 		status, body := doReq(t, req)
-		if status != 403 || !strings.Contains(body, "tako.UploadHeaders builds it") {
+		if status != 403 || !strings.Contains(body, "PutPolicy.Headers builds it") {
 			t.Fatalf("res = %d %s", status, body)
 		}
 	})
@@ -548,11 +548,4 @@ func TestSignedUploadRejections(t *testing.T) {
 		}
 	})
 
-	t.Run("wrong option errors at call time", func(t *testing.T) {
-		_, err := photos.SignedPut(ctx, "k", time.Minute, tako.WithTTL(time.Minute))
-		want := "tako.WithTTL is not a SignedPut option (SignedPut accepts WithMaxSize, WithContentType)"
-		if err == nil || err.Error() != want {
-			t.Fatalf("err = %v", err)
-		}
-	})
 }

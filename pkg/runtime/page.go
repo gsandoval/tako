@@ -28,7 +28,7 @@ type HandlerOption func(*handlerConf)
 
 type handlerConf struct{ requireAuth bool }
 
-// RequireAuth enforces tako.WithAuth: no valid session → 401 before
+// RequireAuth enforces Route.SignIn: no valid session → 401 before
 // the handler runs; past it, ctx.User() is guaranteed.
 func RequireAuth() HandlerOption {
 	return func(c *handlerConf) { c.requireAuth = true }

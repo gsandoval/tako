@@ -12,7 +12,7 @@ Every part of the SDK follows six rules. When adding a primitive later, it must 
 
 1. **Everything is a declared noun.** Infrastructure *and* behavior are package-level vars via constructors: resources (`tako.Bucket("photos")`) and handlers (`var MakeThumb = tako.Worker(thumbs, makeThumb)`). Binding is a compile-checked constructor argument, never a comment or a naming convention — payload mismatches are compile errors with autocomplete, not analysis errors. Nothing is ever configured in YAML that could be declared in code. Corollary: constructors are side-effect-free records (they register intent, never touch I/O), so package initialization order can never matter observably.
 
-2. **One constructor shape.** `tako.Kind("name", ...Option)` or `tako.Kind[T]("name", ...Option)`. The name is the resource's stable identity and must be a string constant (analyzer-enforced). Options all live in one namespace: `tako.WithTTL(...)`, `tako.WithGoogle()`.
+2. **One constructor shape, one config struct.** `tako.Kind("name", Config{…})` or `tako.Kind[T]("name", Config{…})`. The name is the resource's stable identity and must be a string constant (analyzer-enforced). Configuration is a TYPED STRUCT, at most one per constructor, so a setting can only be written where it means something and the compiler rejects the rest: `tako.Cron(sched, fn, tako.CronConfig{Singleflight: true})`, `tako.Worker(q, fn, tako.Compute{Profile: tako.ProfileBatch})`. A struct shared by more than one constructor is named for what it describes (`Route`, `Compute`, `Delivery`); one serving a single constructor carries its name (`CronConfig`, `SiteConfig`). *(X2 amendment, 2026-08-02: this rule previously read "options all live in one namespace" — 23 `With…` functions accepted by 23 call sites, of which 7% of pairs were legal and the other 93% compiled. api-review-3 has the count and the reasoning.)*
 
 3. **One method shape.** Every operation takes `Ctx` first and returns `(T, error)` or `error`. Every synchronous handler is `func(Ctx, Req) (Res, error)` where `Req` is a struct (possibly empty) whose fields carry `path:`/`query:`/`form:` tags or bind from the body. No naked `context.Context`, no variadic surprises, no method that can't be cancelled or traced.
 
@@ -33,7 +33,7 @@ var (
     // Storage & data
     photos = tako.Bucket("photos")
     photoStore = tako.Entity[Photo]("photos")          // typed entity store (Datastore)
-    feed   = tako.Cache[FeedPage]("feed", tako.WithTTL(time.Minute))
+    feed   = tako.Cache[FeedPage]("feed", time.Minute)
 
     // Messaging
     thumbs = tako.Queue[ThumbJob]("thumbnails")     // work queue: competing consumers, ONE worker
@@ -44,11 +44,11 @@ var (
     stripe = tako.Secret("stripe-key")
 
     // Web
-    auth   = tako.Auth(tako.WithGoogle(), tako.WithEmail())
+    auth   = tako.Auth(tako.AuthConfig{Google: true}, tako.AuthConfig{Password: true})
     // Fix-up (S6): tako.Static/tako.Templates were superseded by the
     // one Site constructor (§2.11) — dir serving, SPA fallback, and
     // dir/templates rendering in a single declaration.
-    site   = tako.Site("./web", tako.SPA())
+    site   = tako.Site("./web", tako.SiteConfig{SPA: true})
 
     // Long-running compute
     reidx  = tako.Job[ReindexParams]("reindex")
@@ -71,7 +71,7 @@ photos.Exists(ctx, key)         (bool, error)
 photos.List(ctx, prefix)        tako.Iter[tako.ObjectInfo]
 
 // Direct client transfer — bypasses Cloud Run's 32MB request cap:
-photos.SignedPut(ctx, key, 15*time.Minute, tako.WithMaxSize(20<<20), tako.WithContentType("image/*")) (string, error)
+photos.SignedPut(ctx, key, 15*time.Minute, tako.PutPolicy{MaxSize: 20 << 20, ContentType: "image/*"}) (string, error)
 photos.SignedGet(ctx, key, 15*time.Minute) (string, error)
 
 // Event source, usable as a Subscribe binding:
@@ -127,7 +127,7 @@ Deliberate constraints that keep the SQL door open:
 
 ```go
 thumbs.Publish(ctx, job) error
-thumbs.Publish(ctx, job, tako.WithDelay(4*time.Hour)) error   // provisions Cloud Tasks under the hood
+thumbs.PublishAfter(ctx, job, 4*time.Hour) error   // provisions Cloud Tasks under the hood
 
 ready.Publish(ctx, event) error
 ```
@@ -141,7 +141,7 @@ relock.Do(ctx, func(ctx tako.Ctx) error { ... })    // blocks until held
 held, err := relock.TryDo(ctx, fn)                        // false if someone else holds it
 ```
 
-Most users never touch `Lock` directly — they use the constructors built on it (`tako.Singleton`, `tako.Cron(..., tako.WithSingleflight())`, §2.8).
+Most users never touch `Lock` directly — they use the constructors built on it (`tako.Singleton`, `tako.Cron(..., tako.CronConfig{Singleflight: true})`, §2.8).
 
 ### 2.6 Secret, Cache, Metrics
 
@@ -156,14 +156,14 @@ ups.Add(ctx, 1)
 lat.Observe(ctx, ms)
 ```
 
-v0 `Cache` is per-instance in-memory (documented honestly — no cross-instance invalidation); a shared Redis backend becomes a `tako.WithShared()` opt-in later without changing call sites.
+v0 `Cache` is per-instance in-memory (documented honestly — no cross-instance invalidation); a shared Redis backend becomes a `CacheConfig{Shared: true}` opt-in later without changing call sites.
 
 ### 2.7 Jobs — long-running compute
 
 ```go
 var reidx = tako.Job[ReindexParams]("reindex")
 
-var Reindex = tako.JobHandler(reidx, reindex, tako.WithParallel(10))
+var Reindex = tako.Runner(reidx, reindex, tako.RunnerConfig{Parallel: 10})
 
 func reindex(ctx tako.Ctx, p ReindexParams) error { ... }   // same async shape as everything else
 
@@ -171,7 +171,7 @@ func reindex(ctx tako.Ctx, p ReindexParams) error { ... }   // same async shape 
 reidx.Run(ctx, ReindexParams{Since: t})
 ```
 
-Runs as a Cloud Run **Job** — no request timeout, `tako.WithParallel(n)` maps to task-count fan-out; inside the body `ctx.Task()` reports `(index, count)` for sharding (T4 — Cloud Run's task envs in the cloud, a real joined fan-out locally).
+Runs as a Cloud Run **Job** — no request timeout, `RunnerConfig.Parallel` maps to task-count fan-out; inside the body `ctx.Task()` reports `(index, count)` for sharding (T4 — Cloud Run's task envs in the cloud, a real joined fan-out locally).
 
 ### 2.8 Handler constructors — the complete set
 
@@ -184,11 +184,11 @@ Handlers are declared exactly like resources: a package-level var, a constructor
 | `tako.Worker(queue, fn, ...opts)` | `func(Ctx, T) error` (T from `Queue[T]`) | handler ref | worker service |
 | `tako.Subscribe(topic, fn, ...opts)` | `func(Ctx, T) error` (T from `Topic[T]`) | handler ref | subscriber service |
 | `tako.Subscribe(bucket.Uploaded, fn)` | `func(Ctx, ObjectInfo) error` | handler ref | subscriber service |
-| `tako.JobHandler(job, fn, ...opts)` | `func(Ctx, T) error` (T from `Job[T]`) | handler ref | Cloud Run Job |
+| `tako.Runner(job, fn, ...opts)` | `func(Ctx, T) error` (T from `Job[T]`) | handler ref | Cloud Run Job |
 | `tako.Cron(schedule, fn, ...opts)` | `func(Ctx) error` | handler ref | app service |
 | `tako.Singleton(fn)` | `func(Ctx) error` (long loop) | handler ref | min=1 service + lease |
 
-Handler options share the resource-option namespace: `tako.WithAuth()`, `tako.WithProfile(tako.Batch)`, `tako.WithPrivate()`, `tako.WithSingleflight()`, `tako.WithParallel(10)`.
+Handler configuration follows the same rule as resources — one typed struct: `tako.Route{SignIn: true}`, `tako.Route{Private: true}`, `tako.Compute{Profile: tako.ProfileBatch}`, `tako.CronConfig{Singleflight: true}`, `tako.RunnerConfig{Parallel: 10}`.
 
 **Request structs.** Every `API`/`Page` handler takes a `Req` struct (empty is fine). Fields bind by tag: `path:"id"` from the route pattern, `query:"limit"` from the query string, `form:"caption"` from form posts; untagged fields bind from the JSON body (multipart when a `tako.Blob` field is present). Binding code is generated statically — no reflection at request time.
 
@@ -197,7 +197,7 @@ type UploadReq struct {
     Caption string    `form:"caption"`
     Img     tako.Blob `form:"img"`
 }
-var Upload = tako.API("POST /api/photos", upload, tako.WithAuth())
+var Upload = tako.API("POST /api/photos", upload, tako.Route{SignIn: true})
 func upload(ctx tako.Ctx, req UploadReq) (Photo, error) { ... }
 ```
 
@@ -218,7 +218,7 @@ tako.Permanent(err)      // async handlers: don't retry, dead-letter
 tako.Errorf(409, "...")  // api handlers: explicit status
 ```
 
-Auth is one declaration (`tako.Auth(...)`) plus the `tako.WithAuth()` handler option. The framework injects a `/api/_session` endpoint that exchanges a Firebase ID token for an HttpOnly session cookie, so browser fetches and SSR pages share one validation path in the shim.
+Auth is one declaration (`tako.Auth(...)`) plus the `tako.Route{SignIn: true}` handler option. The framework injects a `/api/_session` endpoint that exchanges a Firebase ID token for an HttpOnly session cookie, so browser fetches and SSR pages share one validation path in the shim.
 
 ### 2.10 Testing
 
@@ -240,12 +240,14 @@ func TestUpload(t *testing.T) {
 `Static` + `Templates` + loose pages was assembly required. The polished primitive is `Site`, which owns the whole web-serving story:
 
 ```go
-var site = tako.Site("./web",
-    tako.WithBuild("npm run build", "dist"),      // run at deploy time, serve the output dir
-    tako.SPA(),                                    // unknown paths → index.html (omit for plain static)
-    tako.WithDomain("gallery.example.com"),        // domain mapping + managed TLS
-    tako.WithRedirect("/old-gallery", "/"),
-)
+var site = tako.Site("./web", tako.SiteConfig{
+    Build:     tako.Build{Command: "npm run build", Out: "dist"}, // run at deploy time, serve the output dir
+    SPA:       true,                                              // unknown paths → index.html (omit for plain static)
+    Redirects: map[string]string{"/old-gallery": "/"},
+})
+
+// The domain is a SERVICE setting, not a site one — one service, one domain:
+var web = tako.Service(tako.ServiceConfig{Domain: "gallery.example.com"})
 ```
 
 What `Site` does without being asked:
@@ -267,7 +269,7 @@ func photoPage(ctx tako.Ctx, req PhotoPageReq) (tako.HTML, error) {
 }
 type PhotoPageReq struct{ ID string `path:"id"` }
 
-var UpdateCaption = tako.Page("POST /p/{id}/caption", updateCaption, tako.WithAuth())
+var UpdateCaption = tako.Page("POST /p/{id}/caption", updateCaption, tako.Route{SignIn: true})
 
 func updateCaption(ctx tako.Ctx, req CaptionReq) (tako.HTML, error) { ... }
 type CaptionReq struct {
@@ -280,13 +282,13 @@ type CaptionReq struct {
 
 **Hypermedia (htmx) as a first-class SSR pattern.** htmx needs almost nothing server-side, which is why Tako can support it completely: `site.Fragment(ctx, name, data)` renders a template without the layout; `ctx.IsHTMX()` lets one route serve full pages and fragments; `tako.Redirect(...)` automatically emits `HX-Redirect` instead of a 302 on htmx requests (same handler code for both worlds); and the built-in CSRF token is wired for the `hx-headers` meta-tag pattern so htmx POSTs pass CSRF with zero configuration. Combined with tagged-Req form binding, this makes server-driven interactive sites — the "website with an API" default case — a fully supported path with no SPA and no Node.
 
-**Markdown, sanitized by default.** For static markdown content, use your generator via `WithBuild` — Tako does not rebuild Hugo. Tako's contribution is *dynamic* markdown: user- or admin-authored content from Entity or Bucket rendered at request time via a `{{ markdown .Body }}` template function and `site.Markdown(ctx, src)`. Rendering is goldmark; output is sanitized by default (bluemonday, strict policy) because user-supplied markdown is an XSS vector — trusted-content opt-out is explicit (`tako.WithTrustedHTML()`), never the default. Both are pure-Go dependencies; no infrastructure is involved.
+**Markdown, sanitized by default.** For static markdown content, use your generator via `WithBuild` — Tako does not rebuild Hugo. Tako's contribution is *dynamic* markdown: user- or admin-authored content from Entity or Bucket rendered at request time via a `{{ markdown .Body }}` template function and `site.Markdown(ctx, src)`. Rendering is goldmark; output is sanitized by default (bluemonday, strict policy) because user-supplied markdown is an XSS vector — trusted-content opt-out is explicit (`tako.SiteConfig{TrustedHTML: true}`), never the default. Both are pure-Go dependencies; no infrastructure is involved.
 
 Last piece: `tako gen client ts` emits a typed TypeScript client for every `api` endpoint (param/response types from the Go signatures, session auth pre-wired), so the frontend talking to the backend is generated, not hand-maintained.
 
 **Generator compatibility and the rendering-model boundary.** `WithBuild` runs on the deploying machine (or CI) with whatever toolchain is installed there — consistent with the local-build philosophy — so any static-output generator works without tako knowing it exists: Hugo (`WithBuild("hugo --minify", "public")`), Astro/Vite/Next in static-export mode (`WithBuild("npm run build", "dist")`), Jekyll, Zola, plain files. In dev, generators with their own dev servers use `WithDevProxy` (e.g. `http://localhost:1313` for Hugo, `:4321` for Astro) instead of rebuild-on-change. Go-template SSR via `tako.Page` is the native dynamic path.
 
-What is explicitly **not** supported in v0: server-rendering frameworks that require their own runtime — Astro SSR, Next.js, Nuxt, SvelteKit in server mode — because tako services are compiled Go binaries. The two supported rendering models are *static output from any generator* and *Go SSR*. The future answer is a bring-your-own-runtime primitive (sketch: `tako.App("./frontend", tako.WithRuntime("node"))`) deployed as a routed service with the same derived IAM and env injection — a deliberate later chapter (it reopens buildpacks and needs a non-Go resource-client story), documented so users with an Astro SSR app know the boundary up front rather than discovering it mid-migration.
+What is explicitly **not** supported in v0: server-rendering frameworks that require their own runtime — Astro SSR, Next.js, Nuxt, SvelteKit in server mode — because tako services are compiled Go binaries. The two supported rendering models are *static output from any generator* and *Go SSR*. The future answer is a bring-your-own-runtime primitive (sketch: `tako.App("./frontend", tako.AppConfig{Runtime: "node"})`) deployed as a routed service with the same derived IAM and env injection — a deliberate later chapter (it reopens buildpacks and needs a non-Go resource-client story), documented so users with an Astro SSR app know the boundary up front rather than discovering it mid-migration.
 
 ### 2.12 Services and typed service-to-service calls
 
@@ -297,7 +299,7 @@ The unit of service partitioning is the **Go package**. One package = one Cloud 
 package billing
 
 // Exported Endpoint var = callable from other service packages.
-var Charge = tako.API("POST /charge", charge, tako.WithPrivate())  // private: IAM-authenticated callers only
+var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})  // private: IAM-authenticated callers only
 
 func charge(ctx tako.Ctx, req ChargeReq) (Receipt, error) { ... }
 ```
@@ -306,7 +308,7 @@ func charge(ctx tako.Ctx, req ChargeReq) (Receipt, error) { ... }
 // gallery/app.go
 import "example.com/shop/billing"
 
-var Checkout = tako.API("POST /api/checkout", checkout, tako.WithAuth())
+var Checkout = tako.API("POST /api/checkout", checkout, tako.Route{SignIn: true})
 
 func checkout(ctx tako.Ctx, cart Cart) (Order, error) {
     receipt, err := billing.Charge.Call(ctx, ChargeReq{...})   // typed, autocomplete on Req/Res
@@ -320,14 +322,14 @@ The `Endpoint[Req, Res]` value *is* the RPC surface, and `.Call` is deliberately
 - **Same service (co-located packages)**: direct in-process invocation, wired at boot.
 - **Remote service**: an HTTP/JSON stub, authenticated with an OIDC ID token minted from the caller's service identity (metadata server, audience = callee URL, which Cloud Run validates natively — no shared secrets), with trace context, the deadline budget, and the caller's SESSION ID propagated automatically — the callee resolves it against the shared session store, so `ctx.User()` crosses the hop as the same verified, revocable identity, and a worker's anonymity stays honest. *(Fix-up, W9: an earlier draft said "optionally, off by default, a signed user-identity header" — that caution priced a crypto-signed header design; Datastore-backed sessions made verification a record lookup, so propagation is automatic and mints no new authority: presenting a session id is equivalent to presenting the session cookie.)*
 
-Go's own visibility rules carry the access model: only **exported** `Endpoint` vars are callable from other service packages (unexported handlers stay service-internal; calling raw handler funcs across packages is an analysis error — it would hide the RPC boundary). `tako.WithPrivate()` is the orthogonal *ingress* option: no unauthenticated invocations from outside.
+Go's own visibility rules carry the access model: only **exported** `Endpoint` vars are callable from other service packages (unexported handlers stay service-internal; calling raw handler funcs across packages is an analysis error — it would hide the RPC boundary). `tako.Route{Private: true}` is the orthogonal *ingress* option: no unauthenticated invocations from outside.
 
-The derived-security story extends naturally: the analyzer finds `billing.Charge` references with the same usage scan that finds resource references, each edge grants the caller's SA `run.invoker` on the callee, and the deploy summary prints the service call graph. Remaining honesty rules: cross-service calls are never silently retried in v0 (a typed call must not invent duplicate charges — `tako.WithIdempotencyKey` later); call cycles between services need no analyzer rule — calling `b.Step` requires importing `b`, and package = service makes any service cycle an import cycle Go itself refuses *(fix-up, W9: previously "the analyzer rejects call cycles"; the compiler already does)*.
+The derived-security story extends naturally: the analyzer finds `billing.Charge` references with the same usage scan that finds resource references, each edge grants the caller's SA `run.invoker` on the callee, and the deploy summary prints the service call graph. Remaining honesty rules: cross-service calls are never silently retried in v0 (a typed call must not invent duplicate charges — an idempotency key later); call cycles between services need no analyzer rule — calling `b.Step` requires importing `b`, and package = service makes any service cycle an import cycle Go itself refuses *(fix-up, W9: previously "the analyzer rejects call cycles"; the compiler already does)*.
 
 **What typed calls must not hide — Cloud Run realities.** The ergonomics above are real, but a cross-service call is a network hop with Cloud Run's specific costs, and the framework surfaces them rather than absorbing them:
 
 - *Transport honesty.* `private` means IAM-only (`ingress=all`, no unauthenticated invocations, OIDC-validated at the Google front end) — **not** network-internal. True `ingress=internal` requires the caller to route via VPC (Direct VPC egress or a connector), the exact configuration tax tako avoids elsewhere; it becomes an explicit `WithVPC` opt-in later with its costs stated, like Redis and Cloud SQL.
-- *Cold starts are loud, not silent.* A sync call edge into a scale-to-zero (`default`-profile) service triggers a deploy-time analyzer warning: give the callee `tako.WithProfile(tako.Latency)` (min-instances, with its cost) or make the interaction async. Same philosophy as the unindexed-query error — distributed-systems costs fail at analysis time, not in production.
+- *Cold starts are loud, not silent.* A sync call edge into a scale-to-zero (`default`-profile) service triggers a deploy-time analyzer warning: give the callee `tako.Service(tako.ServiceConfig{Profile: tako.ProfileLatency})` (min-instances, with its cost) or make the interaction async. Same philosophy as the unindexed-query error — distributed-systems costs fail at analysis time, not in production.
 - *Deadline budgets, not stacked timeouts.* Generated stubs propagate the caller's remaining deadline (minus a margin) with each call, so chains fail fast instead of multiplying timeouts. The analyzer additionally warns on sync chains deeper than one hop, since waiting callers hold their own request slots and couple the services' autoscaling.
 - *Cost.* Each sync hop bills instance time on both sides simultaneously; documented next to the feature, not in a footnote.
 
@@ -358,11 +360,11 @@ var (
     photoStore = tako.Entity[Photo]("photos")
     thumbs = tako.Queue[ThumbJob]("thumbnails")
     ready  = tako.Topic[PhotoReady]("photo-ready")
-    auth   = tako.Auth(tako.WithGoogle(), tako.WithEmail())
+    auth   = tako.Auth(tako.AuthConfig{Google: true}, tako.AuthConfig{Password: true})
     // Fix-up (S6): tako.Static/tako.Templates were superseded by the
     // one Site constructor (§2.11) — dir serving, SPA fallback, and
     // dir/templates rendering in a single declaration.
-    site   = tako.Site("./web", tako.SPA())
+    site   = tako.Site("./web", tako.SiteConfig{SPA: true})
     ups    = tako.Counter("uploads")
 )
 
@@ -378,16 +380,16 @@ type PhotoReady struct{ PhotoID, Owner string }
 // ── Handler declarations (registration + docs + callable endpoints) ──
 
 var (
-    StartUpload = tako.API("POST /api/photos", startUpload, tako.WithAuth())
+    StartUpload = tako.API("POST /api/photos", startUpload, tako.Route{SignIn: true})
     List        = tako.API("GET /api/photos", list)
     Image       = tako.API("GET /api/photos/{id}/image", image)
     PhotoPage   = tako.Page("GET /p/{id}", photoPage)
 
     OnUploaded  = tako.Subscribe(photos.Uploaded, onUploaded)
-    MakeThumb   = tako.Worker(thumbs, makeThumb, tako.WithProfile(tako.Batch))
+    MakeThumb   = tako.Worker(thumbs, makeThumb, tako.Compute{Profile: tako.ProfileBatch})
     NotifyOwner = tako.Subscribe(ready, notifyOwner)
     WarmFeed    = tako.Subscribe(ready, warmFeedCache)
-    Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+    Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 )
 
 // 1. Client asks to upload → gets a signed URL (no 32MB cap, no proxying bytes)
@@ -399,7 +401,7 @@ func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
         return UploadTicket{}, err
     }
     url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute,
-        tako.WithContentType("image/*"), tako.WithMaxSize(20<<20))
+        tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20})
     return UploadTicket{Photo: p, UploadURL: url}, err
 }
 
@@ -480,7 +482,7 @@ import "github.com/gsandoval/tako"
 var (
     posts = tako.Entity[Post]("posts")
     site  = tako.Site("./web")                       // templates in ./web/templates; htmx vendored in ./web
-    auth  = tako.Auth(tako.WithGoogle())
+    auth  = tako.Auth(tako.AuthConfig{Google: true})
 )
 
 type Post struct {
@@ -493,8 +495,8 @@ type Post struct {
 var (
     Home    = tako.Page("GET /", home)
     Read    = tako.Page("GET /p/{id}", read)
-    Create  = tako.Page("POST /posts", create, tako.WithAuth())
-    Publish = tako.Page("POST /p/{id}/publish", publish, tako.WithAuth())
+    Create  = tako.Page("POST /posts", create, tako.Route{SignIn: true})
+    Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 )
 
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
@@ -647,7 +649,7 @@ Scaling profiles → Cloud Run knobs:
 | latency | 1 | 100 | 40 | 2 / 1Gi | off |
 | batch | 0 | 10 | 10 | 2 / 2Gi | on |
 
-The escape hatch under the profiles is `tako.WithFootprint(tako.Footprint{…})`
+The escape hatch under the profiles is a `Footprint` field (`tako.Compute{Footprint: …}`, `tako.ServiceConfig{Footprint: …}`)
 (S1 — fix-up: the earlier `tako.yaml overrides:` sketch is dead; declarations
 are code, there is no YAML): explicit CPU / Memory / Concurrency /
 MinInstances / MaxInstances, layered field-by-field over the profile — zero
@@ -704,7 +706,7 @@ The same generated mains run in both modes — only `TAKO_BACKEND` differs — a
 
 ```go
 // Future — sketch only:
-var db = tako.Postgres("main", tako.WithMigrations("./migrations"))
+var db = tako.Postgres("main", tako.PostgresConfig{Migrations: "./migrations"})
 db.Query / db.Exec / db.Tx(ctx, func(tx tako.SQLTx) error { ... })
 ```
 

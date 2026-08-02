@@ -74,7 +74,7 @@ var DeclaredSecrets func() []string
 // passed as any to avoid an import cycle).
 var HandlerInfo func(h any) (kind, source string, invoke any)
 
-// HandlerParallel reads a job handler's WithParallel fan-out (1 when
+// HandlerParallel reads a job handler's RunnerConfig.Parallel fan-out (1 when
 // none) — the local runtime runs that many tasks per execution.
 var HandlerParallel func(h any) int
 

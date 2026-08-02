@@ -59,13 +59,13 @@ func main() {
 	// worker MakeThumb ← queue thumbnails (app.go:78) — local mode runs the worker in-process
 	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
 
-	// subscriber NotifyOwner ← topic photo-ready (app.go:81) — local mode runs the subscriber in-process
+	// subscriber NotifyOwner ← topic photo-ready (app.go:83) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("NotifyOwner", gallery.NotifyOwner)
 
-	// subscriber WarmFeed ← topic photo-ready (app.go:82) — local mode runs the subscriber in-process
+	// subscriber WarmFeed ← topic photo-ready (app.go:84) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("WarmFeed", gallery.WarmFeed)
 
-	// cron Cleanup — every 24h (singleflight) (app.go:83) — runs in this service on its schedule
+	// cron Cleanup — every 24h (singleflight) (app.go:85) — runs in this service on its schedule
 	runtime.RegisterCron("Cleanup", gallery.Cleanup)
 
 	runtime.Serve(mux)

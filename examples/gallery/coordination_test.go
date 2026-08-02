@@ -2,7 +2,7 @@ package gallery
 
 // The W8 contract, user-style: reindex runs under the "reindex" lock
 // (a caller finding it held collapses, the ledger shows disjoint
-// windows) and Cleanup's WithSingleflight collapses overlapping cron
+// windows) and Cleanup's CronConfig.Singleflight collapses overlapping cron
 // runs through the same lease mechanism. Contention is deterministic:
 // the tests occupy the very lease the code campaigns for — lock names
 // ARE the identity, pinned here as contract.

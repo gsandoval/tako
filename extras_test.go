@@ -1,7 +1,7 @@
 package tako
 
 // User-style tests for F8's primitives: Cache TTL + GetOrFill, Secret
-// via SetSecret, and WithDelay riding the TestApp fake clock. The
+// via SetSecret, and PublishAfter riding the TestApp fake clock. The
 // package-level vars mirror how a user declares these in an app.
 
 import (
@@ -15,7 +15,7 @@ type testDigest struct{ N int }
 
 var (
 	testDigests      = Queue[testDigest]("test-digests")
-	testFeed         = Cache[[]string]("test-feed", WithTTL(time.Minute))
+	testFeed         = Cache[[]string]("test-feed", time.Minute)
 	testKey          = Secret("test-key")
 	digestDeliveries atomic.Int32
 
@@ -27,12 +27,12 @@ func handleTestDigest(ctx Ctx, d testDigest) error {
 	return nil
 }
 
-func TestWithDelayRidesTheFakeClock(t *testing.T) {
+func TestPublishAfterRidesTheFakeClock(t *testing.T) {
 	app := NewTestApp(t)
 	ctx := app.Ctx()
 	digestDeliveries.Store(0)
 
-	if err := testDigests.Publish(ctx, testDigest{N: 1}, WithDelay(4*time.Hour)); err != nil {
+	if err := testDigests.PublishAfter(ctx, testDigest{N: 1}, 4*time.Hour); err != nil {
 		t.Fatal(err)
 	}
 	// Not due: the parked message is idle, so DrainQueues returns at once.
@@ -49,14 +49,6 @@ func TestWithDelayRidesTheFakeClock(t *testing.T) {
 	app.DrainQueues()
 	if n := digestDeliveries.Load(); n != 1 {
 		t.Fatalf("delivered %d times, want exactly 1", n)
-	}
-}
-
-func TestPublishRejectsNonPublishOptions(t *testing.T) {
-	app := NewTestApp(t)
-	err := testDigests.Publish(app.Ctx(), testDigest{}, WithTTL(time.Minute))
-	if err == nil || err.Error() != "tako.WithTTL is not a Publish option (Publish accepts WithDelay)" {
-		t.Fatalf("err = %v", err)
 	}
 }
 
@@ -98,15 +90,6 @@ func TestCacheMissIsNotFoundAndAppsAreIsolated(t *testing.T) {
 	}
 	if _, err := testFeed.Get(a.Ctx(), "k"); err != nil {
 		t.Fatalf("app a lost its own entry: %v", err)
-	}
-}
-
-func TestCacheRejectsNonCacheOptions(t *testing.T) {
-	app := NewTestApp(t)
-	bad := Cache[int]("test-bad-cache", WithDelay(time.Second))
-	_, err := bad.Get(app.Ctx(), "k")
-	if err == nil || err.Error() != "tako.WithDelay is not a Cache option (Cache accepts WithTTL)" {
-		t.Fatalf("err = %v", err)
 	}
 }
 

@@ -25,7 +25,7 @@ import (
 type Endpoint[Req, Res any] struct {
 	route string
 	pkg   string // declaring package path — the callee identity remote transports key on
-	opts  []Option
+	cfg   []Route
 	fn    func(Ctx, Req) (Res, error)
 }
 
@@ -48,7 +48,7 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 }
 
 // Handler is a declared asynchronous or scheduled handler binding, returned
-// by Worker, Subscribe, JobHandler, Cron, and Singleton.
+// by Worker, Subscribe, Runner, Cron, and Singleton.
 type Handler struct {
 	kind   string
 	source string
@@ -62,7 +62,7 @@ type Handler struct {
 	// VALUE is matched — app.AdvanceCron(Cleanup) — without comparing
 	// function pointers, and how the runtime attaches the declared name.
 	id       int
-	parallel int // WithParallel fan-out for jobs; 0/1 = one task
+	parallel int // RunnerConfig.Parallel fan-out for jobs; 0/1 = one task
 	invoke   func(Ctx, []byte) error
 }
 
@@ -149,22 +149,22 @@ func fnName(fn any) string {
 // analyzer-enforced). Req fields bind by tag — path:, query:, form: — and
 // untagged fields bind from the JSON body; binding code is generated
 // statically. An empty Req struct is fine.
-func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), opts ...Option) Endpoint[Req, Res] {
-	return Endpoint[Req, Res]{route: route, pkg: pkgOf(fn), opts: opts, fn: fn}
+func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Route) Endpoint[Req, Res] {
+	return Endpoint[Req, Res]{route: route, pkg: pkgOf(fn), cfg: cfg, fn: fn}
 }
 
 // Page declares a server-rendered route. It binds Req exactly like API
 // (form: tags cover browser form posts) and returns HTML; CSRF is enforced
 // automatically on unsafe-method page routes.
-func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), opts ...Option) Endpoint[Req, HTML] {
-	return Endpoint[Req, HTML]{route: route, pkg: pkgOf(fn), opts: opts, fn: fn}
+func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML] {
+	return Endpoint[Req, HTML]{route: route, pkg: pkgOf(fn), cfg: cfg, fn: fn}
 }
 
 // Worker binds fn as the single consumer of queue. Like every async
 // handler it is func(Ctx, T) error: return nil to ack, an error to retry,
 // tako.Permanent to give up and dead-letter. A queue with two workers is
 // an analysis error.
-func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option) Handler {
+func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler {
 	return register(Handler{
 		kind:   "worker",
 		id:     nextHandlerID(),
@@ -185,7 +185,7 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, opts ...Option)
 // retries on its own, and dead-letters on its own; one subscriber failing
 // never delays another. Like every async handler it is func(Ctx, T) error:
 // return nil to ack, an error to retry, tako.Permanent to give up.
-func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Option) Handler {
+func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler {
 	return register(Handler{
 		kind:   "subscribe",
 		id:     nextHandlerID(),
@@ -204,14 +204,14 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, opts ...Opti
 // Cron declares a scheduled handler: func(Ctx) error, run on the given
 // schedule ("every <duration>" for now — cron expressions arrive with
 // cloud scheduling). The schedule must be a string constant
-// (analyzer-enforced); WithSingleflight collapses overlapping runs.
-// Cron handlers run inside the package's app service. In tests,
-// app.AdvanceCron(name) fires one run synchronously.
-func Cron(schedule string, fn func(Ctx) error, opts ...Option) Handler {
+// (analyzer-enforced); CronConfig.Singleflight collapses overlapping
+// runs. Cron handlers run inside the package's app service. In tests,
+// app.AdvanceCron(cron) fires one run synchronously.
+func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler {
 	id := nextHandlerID()
 	invoke := func(ctx Ctx, _ []byte) error { return fn(ctx) }
-	for _, o := range opts {
-		if o.name == "singleflight" {
+	for _, c := range cfg {
+		if c.Singleflight {
 			// The wrap lives HERE so every trigger — dev ticker,
 			// AdvanceCron, Cloud Scheduler — inherits it: one CAS
 			// attempt on the cron's lease; held elsewhere means an
@@ -268,7 +268,7 @@ func singleflightInvoke(id int, fn func(Ctx) error) func(Ctx, []byte) error {
 // across all revisions, with clean handoff between deploys: the loop
 // executes only while holding the §4.4 lease, so min=1/max=1 plus the
 // lease — not either alone — is the guarantee.
-func Singleton(fn func(Ctx) error, opts ...Option) Handler {
+func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler {
 	return register(Handler{
 		kind:   "singleton",
 		name:   fnName(fn),

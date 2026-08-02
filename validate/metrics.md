@@ -422,7 +422,7 @@ In `examples/gallery/app.go`, add the option to `NotifyOwner`:
 
 ```go
 NotifyOwner = tako.Subscribe(photoReady, notifyOwner,
-	tako.WithProfile(tako.Latency))
+	tako.Compute{Profile: tako.ProfileLatency})
 ```
 
 Redeploy, then:

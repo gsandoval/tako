@@ -37,7 +37,7 @@ func verbOf(kind, method string) string {
 			return "sign"
 		}
 	case "queue", "topic":
-		if method == "Publish" {
+		if method == "Publish" || method == "PublishAfter" {
 			return "publish"
 		}
 	case "secret":
@@ -137,14 +137,11 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 								if v := verbOf(r.kind, sel.Sel.Name); v != "" {
 									refs[fn] = append(refs[fn], ref{r, v})
 									// A delayed publish routes the queue
-									// through Cloud Tasks in the cloud —
-									// detected HERE, at the option site.
-									if r.kind == "queue" && sel.Sel.Name == "Publish" {
-										for _, a := range call.Args {
-											if optName, isOpt := sdkOptionCall(pkg, a); isOpt && optName == "WithDelay" {
-												delayed[r.name] = true
-											}
-										}
+									// through Cloud Tasks in the cloud. It
+									// is its own method now, so the call
+									// site names it outright.
+									if r.kind == "queue" && sel.Sel.Name == "PublishAfter" {
+										delayed[r.name] = true
 									}
 								}
 								return true

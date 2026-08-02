@@ -81,7 +81,7 @@ must tolerate duplicates like any async handler.
 
 ## Errors you'll meet
 
-- `tako.WithTTL is not a tako.Subscribe option (tako.Subscribe accepts WithProfile, WithFootprint) (tako/invalid-option)`
+- `tako.Compute must be written as a literal with constant fields — configuration is read at analysis time, not run time (tako/config-literal)`
 - `tako.Topic name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
 - `queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out (tako/one-worker)` —
   the error that sends you here from a queue.

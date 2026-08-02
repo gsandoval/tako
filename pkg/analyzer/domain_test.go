@@ -106,7 +106,7 @@ func TestDomainFromSiteReachesMountingServiceOnly(t *testing.T) {
 func TestServiceDeclarationNamesTheAppService(t *testing.T) {
 	dir := t.TempDir()
 	writeModule(t, dir, "blog", `
-var api = tako.Service(tako.WithDomain("blog.example.com"))
+var api = tako.Service(tako.ServiceConfig{Domain: "blog.example.com"})
 
 var jobs = tako.Queue[string]("jobs")
 
@@ -185,11 +185,12 @@ func TestJobProfileIsADefaultNotAnOverwrite(t *testing.T) {
 	writeModule(t, dir, "batchy", `
 var work = tako.Job[string]("work")
 
-var Work = tako.JobHandler(work, run,
-	tako.WithProfile(tako.Latency),
-	tako.WithRetries(1),
-	tako.WithFootprint(tako.Footprint{Memory: "8Gi", CPU: 4}),
-	tako.WithTraffic(tako.Traffic{Timeout: 2 * time.Hour}))
+var Work = tako.Runner(work, run, tako.RunnerConfig{
+	Profile:   tako.ProfileLatency,
+	Attempts:  1,
+	Timeout:   2 * time.Hour,
+	Footprint: tako.Footprint{Memory: "8Gi", CPU: 4},
+})
 
 func run(ctx tako.Ctx, _ string) error { return nil }
 `)
