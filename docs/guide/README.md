@@ -31,6 +31,11 @@ Two stories frame everything:
   permissions model, the ONE manual setup step, and what `destroy`
   deliberately leaves behind.
 
+Two pages answer the questions that cut across every feature:
+**[testing](../reference/testing.md)** (how you write tests against an
+app) and **[errors](../reference/errors.md)** (every refusal the
+analyzer can make, and why it exists).
+
 And the **[feature reference](../reference/README.md)** answers by
 feature instead of by example: one page per feature, every page the
 same shape (declare · use · local · cloud · test · errors · not yet).

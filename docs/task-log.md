@@ -9131,3 +9131,68 @@ invented one in §2, which also now says that `no dead letters`
 immediately after a replay is CORRECT (the record is in the inbox), and
 what a stale dev server holding port 8080 looks like — both states the
 walk hits in practice.
+
+## Release pass — docs cleanup + code review (2026-08-01, user-directed)
+
+Out-of-plan, requested before release: prune dead markdown, make the
+guide and reference good enough to use the framework without reading
+the code, and review the code for standardization, duplication and
+engineering practice. Findings and proposals live in
+`docs/code-review-1.md`; this entry records what moved.
+
+**Docs cleanup.** Exactly one file was dead: `docs/C.md`, byte-identical
+to the first 3075 lines of this log, added by a stray redirect in
+`5542f67` and carried for a week. Deleted. Everything else earns its
+place — all 28 `validate/*.md` are cited by a signed verdict (skeleton
+under its gate id, G0, rather than by filename), and the review
+documents, decision records and plans are records of what was true when
+written. `stage7-resume.md` is the one file with an expiry date: it is
+disposable once U4 lands.
+
+**Docs gaps closed.** Three, found by diffing the locked SDK surface and
+the analyzer's rule IDs against the doc corpus:
+
+- `docs/reference/testing.md` — there was no page for the test surface.
+  `NewTestApp`, `DrainQueues`, `AdvanceCron`, `Chaos`, `SetSecret` and
+  `SignIn` were scattered across eight "Test it" sections, and
+  `app.Advance` (the fake clock) and `app.HTMX` appeared nowhere at all.
+- `docs/reference/errors.md` — 38 analyzer rules, 10 of them documented
+  nowhere. Now an index of every rule with its verbatim golden text and
+  what it protects, plus the boundary between analysis errors, boot
+  refusals, preflight and unwired-backend panics.
+- `ctx.Log()` — the only `Ctx` method with no mention anywhere. Added to
+  observability.md, together with the honest limitation behind it (P1
+  below).
+
+One stale claim fixed: observability.md still described the `instance`
+metric label that U2 retired when metrics moved to `generic_task`.
+
+**Code fixes (all zero-behavior-change, suite + six examples green).**
+
+- `Config.Name` and `gcpb.Prefixed` were two implementations of the env
+  prefix rule — with `"prod"` as a literal in one and a constant in the
+  other — under a doc comment claiming they were shared so "the names
+  services read are the names deploys create". They agreed by luck. One
+  function, one constant now.
+- Ten `err.(*apiError)` type assertions became `errors.As` via
+  `asAPIError`, and six copies of the 404 predicate became `notFound`.
+  The taxonomy is intact today only because `Classify` is always called
+  at the leaf; `provision.Apply` wraps with `%w` two frames up, so the
+  invariant was a convention nobody had written down.
+- `gofmt` and `go vet` are clean for the first time (one unformatted
+  test file; one leaked `context.WithDeadline` cancel).
+
+**Proposals, not done** (ranked in `code-review-1.md`): P1 logging never
+became cloud-shaped — no `slog` handler anywhere, so severity is lost in
+Cloud Logging and `logRequests` still prints the dev format in
+production under a comment promising Phase E would replace it; P2 the
+injectable HTTP host (130 hand-built API URLs, and the reason four
+failures this stage were only findable live); P3 `pkg/runtime` is a
+compatibility contract with no lock and no stated policy; P4 "not wired"
+answers in two mechanisms and three phrasings; P5 `ctx.User` panics with
+two texts; P6 the CLI exits two ways; P7 `pkg/devserver` has no tests;
+P8/P9 small duplication and `deploy.go` at 1070 lines holding three
+commands.
+
+P1 is the one to decide before release — it is user-visible behavior,
+not tidiness.

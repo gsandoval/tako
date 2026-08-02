@@ -1,0 +1,237 @@
+# Analysis errors, by rule
+
+Every refusal `tako` makes at analysis time carries a rule ID:
+
+```
+app.go:11:5: tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route" (tako/const-route)
+```
+
+`path:line:col: message (tako/rule-id)` — the same shape as a compiler
+diagnostic, and for the same reason: **these are your app's build
+errors.** `tako dev`, `tako test`, `tako build` and `tako deploy` all
+refuse to proceed while any of them stands. The text is golden-tested,
+so what you read below is what you will see.
+
+This page is the index: what each rule is protecting, and where the
+feature page explains it in full. Most texts below are copied verbatim
+from the golden corpus in `pkg/analyzer/testdata/errors/`; a few rules
+have no golden fixture, and theirs are shown with illustrative names
+filled into the real message template.
+
+**Why a rule exists at all.** Tako derives services, IAM and wiring
+from declarations by *reading* them — never by running them. A rule
+fires where reading would have to become guessing (a route built at run
+time), where one service would have to be two things at once (a package
+claiming two footprints), or where the cloud would reject the shape
+later and more expensively (a cron schedule Cloud Scheduler cannot
+express). None of them are style.
+
+## Declarations must be readable
+
+Names and routes are read from source, so they have to be *in* the
+source.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `package-level` | a handler is declared inside a function | [api.md](api.md) |
+| `const-route` | a route is a variable or a call | [api.md](api.md) |
+| `const-name` | a resource name is a variable | [entity.md](entity.md) |
+| `const-query-field` | a query field name is a variable | [entity.md](entity.md) |
+| `unexported-req` | a request type is unexported | [api.md](api.md) |
+
+```
+tako.API must initialize a package-level var — handlers declared inside functions are invisible to analysis
+tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route"
+tako.Entity name must be a string constant — names are read at analysis time, not run time; got variable "n"
+query field must be a string constant — indexes are derived at analysis time; got variable "f"
+request type greetReq must be exported — generated services construct it outside the package
+```
+
+## Request binding
+
+The Req struct and the route are one contract; these rules keep the two
+from disagreeing.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `route-params` | a `{param}` and a `path:` tag don't match up | [api.md](api.md) |
+| `bind-type` | a tagged field is a type the binder can't parse | [api.md](api.md) |
+| `body-on-get` | a GET's Req has untagged fields (a body it can't receive) | [api.md](api.md) |
+| `blob-binding` | a `tako.Blob` field is on a GET, untagged, or mixed with untagged fields | [bucket.md](bucket.md) |
+| `page-binding` | a Page's Req has an untagged field | [pages.md](pages.md) |
+
+```
+route "GET /greet/{name}" has path parameter {name} but GreetReq has no field tagged path:"name"
+GreetReq field Nick is tagged path:"nick" but route "GET /greet/{name}" has no {nick} parameter
+field When: query:-tagged fields must be string, bool, int, int64, or float64; got time.Time
+GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag
+tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields
+GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route
+CReq mixes a tako.Blob field with untagged field Extra — when a blob is present every other field needs a path:/query:/form: tag
+PageReq field Title has no path:/query:/form: tag — pages receive browser forms, not JSON bodies
+```
+
+## Handlers bind to the thing they serve
+
+A worker serves one queue, a job has one body, and the binding is the
+edge the analyzer follows to derive IAM.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `worker-binding` | `tako.Worker` binds something that isn't a package-level queue | [queue.md](queue.md) |
+| `subscribe-binding` | `tako.Subscribe` binds something that isn't a topic or bucket event | [topic.md](topic.md) |
+| `job-binding` | `tako.JobHandler` binds no package-level job, or a job has no body | [job.md](job.md) |
+| `one-worker` | two workers claim one queue | [queue.md](queue.md) |
+| `one-job-handler` | two handlers claim one job | [job.md](job.md) |
+| `raw-call` | a cross-service call goes to the function, not the Endpoint | [calls.md](calls.md) |
+
+```
+tako.Worker must bind a queue declared as a package-level var in this module
+tako.Subscribe must bind a topic or bucket event declared as a package-level var in this module
+tako.JobHandler must bind a job declared as a package-level var in this module
+job "reindex" has no body — bind one with tako.JobHandler
+queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out
+job "reindex" already has handler Reindex (app.go:9) — a job has exactly one body
+ChargeFn is a handler function — cross-service calls go through the Endpoint var (billing.Charge.Call(ctx, req)) so the RPC boundary stays visible
+```
+
+## One package is one service
+
+Package = service is the partitioning rule, so anything a package can
+only have one of is enforced at the package.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `one-service` | two `tako.Service` declarations in a package | [service.md](service.md) |
+| `one-site` | two `tako.Site` declarations in a package | [site.md](site.md) |
+| `mixed-ingress` | public and `WithPrivate` routes share a package | [calls.md](calls.md) |
+
+```
+a package declares one service — oneservice.api is already declared; remove oneservice.admin or merge the two
+a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two
+service mixedingress mixes private and public routes — Cloud Run enforces WithPrivate at the service level, so private endpoints need their own package
+```
+
+## Options apply where they mean something
+
+`Option` is one type so the SDK stays small, which puts the burden on
+the analyzer to say exactly which options each constructor takes — and
+to list them, so the message is also the documentation.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `invalid-option` | an option is passed to a constructor that has no use for it | each feature page |
+| `service-option` | a service-wide option is declared on one route | [service.md](service.md) |
+| `retries` | `WithRetries` is outside 0–10, or not constant | [job.md](job.md) |
+| `timezone` | `WithTimezone` is not a constant IANA zone, or unknown | [cron.md](cron.md) |
+| `deadline` | `WithDeadline` is outside 15s–30m | [cron.md](cron.md) |
+| `cron-schedule` | a schedule can't map onto unix-cron | [cron.md](cron.md) |
+| `delivery` | a `Delivery` field is out of range or wrong for the carrier | [queue.md](queue.md) |
+| `auth-provider` | `tako.Auth` declares no provider | [auth.md](auth.md) |
+| `site-dir` | a site's directory doesn't exist and nothing builds it | [site.md](site.md) |
+
+```
+tako.WithTTL is not a tako.Queue option (tako.Queue accepts WithDelivery)
+tako.WithParallel is not a tako.Cron option (tako.Cron accepts WithSingleflight, WithTimezone, WithDeadline, WithProfile, WithFootprint)
+tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned
+tako.WithFootprint describes the whole service, not one route — declare it on tako.Service instead: var svc = tako.Service(tako.WithFootprint(…))
+tako.WithRetries takes a constant 0–10 attempts after the first — a task that fails 10 times is not going to pass on the 11th, and jobs have no dead letter to catch it
+tako.WithTimezone does not know the zone "Mars/Olympus" — use an IANA name like "America/Mexico_City" or "Europe/Madrid"
+tako.WithDeadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job
+tako.Cron schedule "0 25 * * *": field 2 (hour): value "25" out of range 0–23
+"every 7m0s" cannot map onto Cloud Scheduler's unix-cron grammar — use minutes dividing 60, hours dividing 24, exactly 24h, or write a cron expression
+delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2
+delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink
+delivery RateLimit is a queue setting — a topic fans out to subscribers with independent fates, so there is no single consumer to pace; cap the queue each subscriber feeds instead
+tako.Auth needs at least one provider (WithGoogle, WithEmail)
+tako.Site directory ./web does not exist (add it, or use WithBuild if a generator creates it)
+```
+
+## Sizing has to resolve to one answer
+
+A service scales one way, so every handler in a package must agree —
+and the resolved numbers have to be ones Cloud Run will accept. See
+[footprint.md](footprint.md) for all of these.
+
+| Rule | Fires when |
+|---|---|
+| `footprint` | a resolved footprint is illegal, or sets fields its kind has no use for |
+| `traffic` | a `Traffic` field is out of range, empty, or wrong for the kind |
+| `singleton-max` | a singleton pins `MaxInstances` |
+| `mixed-footprint` | two handlers in a package pin different footprints |
+| `mixed-profile` | two handlers in a package claim different profiles |
+| `mixed-traffic` | two handlers in a package pin different traffic |
+
+```
+service footprintresolve-bigcpu resolves to 8 vCPUs with 512Mi memory — 8 vCPUs need at least 4Gi; pin Memory too
+service footprintresolve-bigmem resolves to 8Gi memory with 1 vCPU — over 4Gi needs at least 2 vCPUs; pin CPU too
+service footprintresolve-bigmin resolves to MinInstances 30 over MaxInstances 20 (profile default) — pin MaxInstances too
+a job footprint sets CPU and Memory only — executions are tasks, not serving instances, so there is no concurrency, no scaling, no idle CPU to throttle and no cold start to boost; WithParallel sets the fan-out and WithRetries the attempts
+a singleton footprint sets CPU, Memory and StartupBoost only — min=1 and concurrency=1 are what keep the loop's host alive and alone
+a singleton footprint cannot set MaxInstances — the lease is what makes a singleton exactly-one, so a max above 1 only buys instances that pay to lose the race; CPU, Memory and StartupBoost are yours
+traffic Timeout must be at least one second; got 500ms
+traffic SessionAffinity must be tako.Inherit, tako.On, or tako.Off
+traffic sets nothing — drop tako.WithTraffic or pin at least one field
+a job's only traffic setting is Timeout — an execution serves nobody, so there are no clients to keep affinity with and no connections to negotiate HTTP/2 over
+service mixedfootprint cannot carry both footprint (cpu 2) from Sweep and footprint (cpu 4, memory 2Gi) from Purge — one service scales one way; split the packages or align the footprints
+service X cannot be both latency (Web) and batch (Sweep) — one service scales one way; split the packages or align the profiles
+service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) from Api — one service answers one way; split the packages or align the settings
+```
+
+## Entities
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `entity-id` | the id field is missing, duplicated, or not a string | [entity.md](entity.md) |
+| `unindexed-query` | a query filters or orders on an untagged field | [entity.md](entity.md) |
+
+```
+entity type Link must have exactly one field tagged entity:"id"
+entity id field Slug must be a string; got int
+query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable
+query orders by Link.Hits, but Hits is not indexed — tag it entity:"index" to make it orderable
+```
+
+`unindexed-query` is the one rule that pays off entirely in the cloud:
+the local backend would happily scan, and Datastore would fail the
+query at run time in production. Indexes are derived from the tags, so
+the tag is both the fix and the provisioning input.
+
+## Domains
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `domain` | the domain isn't a bare hostname | [domains.md](domains.md) |
+| `domain-unreachable` | the package holding the domain serves no public traffic | [domains.md](domains.md) |
+
+```
+tako.WithDomain needs a bare domain name — no scheme, port, path, or trailing dot; got "https://blog.example.com/"
+this package declares the domain "blog.example.com", but nothing here serves public traffic — queue workers, topic subscribers, and jobs are reached over authenticated push or not at all, so the name would answer nothing; declare an API, Page or Site route here, or move the domain to the package that has one
+```
+
+## Errors that are not analysis errors
+
+Three other kinds of failure look similar and are not this:
+
+- **Boot refusals** — an unset secret, a missing site directory at run
+  time. These stop a service from serving rather than from building;
+  the feature pages list them under "Errors you'll meet".
+- **Deploy preflight** — a disabled API, a missing permission, an
+  unverified domain. These carry a copy-pasteable remediation
+  (`gcloud services enable …`) and are described in
+  [the cloud story](../guide/cloud.md).
+- **Panics from unwired backends** — `tako: no entity backend wired —
+  run via tako dev, a generated service, or tako.NewTestApp`. You get
+  these calling a resource from a bare `go test` with no app booted;
+  [testing.md](testing.md) explains what boots what.
+
+## Not yet
+
+- No `//tako:ignore` escape hatch, and none planned: every rule refuses
+  something that has no correct meaning downstream, so suppressing one
+  would move the failure to deploy or to run time.
+- Rules are not configurable — no severity levels, no per-project
+  opt-outs.
+- Analysis stops at the first *load* failure (the module has to compile
+  before rules can run), but rule violations are collected and reported
+  together, in source order.

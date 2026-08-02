@@ -37,11 +37,14 @@ func fakeToken(t *testing.T) {
 
 // chainCtx builds the ctx a handler mid-request would carry: session
 // and trace ids as values, an optional deadline.
-func chainCtx(deadline time.Duration) tako.Ctx {
+func chainCtx(tb testing.TB, deadline time.Duration) tako.Ctx {
+	tb.Helper()
 	base := context.WithValue(context.Background(), sessionIDKey, "sess-123")
 	base = context.WithValue(base, requestIDKey, "req-abc")
 	if deadline > 0 {
-		base, _ = context.WithDeadline(base, time.Now().Add(deadline))
+		var cancel context.CancelFunc
+		base, cancel = context.WithDeadline(base, time.Now().Add(deadline))
+		tb.Cleanup(cancel)
 	}
 	return &requestCtx{Context: base, log: slog.Default()}
 }
@@ -66,7 +69,7 @@ func TestRemoteCallCarriesTheChain(t *testing.T) {
 			return RemoteJSON[chargeReq, receipt](ctx, "billing", srv.URL, "POST", "/w9-charge", req)
 		})
 
-	res, err := ep.Call(chainCtx(10*time.Second), chargeReq{OrderID: "o1", AmountCents: 700})
+	res, err := ep.Call(chainCtx(t, 10*time.Second), chargeReq{OrderID: "o1", AmountCents: 700})
 	if err != nil || res.ID != "r1" || res.AmountCents != 700 {
 		t.Fatalf("call = %+v, %v", res, err)
 	}
@@ -93,7 +96,7 @@ func TestRemoteCallErrorsPassThroughTyped(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := RemoteJSON[chargeReq, receipt](chainCtx(0), "billing", srv.URL, "POST", "/charge", chargeReq{})
+	_, err := RemoteJSON[chargeReq, receipt](chainCtx(t, 0), "billing", srv.URL, "POST", "/charge", chargeReq{})
 	he, ok := err.(interface{ HTTPStatus() int })
 	if !ok || he.HTTPStatus() != 422 || !strings.Contains(err.Error(), "amount must be positive") {
 		t.Fatalf("err = %v — billing's 422 must surface as the caller's 422", err)
@@ -107,7 +110,7 @@ func TestRemoteCallGrantRefusalIsReadable(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	_, err := RemoteJSON[chargeReq, receipt](chainCtx(0), "billing", srv.URL, "POST", "/charge", chargeReq{})
+	_, err := RemoteJSON[chargeReq, receipt](chainCtx(t, 0), "billing", srv.URL, "POST", "/charge", chargeReq{})
 	if err == nil || !strings.Contains(err.Error(), "run.invoker") {
 		t.Fatalf("err = %v — a front-door 403 must name the missing grant", err)
 	}
@@ -115,7 +118,7 @@ func TestRemoteCallGrantRefusalIsReadable(t *testing.T) {
 
 func TestDeadlineBudgetFloor(t *testing.T) {
 	fakeToken(t)
-	_, err := RemoteJSON[chargeReq, receipt](chainCtx(800*time.Millisecond), "billing", "http://unreachable.invalid", "POST", "/charge", chargeReq{})
+	_, err := RemoteJSON[chargeReq, receipt](chainCtx(t, 800*time.Millisecond), "billing", "http://unreachable.invalid", "POST", "/charge", chargeReq{})
 	if err == nil || !strings.Contains(err.Error(), "deadline budget exhausted") {
 		t.Fatalf("err = %v — below the floor the call must fail before the network", err)
 	}

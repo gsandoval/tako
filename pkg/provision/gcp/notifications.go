@@ -46,7 +46,7 @@ func (n *BucketNotifications) List(ctx context.Context) ([]provision.Observed, e
 		}
 		err := n.C.do(ctx, http.MethodGet, n.configsURL(o.Name), nil, &out)
 		if err != nil {
-			if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+			if notFound(err) {
 				continue // bucket not created yet: no configs to observe
 			}
 			return nil, Classify(err, n.C.Project, "list bucket notifications", "roles/storage.admin")
@@ -80,7 +80,7 @@ func (n *BucketNotifications) Create(ctx context.Context, o provision.Object) er
 		if err == nil {
 			return nil
 		}
-		ae, ok := err.(*apiError)
+		ae, ok := asAPIError(err)
 		retriable := ok && (ae.Status == http.StatusBadRequest || ae.Status == http.StatusForbidden) &&
 			strings.Contains(strings.ToLower(ae.Message), "permission")
 		if !retriable || time.Now().After(deadline) {
@@ -108,7 +108,7 @@ func (n *BucketNotifications) Delete(ctx context.Context, name string) error {
 	}
 	err := n.C.do(ctx, http.MethodGet, n.configsURL(name), nil, &out)
 	if err != nil {
-		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+		if notFound(err) {
 			return nil
 		}
 		return Classify(err, n.C.Project, "list bucket notifications", "roles/storage.admin")

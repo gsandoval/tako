@@ -141,8 +141,8 @@ func (g *Grants) read(ctx context.Context, typ, id string) (policy, bool, error)
 	}
 	var p policy
 	if err := g.C.do(ctx, getMethod, getURL, in, &p); err != nil {
-		ae, isAPI := err.(*apiError)
-		if isAPI && ae.Status == http.StatusNotFound {
+		ae, isAPI := asAPIError(err)
+		if notFound(err) {
 			return policy{}, false, nil // target not created yet: no policy to observe
 		}
 		// Resource-scoped targets (SAs, run services, subscriptions…)
@@ -255,8 +255,8 @@ func (g *Grants) applyOnce(ctx context.Context, o provision.Object) (bool, error
 		body, method = newPolicy, http.MethodPut
 	}
 	if err := g.C.do(ctx, method, setURL, body, nil); err != nil {
-		ae, isAPI := err.(*apiError)
-		if isAPI && typ != provision.TargetProject && ae.Status == http.StatusNotFound {
+		ae, isAPI := asAPIError(err)
+		if typ != provision.TargetProject && notFound(err) {
 			// The target died between read and write (destroy): converge.
 			return false, nil
 		}

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +43,23 @@ type apiError struct {
 }
 
 func (e *apiError) Error() string { return e.Message }
+
+// asAPIError recovers the classified failure from err. It uses
+// errors.As rather than a type assertion so that a call site which
+// wraps (%w) on its way up — provision.Apply already does — does not
+// silently demote every 403 and 404 to an unclassified message.
+func asAPIError(err error) (*apiError, bool) {
+	var ae *apiError
+	return ae, errors.As(err, &ae)
+}
+
+// notFound reports the 404 shape every observer treats as "not created
+// yet" and every delete treats as "already gone" — the two halves of
+// converging without a state file.
+func notFound(err error) bool {
+	ae, ok := asAPIError(err)
+	return ok && ae.Status == http.StatusNotFound
+}
 
 // do runs one JSON call. A nil out discards the response body.
 func (c *Client) do(ctx context.Context, method, url string, in, out any) error {
@@ -116,7 +134,7 @@ func parseAPIError(status int, url string, raw []byte) error {
 // destroy must never demand an API the app never enabled (the T3 gate
 // hit exactly this: a pre-Tasks app's destroy failing on cloudtasks).
 func disabledAPI(err error) bool {
-	ae, ok := err.(*apiError)
+	ae, ok := asAPIError(err)
 	return ok && ae.Status == http.StatusForbidden &&
 		(ae.Reason == "SERVICE_DISABLED" || strings.Contains(ae.Message, "API has not been used") || strings.Contains(ae.Message, "it is disabled"))
 }
@@ -126,7 +144,7 @@ func disabledAPI(err error) bool {
 // verb names what tako was doing; role is the narrowest role that
 // unblocks it.
 func Classify(err error, project, verb, role string) error {
-	ae, ok := err.(*apiError)
+	ae, ok := asAPIError(err)
 	if !ok {
 		return err
 	}

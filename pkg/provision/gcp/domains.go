@@ -159,7 +159,7 @@ func (r *DomainMappings) waitGone(ctx context.Context, domain string) error {
 	deadline := time.Now().Add(mappingGoneWait)
 	for {
 		err := r.C.do(ctx, http.MethodGet, r.base()+"/"+domain, nil, nil)
-		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+		if notFound(err) {
 			return nil
 		}
 		if time.Now().After(deadline) {
@@ -172,7 +172,7 @@ func (r *DomainMappings) waitGone(ctx context.Context, domain string) error {
 
 func (r *DomainMappings) Delete(ctx context.Context, name string) error {
 	if err := r.C.do(ctx, http.MethodDelete, r.base()+"/"+name, nil, nil); err != nil {
-		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+		if notFound(err) {
 			return nil // already gone: destroy converges
 		}
 		return r.classify(err, name, "", "delete")
@@ -226,7 +226,7 @@ func (r *DomainMappings) Status(ctx context.Context, domain string) (*Status, er
 // for are different problems with different fixes, and neither is a
 // permission gap the generic 403 text would name correctly.
 func (r *DomainMappings) classify(err error, domain, route, verb string) error {
-	ae, ok := err.(*apiError)
+	ae, ok := asAPIError(err)
 	if !ok {
 		return err
 	}

@@ -46,18 +46,20 @@ func (c Config) RunURL(service string) string {
 }
 
 // DefaultEnv is the environment deploys target when --env is not given.
-const DefaultEnv = "prod"
+// It is an alias of the backends' constant, not a second copy: the
+// prefix rule below and the one the runtime resolves names through are
+// the same rule, and must stay that way.
+const DefaultEnv = gcpb.DefaultEnv
 
 // RepoName is the app-agnostic Artifact Registry repo every tako deploy
 // pushes into (dedicated project doctrine: one app, one project).
 const RepoName = "tako"
 
-// Name applies the env prefix to a resource name.
+// Name applies the env prefix to a resource name — the same function
+// the runtime resolves its names through, so a name planned here and a
+// name read at run time cannot drift apart.
 func (c Config) Name(base string) string {
-	if c.Env == DefaultEnv {
-		return base
-	}
-	return c.Env + "-" + base
+	return gcpb.Prefixed(c.Env, base)
 }
 
 // SAName derives the IAM accountId for a service's identity: the

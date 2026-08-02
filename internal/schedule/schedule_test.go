@@ -72,7 +72,7 @@ func TestNext(t *testing.T) {
 		}
 	}
 	s, _ := Parse("every 10m")
-	if got := s.Next(base); !got.Equal(base.Add(10*time.Minute)) {
+	if got := s.Next(base); !got.Equal(base.Add(10 * time.Minute)) {
 		t.Fatalf("every Next = %v", got)
 	}
 }

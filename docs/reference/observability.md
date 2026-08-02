@@ -37,6 +37,37 @@ ups.Add(ctx, 1)
 thumbMs.Observe(ctx, float64(time.Since(start).Milliseconds()))
 ```
 
+## Logging
+
+`ctx.Log()` returns a `*slog.Logger` — the standard library's, not a
+tako type, so anything that takes an `slog.Logger` takes this one:
+
+```go
+ctx.Log().Info("thumbnail written", "photo", req.PhotoID, "ms", took)
+ctx.Log().Error("notify failed", "err", err)
+```
+
+The logger is **pre-tagged with the execution it belongs to**, which is
+the reason to prefer it over a package-level `slog`: requests carry
+`req=<id>`, crons carry `cron=<name>`, jobs carry `job=<name>` (and
+`task=<i>` under `WithParallel`), singletons carry `singleton=<name>`,
+and push deliveries carry `handler` and `source`. Every line from one
+request is therefore greppable as a unit without you passing an id
+around.
+
+Nothing else is opinionated: tako installs no `slog` handler, so output
+goes wherever the process's default logger points — stderr, text
+format, `INFO` and above. Configure it as you would in any Go program,
+in your own package's `init` or before the handler runs:
+
+```go
+slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+```
+
+Cloud Logging captures a Cloud Run container's stdout and stderr either
+way, so logs always arrive. What tako does **not** do yet is give them
+a severity: see [Not yet](#not-yet).
+
 ## Local
 
 Secrets come from `.env` in the module dir (`name=value` lines),
@@ -227,14 +258,27 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
 ## Not yet
 
 - No metric labels/dimensions: `Add` and `Observe` take only a value,
-  so you cannot break `uploads` down by user or status. (The `instance`
-  label the exporter adds is tako's, not yours — it exists to keep
-  instances from colliding, not to slice by.)
+  so you cannot break `uploads` down by user or status. (The `revision`
+  label and the resource's `task_id` are tako's, not yours — they exist
+  to keep instances from colliding, not to slice by.)
 - No dashboards or alert policies are created for you; tako writes the
   metrics, you build the views.
 - Histogram bucket bounds are fixed (doubling, 1 to 262144) and not
   declarable.
-- `tako logs` fetches once — no `--follow`/streaming, no severity
-  filter.
+- **Log severity does not survive the trip to Cloud Logging.** Tako
+  installs no `slog` handler, so a deployed service writes Go's default
+  text lines, and Cloud Logging files everything a container prints as
+  severity `DEFAULT` unless the line is JSON carrying a `severity`
+  field. `ctx.Log().Error(…)` therefore reads the same as
+  `ctx.Log().Info(…)` once it lands — you can grep the text, but you
+  cannot filter or alert by level. Setting a JSON handler yourself
+  (above) gets you structured fields; it still won't map slog levels
+  onto Cloud Logging's severities without a `ReplaceAttr` that renames
+  `level` to `severity`.
+- Request logs are the dev-console format in the cloud too — one
+  `GET /path → 200 (1.4ms)` line per request on stdout, not structured
+  and not correlated with the trace.
+- `tako logs` fetches once — no `--follow`/streaming, and no severity
+  filter (there would be nothing to filter on, per the first point).
 - No secret versioning surface: services read `latest` at boot, and
   tako will not write versions for you (by design, not a gap).

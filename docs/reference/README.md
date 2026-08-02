@@ -61,6 +61,10 @@ path.
 
 - [auth.md](auth.md) — `tako.Auth`: providers, sessions, `WithAuth`,
   the dev bar
+- [testing.md](testing.md) — `tako.NewTestApp`: the test surface, the
+  fake clock, chaos mode
 - [client-ts.md](client-ts.md) — `tako gen client ts`: the generated
   TypeScript client
 - [cli.md](cli.md) — the command surface and the confirmation ladder
+- [errors.md](errors.md) — every analysis rule tako can refuse with,
+  and what each one protects

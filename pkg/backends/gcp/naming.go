@@ -6,9 +6,15 @@ package gcp
 // spec §4.6a: non-prod envs prefix logical names; Datastore instead
 // isolates by namespace (namespace = env, no prefix).
 
+// DefaultEnv is the environment whose names go unprefixed. It lives
+// here, next to the rule that reads it, because the runtime and the
+// provisioner must agree on it exactly: a disagreement would have
+// deploys create names the services cannot read.
+const DefaultEnv = "prod"
+
 // Prefixed applies the env prefix to a logical resource name.
 func Prefixed(env, base string) string {
-	if env == "prod" {
+	if env == DefaultEnv {
 		return base
 	}
 	return env + "-" + base
