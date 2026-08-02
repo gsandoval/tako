@@ -11298,3 +11298,72 @@ on custom-metric selectors, the `_bucket` suffix for distributions, the
 `duration: 0s` whenever a lookback exceeds 1d1h.
 
 Next: Y1b (analyzer) on a single code path.
+
+## Y1a amendment 3 — the reading vocabulary, completed (2026-08-02)
+
+Owner asked whether rate/sum/delta are needed beyond count and
+percentile, and told me to verify `increase` is the right function
+rather than assume it.
+
+### Every PromQL function parses — which proves nothing
+
+Probed 18 functions against the live endpoint. `increase`, `delta`,
+`rate`, `irate`, `sum_over_time`, `avg_over_time`, `min/max/last/present/
+absent_over_time`, `resets`, `histogram_quantile`, `predict_linear`,
+`deriv` — **all PARSE**. Cloud Monitoring implements the full function
+set, so availability is not the constraint and a parse check cannot
+choose between them. That is the same trap as `increase(...) == 0`,
+which also parsed and would never have fired.
+
+The choice is semantic, and PromQL's semantics decide it:
+
+- **`increase(v[w])`** — counter-only, reset-aware, extrapolates a
+  partial window. **Correct for tako's metrics**, which are written
+  CUMULATIVE per instance with series appearing and vanishing as
+  instances scale — exactly the regime it exists for.
+- **`delta(v[w])`** — defined for GAUGES: last minus first, no reset
+  handling. On a counter an instance restart reads as a negative delta.
+  Wrong here, and wrong quietly.
+- **`avg_over_time` / `sum_over_time`** — operate on RAW samples. On a
+  cumulative counter that averages running totals, which is not a rate,
+  a count, or anything a user means.
+
+So `increase` for Count, `rate` for Rate, and for the mean
+`increase(_sum)/increase(_count)` — both halves counter-correct, rather
+than `avg_over_time(_sum)` which would report the mean of running sums.
+Verified arithmetically against the recorded distribution: 4216ms over
+14 observations is 301.1ms, exactly what Cloud Monitoring reports as the
+distribution's own mean.
+
+**For the Y1e gate:** compare `increase` against `delta` on live data
+across an instance scale event. The reasoning above is definitional, but
+the failure it predicts has not been watched happen.
+
+### The gap this closed
+
+A histogram could be asked about its SHAPE and never its VOLUME — you
+could alert that thumbnails got slow, but not that none were made. That
+is the louder failure and it was unexpressible.
+
+`Recording` (sealed over Counter and Histogram) now backs `Rate` and
+`Count`, so "how fast" and "how many" work on either. `Mean` and `Sum`
+are histogram-only. sdk_lock 156 → **159**.
+
+| reading | counter | histogram | query |
+|---|---|---|---|
+| `Rate` | ✓ | ✓ | `rate(x[w])` / `rate(x_count[w])` |
+| `Count` | ✓ | ✓ | `increase(x[w])` / `increase(x_count[w])` |
+| `Sum` | — | ✓ | `increase(x_sum[w])` |
+| `Mean` | — | ✓ | `increase(x_sum[w]) / increase(x_count[w])` |
+| `Percentile` | — | ✓ | `histogram_quantile(q, rate(x_bucket[w]))` |
+
+`Sum` included on owner instruction, overriding my "no example demands
+it" deferral. Deliberately NOT added: `delta` (for a counter it IS
+increase — one concept, three words), the raw cumulative value (resets
+per instance, so alerting on it is a footgun), and `sum` across
+instances (that is the cross-series reduction every reading already
+applies, not a user-facing choice).
+
+This is the fourth time a vocabulary looked complete because I had only
+enumerated the mechanism I started from. The table above is the
+enumeration that should have existed when `Metric` was first designed.

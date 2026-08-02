@@ -48,14 +48,18 @@ type Incident struct {
 }
 
 var (
-	Slow    = tako.Alert(tako.Above(tako.Percentile(lat, 0.99), 2000, tako.For(5*time.Minute)), room)
-	Odd     = tako.Alert(tako.Above(tako.Percentile(lat, 0.87), 1500, tako.For(5*time.Minute)), room)
-	Stalled = tako.Alert(tako.Below(tako.Count(ups), 1, tako.Window{Every: 30 * time.Minute}), oncall)
-	Flooded = tako.Alert(tako.Above(tako.Rate(ups), 50, tako.For(5*time.Minute)), oncall)
-	Broken  = tako.Alert(tako.Above(tako.ErrorRate(svc), 0.05, tako.For(5*time.Minute)), oncall, room)
-	Slowest = tako.Alert(tako.Above(tako.ErrorRate(MakeThumb), 0.05, tako.For(5*time.Minute)), hook)
-	Stuck   = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, tako.For(5*time.Minute)), oncall)
-	Missed  = tako.Alert(tako.Absent(tako.Runs(Cleanup), tako.For(26*time.Hour)), oncall, bus)
+	Slow       = tako.Alert(tako.Above(tako.Percentile(lat, 0.99), 2000, tako.For(5*time.Minute)), room)
+	Odd        = tako.Alert(tako.Above(tako.Percentile(lat, 0.87), 1500, tako.For(5*time.Minute)), room)
+	Stalled    = tako.Alert(tako.Below(tako.Count(ups), 1, tako.Window{Every: 30 * time.Minute}), oncall)
+	Flooded    = tako.Alert(tako.Above(tako.Rate(ups), 50, tako.For(5*time.Minute)), oncall)
+	NoThumbs   = tako.Alert(tako.Below(tako.Count(lat), 1, tako.Window{Every: time.Hour}), oncall)
+	Throughput = tako.Alert(tako.Below(tako.Rate(lat), 0.1, tako.For(10*time.Minute)), room)
+	AvgSlow    = tako.Alert(tako.Above(tako.Mean(lat), 800, tako.For(5*time.Minute)), room)
+	Workload   = tako.Alert(tako.Above(tako.Sum(lat), 600000, tako.Window{Every: 10 * time.Minute}), room)
+	Broken     = tako.Alert(tako.Above(tako.ErrorRate(svc), 0.05, tako.For(5*time.Minute)), oncall, room)
+	Slowest    = tako.Alert(tako.Above(tako.ErrorRate(MakeThumb), 0.05, tako.For(5*time.Minute)), hook)
+	Stuck      = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, tako.For(5*time.Minute)), oncall)
+	Missed     = tako.Alert(tako.Absent(tako.Runs(Cleanup), tako.For(26*time.Hour)), oncall, bus)
 )
 
 type Photo struct {

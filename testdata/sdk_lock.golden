@@ -74,7 +74,7 @@ func Below(m Metric, threshold float64, w Window) Condition
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
 func ChatSpace(space string) *ChannelHandle
-func Count(c *CounterHandle) Metric
+func Count(r Recording) Metric
 func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
 func DeadLetters[T any](queue *QueueHandle[T]) Metric
@@ -87,6 +87,7 @@ func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
 func Job[T any](name string) *JobHandle[T]
 func Lock(name string) *LockHandle
+func Mean(h *HistogramHandle) Metric
 func NewID() string
 func NewTestApp(tb testing.TB) *TestApp
 func NotFound() error
@@ -95,7 +96,7 @@ func Percentile(h *HistogramHandle, q float64) Metric
 func Permanent(err error) error
 func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
-func Rate(c *CounterHandle) Metric
+func Rate(r Recording) Metric
 func Redirect(target string) (HTML, error)
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
 func Runs(cron Handler) Metric
@@ -104,6 +105,7 @@ func Service(cfg ...ServiceConfig) *ServiceHandle
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
 func Site(dir string, cfg ...SiteConfig) *SiteHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+func Sum(h *HistogramHandle) Metric
 func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
 func Webhook(url string) *ChannelHandle
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
@@ -139,6 +141,7 @@ type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.
 type Profile int
 type PutPolicy struct{MaxSize int64; ContentType string}
 type QueueHandle[T any] struct{}
+type Recording interface{recordingRef() metricRef}
 type Route struct{SignIn bool; Private bool}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}

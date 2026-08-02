@@ -91,16 +91,63 @@ type metricRef struct {
 	q float64
 }
 
-// Rate is a counter's increase per second, summed across instances.
-func Rate(c *CounterHandle) Metric {
-	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "rate"}}
+// Recording is a declared Counter or Histogram — something values were
+// recorded into. Sealed, like Metric.
+//
+// Rate and Count take either, because "how fast" and "how many" are the
+// same question whichever recording you ask: a histogram counts its
+// observations. Without this a histogram could only be asked about its
+// SHAPE and never its volume — you could alert that thumbnails got slow
+// but not that none were made, which is the louder failure.
+type Recording interface {
+	recordingRef() metricRef
 }
 
-// Count is how many a counter recorded within the condition's window,
-// summed across instances — the reading for "fewer than one upload in
-// half an hour".
-func Count(c *CounterHandle) Metric {
-	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "count"}}
+func (c *CounterHandle) recordingRef() metricRef {
+	return metricRef{kind: "counter", name: c.name}
+}
+
+func (h *HistogramHandle) recordingRef() metricRef {
+	return metricRef{kind: "histogram", name: h.name}
+}
+
+// Rate is a recording's increase per second, summed across instances.
+// For a histogram it is observations per second — throughput.
+func Rate(r Recording) Metric {
+	ref := r.recordingRef()
+	ref.agg = "rate"
+	return derived{ref: ref}
+}
+
+// Count is how many were recorded within the window, summed across
+// instances — the reading for "fewer than one upload in half an hour",
+// and for a histogram, "no thumbnails were made at all".
+func Count(r Recording) Metric {
+	ref := r.recordingRef()
+	ref.agg = "count"
+	return derived{ref: ref}
+}
+
+// Sum is the total of a histogram's observed values over the window —
+// milliseconds of work done, bytes transferred — as opposed to how many
+// observations there were.
+func Sum(h *HistogramHandle) Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "sum"}}
+}
+
+// Mean is a histogram's average observed value over the window.
+//
+// It is Sum over Count, and both halves are counter-correct rather than
+// sample averages: averaging the raw cumulative totals would report the
+// mean of running sums, which is not a latency. Verified against a real
+// distribution — 4216ms over 14 observations is 301.1ms, matching what
+// Cloud Monitoring reports as the distribution's own mean.
+//
+// Prefer a Percentile for latency. A mean hides the tail that wakes you
+// up; it is here because "the average got worse" is still a real
+// question for throughput-shaped work.
+func Mean(h *HistogramHandle) Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "mean"}}
 }
 
 // derived is a metric expression tako writes the query for.
