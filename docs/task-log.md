@@ -11096,3 +11096,79 @@ Exposing alignment did not resolve it. Options unchanged: (a) ship
 `Runs`/`Absent` with the cap and an analyzer error that names it and
 explains the daily-cron consequence; (b) cut `Runs`; (c) counter
 heartbeat. Recommendation remains (a).
+
+## Y1 — PromQL lookbacks defeat the 23h30m cap; daily crons ARE watchable (2026-08-02)
+
+Owner asked whether `increase(my_cron_job_success_total[26h]) == 0`
+would work instead of `conditionAbsent`, and said not to take their word
+for it. Researched and probed. **The approach is right and it resolves
+the open decision — the specific query is not, and only the probe
+showed why.**
+
+### Why it works: the range selector is not the duration field
+
+The 23h30m ceiling is validation on `duration` — how long a breach must
+persist. A PromQL **lookback** lives inside the query, where no such
+check applies:
+
+```
+absent_over_time(...[26h]), duration=0s   -> HTTP 200 ACCEPTED
+absent_over_time(...[7d]),  duration=0s   -> HTTP 200 ACCEPTED
+absent_over_time(...[26h]), duration=60s  -> HTTP 400
+   "Retest windows are not supported in PromQL queries with lookbacks longer than 1d1h."
+```
+
+So a long lookback must pair with `duration: 0s` — which is the right
+shape anyway: with a 26-hour window there is nothing to retest.
+
+### Why `increase(...) == 0` is the wrong query, proven not argued
+
+Both forms are ACCEPTED by the API, so a create-time check would have
+passed either. Querying live data separates them:
+
+```
+increase(request_count{route="/_tako/cron/Cleanup"}[26h])        -> 0 series
+increase(request_count{route="/_tako/cron/Cleanup"}[26h]) == 0   -> 0 series
+absent_over_time(request_count{route="/_tako/cron/Cleanup"}[26h]) -> 1 series
+```
+
+`increase()` over a range with no samples returns NOTHING, and `== 0`
+filters nothing, so the alert never fires — the exact silence it was
+meant to break. `absent_over_time` returns 1 precisely when the range is
+empty. This is the classic PromQL missing-data trap, and it would have
+shipped as an alert that looked correct and never fired.
+
+Both readings have a use and the reference should say so:
+- **`absent_over_time`** — "the cron stopped running" (no data at all).
+- **`increase(...) == 0`** — "the counter is still reported but has not
+  moved", which needs the series to exist.
+
+### Design consequence
+
+`Absent` compiles to a PromQL `absent_over_time` condition with
+`duration: 0s`, not to `conditionAbsent`. One code path, and the
+23h30m cap disappears:
+
+```go
+var Missed = tako.Alert(tako.Absent(tako.Runs(Cleanup), tako.For(26*time.Hour)), Oncall)
+```
+
+`Window.For` on an Absent condition is therefore the LOOKBACK, which is
+what a reader already assumes it is.
+
+`Above`/`Below` stay on `conditionThreshold`: their 24h ceiling is not
+painful, and threshold conditions render better in the console.
+
+Also learned, and required for Y1c: a `custom.googleapis.com/*` selector
+must carry a `monitored_resource` matcher —
+`custom_googleapis_com:tako_uploads{monitored_resource="generic_task"}`
+returned 3 series, the bare name errored with *"must specify a label
+matcher on the 'monitored_resource' label"*. Name mapping is the
+documented rule: first `/` becomes `:`, every other special character
+becomes `_`.
+
+**The daily-cron decision (a)/(b)/(c) is withdrawn — none is needed.**
+The owner's question produced a fourth option that costs nothing and
+removes the limit.
+
+Every probe policy was created disabled and deleted; project ends at 0.
