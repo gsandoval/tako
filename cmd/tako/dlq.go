@@ -158,24 +158,34 @@ func runDLQ(args []string) error {
 	return nil
 }
 
-// pickDead resolves an id PREFIX to one message, the way git resolves a
+// pickByPrefix resolves an id PREFIX to one item, the way git resolves a
 // short SHA. Full ids are long and machine-shaped; asking a human to
 // retype one exactly is a way of not being used.
-func pickDead(msgs []gcp.DeadMessage, prefix string) (gcp.DeadMessage, error) {
-	var hits []gcp.DeadMessage
-	for _, m := range msgs {
-		if strings.HasPrefix(m.ID, prefix) {
-			hits = append(hits, m)
+//
+// lister names the command that would show the choices — it differs
+// between the cloud and local paths, and a refusal that cannot tell you
+// where to look is only half an error.
+func pickByPrefix[T any](items []T, prefix string, id func(T) string, lister string) (T, error) {
+	var zero T
+	var hits []T
+	for _, it := range items {
+		if strings.HasPrefix(id(it), prefix) {
+			hits = append(hits, it)
 		}
 	}
 	switch len(hits) {
 	case 1:
 		return hits[0], nil
 	case 0:
-		return gcp.DeadMessage{}, fmt.Errorf("no dead letter matching %q — tako dlq <service> lists what is there", prefix)
+		return zero, fmt.Errorf("no dead letter matching %q — %s lists what is there", prefix, lister)
 	default:
-		return gcp.DeadMessage{}, fmt.Errorf("%q matches %d dead letters — use more characters", prefix, len(hits))
+		return zero, fmt.Errorf("%q matches %d dead letters — use more characters", prefix, len(hits))
 	}
+}
+
+func pickDead(msgs []gcp.DeadMessage, prefix string) (gcp.DeadMessage, error) {
+	return pickByPrefix(msgs, prefix, func(m gcp.DeadMessage) string { return m.ID },
+		"tako dlq <service>")
 }
 
 // replayDead puts messages back into at-least-once delivery and then

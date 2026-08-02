@@ -2,7 +2,6 @@ package tako
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -35,7 +34,7 @@ func (j *JobHandle[T]) Run(ctx Ctx, params T) error {
 		return hooks.RunJob(ctx, j.name, raw)
 	}
 	if hooks.Queue == nil {
-		return errors.New("tako: jobs are not wired — Run works in booted services (tako dev / deploy) and NewTestApp tests, not bare tests")
+		panic("tako: no queue backend wired — run via tako dev, a generated service, or tako.NewTestApp")
 	}
 	// Locally a job rides the queue dispatcher: DrainQueues/WaitIdle
 	// cover it, retries follow the local queue policy, and a failed

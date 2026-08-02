@@ -109,23 +109,19 @@ func main() {
 		}
 	case "dlq":
 		if err := runDLQ(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
-			os.Exit(1)
+			fail(err)
 		}
 	case "promote":
 		if err := runPromote(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
-			os.Exit(1)
+			fail(err)
 		}
 	case "rollback":
 		if err := runRollback(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
-			os.Exit(1)
+			fail(err)
 		}
 	case "prune":
 		if err := runPrune(os.Args[2:]); err != nil {
-			fmt.Fprintf(os.Stderr, "tako: %v\n", err)
-			os.Exit(1)
+			fail(err)
 		}
 	case "logs":
 		if err := runLogs(os.Args[2:]); err != nil {
@@ -242,7 +238,10 @@ func runTest(args []string) error {
 	return cmd.Run()
 }
 
+// fail is how every command exits on error — one prefix, so a message
+// from tako is distinguishable from one produced by something tako
+// shelled out to (tako test runs go test; its failures are go's).
 func fail(err error) {
-	fmt.Fprintln(os.Stderr, err)
+	fmt.Fprintf(os.Stderr, "tako: %v\n", err)
 	os.Exit(1)
 }

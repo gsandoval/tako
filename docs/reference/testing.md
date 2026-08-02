@@ -178,15 +178,28 @@ tako: ctx.User on an unauthenticated context — pass a user to app.Ctx, or use 
 tako: TAKO_CHAOS_SEED must be a seed integer, got "yesterday"
 ```
 
-`Do`/`Run`/`Render` on an unbooted app return errors rather than
-panicking, and say which environments they work in:
+**Using a resource with no app booted panics, always** — one condition,
+one mechanism, one shape of sentence:
 
 ```
-tako: locks are not wired — Do works in booted services (tako dev / deploy) and NewTestApp tests, not bare tests
+tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp
+tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp
+```
+
+It panics rather than returning an error because these methods' error
+returns already mean something: an unwired `Entity.Get` reporting an
+error would be mistaken for not-found, and an unwired `Lock.Do` for the
+function failing. A panic cannot be mistaken for either.
+
+`Site` is the one exception, and returns an error, because it is the
+one case that is not a wiring mistake — templates are compiled INTO a
+generated service, so there is nothing `NewTestApp` could have wired:
+
+```
 tako: site templates are not wired — Render works in generated services (tako dev / deploy), not bare tests
 ```
 
-That last one is the real limit worth internalizing: **`Render` and
+That is the real limit worth internalizing: **`Render` and
 `Fragment` need a generated service**, because templates are compiled
 into it. Page handlers are still testable — assert the data path and
 the redirect/fragment branch via `app.Ctx()` / `app.HTMX()` — but

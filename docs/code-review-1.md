@@ -138,7 +138,11 @@ func (c *Client) url(host, format string, args ...any) string  // base overridab
 
 Sized as its own task; it touches every adapter file.
 
-## P3 — `pkg/runtime` is an unversioned public API
+## P3 — `pkg/runtime` is an unversioned public API — **SHIPPED 2026-08-02**
+
+> Both halves: a stability policy in `reference/README.md` ("what is
+> API, and what is not") and `pkg/runtime/testdata/runtime_lock.golden`,
+> a deliberately weaker lock recording names and signatures only.
 
 Generated `.tako/gen/<service>/main.go` — which lives in the *user's*
 repo — imports 33 distinct symbols from `pkg/runtime`, out of ~87
@@ -154,7 +158,12 @@ Two honest options, both cheap: state the policy ("`pkg/…` is internal;
 regenerate after upgrading"), or extend the lock-test pattern to
 `pkg/runtime`. Doing neither means finding out from a user.
 
-## P4 — "Not wired" has two mechanisms and three phrasings
+## P4 — "Not wired" has two mechanisms and three phrasings — **SHIPPED 2026-08-02**
+
+> Panic everywhere, one sentence shape. Site keeps returning an error
+> because it is the one case that is not a wiring mistake — templates
+> compile into a generated service, so `NewTestApp` could not have
+> wired them.
 
 One condition — a resource used with no app booted — answers three
 ways:
@@ -177,7 +186,10 @@ programmer error; return where a bare test is a legitimate place to
 be"), but the current split does not follow it. Since this is product
 text, it wants a decision, not a refactor.
 
-## P5 — `ctx.User()` panics with two different texts
+## P5 — `ctx.User()` panics with two different texts — **SHIPPED 2026-08-02**
+
+> Casing aligned; the two remediations stay, because the fix genuinely
+> differs between a request and a test.
 
 `pkg/runtime/ctx.go:29` and `testapp.go:221` handle the identical
 mistake:
@@ -192,7 +204,11 @@ between a request and a test. What is not deliberate is the method
 being spelled `Ctx.User` in one and `ctx.User` in the other. Small, and
 worth aligning while the texts are still cheap to touch.
 
-## P6 — The CLI exits two different ways
+## P6 — The CLI exits two different ways — **SHIPPED 2026-08-02**
+
+> Every command exits through `fail`, which now carries the `tako: `
+> prefix — so a message from tako is distinguishable from one produced
+> by something it shelled out to.
 
 `cmd/tako/main.go` dispatches twelve commands. Six route errors through
 `fail(err)`, which prints the error bare. Four inline the same three
@@ -213,7 +229,11 @@ Also here: `gen` is the only command implemented inline in `main()`
 rather than delegating to a `runX`, which is why its ~40 lines of
 mode-parsing sit in the switch.
 
-## P7 — `pkg/devserver` has no tests
+## P7 — `pkg/devserver` has no tests — **SHIPPED 2026-08-02**
+
+> The pure decisions are covered: the banner's counts, the
+> ignore-my-own-writes filter, and which service the loop runs. The
+> process half stays on the gate scripts.
 
 447 lines implementing the whole `tako dev` loop — watch, analyze,
 generate, run, restart, the resource banner — with zero `_test.go`
@@ -226,7 +246,10 @@ Everything else is well covered: analyzer goldens, the conformance
 suite across both backends, runtime tests including the shutdown drain,
 provision plan tests, and six example suites.
 
-## P8 — Small duplication, listed for completeness
+## P8 — Small duplication, listed for completeness — **SHIPPED 2026-08-02**
+
+> One generic `pickByPrefix`. The four `plural` copies stay: four
+> unexported two-line helpers in four packages is idiomatic Go.
 
 - **`plural(n)` exists four times** — `cmd/tako/genclient.go:59`,
   `pkg/runtime/shutdown.go:190`, `pkg/devserver/devserver.go:442`,
@@ -239,7 +262,9 @@ provision plan tests, and six example suites.
   `pickByPrefix[T]` would collapse them; the two error texts should
   stay distinct.
 
-## P9 — `cmd/tako/deploy.go` is 1070 lines
+## P9 — `cmd/tako/deploy.go` is 1070 lines — **SHIPPED 2026-08-02**
+
+> `logs.go` (66) and `destroy.go` (228) carved out; deploy.go is 806.
 
 It holds `runDeploy`, `runLogs` and `runDestroy` — three separate
 commands — plus about twenty helpers. `logs` and `destroy` living in

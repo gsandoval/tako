@@ -9821,3 +9821,95 @@ keep the old signatures — they are records of what was true then.
 Migration was three `AdvanceCron` call sites, one `Singleton`
 declaration, and `compile_check_test.go`. Full suite green, six examples
 green, gofmt and vet clean.
+
+## The replay ordering bug, and P3–P9 (2026-08-02)
+
+Closes `docs/code-review-1.md`. The bug first, then the review's
+remaining findings in the order approved.
+
+### The bug: DrainReplays returned before the work was counted
+
+`replay` handed the message to `go d.dispatch(…)`, and the in-flight
+count is incremented INSIDE dispatch — so `DrainReplays` could return
+with nothing counted, and `WaitIdle` answered "idle" for a message that
+had not been delivered. In a user's suite that is `app.DrainQueues()`
+returning early: the silent flake generator behind the one failure seen
+during P2.
+
+It was `go` for a reason — `dispatch` takes `d.mu` (via `chaosPlanFor`)
+and `replay` held it. Fixed by resolving the carrier under the lock
+(`routeFor`) and dispatching after releasing it, synchronously; dispatch
+still launches delivery in its own goroutine, but counts the work before
+returning.
+
+**Honest about the test.** `TestDrainReplaysCountsTheWorkBeforeItReturns`
+is a CONTRACT test, not a deterministic regression test. Reintroducing
+`go d.dispatch` still passes it — the window is a few instructions wide
+and the stray goroutine essentially always wins, which is exactly why
+the bug survived as a rare flake rather than a failing test. Two
+attempts to force it (a blocked consumer with a short WaitIdle; a direct
+in-flight read) both lost the race. What the test does buy: the
+invariant is written down and checked, so removing the counting outright
+fails loudly.
+
+`sync.WaitGroup` became a small `inflightCount` so the count can be READ
+— the invariant "work is counted before this call returns" is not
+observable through `Wait` alone.
+
+### P3 — pkg/runtime's compatibility promise
+
+Both halves, per the decision. `docs/reference/README.md` gains "what is
+API, and what is not": the root package is the API and is locked; `pkg/…`
+is internals and may change in any release, with the two consequences
+that actually bite (generated code in the user's repo names ~30 runtime
+symbols; example tests import runtime deliberately).
+
+And `pkg/runtime/testdata/runtime_lock.golden` — 51 entries,
+deliberately WEAKER than the SDK lock: names and signatures only, types
+by name, so internals stay free. A diff there is not a refusal, it is a
+release note.
+
+### P4 — one condition, one mechanism
+
+`Lock.Do`/`TryDo` and `Job.Run` now panic with the same sentence every
+other unwired resource uses. The argument that already justified
+panicking for `Entity.Get` applies to them unchanged: their error
+returns mean something else, so an unwired error is indistinguishable
+from "not found" or "your function failed". A panic cannot be mistaken
+for either.
+
+`Site` keeps returning an error, and the docs now say why rather than
+leaving it looking arbitrary: it is the one case that is not a wiring
+mistake — templates compile INTO a generated service, so there is
+nothing `NewTestApp` could have wired.
+
+### P5, P6
+
+`Ctx.User` → `ctx.User` in the runtime panic, matching testapp's. The
+two remediations stay: the fix genuinely differs between a request and a
+test.
+
+Every CLI command exits through `fail`, which now carries `tako: `.
+Four commands had inlined their own copy of the exit and six printed the
+error bare. The prefix earns its place when a command shells out — `tako
+test` runs `go test`, and its failures are go's.
+
+### P7 — the dev loop has tests
+
+The pure decisions: the banner's counts (four cases, including the
+zero-endpoints pluralization), the ignore-my-own-writes filter (without
+which the loop reloads forever on `.tako/` writes), which service the
+loop runs, and both refusals — an app with nothing public, and a
+private-only package. The process half stays on the gate scripts.
+
+### P8, P9
+
+One generic `pickByPrefix` behind both dlq resolvers, taking the lister
+command as a parameter so each refusal still names where to look. The
+four `plural` copies stay — four unexported two-line helpers in four
+packages is idiomatic Go, and a shared `internal/text` would be worse.
+
+`deploy.go` 1070 → 806, with `logs.go` (66) and `destroy.go` (228)
+carved out. Pure movement; verified by running the CLI.
+
+Full suite green, six examples green, gofmt and vet clean.

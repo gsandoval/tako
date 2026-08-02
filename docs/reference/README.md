@@ -16,6 +16,34 @@ The [guide](../guide/README.md) teaches by example; this reference
 answers by feature. The [README](../../README.md) is the five-minute
 path.
 
+## What is API, and what is not
+
+**The root `tako` package is the API.** Every symbol in it is locked
+(`testdata/sdk_lock.golden`, 148 entries) and reviewed; changing one is
+its own task with its own written review, never a side effect. That is
+the surface your application code imports, and the one this reference
+documents.
+
+**Everything under `pkg/…` is tako's internals** — the analyzer, the
+code generator, the runtime, the provisioner, the backends. They are
+importable because Go has no other way to let the CLI and the generated
+services share them, not because they are for you. They may change in
+any release.
+
+Two consequences worth knowing:
+
+- **Generated services import `pkg/runtime`.** The `.tako/gen/` files in
+  your repository name about thirty of its symbols, so upgrading tako
+  can make committed generated code stale. `tako test`, `tako dev` and
+  `tako deploy` all regenerate before they do anything else, so the fix
+  is automatic — but a bare `go build ./.tako/...` after an upgrade may
+  fail until you run one of them. (`pkg/runtime` carries its own lock
+  test, so such a change is deliberate and lands in the release notes.)
+- **Example tests import `pkg/runtime` directly** to drive contracts
+  whose surface really is the wire — multipart decoding, signed-URL
+  rejection texts. That is a framework-testing technique, not a pattern
+  to copy; [testing.md](testing.md) covers what your tests should use.
+
 ## HTTP
 
 - [api.md](api.md) — `tako.API`: JSON endpoints, request binding

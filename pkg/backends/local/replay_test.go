@@ -190,3 +190,57 @@ func TestReplayKeepsTheFileWhenTheCarrierIsGone(t *testing.T) {
 		t.Errorf("the record was deleted with nowhere to deliver it — it was the only copy")
 	}
 }
+
+// The ordering bug behind a full-suite flake: DrainReplays used to hand
+// the message to `go d.dispatch(…)`, and the in-flight count is
+// incremented INSIDE dispatch — so it could return before the work was
+// counted, and WaitIdle answered "idle" for a message that had not been
+// delivered. In a user's suite that is app.DrainQueues() returning early.
+//
+// Honest about what this test is: a CONTRACT test, not a deterministic
+// regression test. The window is a few instructions wide — reintroduce
+// `go d.dispatch` and this still passes, because the stray goroutine
+// almost always runs before the assertion. It could not be forced from
+// a test without instrumenting the scheduler.
+//
+// What it does buy: the invariant is now written down and checked, so
+// removing the counting outright fails loudly, and the blocked-consumer
+// half pins that WaitIdle and DrainReplays agree at all.
+func TestDrainReplaysCountsTheWorkBeforeItReturns(t *testing.T) {
+	dir := t.TempDir()
+	d := NewQueueDispatcher(dir, QueueOptions{MaxAttempts: 1, Backoff: time.Millisecond})
+	release := make(chan struct{})
+	arrived := make(chan struct{})
+	d.Consume("thumbnails", func(ctx context.Context, p []byte) error {
+		close(arrived)
+		<-release
+		return nil
+	})
+
+	writeReplay(t, dir, backends.DeadLetter{Queue: "thumbnails", Payload: []byte(`{"photo":"x"}`)})
+	if n, err := d.DrainReplays(); err != nil || n != 1 {
+		t.Fatalf("DrainReplays = %d, %v", n, err)
+	}
+
+	// The invariant, checked directly rather than raced: the work is
+	// counted by the time DrainReplays returns. Asserting this through
+	// WaitIdle alone is not deterministic — the stray goroutine usually
+	// wins — which is exactly why the bug survived as a rare flake.
+	if n := d.inflight.Len(); n == 0 {
+		t.Fatal("DrainReplays returned with nothing in flight — WaitIdle (and app.DrainQueues) will report idle for a message that has not been delivered")
+	}
+	// And the consequence: idle is a LIE while the consumer is blocked.
+	if err := d.WaitIdle(150 * time.Millisecond); err == nil {
+		t.Fatal("WaitIdle reported idle while a replayed message was still undelivered")
+	}
+	select {
+	case <-arrived:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the replayed message never reached the consumer")
+	}
+
+	close(release)
+	if err := d.WaitIdle(2 * time.Second); err != nil {
+		t.Fatalf("WaitIdle after release: %v", err)
+	}
+}

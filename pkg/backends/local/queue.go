@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
@@ -42,7 +43,7 @@ type QueueDispatcher struct {
 	rateNext     map[string]time.Time
 	rateEvery    map[string]time.Duration
 	chaos        *chaosState
-	inflight     sync.WaitGroup
+	inflight     inflightCount
 
 	// Delayed publishes. Real mode arms a timer per message; manual mode
 	// (test apps) parks messages on a virtual clock that only Advance
@@ -343,6 +344,32 @@ func (d *QueueDispatcher) deadLetter(to delivery, payload []byte, attempts int, 
 
 // WaitIdle blocks until every published message has acked or
 // dead-lettered, or the timeout passes.
+// inflightCount is a WaitGroup whose count can also be READ. The
+// readable half exists for one reason: the invariant that a call which
+// hands work to the dispatcher must count it BEFORE returning is not
+// observable through Wait alone — a test can only race it. DrainReplays
+// violated that invariant for months and surfaced as an occasional
+// full-suite flake.
+type inflightCount struct {
+	wg sync.WaitGroup
+	n  atomic.Int64
+}
+
+func (c *inflightCount) Add(n int) {
+	c.n.Add(int64(n))
+	c.wg.Add(n)
+}
+
+func (c *inflightCount) Done() {
+	c.n.Add(-1)
+	c.wg.Done()
+}
+
+func (c *inflightCount) Wait() { c.wg.Wait() }
+
+// Len is the number of deliveries in flight right now.
+func (c *inflightCount) Len() int64 { return c.n.Load() }
+
 func (d *QueueDispatcher) WaitIdle(timeout time.Duration) error {
 	done := make(chan struct{})
 	go func() {
@@ -436,29 +463,49 @@ func (d *QueueDispatcher) DrainReplays() (int, error) {
 // tako-replay-to attribute, which is what keeps the two backends
 // behaving alike.
 func (d *QueueDispatcher) replay(rec backends.DeadLetter) bool {
+	to, deliver, ok := d.routeFor(rec)
+	if !ok {
+		return false
+	}
+	// Dispatched SYNCHRONOUSLY, and outside the lock.
+	//
+	// This used to be `go d.dispatch(…)`, because dispatch takes d.mu
+	// (chaosPlanFor) and replay held it. But dispatch is also where the
+	// in-flight count is incremented, so deferring it to a goroutine
+	// left a window where DrainReplays had returned and the work was
+	// not yet counted — WaitIdle answered "idle" for a message that had
+	// not been delivered, and DrainQueues would do the same in a user's
+	// test. Resolving the route under the lock and dispatching after it
+	// closes that window: dispatch counts the work before it returns,
+	// and still launches delivery in its own goroutine.
+	d.dispatch(to, deliver, rec.Payload)
+	return true
+}
+
+// routeFor resolves a dead letter to its carrier under the lock, so the
+// caller can dispatch without holding it.
+func (d *QueueDispatcher) routeFor(rec backends.DeadLetter) (delivery, func(context.Context, []byte) error, bool) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if rec.Subscriber == "" {
 		deliver, ok := d.consumers[rec.Queue]
 		if !ok {
-			return false
+			return delivery{}, nil, false
 		}
-		go d.dispatch(delivery{
+		return delivery{
 			source: rec.Queue,
 			dlDir:  filepath.Join("deadletter", rec.Queue),
-		}, deliver, rec.Payload)
-		return true
+		}, deliver, true
 	}
 	for _, sub := range d.subscribers[rec.Queue] {
 		if sub.name != rec.Subscriber {
 			continue
 		}
-		go d.dispatch(delivery{
+		return delivery{
 			source:   rec.Queue,
 			consumer: sub.name,
 			dlDir:    filepath.Join("deadletter", rec.Queue, sub.name),
-		}, sub.deliver, rec.Payload)
-		return true
+		}, sub.deliver, true
 	}
-	return false
+	return delivery{}, nil, false
 }

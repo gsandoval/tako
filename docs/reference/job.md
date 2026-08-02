@@ -128,8 +128,8 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 - `tako.WithTTL is not a tako.JobHandler option (tako.JobHandler
   accepts WithParallel, WithRetries, WithProfile, WithFootprint)
   (tako/invalid-option)`
-- `Run` in a bare test: `tako: jobs are not wired — Run works in booted
-  services (tako dev / deploy) and NewTestApp tests, not bare tests`
+- `Run` in a bare test panics: `tako: no queue backend wired — run via
+  tako dev, a generated service, or tako.NewTestApp`
 - Missing env in the cloud: `job "settle" has no execution target —
   tako deploy injects TAKO_JOB_* from the graph's Run edges, so this is
   a tako bug (re-run tako deploy, and file it if it persists)`

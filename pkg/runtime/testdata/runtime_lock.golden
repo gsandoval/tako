@@ -1,0 +1,51 @@
+const ReplayAttr untyped string
+func BlobHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.Blob], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
+func Boot()
+func BootGCP() error
+func BootLocal(dir string) error
+func CronDispatch() net/http.Handler
+func DecodeJSON(r *net/http.Request, req any) error
+func FormBlob(r *net/http.Request, name string) (github.com/gsandoval/tako.Blob, error)
+func FormBool(r *net/http.Request, name string) (bool, error)
+func FormFloat64(r *net/http.Request, name string) (float64, error)
+func FormInt(r *net/http.Request, name string) (int, error)
+func FormInt64(r *net/http.Request, name string) (int64, error)
+func FormString(r *net/http.Request, name string) string
+func JSONHandler[Req, Res any](e github.com/gsandoval/tako.Endpoint[Req, Res], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
+func NewCtx(parent context.Context) github.com/gsandoval/tako.Ctx
+func PageHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.HTML], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
+func PathBool(r *net/http.Request, name string) (bool, error)
+func PathFloat64(r *net/http.Request, name string) (float64, error)
+func PathInt(r *net/http.Request, name string) (int, error)
+func PathInt64(r *net/http.Request, name string) (int64, error)
+func PathString(r *net/http.Request, name string) string
+func PushHandler(name string, h github.com/gsandoval/tako.Handler) net/http.Handler
+func QueryBool(r *net/http.Request, name string) (bool, error)
+func QueryFloat64(r *net/http.Request, name string) (float64, error)
+func QueryInt(r *net/http.Request, name string) (int, error)
+func QueryInt64(r *net/http.Request, name string) (int64, error)
+func QueryString(r *net/http.Request, name string) string
+func RegisterCron(name string, h github.com/gsandoval/tako.Handler)
+func RegisterJob(name string, h github.com/gsandoval/tako.Handler)
+func RegisterRemoteCall(pkgPath string, route string, transport any)
+func RegisterSingleton(name string, h github.com/gsandoval/tako.Handler)
+func RegisterSiteTemplates(fsys io/fs.FS, opts SiteOptions)
+func RegisterSubscriber(name string, h github.com/gsandoval/tako.Handler)
+func RegisterWorker(name string, h github.com/gsandoval/tako.Handler)
+func RemoteJSON[Req, Res any](ctx github.com/gsandoval/tako.Ctx, service string, base string, method string, path string, req Req) (Res, error)
+func RenderMarkdown(src string, trusted bool) ([]byte, error)
+func RequireAuth() HandlerOption
+func RunJobMain(name string, h github.com/gsandoval/tako.Handler)
+func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
+func Serve(h net/http.Handler)
+func SessionHandler() net/http.Handler
+func SetQueueRate(queue string, perSec int)
+func SignInPage(providers ...string) net/http.Handler
+func SignOutHandler() net/http.Handler
+func SignedURLHandler() net/http.Handler
+func SingletonHealth(name string) net/http.Handler
+func SiteHandler(fsys io/fs.FS, opts SiteOptions) net/http.Handler
+func WaitIdle(timeout time.Duration) error
+func WithDevBar(next net/http.Handler) net/http.Handler
+type HandlerOption
+type SiteOptions

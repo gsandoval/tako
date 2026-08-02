@@ -172,21 +172,9 @@ func onOneLine(payload []byte) string {
 	return buf.String()
 }
 
-// pickLocalDead resolves an id prefix, matching the cloud path's
-// git-style short ids.
+// pickLocalDead resolves an id prefix through the same resolver the
+// cloud path uses, so the two cannot drift into different rules.
 func pickLocalDead(msgs []localDead, prefix string) (localDead, error) {
-	var hits []localDead
-	for _, m := range msgs {
-		if strings.HasPrefix(m.ID, prefix) {
-			hits = append(hits, m)
-		}
-	}
-	switch len(hits) {
-	case 1:
-		return hits[0], nil
-	case 0:
-		return localDead{}, fmt.Errorf("no dead letter matching %q — tako dlq --local lists what is there", prefix)
-	default:
-		return localDead{}, fmt.Errorf("%q matches %d dead letters — use more characters", prefix, len(hits))
-	}
+	return pickByPrefix(msgs, prefix, func(m localDead) string { return m.ID },
+		"tako dlq --local")
 }
