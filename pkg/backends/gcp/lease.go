@@ -41,8 +41,8 @@ type leaseBody struct {
 // read returns the live record and its generation; held=false when the
 // object is absent (generation 0 for the create CAS).
 func (s *LeaseStore) read(ctx context.Context, name string) (body leaseBody, generation int64, exists bool, err error) {
-	u := "https://storage.googleapis.com/storage/v1/b/" + s.bucket() +
-		"/o/" + url.PathEscape(s.object(name)) + "?alt=media"
+	u := s.c.url(storageHost, "/storage/v1/b/"+s.bucket()+
+		"/o/"+url.PathEscape(s.object(name))+"?alt=media")
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return leaseBody{}, 0, false, err
@@ -71,9 +71,9 @@ func (s *LeaseStore) write(ctx context.Context, name string, body leaseBody, ifG
 	if err != nil {
 		return false, 0, err
 	}
-	u := "https://storage.googleapis.com/upload/storage/v1/b/" + s.bucket() +
-		"/o?uploadType=media&name=" + url.QueryEscape(s.object(name)) +
-		"&ifGenerationMatch=" + strconv.FormatInt(ifGeneration, 10)
+	u := s.c.url(storageHost, "/upload/storage/v1/b/"+s.bucket()+
+		"/o?uploadType=media&name="+url.QueryEscape(s.object(name))+
+		"&ifGenerationMatch="+strconv.FormatInt(ifGeneration, 10))
 	req, err := http.NewRequestWithContext(ctx, "POST", u, bytes.NewReader(raw))
 	if err != nil {
 		return false, 0, err
@@ -122,9 +122,9 @@ func (s *LeaseStore) Extend(ctx context.Context, name, owner string, token int64
 }
 
 func (s *LeaseStore) Release(ctx context.Context, name, owner string, token int64) error {
-	u := "https://storage.googleapis.com/storage/v1/b/" + s.bucket() +
-		"/o/" + url.PathEscape(s.object(name)) +
-		"?ifGenerationMatch=" + strconv.FormatInt(token, 10)
+	u := s.c.url(storageHost, "/storage/v1/b/"+s.bucket()+
+		"/o/"+url.PathEscape(s.object(name))+
+		"?ifGenerationMatch="+strconv.FormatInt(token, 10))
 	err := s.c.do(ctx, "DELETE", u, nil, nil)
 	if isStatus(err, http.StatusNotFound) || isStatus(err, http.StatusPreconditionFailed) {
 		return nil // already gone, or someone else's now — both fine

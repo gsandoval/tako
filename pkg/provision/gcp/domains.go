@@ -37,8 +37,10 @@ func (r *DomainMappings) Kind() provision.Kind { return provision.KindDomainMapp
 // base is the REGIONAL endpoint: domain mappings live in the region
 // their service does, so the call must not go to the global host.
 func (r *DomainMappings) base() string {
-	return fmt.Sprintf("https://%s-run.googleapis.com/apis/domains.cloudrun.com/v1/namespaces/%s/domainmappings",
-		r.C.Region, r.C.Project)
+	// The regional host is the host, so it goes through url like every
+	// other: a test redirecting Base catches this call too.
+	return r.C.url(r.C.Region+"-"+runHost,
+		"/apis/domains.cloudrun.com/v1/namespaces/%s/domainmappings", r.C.Project)
 }
 
 type domainMapping struct {
@@ -281,7 +283,7 @@ func (c *Client) verifiedDomains(ctx context.Context) ([]string, error) {
 			ID string `json:"id"`
 		} `json:"domains"`
 	}
-	url := "https://run.googleapis.com/v1/projects/" + c.Project + "/authorizeddomains"
+	url := c.url(runHost, "/v1/projects/"+c.Project+"/authorizeddomains")
 	if err := c.do(ctx, http.MethodGet, url, nil, &out); err != nil {
 		return nil, err
 	}

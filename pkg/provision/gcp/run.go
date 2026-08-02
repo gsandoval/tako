@@ -77,7 +77,7 @@ type runService struct {
 }
 
 func (r *RunServices) List(ctx context.Context) ([]provision.Observed, error) {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services?pageSize=1000", r.parent())
+	url := r.C.url(runHost, "/v2/%s/services?pageSize=1000", r.parent())
 	var out struct {
 		Services []runService `json:"services"`
 	}
@@ -110,7 +110,7 @@ func (r *RunServices) isPublic(ctx context.Context, name string) bool {
 			Members []string `json:"members"`
 		} `json:"bindings"`
 	}
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s:getIamPolicy", r.parent(), name)
+	url := r.C.url(runHost, "/v2/%s/services/%s:getIamPolicy", r.parent(), name)
 	if err := r.C.do(ctx, http.MethodGet, url, nil, &p); err != nil {
 		return false
 	}
@@ -249,14 +249,14 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 }
 
 func (r *RunServices) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services?serviceId=%s", r.parent(), o.Name)
+	url := r.C.url(runHost, "/v2/%s/services?serviceId=%s", r.parent(), o.Name)
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), &op); err != nil {
 		return Classify(err, r.C.Project, "create the run service", "roles/run.admin")
 	}
-	err := r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	err := r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 	// A repo created moments ago is eventually consistent: the first
 	// pull can answer "Image … not found" for an image the push just
 	// confirmed (hit live in the W11 walk). The service now exists
@@ -273,7 +273,7 @@ func (r *RunServices) Create(ctx context.Context, o provision.Object) error {
 }
 
 func (r *RunServices) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s", r.parent(), o.Name)
+	url := r.C.url(runHost, "/v2/%s/services/%s", r.parent(), o.Name)
 	body := r.body(o)
 	// Traffic is explicit on every update: the default rollout is 100%
 	// to latest (which also means a plain deploy supersedes an
@@ -306,7 +306,7 @@ func (r *RunServices) Update(ctx context.Context, o provision.Object) error {
 	if err := r.C.do(ctx, http.MethodPatch, url, body, &op); err != nil {
 		return Classify(err, r.C.Project, "update the run service", "roles/run.admin")
 	}
-	if err := r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong); err != nil {
+	if err := r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong); err != nil {
 		return fmt.Errorf("run service %s did not become ready: %w", o.Name, err)
 	}
 	return r.allowPublic(ctx, o)
@@ -318,7 +318,7 @@ func (r *RunServices) allowPublic(ctx context.Context, o provision.Object) error
 	if public, _ := o.Spec["public"].(bool); !public {
 		return nil
 	}
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s:setIamPolicy", r.parent(), o.Name)
+	url := r.C.url(runHost, "/v2/%s/services/%s:setIamPolicy", r.parent(), o.Name)
 	body := map[string]any{"policy": map[string]any{
 		"bindings": []map[string]any{{"role": "roles/run.invoker", "members": []string{"allUsers"}}},
 	}}
@@ -331,7 +331,7 @@ func (r *RunServices) allowPublic(ctx context.Context, o provision.Object) error
 // URL fetches the service's serving URL.
 func (r *RunServices) URL(ctx context.Context, name string) (string, error) {
 	var svc runService
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s", r.parent(), name)
+	url := r.C.url(runHost, "/v2/%s/services/%s", r.parent(), name)
 	if err := r.C.do(ctx, http.MethodGet, url, nil, &svc); err != nil {
 		return "", Classify(err, r.C.Project, "read the run service", "roles/run.viewer")
 	}
@@ -339,12 +339,12 @@ func (r *RunServices) URL(ctx context.Context, name string) (string, error) {
 }
 
 func (r *RunServices) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s", r.parent(), name)
+	url := r.C.url(runHost, "/v2/%s/services/%s", r.parent(), name)
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := r.C.do(ctx, http.MethodDelete, url, nil, &op); err != nil {
 		return Classify(err, r.C.Project, "delete the run service", "roles/run.admin")
 	}
-	return r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 }

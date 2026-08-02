@@ -23,10 +23,38 @@ type Options struct {
 	SignerEmail string
 }
 
+// Google API hosts. Every call this package makes is built from one of
+// these through Client.url, so a test can point the whole package at a
+// fake server — the seam MetricsStore already had and nothing else did.
+const (
+	storageHost    = "storage.googleapis.com"
+	pubsubHost     = "pubsub.googleapis.com"
+	datastoreHost  = "datastore.googleapis.com"
+	tasksHost      = "cloudtasks.googleapis.com"
+	runHost        = "run.googleapis.com"
+	secretHost     = "secretmanager.googleapis.com"
+	iamCredsHost   = "iamcredentials.googleapis.com"
+	monitoringHost = "monitoring.googleapis.com"
+)
+
 // Client is the shared authenticated HTTP client behind the stores.
 type Client struct {
 	HC   *http.Client
 	Opts Options
+	// Base redirects every API host at one server, for tests. Empty
+	// (production's only value) means the real hosts.
+	Base string
+}
+
+// url builds one API URL. path is a format string appended to the host.
+func (c *Client) url(host, path string, args ...any) string {
+	if len(args) > 0 {
+		path = fmt.Sprintf(path, args...)
+	}
+	if c.Base != "" {
+		return c.Base + "/" + host + path
+	}
+	return "https://" + host + path
 }
 
 // New authenticates via ADC (on Cloud Run: the service's own SA).

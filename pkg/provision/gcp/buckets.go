@@ -39,7 +39,7 @@ func (b *Buckets) List(ctx context.Context) ([]provision.Observed, error) {
 	var observed []provision.Observed
 	pageToken := ""
 	for {
-		u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b?project=%s&pageToken=%s", b.C.Project, url.QueryEscape(pageToken))
+		u := b.C.url(storageHost, "/storage/v1/b?project=%s&pageToken=%s", b.C.Project, url.QueryEscape(pageToken))
 		var out struct {
 			Items         []bucketBody `json:"items"`
 			NextPageToken string       `json:"nextPageToken"`
@@ -86,7 +86,7 @@ func (b *Buckets) body(o provision.Object) bucketBody {
 }
 
 func (b *Buckets) Create(ctx context.Context, o provision.Object) error {
-	u := "https://storage.googleapis.com/storage/v1/b?project=" + b.C.Project
+	u := b.C.url(storageHost, "/storage/v1/b?project="+b.C.Project)
 	if err := b.C.do(ctx, http.MethodPost, u, b.body(o), nil); err != nil {
 		return Classify(err, b.C.Project, "create the bucket", "roles/storage.admin")
 	}
@@ -94,7 +94,7 @@ func (b *Buckets) Create(ctx context.Context, o provision.Object) error {
 }
 
 func (b *Buckets) Update(ctx context.Context, o provision.Object) error {
-	u := "https://storage.googleapis.com/storage/v1/b/" + o.Name
+	u := b.C.url(storageHost, "/storage/v1/b/"+o.Name)
 	body := map[string]any{"labels": withHash(b.Labels, provision.SpecHash(o.Spec))}
 	if cors, _ := o.Spec["cors"].(bool); cors {
 		body["cors"] = corsForSignedTransfers
@@ -114,7 +114,7 @@ func (b *Buckets) Delete(ctx context.Context, name string) error {
 				Name string `json:"name"`
 			} `json:"items"`
 		}
-		u := "https://storage.googleapis.com/storage/v1/b/" + name + "/o?fields=items(name)"
+		u := b.C.url(storageHost, "/storage/v1/b/"+name+"/o?fields=items(name)")
 		if err := b.C.do(ctx, http.MethodGet, u, nil, &page); err != nil {
 			return Classify(err, b.C.Project, "list bucket objects", "roles/storage.admin")
 		}
@@ -122,13 +122,13 @@ func (b *Buckets) Delete(ctx context.Context, name string) error {
 			break
 		}
 		for _, it := range page.Items {
-			du := "https://storage.googleapis.com/storage/v1/b/" + name + "/o/" + url.PathEscape(it.Name)
+			du := b.C.url(storageHost, "/storage/v1/b/"+name+"/o/"+url.PathEscape(it.Name))
 			if err := b.C.do(ctx, http.MethodDelete, du, nil, nil); err != nil {
 				return Classify(err, b.C.Project, "delete bucket object", "roles/storage.admin")
 			}
 		}
 	}
-	if err := b.C.do(ctx, http.MethodDelete, "https://storage.googleapis.com/storage/v1/b/"+name, nil, nil); err != nil {
+	if err := b.C.do(ctx, http.MethodDelete, b.C.url(storageHost, "/storage/v1/b/"+name), nil, nil); err != nil {
 		return Classify(err, b.C.Project, "delete the bucket", "roles/storage.admin")
 	}
 	return nil
@@ -142,7 +142,7 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, max int) ([]str
 			Name string `json:"name"`
 		} `json:"items"`
 	}
-	u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o?fields=items(name)&maxResults=%d", bucket, max)
+	u := c.url(storageHost, "/storage/v1/b/%s/o?fields=items(name)&maxResults=%d", bucket, max)
 	if err := c.do(ctx, http.MethodGet, u, nil, &page); err != nil {
 		return nil, Classify(err, c.Project, "list bucket objects", "roles/storage.admin")
 	}

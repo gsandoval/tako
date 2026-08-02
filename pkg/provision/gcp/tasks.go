@@ -36,7 +36,7 @@ type tasksQueue struct {
 }
 
 func (r *TasksQueues) List(ctx context.Context) ([]provision.Observed, error) {
-	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues?pageSize=500", r.parent())
+	url := r.C.url(tasksHost, "/v2/%s/queues?pageSize=500", r.parent())
 	var out struct {
 		Queues []tasksQueue `json:"queues"`
 	}
@@ -79,7 +79,7 @@ func (r *TasksQueues) body(o provision.Object) map[string]any {
 }
 
 func (r *TasksQueues) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues", r.parent())
+	url := r.C.url(tasksHost, "/v2/%s/queues", r.parent())
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), nil); err != nil {
 		return Classify(err, r.C.Project, "create the tasks queue", "roles/cloudtasks.admin")
 	}
@@ -87,7 +87,7 @@ func (r *TasksQueues) Create(ctx context.Context, o provision.Object) error {
 }
 
 func (r *TasksQueues) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues/%s?updateMask=rateLimits.maxDispatchesPerSecond,retryConfig.maxAttempts", r.parent(), o.Name)
+	url := r.C.url(tasksHost, "/v2/%s/queues/%s?updateMask=rateLimits.maxDispatchesPerSecond,retryConfig.maxAttempts", r.parent(), o.Name)
 	if err := r.C.do(ctx, http.MethodPatch, url, r.body(o), nil); err != nil {
 		return Classify(err, r.C.Project, "update the tasks queue", "roles/cloudtasks.admin")
 	}
@@ -95,7 +95,7 @@ func (r *TasksQueues) Update(ctx context.Context, o provision.Object) error {
 }
 
 func (r *TasksQueues) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/%s/queues/%s", r.parent(), name)
+	url := r.C.url(tasksHost, "/v2/%s/queues/%s", r.parent(), name)
 	if err := r.C.do(ctx, http.MethodDelete, url, nil, nil); err != nil {
 		return Classify(err, r.C.Project, "delete the tasks queue", "roles/cloudtasks.admin")
 	}

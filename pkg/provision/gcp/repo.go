@@ -2,7 +2,6 @@ package gcp
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 
 	"github.com/gsandoval/tako/pkg/provision"
@@ -24,7 +23,7 @@ type repoBody struct {
 }
 
 func (r *Repos) List(ctx context.Context) ([]provision.Observed, error) {
-	url := fmt.Sprintf("https://artifactregistry.googleapis.com/v1/projects/%s/locations/%s/repositories?pageSize=1000",
+	url := r.C.url(artifactHost, "/v1/projects/%s/locations/%s/repositories?pageSize=1000",
 		r.C.Project, r.C.Region)
 	var out struct {
 		Repositories []repoBody `json:"repositories"`
@@ -51,7 +50,7 @@ func (r *Repos) List(ctx context.Context) ([]provision.Observed, error) {
 }
 
 func (r *Repos) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://artifactregistry.googleapis.com/v1/projects/%s/locations/%s/repositories?repositoryId=%s",
+	url := r.C.url(artifactHost, "/v1/projects/%s/locations/%s/repositories?repositoryId=%s",
 		r.C.Project, r.C.Region, o.Name)
 	body := repoBody{Format: "DOCKER", Labels: withHash(r.Labels, provision.SpecHash(o.Spec))}
 	var op struct {
@@ -60,11 +59,11 @@ func (r *Repos) Create(ctx context.Context, o provision.Object) error {
 	if err := r.C.do(ctx, http.MethodPost, url, body, &op); err != nil {
 		return Classify(err, r.C.Project, "create the artifact repo", "roles/artifactregistry.admin")
 	}
-	return r.C.waitOperation(ctx, "https://artifactregistry.googleapis.com/v1/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(artifactHost, "/v1/"+op.Name), waitLong)
 }
 
 func (r *Repos) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://artifactregistry.googleapis.com/v1/projects/%s/locations/%s/repositories/%s?updateMask=labels",
+	url := r.C.url(artifactHost, "/v1/projects/%s/locations/%s/repositories/%s?updateMask=labels",
 		r.C.Project, r.C.Region, o.Name)
 	body := repoBody{Format: "DOCKER", Labels: withHash(r.Labels, provision.SpecHash(o.Spec))}
 	if err := r.C.do(ctx, http.MethodPatch, url, body, nil); err != nil {
@@ -74,7 +73,7 @@ func (r *Repos) Update(ctx context.Context, o provision.Object) error {
 }
 
 func (r *Repos) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://artifactregistry.googleapis.com/v1/projects/%s/locations/%s/repositories/%s",
+	url := r.C.url(artifactHost, "/v1/projects/%s/locations/%s/repositories/%s",
 		r.C.Project, r.C.Region, name)
 	var op struct {
 		Name string `json:"name"`
@@ -82,5 +81,5 @@ func (r *Repos) Delete(ctx context.Context, name string) error {
 	if err := r.C.do(ctx, http.MethodDelete, url, nil, &op); err != nil {
 		return Classify(err, r.C.Project, "delete the artifact repo", "roles/artifactregistry.admin")
 	}
-	return r.C.waitOperation(ctx, "https://artifactregistry.googleapis.com/v1/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(artifactHost, "/v1/"+op.Name), waitLong)
 }

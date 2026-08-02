@@ -30,7 +30,7 @@ func NewEntityStore(c *Client) *EntityStore { return &EntityStore{c: c} }
 const docProp = "_doc"
 
 func (s *EntityStore) url(verb string) string {
-	return "https://datastore.googleapis.com/v1/projects/" + s.c.Opts.Project + ":" + verb
+	return s.c.url(datastoreHost, "/v1/projects/"+s.c.Opts.Project+":"+verb)
 }
 
 func (s *EntityStore) partition() map[string]any {

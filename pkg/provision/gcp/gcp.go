@@ -18,11 +18,53 @@ import (
 	"golang.org/x/oauth2/google"
 )
 
+// Google API hosts. Every URL in this package is built from one of
+// these through Client.url, so a test can point the whole package at a
+// fake server and no adapter can quietly address a host of its own.
+const (
+	runHost        = "run.googleapis.com"
+	iamHost        = "iam.googleapis.com"
+	crmHost        = "cloudresourcemanager.googleapis.com"
+	storageHost    = "storage.googleapis.com"
+	pubsubHost     = "pubsub.googleapis.com"
+	datastoreHost  = "datastore.googleapis.com"
+	schedulerHost  = "cloudscheduler.googleapis.com"
+	tasksHost      = "cloudtasks.googleapis.com"
+	artifactHost   = "artifactregistry.googleapis.com"
+	secretHost     = "secretmanager.googleapis.com"
+	serviceuseHost = "serviceusage.googleapis.com"
+	loggingHost    = "logging.googleapis.com"
+	identityHost   = "identitytoolkit.googleapis.com"
+	monitoringHost = "monitoring.googleapis.com"
+	iamCredsHost   = "iamcredentials.googleapis.com"
+)
+
 // Client is one authenticated deploy target.
 type Client struct {
 	HC      *http.Client
 	Project string
 	Region  string
+	// Base redirects every API host at one server, for tests. Empty (the
+	// only value production ever has) means the real hosts. It exists
+	// because this package had no seam at all: four failures in one
+	// stage — a container port with no number, a metric filed under a
+	// resource type that refuses writes — were findable only by
+	// deploying, since nothing here could be pointed at a fake.
+	Base string
+}
+
+// url builds one API URL. path is a format string appended to the host,
+// so call sites read as the API's own documentation does.
+func (c *Client) url(host, path string, args ...any) string {
+	if len(args) > 0 {
+		path = fmt.Sprintf(path, args...)
+	}
+	if c.Base != "" {
+		// The host becomes the first path segment so ONE fake server can
+		// serve every API and still assert which was addressed.
+		return c.Base + "/" + host + path
+	}
+	return "https://" + host + path
 }
 
 // NewClient builds a client from ambient credentials (gcloud/ADC).

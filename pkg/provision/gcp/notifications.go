@@ -32,7 +32,7 @@ type notificationConfig struct {
 }
 
 func (n *BucketNotifications) configsURL(bucket string) string {
-	return "https://storage.googleapis.com/storage/v1/b/" + bucket + "/notificationConfigs"
+	return n.C.url(storageHost, "/storage/v1/b/"+bucket+"/notificationConfigs")
 }
 
 func (n *BucketNotifications) List(ctx context.Context) ([]provision.Observed, error) {

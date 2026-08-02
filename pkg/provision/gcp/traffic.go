@@ -26,7 +26,7 @@ type TrafficTarget struct {
 }
 
 func (r *RunServices) serviceURL(name string) string {
-	return fmt.Sprintf("https://run.googleapis.com/v2/%s/services/%s", r.parent(), name)
+	return r.C.url(runHost, "/v2/%s/services/%s", r.parent(), name)
 }
 
 // Revisions lists the service's revisions, newest first.
@@ -114,7 +114,7 @@ func (r *RunServices) SetTraffic(ctx context.Context, service string, targets []
 	if err := r.C.do(ctx, http.MethodPatch, r.serviceURL(service)+"?updateMask=traffic", body, &op); err != nil {
 		return Classify(err, r.C.Project, "shift the service's traffic", "roles/run.admin")
 	}
-	return r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 }
 
 // serving is the revision currently carrying the most traffic ("" when

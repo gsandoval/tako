@@ -45,7 +45,7 @@ func (m DeadMessage) Source() (kind, name string, ok bool) {
 // subscription WITHOUT acking — repeated peeks keep seeing them until
 // AckDead drains.
 func (c *Client) PullDead(ctx context.Context, sub string, max int) ([]DeadMessage, error) {
-	u := "https://pubsub.googleapis.com/v1/projects/" + c.Project + "/subscriptions/" + sub + ":pull"
+	u := c.url(pubsubHost, "/v1/projects/"+c.Project+"/subscriptions/"+sub+":pull")
 	var out struct {
 		ReceivedMessages []struct {
 			AckID   string `json:"ackId"`
@@ -81,7 +81,7 @@ func (c *Client) AckDead(ctx context.Context, sub string, ackIDs []string) error
 	if len(ackIDs) == 0 {
 		return nil
 	}
-	u := "https://pubsub.googleapis.com/v1/projects/" + c.Project + "/subscriptions/" + sub + ":acknowledge"
+	u := c.url(pubsubHost, "/v1/projects/"+c.Project+"/subscriptions/"+sub+":acknowledge")
 	if err := c.do(ctx, http.MethodPost, u, map[string]any{"ackIds": ackIDs}, nil); err != nil {
 		return Classify(err, c.Project, "acknowledge dead-lettered messages", "roles/pubsub.subscriber")
 	}
@@ -103,7 +103,7 @@ const ReplayAttr = "tako-replay-to"
 // Republish puts a message back on a topic with the attributes it
 // carried, plus whatever the replay adds.
 func (c *Client) Republish(ctx context.Context, topic string, payload []byte, attrs map[string]string) error {
-	u := "https://pubsub.googleapis.com/v1/projects/" + c.Project + "/topics/" + topic + ":publish"
+	u := c.url(pubsubHost, "/v1/projects/"+c.Project+"/topics/"+topic+":publish")
 	msg := map[string]any{"data": payload} // []byte marshals as base64, which is the wire form
 	if len(attrs) > 0 {
 		msg["attributes"] = attrs

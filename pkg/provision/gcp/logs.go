@@ -51,7 +51,7 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 			} `json:"resource"`
 		} `json:"entries"`
 	}
-	if err := c.do(ctx, http.MethodPost, "https://logging.googleapis.com/v2/entries:list", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.url(loggingHost, "/v2/entries:list"), body, &out); err != nil {
 		return nil, Classify(err, c.Project, "read logs", "roles/logging.viewer")
 	}
 	entries := make([]LogEntry, 0, len(out.Entries))

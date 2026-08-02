@@ -26,7 +26,7 @@ type topicBody struct {
 }
 
 func (t *Topics) List(ctx context.Context) ([]provision.Observed, error) {
-	u := "https://pubsub.googleapis.com/v1/projects/" + t.C.Project + "/topics?pageSize=1000"
+	u := t.C.url(pubsubHost, "/v1/projects/"+t.C.Project+"/topics?pageSize=1000")
 	var out struct {
 		Topics []topicBody `json:"topics"`
 	}
@@ -49,7 +49,7 @@ func (t *Topics) List(ctx context.Context) ([]provision.Observed, error) {
 
 func (t *Topics) Create(ctx context.Context, o provision.Object) error {
 	body := topicBody{Labels: withHash(t.Labels, provision.SpecHash(o.Spec))}
-	if err := t.C.do(ctx, http.MethodPut, "https://pubsub.googleapis.com/v1/"+t.name(o.Name), body, nil); err != nil {
+	if err := t.C.do(ctx, http.MethodPut, t.C.url(pubsubHost, "/v1/"+t.name(o.Name)), body, nil); err != nil {
 		return Classify(err, t.C.Project, "create the topic", "roles/pubsub.admin")
 	}
 	return nil
@@ -60,14 +60,14 @@ func (t *Topics) Update(ctx context.Context, o provision.Object) error {
 		"topic":      topicBody{Name: t.name(o.Name), Labels: withHash(t.Labels, provision.SpecHash(o.Spec))},
 		"updateMask": "labels",
 	}
-	if err := t.C.do(ctx, http.MethodPatch, "https://pubsub.googleapis.com/v1/"+t.name(o.Name), body, nil); err != nil {
+	if err := t.C.do(ctx, http.MethodPatch, t.C.url(pubsubHost, "/v1/"+t.name(o.Name)), body, nil); err != nil {
 		return Classify(err, t.C.Project, "update the topic", "roles/pubsub.admin")
 	}
 	return nil
 }
 
 func (t *Topics) Delete(ctx context.Context, name string) error {
-	if err := t.C.do(ctx, http.MethodDelete, "https://pubsub.googleapis.com/v1/"+t.name(name), nil, nil); err != nil {
+	if err := t.C.do(ctx, http.MethodDelete, t.C.url(pubsubHost, "/v1/"+t.name(name)), nil, nil); err != nil {
 		return Classify(err, t.C.Project, "delete the topic", "roles/pubsub.admin")
 	}
 	return nil
@@ -103,7 +103,7 @@ type subscriptionBody struct {
 // shape: Pub/Sub keeps push and pull subscriptions in the same
 // collection, so each kind filters by pushConfig presence.
 func listSubscriptions(ctx context.Context, c *Client, labels map[string]string, kind provision.Kind, push bool) ([]provision.Observed, error) {
-	u := "https://pubsub.googleapis.com/v1/projects/" + c.Project + "/subscriptions?pageSize=1000"
+	u := c.url(pubsubHost, "/v1/projects/"+c.Project+"/subscriptions?pageSize=1000")
 	var out struct {
 		Subscriptions []subscriptionBody `json:"subscriptions"`
 	}
@@ -164,7 +164,7 @@ func (s *PushSubscriptions) body(o provision.Object) subscriptionBody {
 }
 
 func (s *PushSubscriptions) Create(ctx context.Context, o provision.Object) error {
-	if err := s.C.do(ctx, http.MethodPut, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), s.body(o), nil); err != nil {
+	if err := s.C.do(ctx, http.MethodPut, s.C.url(pubsubHost, "/v1/"+s.name(o.Name)), s.body(o), nil); err != nil {
 		return Classify(err, s.C.Project, "create the push subscription", "roles/pubsub.admin")
 	}
 	return nil
@@ -177,7 +177,7 @@ func (s *PushSubscriptions) Create(ctx context.Context, o provision.Object) erro
 // old subscription are lost, which is exactly what the plan said.
 func (s *PushSubscriptions) Update(ctx context.Context, o provision.Object) error {
 	var live subscriptionBody
-	if err := s.C.do(ctx, http.MethodGet, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), nil, &live); err == nil &&
+	if err := s.C.do(ctx, http.MethodGet, s.C.url(pubsubHost, "/v1/"+s.name(o.Name)), nil, &live); err == nil &&
 		live.Topic != "" && lastSegment(live.Topic) != fmt.Sprint(o.Spec["topic"]) {
 		if s.Say != nil {
 			s.Say("⚠ replacing subscription %s (topic %s → %s): delete + create", o.Name, lastSegment(live.Topic), o.Spec["topic"])
@@ -198,14 +198,14 @@ func (s *PushSubscriptions) Update(ctx context.Context, o provision.Object) erro
 		},
 		"updateMask": "pushConfig,retryPolicy,deadLetterPolicy,labels",
 	}
-	if err := s.C.do(ctx, http.MethodPatch, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
+	if err := s.C.do(ctx, http.MethodPatch, s.C.url(pubsubHost, "/v1/"+s.name(o.Name)), body, nil); err != nil {
 		return Classify(err, s.C.Project, "update the push subscription", "roles/pubsub.admin")
 	}
 	return nil
 }
 
 func (s *PushSubscriptions) Delete(ctx context.Context, name string) error {
-	if err := s.C.do(ctx, http.MethodDelete, "https://pubsub.googleapis.com/v1/"+s.name(name), nil, nil); err != nil {
+	if err := s.C.do(ctx, http.MethodDelete, s.C.url(pubsubHost, "/v1/"+s.name(name)), nil, nil); err != nil {
 		return Classify(err, s.C.Project, "delete the push subscription", "roles/pubsub.admin")
 	}
 	return nil
@@ -236,7 +236,7 @@ func (s *PullSubscriptions) Create(ctx context.Context, o provision.Object) erro
 		Topic:  "projects/" + s.C.Project + "/topics/" + fmt.Sprint(o.Spec["topic"]),
 		Labels: withHash(s.Labels, provision.SpecHash(o.Spec)),
 	}
-	if err := s.C.do(ctx, http.MethodPut, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
+	if err := s.C.do(ctx, http.MethodPut, s.C.url(pubsubHost, "/v1/"+s.name(o.Name)), body, nil); err != nil {
 		return Classify(err, s.C.Project, "create the dead-letter keep subscription", "roles/pubsub.admin")
 	}
 	return nil
@@ -250,14 +250,14 @@ func (s *PullSubscriptions) Update(ctx context.Context, o provision.Object) erro
 		},
 		"updateMask": "labels",
 	}
-	if err := s.C.do(ctx, http.MethodPatch, "https://pubsub.googleapis.com/v1/"+s.name(o.Name), body, nil); err != nil {
+	if err := s.C.do(ctx, http.MethodPatch, s.C.url(pubsubHost, "/v1/"+s.name(o.Name)), body, nil); err != nil {
 		return Classify(err, s.C.Project, "update the dead-letter keep subscription", "roles/pubsub.admin")
 	}
 	return nil
 }
 
 func (s *PullSubscriptions) Delete(ctx context.Context, name string) error {
-	if err := s.C.do(ctx, http.MethodDelete, "https://pubsub.googleapis.com/v1/"+s.name(name), nil, nil); err != nil {
+	if err := s.C.do(ctx, http.MethodDelete, s.C.url(pubsubHost, "/v1/"+s.name(name)), nil, nil); err != nil {
 		return Classify(err, s.C.Project, "delete the dead-letter keep subscription", "roles/pubsub.admin")
 	}
 	return nil

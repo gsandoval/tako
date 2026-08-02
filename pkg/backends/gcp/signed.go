@@ -69,7 +69,7 @@ func (s *Signer) identity(ctx context.Context) (string, error) {
 
 // signBlob signs payload as email via the IAM Credentials API.
 func (s *Signer) signBlob(ctx context.Context, email string, payload []byte) ([]byte, error) {
-	u := "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/" + email + ":signBlob"
+	u := s.c.url(iamCredsHost, "/v1/projects/-/serviceAccounts/"+email+":signBlob")
 	var out struct {
 		SignedBlob []byte `json:"signedBlob"` // encoding/json base64-decodes
 	}
@@ -136,7 +136,10 @@ func (s *Signer) signV4(ctx context.Context, method, bucket, key string, ttl tim
 	if err != nil {
 		return "", err
 	}
-	return "https://storage.googleapis.com" + path + "?" + canonicalQuery +
+	// NOT c.url: this is the URL handed to the CALLER to use, not a
+	// call tako makes. Redirecting it at a test server would hand out a
+	// link that points nowhere real.
+	return "https://" + storageHost + path + "?" + canonicalQuery +
 		"&X-Goog-Signature=" + hex.EncodeToString(sig), nil
 }
 

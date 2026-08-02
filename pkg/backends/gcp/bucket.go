@@ -24,7 +24,7 @@ func (s *BucketStore) physical(bucket string) string {
 }
 
 func (s *BucketStore) objectURL(bucket, key string) string {
-	return "https://storage.googleapis.com/storage/v1/b/" + s.physical(bucket) + "/o/" + url.PathEscape(key)
+	return s.c.url(storageHost, "/storage/v1/b/"+s.physical(bucket)+"/o/"+url.PathEscape(key))
 }
 
 type objectMeta struct {
@@ -42,8 +42,8 @@ func (m objectMeta) toMeta() backends.ObjectMeta {
 }
 
 func (s *BucketStore) Put(ctx context.Context, bucket, key string, data backends.BlobData) error {
-	u := "https://storage.googleapis.com/upload/storage/v1/b/" + s.physical(bucket) +
-		"/o?uploadType=media&name=" + url.QueryEscape(key)
+	u := s.c.url(storageHost, "/upload/storage/v1/b/"+s.physical(bucket)+
+		"/o?uploadType=media&name="+url.QueryEscape(key))
 	req, err := http.NewRequestWithContext(ctx, "POST", u, data.Reader)
 	if err != nil {
 		return err
@@ -112,8 +112,8 @@ func (s *BucketStore) List(ctx context.Context, bucket, prefix string) ([]backen
 	var out []backends.ObjectMeta
 	pageToken := ""
 	for {
-		u := "https://storage.googleapis.com/storage/v1/b/" + s.physical(bucket) +
-			"/o?prefix=" + url.QueryEscape(prefix) + "&pageToken=" + url.QueryEscape(pageToken)
+		u := s.c.url(storageHost, "/storage/v1/b/"+s.physical(bucket)+
+			"/o?prefix="+url.QueryEscape(prefix)+"&pageToken="+url.QueryEscape(pageToken))
 		var page struct {
 			Items         []objectMeta `json:"items"`
 			NextPageToken string       `json:"nextPageToken"`

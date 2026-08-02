@@ -9400,3 +9400,190 @@ claimed the function name was "the same identity the wiring uses", which
 is false, and that claim was copied into `docs/reference/testing.md`
 when that page was written earlier today. Both corrected to state the
 split plainly; the fix itself stays unscheduled.
+
+## P2 — the injectable HTTP host (2026-08-02)
+
+From `docs/code-review-1.md`. No DX proposal: this slice adds no user
+surface, changes no user-visible behavior and no error text. It is a
+refactor whose product is a seam.
+
+**`Client.url(host, path, args...)`** in both `pkg/provision/gcp` and
+`pkg/backends/gcp`, with the API hosts as named constants. Every URL
+either package builds now goes through it — 130 literals gone. When
+`Client.Base` is set the host becomes the FIRST PATH SEGMENT, so one
+fake server serves every API and a test can assert *which* API was
+addressed, not merely that something was.
+
+A pleasant side effect: preflight's API-enablement list and the URL
+builders now share the same constants. They were two hand-maintained
+lists of the same strings.
+
+Two deliberate non-conversions:
+
+- `signed.go`'s returned URL. That is handed to the CALLER, not called
+  by tako; redirecting it at a test server would hand out links that
+  point nowhere. It uses `"https://" + storageHost` with a comment
+  saying why, and a test pins the distinction.
+- `pkg/runtime`'s two Google certificate endpoints (JWKS for session
+  and cron token verification). They are not deploy-target calls and
+  do not belong to either Client.
+
+### The payoff, demonstrated rather than asserted
+
+`TestCreatedServiceSendsAPortNumber` is the U2 regression: a container
+port carrying a name and no number, which Cloud Run reads as 0 and
+refuses — *every service in every app* failed to create. Reintroducing
+the exact defect (renaming the `containerPort` key) makes the test fail
+with:
+
+```
+containerPort is absent from map[__gone__:8080 name:h2c] — Cloud Run
+reads that as 0 and refuses the service
+```
+
+and restoring it passes. That bug was unit-testable all along; nothing
+could see the request body.
+
+Six more that were impossible before: domain mappings going to the
+REGIONAL host (a global-host call 404s, and the difference was
+invisible), a SERVICE_DISABLED 403 arriving as the exact
+`gcloud services enable …` command, a plain 403 naming the role, a
+disabled API observing as an EMPTY inventory rather than a failure
+(destroy converging past an API the app never enabled), Google's HTML
+error page becoming a diagnosis instead of a paste, and the host
+constants being well-formed. On the backends side: env namespace in the
+Datastore URL, the physical bucket name in the GCS path, and the derived
+dead-letter topic in the publish.
+
+`MetricsStore` kept its own `base` field — it predates this and its
+tests point at one server without redirecting the whole client — but it
+now builds that default from the shared host constant.
+
+### Discovered work (logged, not done)
+
+**`pkg/backends/local` replay tests flake under load.** One full-suite
+run had `TestReplayRedeliversAQueueMessage` fail with *"worker saw
+<nil>"* and `TestReplayReachesOnlyTheFailedSubscriber` with *"the failed
+subscriber ran 0 times"*; three subsequent full runs and a `-count=3`
+run of the package alone were clean, so it is load-dependent, not a
+break from this slice.
+
+It should not be dismissed as flake. `WaitIdle` returned WITHOUT error
+while the replayed message had not been delivered, which means idle was
+observed before `DrainReplays`'s hand-off registered as in-flight. That
+is a real ordering gap in the local dispatcher, and the same gap would
+make `app.DrainQueues()` return early in a user's test. Worth its own
+look.
+
+## X1 — one cron, one name (DX proposal, 2026-08-02)
+
+User-chosen direction (2026-08-02): **the variable name wins
+everywhere.** Today a cron has two identities:
+
+```go
+var Cleanup = tako.Cron("every 24h", cleanupOrphans)
+```
+
+| addressed from | by | name |
+|---|---|---|
+| a test | `app.AdvanceCron` | `cleanupOrphans` — the FUNCTION |
+| the generated service | `RegisterCron` | `Cleanup` — the VARIABLE |
+| Cloud Scheduler | the URI | `/_tako/cron/Cleanup` |
+| the singleflight lease | `cron-<name>` | `cleanupOrphans` |
+
+### Why it is not a one-line fix
+
+`tako.Cron` derives its name with `fnName(fn)` — reflection on the
+function pointer (`handlers.go:113`). A Go value does not carry the name
+of the variable it is assigned to, so **the SDK can only ever see the
+function name.** The variable name exists solely in the AST, which is why
+the analyzer has it and the generated `RegisterCron` call carries it.
+
+A test has no analyzer and no generated code. That is the whole problem,
+and it is why this is its own task.
+
+### Proposed: the analyzer records the mapping; tests read it
+
+`tako dev`, `tako test`, `tako build` and `tako deploy` all run the
+analyzer already. Have it write, alongside the generated services:
+
+```
+.tako/crons.json
+{"gallery": {"Cleanup": "cleanupOrphans", "Rebuild": "rebuildFeed"}}
+```
+
+`NewTestApp` walks up from the working directory for `.tako/` (the
+module root; a multi-package app like shop has one at the top) and loads
+it. `AdvanceCron` then resolves a VARIABLE name through it.
+
+### What a user writes
+
+```go
+app.AdvanceCron("Cleanup")   // was: app.AdvanceCron("cleanupOrphans")
+```
+
+**Breaking, deliberately** — that is the point of having one name. The
+migration is mechanical and the error does it for you, because the
+mapping knows both sides:
+
+```
+tako: AdvanceCron("cleanupOrphans"): crons are addressed by their variable
+  name — use "Cleanup" (the deployed cron is /_tako/cron/Cleanup)
+```
+
+Without a mapping on disk at all:
+
+```
+tako: AdvanceCron("Cleanup"): no cron mapping under .tako — run tako test
+  (or tako dev once) so the analyzer can record which var declares which cron
+```
+
+### The cost, stated plainly
+
+**`NewTestApp` gains a dependency on generated state**, which it does not
+have today: a bare `go test ./...` on a fresh clone currently exercises
+crons fine, and after this it needs `tako test` (or one `tako dev`) to
+have run first. That is a real regression in the "your tests are just Go
+tests" story, accepted knowingly in exchange for one name.
+
+Two mitigations worth deciding on:
+
+1. `tako test` already regenerates before running, so the documented
+   path stays seamless. The gap is only bare `go test` on a clone with
+   no `.tako/`.
+2. `.tako/crons.json` could be committed rather than ignored. It is
+   small, human-readable, and derived — the same category as the
+   generated mains, which ARE committed today.
+
+Recommending (2): commit it, for the same reason the generated services
+are committed.
+
+### Also in scope
+
+- **The singleflight lease key** moves to the variable name too, so
+  `cron-Cleanup` is the key everywhere. One transitional deploy has old
+  and new instances holding different keys, which means a single
+  overlapping run could double-fire during the rollout. Worth naming in
+  the docs; not worth a migration shim for a v0.
+- `AdvanceCron`'s doc comment and `docs/reference/testing.md`'s "Mind
+  which name" section both revert to a plain statement once there is one
+  name.
+
+### Not in scope
+
+The `/_tako/cron/{cron}` dispatcher stays as it is. Replacing it with a
+generated route per cron is the third option from the same question and
+wants its own slice: the dispatcher exists so ONE OIDC-verified route
+serves every cron without colliding with app routes, and unpicking that
+is a routing design, not a naming one.
+
+### Test plan
+
+- Analyzer golden: `.tako/crons.json` content for gallery and shop.
+- `AdvanceCron("Cleanup")` runs the body; `AdvanceCron("cleanupOrphans")`
+  fails with the migration text naming `"Cleanup"`.
+- No mapping on disk → the run-tako-test error, not a confusing miss.
+- The three existing gallery call sites migrate, and `tako.Cron`'s own
+  wiring, the Scheduler URI and the lease key are asserted to agree.
+
+**STOP — awaiting approval.**

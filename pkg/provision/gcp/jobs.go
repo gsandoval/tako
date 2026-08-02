@@ -49,7 +49,7 @@ type runJob struct {
 }
 
 func (r *RunJobs) List(ctx context.Context) ([]provision.Observed, error) {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/jobs?pageSize=1000", r.parent())
+	url := r.C.url(runHost, "/v2/%s/jobs?pageSize=1000", r.parent())
 	var out struct {
 		Jobs []runJob `json:"jobs"`
 	}
@@ -130,34 +130,34 @@ func (r *RunJobs) body(o provision.Object) map[string]any {
 }
 
 func (r *RunJobs) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/jobs?jobId=%s", r.parent(), o.Name)
+	url := r.C.url(runHost, "/v2/%s/jobs?jobId=%s", r.parent(), o.Name)
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), &op); err != nil {
 		return Classify(err, r.C.Project, "create the run job", "roles/run.admin")
 	}
-	return r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 }
 
 func (r *RunJobs) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/jobs/%s", r.parent(), o.Name)
+	url := r.C.url(runHost, "/v2/%s/jobs/%s", r.parent(), o.Name)
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := r.C.do(ctx, http.MethodPatch, url, r.body(o), &op); err != nil {
 		return Classify(err, r.C.Project, "update the run job", "roles/run.admin")
 	}
-	return r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 }
 
 func (r *RunJobs) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://run.googleapis.com/v2/%s/jobs/%s", r.parent(), name)
+	url := r.C.url(runHost, "/v2/%s/jobs/%s", r.parent(), name)
 	var op struct {
 		Name string `json:"name"`
 	}
 	if err := r.C.do(ctx, http.MethodDelete, url, nil, &op); err != nil {
 		return Classify(err, r.C.Project, "delete the run job", "roles/run.admin")
 	}
-	return r.C.waitOperation(ctx, "https://run.googleapis.com/v2/"+op.Name, waitLong)
+	return r.C.waitOperation(ctx, r.C.url(runHost, "/v2/"+op.Name), waitLong)
 }

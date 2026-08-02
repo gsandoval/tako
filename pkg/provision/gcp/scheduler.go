@@ -45,7 +45,7 @@ type schedulerJob struct {
 }
 
 func (r *SchedulerJobs) List(ctx context.Context) ([]provision.Observed, error) {
-	url := fmt.Sprintf("https://cloudscheduler.googleapis.com/v1/%s/jobs?pageSize=500", r.parent())
+	url := r.C.url(schedulerHost, "/v1/%s/jobs?pageSize=500", r.parent())
 	var out struct {
 		Jobs []schedulerJob `json:"jobs"`
 	}
@@ -101,7 +101,7 @@ func (r *SchedulerJobs) body(o provision.Object) map[string]any {
 }
 
 func (r *SchedulerJobs) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://cloudscheduler.googleapis.com/v1/%s/jobs", r.parent())
+	url := r.C.url(schedulerHost, "/v1/%s/jobs", r.parent())
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), nil); err != nil {
 		return Classify(err, r.C.Project, "create the scheduler job", "roles/cloudscheduler.admin")
 	}
@@ -109,7 +109,7 @@ func (r *SchedulerJobs) Create(ctx context.Context, o provision.Object) error {
 }
 
 func (r *SchedulerJobs) Update(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://cloudscheduler.googleapis.com/v1/%s/jobs/%s", r.parent(), o.Name)
+	url := r.C.url(schedulerHost, "/v1/%s/jobs/%s", r.parent(), o.Name)
 	if err := r.C.do(ctx, http.MethodPatch, url, r.body(o), nil); err != nil {
 		return Classify(err, r.C.Project, "update the scheduler job", "roles/cloudscheduler.admin")
 	}
@@ -117,7 +117,7 @@ func (r *SchedulerJobs) Update(ctx context.Context, o provision.Object) error {
 }
 
 func (r *SchedulerJobs) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://cloudscheduler.googleapis.com/v1/%s/jobs/%s", r.parent(), name)
+	url := r.C.url(schedulerHost, "/v1/%s/jobs/%s", r.parent(), name)
 	if err := r.C.do(ctx, http.MethodDelete, url, nil, nil); err != nil {
 		return Classify(err, r.C.Project, "delete the scheduler job", "roles/cloudscheduler.admin")
 	}

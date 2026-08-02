@@ -38,9 +38,12 @@ import (
 // along as a metric label, which costs no extra series (task_id is
 // already finer-grained) and makes a metric shift traceable to a deploy.
 type MetricsStore struct {
-	c    *Client
-	who  Identity
-	base string // overridable in tests; the real host by default
+	c   *Client
+	who Identity
+	// base is the monitoring host. It predates Client.Base — which now
+	// gives every store the same seam — and stays because the tests here
+	// point at one server without redirecting the whole client.
+	base string
 
 	// start is this process's birth, and the startTime of every
 	// cumulative point it ever writes. Cloud Monitoring reads a
@@ -111,7 +114,7 @@ func NewMetricsStore(c *Client, who Identity) *MetricsStore {
 	return &MetricsStore{
 		c:        c,
 		who:      who,
-		base:     "https://monitoring.googleapis.com",
+		base:     c.url(monitoringHost, ""),
 		start:    time.Now(),
 		counters: map[string]int64{},
 		dists:    map[string]*distribution{},

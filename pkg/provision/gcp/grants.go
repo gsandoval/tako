@@ -52,31 +52,31 @@ func grantTarget(o provision.Object) (typ, id string) {
 func (g *Grants) urls(typ, id string) (getMethod, getURL, setURL string, bareSet bool, err error) {
 	switch typ {
 	case provision.TargetProject:
-		base := "https://cloudresourcemanager.googleapis.com/v1/projects/" + g.C.Project
+		base := g.C.url(crmHost, "/v1/projects/"+g.C.Project)
 		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetBucket:
-		base := "https://storage.googleapis.com/storage/v1/b/" + id + "/iam"
+		base := g.C.url(storageHost, "/storage/v1/b/"+id+"/iam")
 		return http.MethodGet, base, base, true, nil
 	case provision.TargetTopic:
-		base := "https://pubsub.googleapis.com/v1/projects/" + g.C.Project + "/topics/" + id
+		base := g.C.url(pubsubHost, "/v1/projects/"+g.C.Project+"/topics/"+id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetRunService:
-		base := fmt.Sprintf("https://run.googleapis.com/v2/projects/%s/locations/%s/services/%s", g.C.Project, g.C.Region, id)
+		base := g.C.url(runHost, "/v2/projects/%s/locations/%s/services/%s", g.C.Project, g.C.Region, id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetRunJob:
-		base := fmt.Sprintf("https://run.googleapis.com/v2/projects/%s/locations/%s/jobs/%s", g.C.Project, g.C.Region, id)
+		base := g.C.url(runHost, "/v2/projects/%s/locations/%s/jobs/%s", g.C.Project, g.C.Region, id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetServiceAccount:
-		base := "https://iam.googleapis.com/v1/projects/" + g.C.Project + "/serviceAccounts/" + id
+		base := g.C.url(iamHost, "/v1/projects/"+g.C.Project+"/serviceAccounts/"+id)
 		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetSubscription:
-		base := "https://pubsub.googleapis.com/v1/projects/" + g.C.Project + "/subscriptions/" + id
+		base := g.C.url(pubsubHost, "/v1/projects/"+g.C.Project+"/subscriptions/"+id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetTasksQueue:
-		base := fmt.Sprintf("https://cloudtasks.googleapis.com/v2/projects/%s/locations/%s/queues/%s", g.C.Project, g.C.Region, id)
+		base := g.C.url(tasksHost, "/v2/projects/%s/locations/%s/queues/%s", g.C.Project, g.C.Region, id)
 		return http.MethodPost, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	case provision.TargetSecret:
-		base := "https://secretmanager.googleapis.com/v1/projects/" + g.C.Project + "/secrets/" + id
+		base := g.C.url(secretHost, "/v1/projects/"+g.C.Project+"/secrets/"+id)
 		return http.MethodGet, base + ":getIamPolicy", base + ":setIamPolicy", false, nil
 	}
 	return "", "", "", false, fmt.Errorf("unknown grant target type %q", typ)

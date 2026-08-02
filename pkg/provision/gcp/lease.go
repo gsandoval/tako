@@ -3,7 +3,6 @@ package gcp
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -64,7 +63,7 @@ func (l *Lease) Acquire(ctx context.Context, holder string) (release func(), err
 }
 
 func (l *Lease) ensureBucket(ctx context.Context) error {
-	err := l.C.do(ctx, http.MethodGet, "https://storage.googleapis.com/storage/v1/b/"+l.bucket(), nil, nil)
+	err := l.C.do(ctx, http.MethodGet, l.C.url(storageHost, "/storage/v1/b/"+l.bucket()), nil, nil)
 	if err == nil {
 		return nil
 	}
@@ -72,7 +71,7 @@ func (l *Lease) ensureBucket(ctx context.Context) error {
 		return Classify(err, l.C.Project, "read the framework bucket", "roles/storage.admin")
 	}
 	body := map[string]any{"name": l.bucket(), "labels": l.Labels}
-	createURL := "https://storage.googleapis.com/storage/v1/b?project=" + l.C.Project
+	createURL := l.C.url(storageHost, "/storage/v1/b?project="+l.C.Project)
 	if err := l.C.do(ctx, http.MethodPost, createURL, body, nil); err != nil {
 		return Classify(err, l.C.Project, "create the framework bucket", "roles/storage.admin")
 	}
@@ -82,7 +81,7 @@ func (l *Lease) ensureBucket(ctx context.Context) error {
 func (l *Lease) tryCreate(ctx context.Context, holder string) error {
 	meta := map[string]string{"holder": holder, "since": time.Now().UTC().Format(time.RFC3339)}
 	raw, _ := json.Marshal(meta)
-	u := fmt.Sprintf("https://storage.googleapis.com/upload/storage/v1/b/%s/o?uploadType=media&name=%s&ifGenerationMatch=0",
+	u := l.C.url(storageHost, "/upload/storage/v1/b/%s/o?uploadType=media&name=%s&ifGenerationMatch=0",
 		l.bucket(), url.QueryEscape(l.object()))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(raw)))
 	if err != nil {
@@ -95,13 +94,13 @@ func (l *Lease) tryCreate(ctx context.Context, holder string) error {
 	}
 	defer res.Body.Close()
 	if res.StatusCode/100 != 2 {
-		return &apiError{Status: res.StatusCode, Message: "deploy lease exists", API: "storage.googleapis.com"}
+		return &apiError{Status: res.StatusCode, Message: "deploy lease exists", API: storageHost}
 	}
 	return nil
 }
 
 func (l *Lease) holder(ctx context.Context) (string, time.Time, error) {
-	u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s?alt=media", l.bucket(), url.QueryEscape(l.object()))
+	u := l.C.url(storageHost, "/storage/v1/b/%s/o/%s?alt=media", l.bucket(), url.QueryEscape(l.object()))
 	var meta struct {
 		Holder string    `json:"holder"`
 		Since  time.Time `json:"since"`
@@ -113,7 +112,7 @@ func (l *Lease) holder(ctx context.Context) (string, time.Time, error) {
 }
 
 func (l *Lease) delete(ctx context.Context) error {
-	u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s", l.bucket(), url.QueryEscape(l.object()))
+	u := l.C.url(storageHost, "/storage/v1/b/%s/o/%s", l.bucket(), url.QueryEscape(l.object()))
 	return l.C.do(ctx, http.MethodDelete, u, nil, nil)
 }
 
@@ -125,7 +124,7 @@ func (l *Lease) DeleteBucket(ctx context.Context) error {
 			Name string `json:"name"`
 		} `json:"items"`
 	}
-	listURL := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o", l.bucket())
+	listURL := l.C.url(storageHost, "/storage/v1/b/%s/o", l.bucket())
 	if err := l.C.do(ctx, http.MethodGet, listURL, nil, &listing); err != nil {
 		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
 			return nil
@@ -133,10 +132,10 @@ func (l *Lease) DeleteBucket(ctx context.Context) error {
 		return err
 	}
 	for _, item := range listing.Items {
-		u := fmt.Sprintf("https://storage.googleapis.com/storage/v1/b/%s/o/%s", l.bucket(), url.QueryEscape(item.Name))
+		u := l.C.url(storageHost, "/storage/v1/b/%s/o/%s", l.bucket(), url.QueryEscape(item.Name))
 		if err := l.C.do(ctx, http.MethodDelete, u, nil, nil); err != nil {
 			return err
 		}
 	}
-	return l.C.do(ctx, http.MethodDelete, "https://storage.googleapis.com/storage/v1/b/"+l.bucket(), nil, nil)
+	return l.C.do(ctx, http.MethodDelete, l.C.url(storageHost, "/storage/v1/b/"+l.bucket()), nil, nil)
 }

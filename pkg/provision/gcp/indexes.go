@@ -85,7 +85,7 @@ func sameIndex(o provision.Object, live liveIndex) bool {
 }
 
 func (d *DatastoreIndexes) live(ctx context.Context) ([]liveIndex, error) {
-	u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes"
+	u := d.C.url(datastoreHost, "/v1/projects/"+d.C.Project+"/indexes")
 	var out struct {
 		Indexes []liveIndex `json:"indexes"`
 	}
@@ -146,7 +146,7 @@ func (d *DatastoreIndexes) List(ctx context.Context) ([]provision.Observed, erro
 // builds indexes concurrently, so waiting inside Create made N indexes
 // cost N × ~6 minutes for work the server was willing to overlap.
 func (d *DatastoreIndexes) Create(ctx context.Context, o provision.Object) error {
-	u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes"
+	u := d.C.url(datastoreHost, "/v1/projects/"+d.C.Project+"/indexes")
 	body := map[string]any{
 		"kind":       o.Spec["entityKind"],
 		"ancestor":   "NONE",
@@ -246,7 +246,7 @@ func (d *DatastoreIndexes) Update(ctx context.Context, o provision.Object) error
 
 func (d *DatastoreIndexes) Delete(ctx context.Context, name string) error {
 	if id, ok := d.orphanIDs[name]; ok {
-		u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes/" + id
+		u := d.C.url(datastoreHost, "/v1/projects/"+d.C.Project+"/indexes/"+id)
 		if err := d.C.do(ctx, http.MethodDelete, u, nil, nil); err != nil {
 			return Classify(err, d.C.Project, "delete the datastore index", "roles/datastore.indexAdmin")
 		}
@@ -262,7 +262,7 @@ func (d *DatastoreIndexes) Delete(ctx context.Context, name string) error {
 		}
 		for _, li := range live {
 			if sameIndex(o, li) {
-				u := "https://datastore.googleapis.com/v1/projects/" + d.C.Project + "/indexes/" + li.IndexID
+				u := d.C.url(datastoreHost, "/v1/projects/"+d.C.Project+"/indexes/"+li.IndexID)
 				if err := d.C.do(ctx, http.MethodDelete, u, nil, nil); err != nil {
 					return Classify(err, d.C.Project, "delete the datastore index", "roles/datastore.indexAdmin")
 				}

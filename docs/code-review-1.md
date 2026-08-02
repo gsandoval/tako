@@ -105,7 +105,12 @@ worth a slice of its own because it is user-visible behavior.
 Logging section and states the severity limitation under "Not yet"
 rather than leaving users to discover it in an incident.
 
-## P2 — No injectable HTTP host, and 130 hand-built URLs
+## P2 — No injectable HTTP host, and 130 hand-built URLs — **SHIPPED 2026-08-02**
+
+> Client.url with named host constants in both gcp packages; Client.Base
+> redirects every host at one fake server. Proved by reintroducing the
+> U2 container-port bug and watching the new test catch it. The
+> description below is what was wrong.
 
 Already on the discovered-work list from U2; this review adds the scale
 and the duplication angle. Every cloud call builds its URL inline:

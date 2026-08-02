@@ -35,7 +35,7 @@ func (s *ServiceAccounts) List(ctx context.Context) ([]provision.Observed, error
 	var observed []provision.Observed
 	pageToken := ""
 	for {
-		url := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts?pageSize=100&pageToken=%s", s.C.Project, pageToken)
+		url := s.C.url(iamHost, "/v1/projects/%s/serviceAccounts?pageSize=100&pageToken=%s", s.C.Project, pageToken)
 		var out struct {
 			Accounts      []saBody `json:"accounts"`
 			NextPageToken string   `json:"nextPageToken"`
@@ -69,7 +69,7 @@ func (s *ServiceAccounts) description(o provision.Object) string {
 }
 
 func (s *ServiceAccounts) Create(ctx context.Context, o provision.Object) error {
-	url := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts", s.C.Project)
+	url := s.C.url(iamHost, "/v1/projects/%s/serviceAccounts", s.C.Project)
 	body := map[string]any{
 		"accountId": o.Name,
 		"serviceAccount": saBody{
@@ -95,7 +95,7 @@ func (s *ServiceAccounts) Create(ctx context.Context, o provision.Object) error 
 
 func (s *ServiceAccounts) Update(ctx context.Context, o provision.Object) error {
 	email := s.Email(o.Name)
-	url := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts/%s?updateMask=displayName,description", s.C.Project, email)
+	url := s.C.url(iamHost, "/v1/projects/%s/serviceAccounts/%s?updateMask=displayName,description", s.C.Project, email)
 	body := saBody{DisplayName: fmt.Sprint(o.Spec["displayName"]), Description: s.description(o)}
 	if err := s.C.do(ctx, http.MethodPatch, url, body, nil); err != nil {
 		return Classify(err, s.C.Project, "update the service account", "roles/iam.serviceAccountAdmin")
@@ -104,7 +104,7 @@ func (s *ServiceAccounts) Update(ctx context.Context, o provision.Object) error 
 }
 
 func (s *ServiceAccounts) Delete(ctx context.Context, name string) error {
-	url := fmt.Sprintf("https://iam.googleapis.com/v1/projects/%s/serviceAccounts/%s", s.C.Project, s.Email(name))
+	url := s.C.url(iamHost, "/v1/projects/%s/serviceAccounts/%s", s.C.Project, s.Email(name))
 	if err := s.C.do(ctx, http.MethodDelete, url, nil, nil); err != nil {
 		return Classify(err, s.C.Project, "delete the service account", "roles/iam.serviceAccountAdmin")
 	}

@@ -13,7 +13,7 @@ import (
 // env, so other envs' data is untouched. Returns entities deleted.
 func (c *Client) PurgeDatastore(ctx context.Context, namespace string, kinds []string) (int, error) {
 	deleted := 0
-	base := "https://datastore.googleapis.com/v1/projects/" + c.Project
+	base := c.url(datastoreHost, "/v1/projects/"+c.Project)
 	partition := map[string]any{"projectId": c.Project, "namespaceId": namespace}
 	for _, kind := range kinds {
 		for {
@@ -75,7 +75,7 @@ func (c *Client) KindsInNamespace(ctx context.Context, namespace string) ([]stri
 			} `json:"entityResults"`
 		} `json:"batch"`
 	}
-	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runQuery", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.url(datastoreHost, "/v1/projects/"+c.Project+":runQuery"), body, &out); err != nil {
 		return nil, Classify(err, c.Project, "list datastore kinds", "roles/datastore.viewer")
 	}
 	var kinds []string
@@ -109,7 +109,7 @@ func (c *Client) CountKind(ctx context.Context, namespace, kind string) (int, er
 			} `json:"aggregationResults"`
 		} `json:"batch"`
 	}
-	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runAggregationQuery", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.url(datastoreHost, "/v1/projects/"+c.Project+":runAggregationQuery"), body, &out); err != nil {
 		return 0, Classify(err, c.Project, "count datastore entities", "roles/datastore.viewer")
 	}
 	for _, r := range out.Batch.AggregationResults {
@@ -141,7 +141,7 @@ func (c *Client) Namespaces(ctx context.Context) ([]string, error) {
 			} `json:"entityResults"`
 		} `json:"batch"`
 	}
-	if err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":runQuery", body, &out); err != nil {
+	if err := c.do(ctx, http.MethodPost, c.url(datastoreHost, "/v1/projects/"+c.Project+":runQuery"), body, &out); err != nil {
 		return nil, Classify(err, c.Project, "list datastore namespaces", "roles/datastore.viewer")
 	}
 	var names []string

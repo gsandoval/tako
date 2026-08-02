@@ -71,7 +71,7 @@ func (c *Client) enqueueTask(ctx context.Context, route, queue string, payload [
 	if delay > 0 {
 		task["scheduleTime"] = time.Now().Add(delay).UTC().Format(time.RFC3339)
 	}
-	u := "https://cloudtasks.googleapis.com/v2/" + queueResource + "/tasks"
+	u := c.url(tasksHost, "/v2/"+queueResource+"/tasks")
 	return c.do(ctx, "POST", u, map[string]any{"task": task}, nil)
 }
 
@@ -83,7 +83,7 @@ func (s *QueueStore) Consume(queue string, deliver func(ctx context.Context, pay
 // path under queues, topics, bucket-event emission, and the Permanent
 // dead-letter short-circuit.
 func (c *Client) publish(ctx context.Context, topic string, payload []byte, attrs map[string]string) error {
-	u := "https://pubsub.googleapis.com/v1/projects/" + c.Opts.Project + "/topics/" + topic + ":publish"
+	u := c.url(pubsubHost, "/v1/projects/"+c.Opts.Project+"/topics/"+topic+":publish")
 	msg := map[string]any{"data": base64.StdEncoding.EncodeToString(payload)}
 	if len(attrs) > 0 {
 		msg["attributes"] = attrs

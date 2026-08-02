@@ -19,8 +19,8 @@ func SecretName(env, base string) string {
 // as local's .env: a missing secret refuses boot, so SecretHandle.Value
 // never fails at request time.
 func (c *Client) AccessSecret(ctx context.Context, base string) (string, error) {
-	u := "https://secretmanager.googleapis.com/v1/projects/" + c.Opts.Project +
-		"/secrets/" + url.PathEscape(SecretName(c.Opts.Env, base)) + "/versions/latest:access"
+	u := c.url(secretHost, "/v1/projects/"+c.Opts.Project+
+		"/secrets/"+url.PathEscape(SecretName(c.Opts.Env, base))+"/versions/latest:access")
 	var out struct {
 		Payload struct {
 			Data []byte `json:"data"` // encoding/json base64-decodes

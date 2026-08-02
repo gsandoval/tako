@@ -12,10 +12,10 @@ import (
 
 // preflightAPIs are the services every deploy touches.
 var preflightAPIs = []string{
-	"run.googleapis.com",
-	"iam.googleapis.com",
-	"artifactregistry.googleapis.com",
-	"storage.googleapis.com",
+	runHost,
+	iamHost,
+	artifactHost,
+	storageHost,
 }
 
 // preflightPerms maps required permissions to the narrowest role that
@@ -74,42 +74,42 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	apis := append([]string{}, preflightAPIs...)
 	perms := append([]struct{ perm, role string }{}, preflightPerms...)
 	if needs.Datastore {
-		apis = append(apis, "datastore.googleapis.com")
+		apis = append(apis, datastoreHost)
 		perms = append(perms, struct{ perm, role string }{"datastore.indexes.create", "roles/datastore.indexAdmin"})
 	}
 	if needs.Scheduler {
-		apis = append(apis, "cloudscheduler.googleapis.com")
+		apis = append(apis, schedulerHost)
 	}
 	if needs.Tasks {
-		apis = append(apis, "cloudtasks.googleapis.com")
+		apis = append(apis, tasksHost)
 	}
 	if needs.PubSub {
-		apis = append(apis, "pubsub.googleapis.com")
+		apis = append(apis, pubsubHost)
 		perms = append(perms,
 			struct{ perm, role string }{"pubsub.topics.create", "roles/pubsub.admin"},
 			struct{ perm, role string }{"pubsub.subscriptions.create", "roles/pubsub.admin"})
 	}
 	if len(needs.Secrets) > 0 {
-		apis = append(apis, "secretmanager.googleapis.com")
+		apis = append(apis, secretHost)
 		perms = append(perms,
 			struct{ perm, role string }{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
 			struct{ perm, role string }{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
 	}
 	if needs.Metrics {
-		apis = append(apis, "monitoring.googleapis.com")
+		apis = append(apis, monitoringHost)
 	}
 	if needs.SignBlob {
-		apis = append(apis, "iamcredentials.googleapis.com")
+		apis = append(apis, iamCredsHost)
 	}
 	if len(needs.AuthProviders) > 0 {
-		apis = append(apis, "identitytoolkit.googleapis.com")
+		apis = append(apis, identityHost)
 	}
 
 	for _, api := range apis {
 		var state struct {
 			State string `json:"state"`
 		}
-		url := fmt.Sprintf("https://serviceusage.googleapis.com/v1/projects/%s/services/%s", c.Project, api)
+		url := c.url(serviceuseHost, "/v1/projects/%s/services/%s", c.Project, api)
 		if err := c.do(ctx, http.MethodGet, url, nil, &state); err != nil {
 			// Classify handles bad project / no auth; a serviceusage 403
 			// means we cannot even ask — report and stop.
@@ -127,7 +127,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	for i, p := range perms {
 		ask[i] = p.perm
 	}
-	url := fmt.Sprintf("https://cloudresourcemanager.googleapis.com/v1/projects/%s:testIamPermissions", c.Project)
+	url := c.url(crmHost, "/v1/projects/%s:testIamPermissions", c.Project)
 	if err := c.do(ctx, http.MethodPost, url, map[string]any{"permissions": ask}, &granted); err != nil {
 		return nil, Classify(err, c.Project, "check permissions", "roles/viewer")
 	}
@@ -145,7 +145,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	// refuses to serve with one unset — the same contract as local's
 	// .env). Missing is a distinct, fixable state with its own command.
 	for _, physical := range needs.Secrets {
-		u := "https://secretmanager.googleapis.com/v1/projects/" + c.Project + "/secrets/" + physical
+		u := c.url(secretHost, "/v1/projects/"+c.Project+"/secrets/"+physical)
 		err := c.do(ctx, http.MethodGet, u, nil, nil)
 		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
 			gaps = append(gaps, fmt.Sprintf("secret %s does not exist in %s — create it: printf '<value>' | gcloud secrets create %s --data-file=- --project %s", physical, c.Project, physical, c.Project))
@@ -158,7 +158,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		probe := map[string]any{"keys": []any{map[string]any{
 			"path": []map[string]any{{"kind": "tako-preflight", "name": "probe"}},
 		}}}
-		err := c.do(ctx, http.MethodPost, "https://datastore.googleapis.com/v1/projects/"+c.Project+":lookup", probe, nil)
+		err := c.do(ctx, http.MethodPost, c.url(datastoreHost, "/v1/projects/"+c.Project+":lookup"), probe, nil)
 		if ae, ok := err.(*apiError); ok && (ae.Status == http.StatusNotFound || strings.Contains(ae.Message, "database")) {
 			gaps = append(gaps, fmt.Sprintf("no Datastore database in %s — create it: gcloud firestore databases create --location=%s --type=datastore-mode --project %s", c.Project, c.Region, c.Project))
 		}
@@ -203,7 +203,7 @@ func (c *Client) ProjectNumber(ctx context.Context) (string, error) {
 	var out struct {
 		ProjectNumber string `json:"projectNumber"`
 	}
-	url := "https://cloudresourcemanager.googleapis.com/v1/projects/" + c.Project
+	url := c.url(crmHost, "/v1/projects/"+c.Project)
 	if err := c.do(ctx, http.MethodGet, url, nil, &out); err != nil {
 		return "", Classify(err, c.Project, "resolve the project number", "roles/viewer")
 	}
@@ -281,7 +281,7 @@ func googleProviderSteps(project string) string {
 // mutate=false (tako deploy --plan) checks and narrates without
 // touching anything.
 func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string, mutate bool, say func(format string, args ...any)) (AuthClient, error) {
-	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
+	base := c.url(identityHost, "/admin/v2/projects/"+c.Project)
 	var config struct {
 		SignIn struct {
 			Email struct {
@@ -304,7 +304,7 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string
 		// initializeAuth lives on the /v2/ surface; only the config
 		// resource is under /admin/v2/ (a wrong path gets Google's HTML
 		// 404 page, not a JSON error).
-		if err := c.doIdentity(ctx, http.MethodPost, "https://identitytoolkit.googleapis.com/v2/projects/"+c.Project+"/identityPlatform:initializeAuth", map[string]any{}, nil); err != nil {
+		if err := c.doIdentity(ctx, http.MethodPost, c.url(identityHost, "/v2/projects/"+c.Project+"/identityPlatform:initializeAuth"), map[string]any{}, nil); err != nil {
 			return AuthClient{}, fmt.Errorf("initializing Identity Platform: %w", err)
 		}
 		say("auth         initialized Identity Platform")
@@ -402,7 +402,7 @@ func (c *Client) EnsureAuthClient(ctx context.Context, hosts, providers []string
 // counterpart to the deploy's registration. Only ever called with
 // tako-derived hosts; foreign domains are never touched.
 func (c *Client) RemoveAuthorizedDomains(ctx context.Context, hosts []string, say func(format string, args ...any)) error {
-	base := "https://identitytoolkit.googleapis.com/admin/v2/projects/" + c.Project
+	base := c.url(identityHost, "/admin/v2/projects/"+c.Project)
 	var config struct {
 		AuthorizedDomains []string `json:"authorizedDomains"`
 	}

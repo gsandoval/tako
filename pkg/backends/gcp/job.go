@@ -15,5 +15,5 @@ func (c *Client) RunJob(ctx context.Context, resource string, params []byte) err
 			},
 		},
 	}
-	return c.do(ctx, "POST", "https://run.googleapis.com/v2/"+resource+":run", body, nil)
+	return c.do(ctx, "POST", c.url(runHost, "/v2/"+resource+":run"), body, nil)
 }
