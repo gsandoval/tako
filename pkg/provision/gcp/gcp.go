@@ -124,6 +124,21 @@ var readOnlyVerbs = []string{
 	":getIamPolicy",        // grant observation
 	":runQuery",            // datastore reads
 	":runAggregationQuery", // datastore counts
+	":lookup",              // datastore key reads
+	":list",                // logging entries:list, and AIP's list verb generally
+}
+
+// mutatingVerbs are the colon-suffixed POSTs that must NOT be retried,
+// listed so the completeness test can tell "classified as mutating"
+// apart from "nobody has looked at it yet". A retried :commit writes
+// twice; a retried :setIamPolicy can clobber a concurrent change.
+var mutatingVerbs = []string{
+	":commit",
+	":setIamPolicy",
+	":initializeAuth",
+	":publish",     // a retried publish is a duplicate message
+	":pull",        // leases messages and moves ack deadlines
+	":acknowledge", // effectively idempotent, but not worth the reasoning
 }
 
 // idempotent reports whether re-sending this request is safe. GET and

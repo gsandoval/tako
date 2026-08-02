@@ -11,6 +11,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -430,4 +433,66 @@ func TestRetryResendsTheBody(t *testing.T) {
 	if len(bodies) != 2 || bodies[0] != bodies[1] || !strings.Contains(bodies[1], `"topic":"t"`) {
 		t.Errorf("bodies = %q — the retry must re-send what the first attempt sent", bodies)
 	}
+}
+
+// Every colon-suffixed POST in the tree must be CLASSIFIED — either as
+// a read that may be retried or as a mutation that may not. The
+// allowlist was first written by eyeballing a few call sites and missed
+// two reads (logging's entries:list, datastore's :lookup); the second
+// one surfaced as a 429 that killed `tako logs` mid-investigation, the
+// same failure the allowlist had just been created to prevent.
+//
+// This scans the source rather than trusting a reviewer to notice, so a
+// new custom method cannot be added without a decision about retrying it.
+func TestEveryCustomMethodPostIsClassified(t *testing.T) {
+	classified := map[string]bool{}
+	for _, v := range readOnlyVerbs {
+		classified[v] = true
+	}
+	for _, v := range mutatingVerbs {
+		classified[v] = true
+	}
+
+	// URLs are built from string literals; find the colon verbs among them.
+	verb := regexp.MustCompile(`"[^"]*(:[a-zA-Z][a-zA-Z0-9]*)"`)
+	roots := []string{".", "../../backends/gcp"}
+	seen := map[string]string{}
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			t.Fatalf("reading %s: %v", root, err)
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+				continue
+			}
+			path := filepath.Join(root, name)
+			src, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(src), "MethodPost") {
+				continue
+			}
+			for _, m := range verb.FindAllStringSubmatch(string(src), -1) {
+				// Skip time literals and the like: a verb is alphabetic
+				// and follows a path segment.
+				if strings.Contains(m[0], "://") {
+					continue
+				}
+				seen[m[1]] = path
+			}
+		}
+	}
+	if len(seen) == 0 {
+		t.Fatal("scanned no custom methods — the scan itself broke, which would make this test vacuous")
+	}
+	for v, where := range seen {
+		if !classified[v] {
+			t.Errorf("custom method %q (%s) is neither in readOnlyVerbs nor mutatingVerbs — "+
+				"decide whether re-sending it is safe; an unclassified POST silently gets no retry", v, where)
+		}
+	}
+	t.Logf("classified %d custom methods", len(seen))
 }

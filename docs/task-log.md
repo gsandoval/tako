@@ -11172,3 +11172,75 @@ The owner's question produced a fourth option that costs nothing and
 removes the limit.
 
 Every probe policy was created disabled and deleted; project ends at 0.
+
+## Y1 — PromQL vs the aggregations model, settled with live data (2026-08-02)
+
+Redeployed gallery to `x1`, drove 14 photos of three sizes through the
+real pipeline so `thumb_ms` held a genuine spread, and asked both models
+the same question.
+
+**Control — aggregations model, two-stage via `timeSeries`:**
+
+```
+ALIGN_DELTA -> ALIGN_PERCENTILE_99   509.0133333333333
+ALIGN_DELTA -> ALIGN_PERCENTILE_50   362.6666666666667
+```
+
+**PromQL, same distribution:**
+
+```
+histogram_quantile(0.99, rate(custom_googleapis_com:tako_thumb_ms_bucket{...}[15m]))  509.0133333333333
+histogram_quantile(0.50, rate(...))                                                  362.6666666666667
+histogram_quantile(0.87, rate(...))                                                  473.1733333333333
+```
+
+**Identical to the last decimal.** The two models compute the same
+thing; there is no semantic divergence to fear. `_count` = 14 and
+`_sum` = 4216 (mean 301.1) match the control's distribution exactly.
+
+### The detail that made the earlier probe look negative
+
+A Cloud Monitoring DISTRIBUTION is exposed to PromQL through the
+standard Prometheus decomposition — `_bucket`, `_count`, `_sum` — and
+NOT under its bare name:
+
+```
+custom_googleapis_com:tako_thumb_ms{...}         0 series
+custom_googleapis_com:tako_thumb_ms_bucket{...}  21 series
+custom_googleapis_com:tako_thumb_ms_count{...}   1 series  ['14']
+custom_googleapis_com:tako_thumb_ms_sum{...}     1 series  ['4216']
+```
+
+The earlier probe queried the bare name, got `0 series`, and I could not
+tell "wrong name" from "no data" because the env was destroyed. With
+data present the same query still returns 0 — which is what makes the
+suffix, not the data, the explanation.
+
+### What this settles
+
+1. **Percentiles work in PromQL over tako's histograms**, and agree
+   exactly with the aggregations model.
+2. **Arbitrary percentiles work.** `histogram_quantile(0.87, …)`
+   returned 473.17. The "only four percentiles exist" limit recorded in
+   the Y1a amendment is an artifact of the `Aligner` enum — a property
+   of the API I happened to pick first, not a fact about the metric.
+   `P99/P95/P50/P05` can become `Percentile(h, 0.87)`.
+3. **One model is viable**, and strictly more expressive: PromQL already
+   owns `Absent` (the 23h30m escape), and it can own the thresholds too.
+
+### Cost of going one-model, stated honestly
+
+PromQL conditions render as a query in the console rather than as an
+editable threshold, so an operator reading the policy sees tako's
+generated PromQL instead of a form. Against that: one code path in Y1c,
+no aligner/reducer compatibility matrix (the CUMULATIVE+DISTRIBUTION
+refusal that broke Y1a could not happen), arbitrary percentiles, and no
+duration ceilings.
+
+Y1c must encode two things the probes proved necessary: the
+`monitored_resource="generic_task"` matcher (a bare custom-metric
+selector errors) and the `_bucket` suffix for distributions.
+
+**Decision for the owner: one model (PromQL) or two?** Recommendation:
+one. The split existed because of the order I discovered things, and
+every measured advantage now runs the same way.
