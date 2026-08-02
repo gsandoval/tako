@@ -11367,3 +11367,97 @@ applies, not a user-facing choice).
 This is the fourth time a vocabulary looked complete because I had only
 enumerated the mechanism I started from. The table above is the
 enumeration that should have existed when `Metric` was first designed.
+
+## Y2 — proposal: platform metrics and baseline alerts (2026-08-02) — AWAITING APPROVAL
+
+Two owner asks that are their own slices, not amendments.
+
+### Y2a — referencing Google's own metrics
+
+The problem is scale, and it is measured: paginating this project's
+descriptors returned **8,667 metric types**. A hand-written reference
+page would be stale before it was committed, and a generated one would
+be 8,667 rows nobody reads. So the answer is three-tiered, not one doc.
+
+**1. Derived — no strings at all.** The metrics an app actually pages on
+are about things tako already knows, so they take a Target and tako
+writes the filter:
+
+```go
+tako.ErrorRate(svc)              // have
+tako.Latency(svc, 0.99)          // run.googleapis.com/request_latencies
+tako.Instances(svc)              // container/instance_count
+tako.Saturation(svc)             // container/cpu/utilizations
+```
+
+Rename-safe, autocompletable, and impossible to point at a metric the
+service does not emit.
+
+**2. `tako.Platform` — the honest escape hatch** for the other 8,660:
+
+```go
+var Egress = tako.Alert(
+    tako.Above(tako.Platform("run.googleapis.com/container/network/sent_bytes_count",
+        tako.MetricOn(svc)), 1<<30, tako.For(10*time.Minute)),
+    Oncall)
+```
+
+Strings, because the name IS Google's and pretending otherwise would be
+a lie; the analyzer enforces constants and tako derives the PromQL
+mapping (first `/` → `:`, other specials → `_`) plus the
+`monitored_resource` matcher the probes proved mandatory.
+
+**3. `tako metrics <search>` — a reference that cannot rot.** Queries
+`projects.metricDescriptors` live and prints type, kind, value type and
+labels, so a user finds the exact string from the terminal:
+
+```
+$ tako metrics network/sent
+run.googleapis.com/container/network/sent_bytes_count
+  DELTA INT64 · resource cloud_run_revision · labels: (none)
+```
+
+A live query beats a doc precisely because there are 8,667 of them and
+Google adds more without telling us.
+
+### Y2b — baseline alerts, derived from the graph
+
+Owner: pre-built rules that do not need configuring from scratch. tako
+already knows every service, queue, dead-letter topic, cron and its
+schedule — the same graph that derives IAM can derive the alerts every
+app wants and nobody writes:
+
+```go
+var Ops = tako.Baseline(Oncall, Room)
+```
+
+One declaration; the policies come from the graph:
+
+| for every | alert |
+|---|---|
+| service | 5xx rate over 5% for 5m |
+| queue with a dead letter | any dead letter in 5m |
+| cron | no run in 2x its schedule — tako KNOWS the schedule, so `every 6h` gets a 12h lookback and a daily job gets 26h, which only works because `Absent` compiles to PromQL |
+| job | a failed execution |
+
+Three properties that make this tako-shaped rather than a template:
+
+- **Derived, not copied.** Add a queue, get its dead-letter alert. The
+  same argument as derived IAM.
+- **Visible, not magic.** `tako deploy` lists every policy Baseline
+  created, the way the security summary lists derived grants. A user
+  who cannot see what was created cannot trust it.
+- **Overridable.** An explicit `tako.Alert` on the same subject replaces
+  the baseline's rather than doubling it — otherwise the first thing
+  anyone does after adopting Baseline is get paged twice.
+
+Open questions for the DX proposal: whether Baseline takes thresholds
+(`tako.Baseline(Oncall, tako.BaselineConfig{ErrorRate: 0.02})`) or is
+deliberately unconfigurable so it stays a floor rather than a second
+configuration surface; and whether it belongs behind an opt-in at all,
+given a user who declares it and never reads the summary has alerts they
+did not write.
+
+**STOP — approve Y2a and Y2b as slices before Y1b, after it, or not at
+all?** They are additive to everything Y1 has settled; Y1b's analyzer
+work does not block on either.
