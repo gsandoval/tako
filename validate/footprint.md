@@ -116,10 +116,29 @@ check.
 ### 3d. Two claims, one service
 
 A footprint describes a whole SERVICE, so a service can only carry one.
-Crons are the way two claims can still land on the same one: they run
-in their package's app service, whereas each worker, subscriber, job
-and singleton owns its own service, and `tako.Service` is one per
-package.
+
+**Two cron vars are not two Cloud Run services.** Within a package,
+API, Page and Cron handlers deploy together as that package's app
+service; only workers, subscribers, jobs and singletons get one each.
+gallery's own deploy shows it — 9 APIs, 1 cron, 1 worker, 3 subscribers
+produce FIVE services:
+
+```
+run service <env>-gallery              ← the 9 APIs and the cron
+run service <env>-gallery-onuploaded   ← subscriber
+run service <env>-gallery-makethumb    ← worker
+run service <env>-gallery-notifyowner  ← subscriber
+run service <env>-gallery-warmfeed     ← subscriber
+scheduler job <env>-gallery-cron-cleanup
+```
+
+The cron is not a service at all: it is a Cloud Scheduler job that
+POSTs `/_tako/cron/cleanup` on the app service. So two crons are two
+routes on one machine, and asking for `cpu 4` and `cpu 2` is asking
+that machine to be two sizes. Which is why the error's other remedy —
+"split the packages" — is not a euphemism: in tako a service IS a
+package, so two schedules that genuinely need different machines are
+two packages.
 
 gallery has one cron. Add a second, on line 84:
 
