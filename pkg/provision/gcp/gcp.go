@@ -103,36 +103,79 @@ func notFound(err error) bool {
 	return ok && ae.Status == http.StatusNotFound
 }
 
+// retryBackoff paces the retries below. Short on purpose: a real outage
+// should surface as an error the user can act on, not as a command that
+// appears to hang.
+var retryBackoff = []time.Duration{time.Second, 3 * time.Second}
+
+// idempotent reports whether re-sending this method is safe. GET and
+// DELETE are by definition; PUT is how the Pub/Sub APIs express "make
+// this exist with this shape", which is also safe to repeat. POST and
+// PATCH are not — a retried create can make two of something — and are
+// deliberately left to fail so the user re-runs a plan that has
+// observed the world again.
+func idempotent(method string) bool {
+	return method == http.MethodGet || method == http.MethodDelete || method == http.MethodPut
+}
+
 // do runs one JSON call. A nil out discards the response body.
+//
+// Transient failures — 5xx, 429, and connection errors — are retried for
+// idempotent methods. Reconciliation converges, so a failed run has
+// always been fixable by running it again; the 2026-08-02 release walk
+// hit a one-off `503 from pubsub.googleapis.com` deleting a
+// subscription, which stopped a destroy halfway and left the user to
+// discover that re-running finishes it. Converging is the design;
+// making the user drive it for a blip is not.
 func (c *Client) do(ctx context.Context, method, url string, in, out any) error {
-	var body io.Reader
+	var payload []byte
 	if in != nil {
-		raw, err := json.Marshal(in)
+		var err error
+		if payload, err = json.Marshal(in); err != nil {
+			return err
+		}
+	}
+	for attempt := 0; ; attempt++ {
+		var body io.Reader
+		if in != nil {
+			// A fresh reader per attempt: the previous one is consumed.
+			body = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequestWithContext(ctx, method, url, body)
 		if err != nil {
 			return err
 		}
-		body = bytes.NewReader(raw)
+		if in != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		res, err := c.HC.Do(req)
+		if err == nil {
+			raw, _ := io.ReadAll(res.Body)
+			res.Body.Close()
+			if res.StatusCode/100 == 2 {
+				if out != nil && len(raw) > 0 {
+					return json.Unmarshal(raw, out)
+				}
+				return nil
+			}
+			if !transientStatus(res.StatusCode) || !idempotent(method) || attempt >= len(retryBackoff) {
+				return parseAPIError(res.StatusCode, url, raw)
+			}
+		} else if !idempotent(method) || attempt >= len(retryBackoff) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(retryBackoff[attempt]):
+		}
 	}
-	req, err := http.NewRequestWithContext(ctx, method, url, body)
-	if err != nil {
-		return err
-	}
-	if in != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	res, err := c.HC.Do(req)
-	if err != nil {
-		return err
-	}
-	defer res.Body.Close()
-	raw, _ := io.ReadAll(res.Body)
-	if res.StatusCode/100 != 2 {
-		return parseAPIError(res.StatusCode, url, raw)
-	}
-	if out != nil && len(raw) > 0 {
-		return json.Unmarshal(raw, out)
-	}
-	return nil
+}
+
+// transientStatus reports the answers worth trying again: the server
+// said it could not do this NOW, not that it will not.
+func transientStatus(code int) bool {
+	return code == http.StatusTooManyRequests || code >= 500
 }
 
 func parseAPIError(status int, url string, raw []byte) error {

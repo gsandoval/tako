@@ -10046,3 +10046,65 @@ in tako-test-01 from gcp-backend conformance runs. Not tako-managed
 resources — the conformance suite creates them under its own `conf-`
 prefix — but they should be cleaned up by the suite rather than
 accumulating.
+
+## Destroy retries transients; conformance stops leaking (2026-08-02)
+
+The two items the release-cycle walk logged.
+
+### Destroy (and every idempotent call) retries transients
+
+`Client.do` retries 5xx, 429 and connection errors — but only for GET,
+DELETE and PUT. POST and PATCH are deliberately excluded: a retried
+create can make two of something, and a deploy that has re-observed the
+world is the safe way back from one of those.
+
+Two backoffs (1s, 3s) and then the error surfaces. Short on purpose — a
+real outage should read as an error the user can act on, not as a
+command that appears to hang.
+
+This is what the walk's `503 from pubsub.googleapis.com` deserved:
+reconciliation already converged on re-run, so nothing was ever lost,
+but the user had to know to re-run. Converging is the design; making a
+person drive it for a blip is not.
+
+Four tests, all on the fake-server seam P2 built: a 503 on DELETE
+retried and succeeding; a 503 on POST surfacing after ONE call; a 403
+surfacing immediately (an answer, not a hiccup); and the body being
+re-sent rather than consumed by the first attempt — the bug this shape
+of retry invites.
+
+### Conformance stops leaking, two ways
+
+**The cleanups were silent.** Both were
+`if r, err := c.HC.Do(req); err == nil { r.Body.Close() }` — which
+swallows the STATUS as well as the error, so a 5xx leaked the resource
+and said nothing. Replaced with `deleteResource`, which retries
+transients, treats 404 as success, and `t.Errorf`s anything left: a
+suite that creates cloud resources and does not remove them is a suite
+that quietly costs money.
+
+**And cleanups only run if the process lives to run them.** A run killed
+mid-chapter leaks whatever it had made, which is how
+`conf-91c17217-evbkt-uploaded-keep` was still in tako-test-01 weeks
+later. `sweepStaleConformance` now runs once per run, before anything is
+created, deleting `conf-*` Pub/Sub resources whose env prefix is not
+this run's — anything else belongs to a run that is over. Subscriptions
+before topics, since a topic with a live subscription refuses to go.
+
+Verified live: a `TestTopicGCP` run swept exactly the stale subscription
+the release walk had found —
+
+```
+gcp_test.go:36: conformance: swept subscriptions conf-91c17217-evbkt-uploaded-keep left by an earlier run
+--- PASS: TestTopicGCP (14.25s)
+```
+
+— and left the project with zero topics and zero subscriptions
+afterwards, its own included.
+
+**Correction to the release-cycle entry:** it listed `conf-signer`
+alongside the subscription as a leftover to clean up. That was wrong.
+The SA is deliberate and documented in the harness — creating one and
+waiting out signBlob propagation costs 90 seconds, so it persists across
+runs like the conformance composite index. It is not swept, and should
+not be.

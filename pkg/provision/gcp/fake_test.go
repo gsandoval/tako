@@ -8,10 +8,12 @@ package gcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -250,5 +252,108 @@ func TestHostConstantsAreWellFormed(t *testing.T) {
 		if got := c.url(h, "/v1/x"); got != "https://"+h+"/v1/x" {
 			t.Errorf("url(%q) = %q", h, got)
 		}
+	}
+}
+
+// The release walk's destroy stopped halfway on a one-off
+// "503 from pubsub.googleapis.com" deleting a subscription. Reconciling
+// converges, so re-running finished it — but the user had to know that.
+// A transient answer on an idempotent call is now retried.
+func TestTransientFailureIsRetriedOnIdempotentCalls(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(503)
+			_, _ = w.Write([]byte(`{"error":{"message":"The service was unable to fulfill your request."}}`))
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+	if err := c.do(context.Background(), http.MethodDelete, c.url(pubsubHost, "/v1/x"), nil, nil); err != nil {
+		t.Fatalf("a 503 on a DELETE should have been retried: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("%d call(s), want 2 — the retry did not happen", calls)
+	}
+}
+
+// A create is NOT retried: repeating a POST can make two of something,
+// and a deploy that has re-observed the world is the safe way back.
+func TestCreatesAreNotRetried(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"error":{"message":"unavailable"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+	if err := c.do(context.Background(), http.MethodPost, c.url(runHost, "/v2/x"), map[string]any{"a": 1}, nil); err == nil {
+		t.Fatal("a 503 on a POST must surface, not retry")
+	}
+	if calls != 1 {
+		t.Errorf("%d call(s), want 1 — a create was retried", calls)
+	}
+}
+
+// A permanent refusal must not be retried into a slow failure: 403 is
+// an answer, not a hiccup.
+func TestPermanentFailuresAreNotRetried(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		w.WriteHeader(403)
+		_, _ = w.Write([]byte(`{"error":{"message":"caller lacks permission"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+	if err := c.do(context.Background(), http.MethodDelete, c.url(pubsubHost, "/v1/x"), nil, nil); err == nil {
+		t.Fatal("a 403 must surface")
+	}
+	if calls != 1 {
+		t.Errorf("%d call(s), want 1 — a permanent refusal was retried", calls)
+	}
+}
+
+// The retried body must be re-sent, not consumed by the first attempt.
+func TestRetryResendsTheBody(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	var bodies []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		bodies = append(bodies, string(raw))
+		if len(bodies) == 1 {
+			w.WriteHeader(503)
+			return
+		}
+		w.WriteHeader(200)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+	if err := c.do(context.Background(), http.MethodPut, c.url(pubsubHost, "/v1/x"), map[string]any{"topic": "t"}, nil); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if len(bodies) != 2 || bodies[0] != bodies[1] || !strings.Contains(bodies[1], `"topic":"t"`) {
+		t.Errorf("bodies = %q — the retry must re-send what the first attempt sent", bodies)
 	}
 }

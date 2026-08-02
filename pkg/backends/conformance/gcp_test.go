@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -32,11 +33,76 @@ func gcpClient(t *testing.T, app, env string) *gcpb.Client {
 	if err != nil {
 		t.Fatalf("gcp auth: %v", err)
 	}
+	sweepOnce.Do(func() { sweepStaleConformance(t, c, env) })
 	// The env is a throwaway Datastore namespace: purge it on the way
 	// out so the console's namespace dropdown stays readable (conf-*
 	// litter buried real data before this cleanup existed).
 	t.Cleanup(func() { purgeNamespace(t, c, env) })
 	return c
+}
+
+var sweepOnce sync.Once
+
+// sweepStaleConformance removes conf-* Pub/Sub resources left by
+// EARLIER runs, once per run, before anything is created.
+//
+// Cleanups only run if the process lives to run them. A run killed
+// mid-chapter — Ctrl-C, a CI timeout — leaks whatever it had made, and
+// that is how conf-91c17217-evbkt-uploaded-keep was still sitting in
+// the scratch project when the 2026-08-02 release walk listed it. Each
+// run picks a fresh conf-<hex> env, so anything carrying a DIFFERENT
+// env prefix belongs to a run that is over.
+//
+// Subscriptions before topics: a topic with a live subscription refuses
+// to go. Best-effort throughout — this is tidying, and it must never be
+// the reason a chapter fails.
+func sweepStaleConformance(t *testing.T, c *gcpb.Client, currentEnv string) {
+	t.Helper()
+	base := "https://pubsub.googleapis.com/v1/projects/" + *project
+	for _, kind := range []string{"subscriptions", "topics"} {
+		var page struct {
+			Subscriptions []struct {
+				Name string `json:"name"`
+			} `json:"subscriptions"`
+			Topics []struct {
+				Name string `json:"name"`
+			} `json:"topics"`
+		}
+		req, err := http.NewRequestWithContext(context.Background(), "GET", base+"/"+kind+"?pageSize=1000", nil)
+		if err != nil {
+			return
+		}
+		res, err := c.HC.Do(req)
+		if err != nil {
+			return
+		}
+		raw, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode/100 != 2 {
+			return
+		}
+		_ = json.Unmarshal(raw, &page)
+		names := page.Topics
+		if kind == "subscriptions" {
+			names = page.Subscriptions
+		}
+		for _, n := range names {
+			short := n.Name[strings.LastIndex(n.Name, "/")+1:]
+			if !strings.HasPrefix(short, "conf-") || strings.HasPrefix(short, currentEnv) {
+				continue
+			}
+			req, err := http.NewRequestWithContext(context.Background(), "DELETE", base+"/"+kind+"/"+short, nil)
+			if err != nil {
+				continue
+			}
+			if r, err := c.HC.Do(req); err == nil {
+				r.Body.Close()
+				if r.StatusCode/100 == 2 {
+					t.Logf("conformance: swept %s %s left by an earlier run", kind, short)
+				}
+			}
+		}
+	}
 }
 
 // purgeNamespace deletes every entity in the chapter's namespace — a
@@ -219,6 +285,45 @@ func ensureAndIndex(t *testing.T, c *gcpb.Client) {
 	})
 }
 
+// deleteResource removes one conformance resource and SAYS SO when it
+// cannot. The cleanups here used to be `if r, err := c.HC.Do(req); err
+// == nil` — which swallowed the status as well as the error, so a 5xx
+// leaked the resource silently. A subscription from an interrupted run
+// was still sitting in the scratch project weeks later because of it.
+//
+// A transient answer is retried; anything left is a test failure,
+// because a suite that creates cloud resources and does not remove them
+// is a suite that quietly costs money.
+func deleteResource(t *testing.T, c *gcpb.Client, url, what string) {
+	t.Helper()
+	var last string
+	for attempt := range 3 {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt) * time.Second)
+		}
+		req, err := http.NewRequestWithContext(context.Background(), "DELETE", url, nil)
+		if err != nil {
+			t.Errorf("conformance leaked %s: %v", what, err)
+			return
+		}
+		res, err := c.HC.Do(req)
+		if err != nil {
+			last = err.Error()
+			continue
+		}
+		res.Body.Close()
+		// 404: already gone, which is the outcome we wanted.
+		if res.StatusCode/100 == 2 || res.StatusCode == http.StatusNotFound {
+			return
+		}
+		last = fmt.Sprintf("HTTP %d", res.StatusCode)
+		if res.StatusCode < 500 && res.StatusCode != http.StatusTooManyRequests {
+			break // a refusal, not a hiccup
+		}
+	}
+	t.Errorf("conformance leaked %s (%s) — delete it by hand; the scratch project accumulates otherwise", what, last)
+}
+
 // --- C4: Pub/Sub-backed chapters ---------------------------------------
 //
 // Push DELIVERY is infrastructure (subscription → Cloud Run → IAM) and
@@ -245,12 +350,7 @@ func makeTopic(t *testing.T, c *gcpb.Client, name string) {
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("create topic %s: HTTP %d", name, resp.StatusCode)
 	}
-	t.Cleanup(func() {
-		req, _ := http.NewRequestWithContext(context.Background(), "DELETE", full, nil)
-		if r, err := c.HC.Do(req); err == nil {
-			r.Body.Close()
-		}
-	})
+	t.Cleanup(func() { deleteResource(t, c, full, "topic "+name) })
 }
 
 func makePullSub(t *testing.T, c *gcpb.Client, sub, topic string) {
@@ -271,12 +371,7 @@ func makePullSub(t *testing.T, c *gcpb.Client, sub, topic string) {
 	if resp.StatusCode/100 != 2 {
 		t.Fatalf("create subscription %s: HTTP %d", sub, resp.StatusCode)
 	}
-	t.Cleanup(func() {
-		req, _ := http.NewRequestWithContext(context.Background(), "DELETE", full, nil)
-		if r, err := c.HC.Do(req); err == nil {
-			r.Body.Close()
-		}
-	})
+	t.Cleanup(func() { deleteResource(t, c, full, "subscription "+sub) })
 }
 
 // pullPayloads pulls (and acks) until want messages arrive or the
