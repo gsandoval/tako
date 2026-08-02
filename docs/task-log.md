@@ -11033,3 +11033,66 @@ Ditto absence over 23h30m.
    limit for a subtler failure. My recommendation is (a): the limit is
    real, and an error that names it teaches more than a missing feature.
 2. **Alignment derivation** as recommended above, or expose the knob?
+
+## Y1 — exposing alignment (owner direction), and what it does NOT fix (2026-08-02)
+
+Owner: expose the alignment windows rather than abstracting them away —
+"let some of these details leak, maybe create an easy way to configure
+them, but not necessarily hiding the knobs". Adopted; it matches how
+tako already treats cost and footprint (surfaced, never hidden).
+
+**But the accompanying hypothesis — that absence then covers every
+case — is false, and was measured rather than argued:**
+
+```
+absent For=26h, align=60s     -> HTTP 400  Durations longer than 23h30m
+absent For=26h, align=3600s   -> HTTP 400  Durations longer than 23h30m
+absent For=26h, align=86400s  -> HTTP 400  Durations longer than 23h30m
+PromQL duration=26h           -> HTTP 400  (same ceiling)
+PromQL duration=48h           -> HTTP 400  (same ceiling)
+```
+
+The cap is validation on the `duration` FIELD. It does not move with
+alignment, and switching condition types does not escape it —
+`conditionPrometheusQueryLanguage` refuses the same durations, so there
+is no back door. **A daily cron still cannot be watched by absence**,
+and no amount of exposed knobs changes that.
+
+Worth stating concretely why 23h30m is not "close enough" for a daily
+cron: a job at 00:00 has its last data point 23h30m ago at 23:30, so the
+condition goes true at 23:30 and resolves at 00:00 — a false page every
+single day, forever.
+
+### The shape: tako.Window
+
+```go
+type Window struct {
+    For   time.Duration // how long the condition must hold
+    Every time.Duration // the alignment period — the bucket each series is reduced into
+}
+
+tako.Above(tako.P99(thumbMs), 2000, tako.For(5*time.Minute))
+tako.Below(tako.Count(uploads), 1, tako.Window{Every: 30 * time.Minute})
+tako.Absent(tako.Runs(Sweep), tako.For(2*time.Hour))
+```
+
+`tako.For(d)` is the easy path; the struct is there when the bucket
+matters. `Every` reads correctly in both directions — "the p99 computed
+every minute", "uploads counted every 30 minutes" — because it IS the
+period each series is reduced into, which is the honest description.
+
+Zero `Every` derives per reading and the reference states the mapping:
+60s for rate, ratio and percentile readings (units are independent of
+the bucket, so the bucket is only smoothing); for COUNT readings there
+is no defensible default — the bucket is the counting window, and
+`Count(x)` with an unstated period means nothing — so the analyzer
+refuses it and says what to write.
+
+Measured bounds become analyzer errors with the real ceilings:
+`Every` 60s–90000s, `For` ≤24h on thresholds, ≤23h30m on absence.
+
+**STILL OPEN — the daily-cron decision from the previous entry.**
+Exposing alignment did not resolve it. Options unchanged: (a) ship
+`Runs`/`Absent` with the cap and an analyzer error that names it and
+explains the daily-cron consequence; (b) cut `Runs`; (c) counter
+heartbeat. Recommendation remains (a).
