@@ -9982,3 +9982,67 @@ and the two commands that confirm recovery (a 204 on the same endpoint,
 and an empty DLQ) — plus what it means if the 403s never stop, which IS
 a tako bug. `topic.md` points at it, and the gate script gained §8b so
 the next walker meets it as an expected step rather than a scare.
+
+## Pre-release deploy/destroy cycle — run 2026-08-02
+
+`validate/release-cycle.md` (new, not a feature gate): the short walk
+proving the two riskiest changes of the release pass reach real
+infrastructure together. Run against tako-test-01, `--env x1`, on
+examples/gallery. **All five sections pass.**
+
+| § | claim | result |
+|---|---|---|
+| 1 | P2's 130 rewritten URLs provision real infrastructure | 45 creates, 5 services up in 2m31s |
+| 2 | X1: the cron carries its VARIABLE's name | job `x1-gallery-cron-cleanup` → `/_tako/cron/Cleanup` |
+| 3 | and the route actually resolves | `POST /_tako/cron/Cleanup → 200 (526.3ms)`, then `cron ok` |
+| 4 | every observation path reads back what creation wrote | re-plan: **0 creates, 0 updates, 55 skips, 0 orphans** |
+| 5 | destroy leaves nothing | no `x1-*` service, job, topic, subscription, SA or bucket |
+
+§2 is the one that mattered: `cleanupOrphans` — the function name X1
+retired as an identity — appears nowhere in either column. §4's full
+convergence is the strongest available evidence for P2, since a URL that
+reads differently from the one that wrote would surface as a spurious
+create.
+
+### What the run found
+
+**A third `tako logs` defect, fixed and verified live.** Cloud Audit
+Logs share the `cloud_run_revision` resource, so they matched the
+filter; they carry a `protoPayload` nothing rendered, and arrived as
+blank lines — six of them in a twelve-line window. Worse than ugly: a
+deploy emits enough audit entries to crowd the 200-entry page budget and
+push the app's own logs off the end. Now excluded in the filter, with a
+defensive skip for any entry that still renders empty. Re-ran against
+the live service: clean.
+
+That is three defects in one command found by two walks — blank platform
+request entries, the duplicate tako wrote next to them, and now audit
+noise. All three came from the same root: the query says
+`resource.type="cloud_run_revision"` and nothing had ever asked what
+ELSE lands under that resource type.
+
+**Destroy met a real transient and converged.** The first run failed
+partway with `delete the dead-letter keep subscription: The service was
+unable to fulfill your request [code=8a75] (HTTP 503 from
+pubsub.googleapis.com)`. Re-running the identical command finished the
+teardown — which is the stateless-reconciliation design working exactly
+as intended, and worth having seen once rather than assumed.
+
+Logged, not done: **destroy does not retry transient 5xx.** It converges
+on re-run, so nothing is lost, but a user meeting a 503 mid-teardown has
+to know to re-run. Deploy already retries elsewhere (the image
+eventual-consistency loop in `RunServices.Create`); the same treatment
+for 5xx during apply would make this invisible.
+
+**The script itself had a gap the run caught:** gallery declares a
+secret and every env gets its own, so preflight stops on
+`x1-notifier-key` before anything is built. §1 now creates it and §5
+deletes it — destroy never touches secrets by design, so leaving that
+out would have left one behind on every run.
+
+Also observed, pre-existing and unrelated: `conf-signer` (service
+account) and `conf-91c17217-evbkt-uploaded-keep` (subscription) survive
+in tako-test-01 from gcp-backend conformance runs. Not tako-managed
+resources — the conformance suite creates them under its own `conf-`
+prefix — but they should be cleaned up by the suite rather than
+accumulating.

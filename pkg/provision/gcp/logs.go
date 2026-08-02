@@ -21,7 +21,13 @@ type LogEntry struct {
 // (Cloud Logging is queried by service name — label filtering happens
 // on the resource, so callers pass the service names they own).
 func (c *Client) Logs(ctx context.Context, services []string, since time.Duration, limit int) ([]LogEntry, error) {
-	filter := fmt.Sprintf(`resource.type="cloud_run_revision" AND timestamp>=%q`,
+	// Audit logs share the cloud_run_revision resource but describe WHO
+	// DEPLOYED, not what the app did. They carry a protoPayload this
+	// command has no rendering for — they arrived as blank lines — and,
+	// worse, a deploy emits enough of them to crowd the page budget and
+	// push the app's own logs off the end.
+	filter := fmt.Sprintf(`resource.type="cloud_run_revision" AND timestamp>=%q`+
+		` AND NOT logName:"cloudaudit.googleapis.com"`,
 		time.Now().Add(-since).UTC().Format(time.RFC3339))
 	if len(services) == 1 {
 		filter += fmt.Sprintf(` AND resource.labels.service_name=%q`, services[0])
@@ -78,6 +84,12 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 		if text == "" && e.HTTPRequest.RequestMethod != "" {
 			text = requestLine(e.HTTPRequest.RequestMethod, e.HTTPRequest.RequestURL,
 				e.HTTPRequest.Status, e.HTTPRequest.Latency)
+		}
+		if text == "" {
+			// Nothing renderable: a shape this command does not know.
+			// Printing a timestamp and a severity with no message is
+			// worse than printing nothing.
+			continue
 		}
 		entries = append(entries, LogEntry{
 			Time:     e.Timestamp,
