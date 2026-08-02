@@ -23,13 +23,10 @@ package runtime
 // WARNING, not WARN. A JSON handler alone would still lose severity.
 
 import (
-	"context"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/http"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -142,71 +139,23 @@ func requestLogger(r *http.Request, reqID string) *slog.Logger {
 	return slog.Default().With(append([]any{"req", reqID}, traceAttrs(r)...)...)
 }
 
-// logRequest emits the one-line-per-request record. Locally that is the
-// dev console's terse line, unchanged. Deployed it is a structured
-// httpRequest record, which is what makes Cloud Logging render it as a
-// request rather than as text — and what lets the handler's own lines
-// nest underneath it.
-func logRequest(r *http.Request, status int, size int64, took time.Duration) {
-	if traceProject == "" {
-		fmt.Printf("%s %s → %d (%.1fms)\n",
-			r.Method, r.URL.Path, status, float64(took.Microseconds())/1000)
-		return
+// logRequest prints the dev console's one-line-per-request summary.
+//
+// It is LOCAL ONLY, deliberately. Cloud Run's frontend already writes a
+// request log for every request — to run.googleapis.com/requests, with
+// the full URL, requestSize, serverIp, nanosecond latency, the trace,
+// and a severity already derived from the status. Tako used to write a
+// second one alongside it, carrying strictly less, which doubled
+// request-log volume and made every request appear twice in the
+// console. Deployed, the platform's record is the request log; tako
+// adds nothing to it.
+//
+// What tako still owns in the cloud is the HANDLER's lines, which carry
+// the same trace so they nest under the platform's request entry.
+func logRequest(r *http.Request, status int, took time.Duration) {
+	if traceProject != "" {
+		return // Cloud Run already logged this request, and logged it better
 	}
-	req := map[string]any{
-		"requestMethod": r.Method,
-		"requestUrl":    r.URL.RequestURI(),
-		"status":        status,
-		"latency":       strconv.FormatFloat(took.Seconds(), 'f', 6, 64) + "s",
-		"protocol":      r.Proto,
-	}
-	if size > 0 {
-		req["responseSize"] = size
-	}
-	if ua := r.UserAgent(); ua != "" {
-		req["userAgent"] = ua
-	}
-	if ip := clientIP(r); ip != "" {
-		req["remoteIp"] = ip
-	}
-	attrs := append([]any{httpKey, req}, traceAttrs(r)...)
-	slog.LogAttrs(context.Background(), levelFor(status), r.Method+" "+r.URL.Path+" → "+strconv.Itoa(status),
-		anyToAttrs(attrs)...)
-}
-
-// levelFor maps a response status onto a severity, so a page of 500s is
-// findable with the same filter as a handler's own ERROR lines.
-func levelFor(status int) slog.Level {
-	switch {
-	case status >= 500:
-		return slog.LevelError
-	case status >= 400:
-		return slog.LevelWarn
-	default:
-		return slog.LevelInfo
-	}
-}
-
-// clientIP prefers the forwarded address, since every request arrives
-// through Cloud Run's frontend and RemoteAddr is that frontend.
-func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		first, _, _ := strings.Cut(f, ",")
-		return strings.TrimSpace(first)
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
-}
-
-// anyToAttrs converts a k, v, k, v slice into attrs for LogAttrs.
-func anyToAttrs(kv []any) []slog.Attr {
-	out := make([]slog.Attr, 0, len(kv)/2)
-	for i := 0; i+1 < len(kv); i += 2 {
-		key, _ := kv[i].(string)
-		out = append(out, slog.Any(key, kv[i+1]))
-	}
-	return out
+	fmt.Printf("%s %s → %d (%.1fms)\n",
+		r.Method, r.URL.Path, status, float64(took.Microseconds())/1000)
 }

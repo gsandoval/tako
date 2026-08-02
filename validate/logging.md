@@ -105,21 +105,41 @@ gcloud logging read \
   --project $PROJECT --limit 3 --freshness 10m --format 'value(jsonPayload.message)'
 ```
 
-## 6. The payload is a record, not a blob
+## 6. The handler's own lines are records, and each request is logged ONCE
+
+Read a line the HANDLER wrote — one with attributes of its own, which is
+what distinguishes it from a bare message:
 
 ```
 gcloud logging read \
-  'resource.type="cloud_run_revision" AND resource.labels.service_name="logging-gallery"' \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="logging-gallery"
+   AND logName:"stdout" AND jsonPayload.req!=""' \
   --project $PROJECT --limit 1 --freshness 10m --format json
 ```
 
-**Observe:** the entry has a **`jsonPayload`** object — not a
-`textPayload` string. Inside it, `httpRequest` fields are broken out
-(`requestMethod`, `status`, `latency`, `responseSize`), and the entry
-carries a `trace` of the form `projects/<project>/traces/<id>`.
+**Observe:** a **`jsonPayload`** object carrying the handler's own keys
+(`req`, and whatever the call site attached), plus a `trace` of the form
+`projects/<project>/traces/<id>`.
 
-A `textPayload` here means the JSON handler is not installed and the
-gate fails.
+A line whose only content is a message arrives as `textPayload` with
+`severity` and `trace` alongside — that is Cloud Logging lifting the
+special fields out, not a failure.
+
+**Then check for duplicates**, which is what this section is really for:
+
+```
+gcloud logging read \
+  'resource.type="cloud_run_revision" AND resource.labels.service_name="logging-gallery"
+   AND httpRequest.requestUrl:"/api/photos"' \
+  --project $PROJECT --limit 10 --freshness 10m \
+  --format 'value(logName, httpRequest.requestMethod, httpRequest.status)'
+```
+
+**Every request must appear exactly once**, from
+`run.googleapis.com%2Frequests` — Cloud Run's own entry. A second line
+for the same request from `%2Fstdout` means tako is writing a request
+log the platform already writes (the defect this gate caught the first
+time it ran).
 
 ## 7. Handler lines nest under their request
 
@@ -146,6 +166,26 @@ go run ../../cmd/tako logs gallery --project $PROJECT --env logging
 
 **Observe:** the severity column now carries `INFO` / `WARNING` /
 `ERROR` per line rather than `DEFAULT` on every one.
+
+## 8b. Expected noise: the post-deploy 403 window
+
+Within the first couple of minutes you will likely see 403s on
+`/_tako/push` for the subscriber services, with *"The IAM principal
+lacks {run.routes.invoke} permission"*. **That is IAM propagation, not a
+defect** — the grant is applied before the subscription is created, but
+Cloud Run's front door takes a moment to see it, and Pub/Sub retries.
+
+Confirm it recovered rather than assuming:
+
+```
+gcloud logging read \
+  'resource.labels.service_name="logging-gallery-onuploaded" AND httpRequest.status=204' \
+  --project $PROJECT --limit 3 --freshness 15m
+go run ../../cmd/tako dlq gallery-onuploaded --project $PROJECT --env logging
+```
+
+→ 204s present, and no dead letters citing the 403. If the 403s never
+stop, that IS a defect: report it.
 
 ## 9. Destroy clean
 

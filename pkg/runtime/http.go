@@ -183,24 +183,16 @@ func logRequests(next http.Handler) http.Handler {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		logRequest(r, sw.status, sw.written, time.Since(start))
+		logRequest(r, sw.status, time.Since(start))
 	})
 }
 
 type statusWriter struct {
 	http.ResponseWriter
-	status  int
-	written int64
+	status int
 }
 
 func (w *statusWriter) WriteHeader(status int) {
 	w.status = status
 	w.ResponseWriter.WriteHeader(status)
-}
-
-// Write counts the body so the cloud record can carry responseSize.
-func (w *statusWriter) Write(b []byte) (int, error) {
-	n, err := w.ResponseWriter.Write(b)
-	w.written += int64(n)
-	return n, err
 }

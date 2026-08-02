@@ -9,7 +9,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -136,78 +135,30 @@ func TestParseTraceContext(t *testing.T) {
 	}
 }
 
-func TestCloudRequestLogIsAnHttpRequestRecord(t *testing.T) {
-	buf, restore := cloudLogs(t, "tako-test-01")
-	defer restore()
-
-	r := httptest.NewRequest("GET", "/api/photos?page=2", nil)
-	r.Header.Set("User-Agent", "curl/8.7.1")
-	r.Header.Set("X-Forwarded-For", "203.0.113.7, 130.211.0.1")
-	logRequest(r, 200, 812, 14*time.Millisecond)
-
-	line := lastLine(t, buf)
-	req, ok := line[httpKey].(map[string]any)
-	if !ok {
-		t.Fatalf("httpRequest = %v — Cloud Logging renders this key as a request, and text as text", line[httpKey])
-	}
-	if req["requestMethod"] != "GET" || req["requestUrl"] != "/api/photos?page=2" {
-		t.Errorf("method/url = %v %v", req["requestMethod"], req["requestUrl"])
-	}
-	if req["status"].(float64) != 200 || req["responseSize"].(float64) != 812 {
-		t.Errorf("status/size = %v %v", req["status"], req["responseSize"])
-	}
-	if req["latency"] != "0.014000s" {
-		t.Errorf("latency = %v — Cloud Logging wants a seconds-with-suffix duration", req["latency"])
-	}
-	if req["userAgent"] != "curl/8.7.1" {
-		t.Errorf("userAgent = %v", req["userAgent"])
-	}
-	// RemoteAddr is Cloud Run's frontend on every request; the client is
-	// the first hop of X-Forwarded-For or nothing.
-	if req["remoteIp"] != "203.0.113.7" {
-		t.Errorf("remoteIp = %v — the frontend's own address is not the client", req["remoteIp"])
-	}
-}
-
-// A page of 500s must be findable with the same severity filter as a
-// handler's own error lines.
-func TestRequestSeverityFollowsStatus(t *testing.T) {
-	for _, c := range []struct {
-		status int
-		want   slog.Level
-	}{{200, slog.LevelInfo}, {404, slog.LevelWarn}, {500, slog.LevelError}} {
-		if got := levelFor(c.status); got != c.want {
-			t.Errorf("levelFor(%d) = %v, want %v", c.status, got, c.want)
-		}
-	}
-}
-
 // Local output is a product: the dev console's line, on stdout, not
-// JSON. This is the half of the slice that must NOT change.
+// JSON.
 func TestLocalRequestLogStaysTheDevLine(t *testing.T) {
 	buf, restore := cloudLogs(t, "") // not deployed
 	defer restore()
 
-	logRequest(httptest.NewRequest("GET", "/greet/ada", nil), 200, 20, time.Millisecond)
+	logRequest(httptest.NewRequest("GET", "/greet/ada", nil), 200, time.Millisecond)
 	if buf.Len() != 0 {
 		t.Errorf("a local request went through the structured logger:\n%s", buf.String())
 	}
 }
 
-// End to end through the middleware: the response size the record
-// reports is the bytes actually written.
-func TestLogRequestsCountsTheBody(t *testing.T) {
-	buf, restore := cloudLogs(t, "tako-test-01")
+// Deployed, tako writes NO request log: Cloud Run's frontend already
+// writes one per request, with the full URL, requestSize, serverIp,
+// nanosecond latency and a severity derived from the status. The gate
+// walk found tako's copy sitting next to it in the console, carrying
+// strictly less — every request logged twice, and request-log volume
+// doubled for nothing.
+func TestNoRequestLogInTheCloud(t *testing.T) {
+	buf, restore := cloudLogs(t, "tako-test-01") // deployed
 	defer restore()
 
-	h := logRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(201)
-		_, _ = w.Write([]byte(`{"id":"x"}`))
-	}))
-	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/photos", nil))
-
-	req := lastLine(t, buf)[httpKey].(map[string]any)
-	if req["status"].(float64) != 201 || req["responseSize"].(float64) != 10 {
-		t.Errorf("status/size = %v %v, want 201 10", req["status"], req["responseSize"])
+	logRequest(httptest.NewRequest("GET", "/api/photos", nil), 200, 14*time.Millisecond)
+	if buf.Len() != 0 {
+		t.Errorf("tako wrote a request log the platform already writes:\n%s", buf.String())
 	}
 }

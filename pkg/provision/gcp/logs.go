@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -46,7 +47,16 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 			Severity    string         `json:"severity"`
 			TextPayload string         `json:"textPayload"`
 			JSONPayload map[string]any `json:"jsonPayload"`
-			Resource    struct {
+			// Cloud Run's frontend writes one request entry per request,
+			// and its content lives HERE rather than in a payload — so
+			// without this these arrived as blank lines.
+			HTTPRequest struct {
+				RequestMethod string `json:"requestMethod"`
+				RequestURL    string `json:"requestUrl"`
+				Status        int    `json:"status"`
+				Latency       string `json:"latency"`
+			} `json:"httpRequest"`
+			Resource struct {
 				Labels map[string]string `json:"labels"`
 			} `json:"resource"`
 		} `json:"entries"`
@@ -65,6 +75,10 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 				text = fmt.Sprint(e.JSONPayload)
 			}
 		}
+		if text == "" && e.HTTPRequest.RequestMethod != "" {
+			text = requestLine(e.HTTPRequest.RequestMethod, e.HTTPRequest.RequestURL,
+				e.HTTPRequest.Status, e.HTTPRequest.Latency)
+		}
 		entries = append(entries, LogEntry{
 			Time:     e.Timestamp,
 			Service:  e.Resource.Labels["service_name"],
@@ -73,4 +87,23 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 		})
 	}
 	return entries, nil
+}
+
+// requestLine renders Cloud Run's own request entry the way the dev
+// console renders a local one, so `tako logs` reads the same in both
+// places: METHOD /path → status (12.3ms).
+func requestLine(method, rawURL string, status int, latency string) string {
+	path := rawURL
+	// The platform logs an absolute URL; the path is what identifies the
+	// route, and the host is the same for every line anyway.
+	if i := strings.Index(path, "://"); i >= 0 {
+		if j := strings.Index(path[i+3:], "/"); j >= 0 {
+			path = path[i+3+j:]
+		}
+	}
+	line := fmt.Sprintf("%s %s → %d", method, path, status)
+	if d, err := time.ParseDuration(latency); err == nil && d > 0 {
+		line += fmt.Sprintf(" (%.1fms)", float64(d.Microseconds())/1000)
+	}
+	return line
 }

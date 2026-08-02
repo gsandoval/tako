@@ -83,20 +83,15 @@ Three things follow from that, and each is the point:
   deliveries where there is no trace, `req` does the correlating on its
   own.
 
-Request logs follow the same split — the terse `GET /path → 200
-(14.2ms)` line locally, and deployed a structured `httpRequest` record
-that Cloud Logging renders as a request:
+**Request logs are Cloud Run's, not tako's.** The platform writes one
+entry per request to `run.googleapis.com/requests` — full URL, request
+and response sizes, the client IP, nanosecond latency, the trace, and a
+severity already derived from the status (a 404 arrives as `WARNING`).
+Tako does not write a second one; locally, where there is no platform to
+do it, you get the dev console's `GET /path → 200 (14.2ms)` line.
 
-```json
-{"time":"…","severity":"INFO","message":"GET /api/photos → 200",
- "httpRequest":{"requestMethod":"GET","requestUrl":"/api/photos","status":200,
-   "latency":"0.014000s","responseSize":812,"userAgent":"curl/8.7.1","protocol":"HTTP/1.1"},
- "logging.googleapis.com/trace":"projects/my-project/traces/1054…"}
-```
-
-Its severity follows the status: 5xx logs as `ERROR`, 4xx as `WARNING`,
-everything else `INFO` — so a burst of 500s is findable with the same
-filter as the handler errors behind them.
+`tako logs` renders those platform entries in the same shape, so the
+output reads the same in both places.
 
 **tako owns the default logger in a deployed service.** A generated main
 calls `Boot()` before any of your code runs, so a `slog.SetDefault` in
@@ -105,9 +100,10 @@ in the cloud is derived the same way the service's shape is, and it is
 what makes severity mean anything without configuration. Locally
 nothing is installed, so `slog.SetDefault` is yours.
 
-Cron, job, and singleton lines get severity too — they carry their
-`cron=`/`job=`/`handler=` attribute instead of `httpRequest`, since an
-execution is not a request from a client.
+Cron, job, singleton and push-handler lines get severity and the same
+treatment; they carry a `cron=`/`job=`/`handler=` attribute naming what
+ran, since an execution is not a request from a client and has no
+platform request entry to nest under.
 
 ## Local
 

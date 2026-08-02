@@ -9913,3 +9913,72 @@ packages is idiomatic Go, and a shared `internal/text` would be worse.
 carved out. Pure movement; verified by running the CLI.
 
 Full suite green, six examples green, gofmt and vet clean.
+
+## P1 follow-up: the gate caught a duplicate request log (2026-08-02)
+
+Two findings from the live walk of `validate/logging.md`, one a real
+defect in P1 and one benign.
+
+### 1. Tako was logging every request twice — P1 shipped this
+
+The console showed two entries per request:
+
+| logName | source | content |
+|---|---|---|
+| `run.googleapis.com%2Frequests` | Cloud Run's frontend | full URL, requestSize, serverIp, `0.191464485s`, trace, spanId, traceSampled, **severity already derived from status** |
+| `run.googleapis.com%2Fstdout` | tako | `/api/photos`, `0.188980s`, no sizes, no serverIp |
+
+**Cloud Run already writes a request log for every request**, including
+to private push endpoints, and already maps status to severity — the
+404 in the walk arrived as `WARNING` from the platform without tako's
+help. P1's request-log half therefore added nothing, doubled
+request-log volume (billed), and made every request appear twice.
+
+I did not check whether the platform already did this before proposing
+it. The proposal argued from what Cloud Logging *accepts* rather than
+from what Cloud Run *already emits* — the same shape of miss as U2's
+`cloud_run_revision` metric assumption, where the half that was checked
+made the other half easy to skip.
+
+**Fixed by deletion:** `logRequest` is local-only now. The dev console
+line is unchanged; deployed, the platform's record is the request log.
+`statusWriter` loses the byte counting it grew for `responseSize`, and
+`levelFor`/`clientIP`/`anyToAttrs` go with it. The valuable half of P1 —
+handler lines carrying severity and the trace that nests them under the
+platform's request entry — is untouched.
+
+**And a second defect the same evidence exposed:** `tako logs` has no
+`logName` filter, so it was already ingesting the platform's request
+entries — and rendering them BLANK, because their content lives in
+`httpRequest` and nothing read it. So the CLI was showing a blank line
+AND a duplicate for every request. It now renders them as
+`POST /api/photos → 200 (191.5ms)`, matching the dev console, which
+means removing tako's copy costs the CLI nothing and gains it the
+platform's richer fields.
+
+`validate/logging.md` §6 was wrong too, and would have passed anyway: it
+told the reader to expect `jsonPayload` on an arbitrary entry, but a
+line whose only content is a message legitimately arrives as
+`textPayload` with the special fields lifted out. Rewritten to read a
+line with handler attributes, and — the point of the section now — to
+count entries per request and fail on a duplicate.
+
+### 2. The post-deploy 403 window is expected
+
+`POST /_tako/push → 403 … lacks {run.routes.invoke} permission`, five
+times over two minutes, then silence.
+
+Checked rather than assumed: `reconcileOrder` puts `KindIamGrants`
+BEFORE `KindPushSubscription`, and `grants.go` adds
+`roles/run.invoker` for each worker/subscriber's SA on its own service.
+So the grant is written before the subscription exists — this is IAM
+propagation through Cloud Run's front door, and Pub/Sub's retries carry
+the messages through it. At-least-once means nothing is lost. Boot
+already retries Secret Manager for 90s for the identical reason.
+
+Not a code change; a documentation gap. `guide/cloud.md` gains "the
+first two minutes after a deploy" with the exact text, why it happens,
+and the two commands that confirm recovery (a 204 on the same endpoint,
+and an empty DLQ) — plus what it means if the 403s never stop, which IS
+a tako bug. `topic.md` points at it, and the gate script gained §8b so
+the next walker meets it as an expected step rather than a scare.

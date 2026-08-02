@@ -87,6 +87,10 @@ must tolerate duplicates like any async handler.
   the error that sends you here from a queue.
 - `tako: no topic backend wired — run via tako dev, a generated service, or tako.NewTestApp` — a panic from `Publish` in a bare
   test without a booted app.
+- On the wire, minutes after a fresh deploy: `POST /_tako/push → 403 …
+  lacks {run.routes.invoke} permission`. IAM propagation, not a
+  misconfiguration — Pub/Sub retries and it stops. See
+  [the cloud story](../guide/cloud.md#the-first-two-minutes-after-a-deploy).
 
 ## Not yet
 

@@ -32,6 +32,40 @@ that demanded it, plus warnings for anything internet-open.
 Removing code removes its grants on the next deploy: revocation is
 convergence, not cleanup you remember to do.
 
+### The first two minutes after a deploy
+
+A fresh deploy can log a short burst of 403s on the push endpoints,
+looking like this:
+
+```
+POST /_tako/push → 403
+The request was not authenticated. … The IAM principal lacks {run.routes.invoke} permission.
+```
+
+**This is expected and self-healing.** Tako grants the subscription's
+identity `roles/run.invoker` on its service and creates the subscription
+after — the reconcile order is grants, then push subscriptions — but IAM
+changes take up to a couple of minutes to propagate through Cloud Run's
+front door. Pub/Sub retries with backoff, so the messages arrive once
+the grant lands; at-least-once delivery means nothing is lost. Tako
+already treats this class of lag as normal elsewhere: boot retries
+Secret Manager reads for 90 seconds for the same reason.
+
+It is worth a look only if it does NOT stop. Confirm delivery recovered:
+
+```
+# a 204 on the same endpoint, after the 403s
+gcloud logging read \
+  'resource.labels.service_name="<env>-<app>-<subscriber>" AND httpRequest.status=204' \
+  --project <project> --limit 3 --freshness 15m
+
+# and nothing gave up into the dead-letter queue
+tako dlq <app>-<subscriber> --project <project> --env <env>
+```
+
+Dead letters with that 403 as their reason mean the grant never landed,
+which is a tako bug — re-run `tako deploy` and file it if it persists.
+
 ## The confirmation ladder
 
 Friction scales with irreversibility (also in `tako --help`):
