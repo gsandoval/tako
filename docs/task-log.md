@@ -10952,3 +10952,84 @@ dead-letter rate is not a question anyone asks — and says so rather
 than leaving it as an unexplained asymmetry.
 
 sdk_lock **151 → 157**.
+
+## Y1 — alignment: measured limits, and one that kills an example (2026-08-02)
+
+Owner asked what decisions alignment forces. It forces three, and the
+answer to one of them is that a promised alert cannot be built.
+
+`alignmentPeriod` and `duration` are different knobs and Y1a's probes
+conflated them by setting them equal. `alignmentPeriod` is the bucket
+each series is reduced into; `duration` is how long the breach must
+persist. Measured against the live API (every probe policy created
+disabled and deleted; project ends at 0 policies):
+
+| field | accepted | refused |
+|---|---|---|
+| `alignmentPeriod` | 60s … 90000s | 30s (`too short`), 172800s |
+| `conditionThreshold.duration` | ≤ 86400s (24h) | 93600s — *"Durations longer than 24[h]"* |
+| **`conditionAbsent.duration`** | **≤ 84600s (23h30m)** | 84660s — *"Durations longer than 23h30m"* |
+
+`conditionAbsent` also **requires** an aggregation with a
+`perSeriesAligner` — *"An aggregation with a perSeriesAligner is
+required"* — so absence is not the config-free condition it looks like.
+
+### The decision that has no good answer: daily crons
+
+Y1's flagship example was
+`tako.Alert(tako.Absent(tako.Runs(Cleanup), 26*time.Hour), Oncall)` —
+"tell me when the nightly job stops running". **It is not
+expressible.** Absence caps at 23h30m, which is SHORTER than a daily
+cron's own period, so any window tako could set would fire on a cron
+that ran perfectly and merely ran late. And a threshold condition is not
+a substitute: a cron that never fires produces no time series at all,
+and threshold conditions do not evaluate on missing data — which is
+exactly why `conditionAbsent` exists.
+
+So the honest boundary: **`Absent(Runs(cron), …)` works for crons that
+run more often than roughly every 11h45m** (window = 2x period), and
+cannot reliably watch a daily one. This is Google's ceiling, not a
+tako choice, and it needs an owner decision rather than a quiet cap.
+
+### Decision 2: alignment is per-READING, not one global policy
+
+There is no single alignmentPeriod that serves every metric, because
+the reading changes what the period MEANS:
+
+- `Count(c)` — the alignment period IS the counting window. With
+  `alignmentPeriod=60s`, `Below(Count(ups), 1, 30m)` means "fewer than
+  one upload per MINUTE, for 30 minutes"; with
+  `alignmentPeriod=30m, duration=0` it means "fewer than one upload in
+  30 minutes". Only the second matches what the call site reads like.
+- `Rate(c)` — units are per-second whatever the period, so the period
+  is just smoothing. 60s with `duration=window` is the standard shape.
+- `P99(h)` and friends — the period is the bucket the percentile is
+  computed over. 60s with `duration=window` again.
+- `ErrorRate` — a ratio; same as Rate.
+
+**Recommendation (no new API surface):** derive it per reading —
+`Count` and `DeadLetters` use `alignmentPeriod = the stated window` with
+`duration = 0`; `Rate`, `ErrorRate` and the percentiles use
+`alignmentPeriod = 60s` with `duration = the stated window`. The call
+site keeps reading in English either way, and `reference/alerts.md`
+states the mapping so nobody has to infer it.
+
+The alternative — exposing an `Every(…)` knob — adds a parameter whose
+correct value is derivable in every case tako supports.
+
+### Decision 3: threshold durations over 24h
+
+`sustained` above 24h must be refused at ANALYSIS time with the real
+ceiling in the message, not passed through to a deploy-time 400.
+Ditto absence over 23h30m.
+
+**STOP — decisions for the owner:**
+
+1. **Daily crons.** Options: (a) ship `Runs`/`Absent` with the 23h30m
+   cap and an analyzer error naming it, documenting that daily crons
+   cannot be watched this way; (b) cut `Runs` from v1 and say so; (c)
+   have the cron increment a Counter and watch `Count` instead — which
+   evaluates only while the series still exists, so it trades a hard
+   limit for a subtler failure. My recommendation is (a): the limit is
+   real, and an error that names it teaches more than a missing feature.
+2. **Alignment derivation** as recommended above, or expose the knob?
