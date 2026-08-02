@@ -10877,3 +10877,78 @@ suite, vet and gofmt clean.
 
 Next: Y1b (analyzer — alert/channel resources, subject resolution,
 goldens).
+
+## Y1a amendment — the aggregation is the question, not a default (2026-08-02)
+
+Owner asked for a p99 option on histograms and for the same scrutiny of
+any other metric kind with a hidden knob. Both turned up real problems,
+and the histogram one was a design that could not have shipped.
+
+### Probed against the live API, not the docs
+
+Y1a hardcoded `ALIGN_PERCENTILE_95` for histograms. The reference says
+percentile aligners are valid for "GAUGE and DELTA metrics with
+distribution values" — and tako writes histograms as **CUMULATIVE
+DISTRIBUTION** (`custom.googleapis.com/tako/thumb_ms`, confirmed on
+tako-test-01). Creating real alert policies against that real metric:
+
+```
+ALIGN_PERCENTILE_99 + REDUCE_MAX   -> HTTP 400  the aligner cannot be applied to
+ALIGN_PERCENTILE_95 + REDUCE_MAX   -> HTTP 400  metrics with kind CUMULATIVE and
+ALIGN_PERCENTILE_50 + REDUCE_MEAN  -> HTTP 400  value type DISTRIBUTION
+ALIGN_MEAN          + REDUCE_MEAN  -> HTTP 400
+ALIGN_DELTA         + REDUCE_MEAN  -> HTTP 200
+```
+
+**Y1a's hardcoded p95 would have 400'd at deploy on every histogram
+alert.** Two-stage aggregation is the shape that works, also verified:
+
+```
+[{ALIGN_DELTA, REDUCE_NONE}, {ALIGN_PERCENTILE_99}]        -> HTTP 200
+[{ALIGN_DELTA, REDUCE_NONE}, {ALIGN_PERCENTILE_95, REDUCE_MAX}] -> HTTP 200
+```
+
+Y1c must emit the two-stage form. Every probe policy was created
+disabled and deleted; the project ends with 0 alert policies.
+
+### The same scrutiny found a worse bug in counters
+
+`Below(ups, 1, 30*time.Minute)` — Y1a's own stall example — meant
+"fewer than one upload in half an hour" to a reader, and
+`ALIGN_RATE + REDUCE_SUM` to the provisioner: a rate under one PER
+SECOND, which is almost always true. It would have fired constantly
+while looking correct. Both readings are legal
+(`ALIGN_RATE` and `ALIGN_DELTA`, both HTTP 200 on the live counter) —
+which is exactly why picking one silently was wrong.
+
+### The fix: raw handles are no longer metrics
+
+`*CounterHandle` and `*HistogramHandle` no longer implement `Metric`. A
+recording is not a question; the reading is written where it is read:
+
+```go
+tako.Rate(uploads)    tako.Count(uploads)
+tako.P99(thumbMs)     tako.P95(…)  tako.P50(…)  tako.P05(…)
+```
+
+Verified with the real CLI — all three ambiguous forms are now compile
+errors, not analyzer rules:
+
+```
+cannot use lat (variable of type *tako.HistogramHandle) as tako.Metric value in
+  argument to tako.Above: *tako.HistogramHandle does not implement tako.Metric
+cannot use ups (variable of type *tako.CounterHandle) as tako.Metric value ...
+cannot use ups (variable of type *tako.CounterHandle) as *tako.HistogramHandle
+  value in argument to tako.P99
+```
+
+**Only four percentiles, and that is Google's limit, not a v1 scope
+cut**: the Aligner enum offers 99, 95, 50 and 05 and nothing else, so
+there is no P90 to add later. Documented on the constructors so nobody
+proposes one.
+
+`DeadLetters` keeps a single reading deliberately — a per-second
+dead-letter rate is not a question anyone asks — and says so rather
+than leaving it as an unexplained asymmetry.
+
+sdk_lock **151 → 157**.

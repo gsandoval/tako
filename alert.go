@@ -57,23 +57,27 @@ func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle {
 	return &ChannelHandle{kind: "pubsub", target: topic.name}
 }
 
-// Metric is something a condition can be written about: a declared
-// Counter or Histogram, or one of the derived expressions below.
+// Metric is something a condition can be written about. It is NOT a
+// declared Counter or Histogram directly: those are raw recordings, and
+// a raw recording does not say which question you are asking of it.
 //
-// It is a sealed interface — only SDK types implement it — so the
+//	tako.Rate(uploads)   // uploads per second
+//	tako.Count(uploads)  // uploads in the window
+//	tako.P99(thumbMs)    // 99th percentile latency
+//
+// The interface is sealed — only SDK types implement it — so the
 // analyzer can enumerate every subject an alert could name, and so the
-// AGGREGATION can be derived from the subject's type rather than left to
-// the user. That is the reason conditions take a handle and not a metric
-// name: your metrics are written one cumulative series per instance, and
-// a condition that forgets to aggregate across instances is per-instance
-// noise or silence. A counter alerts on its summed rate, a histogram on
-// its 95th percentile across instances; a string could not carry that.
+// AGGREGATION is chosen where it is visible. Metrics are written one
+// cumulative series per instance, and an alert that aggregates them the
+// wrong way looks configured while being noise: Below(Rate(uploads), 1)
+// asks for a rate under one PER SECOND, which is almost always true.
+// Making the reading explicit is what stops that from being the default.
 type Metric interface {
 	metricSubject() metricRef
 }
 
 // metricRef is what the analyzer reads: which kind of thing is being
-// watched, and which declaration.
+// watched, which declaration, and how to aggregate it.
 type metricRef struct {
 	kind string // counter, histogram, error_rate, dead_letters, runs
 	name string // the declared name, or "" when the subject is a handler
@@ -81,14 +85,43 @@ type metricRef struct {
 	// on distinguishes what a derived metric is measured against when
 	// more than one kind of subject is legal: "service" or "handler".
 	on string
+	// agg is the reading: rate, count, or p99/p95/p50/p05.
+	agg string
 }
 
-func (c *CounterHandle) metricSubject() metricRef {
-	return metricRef{kind: "counter", name: c.name}
+// Rate is a counter's increase per second, summed across instances.
+func Rate(c *CounterHandle) Metric {
+	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "rate"}}
 }
 
-func (h *HistogramHandle) metricSubject() metricRef {
-	return metricRef{kind: "histogram", name: h.name}
+// Count is how many a counter recorded within the condition's window,
+// summed across instances — the reading for "fewer than one upload in
+// half an hour".
+func Count(c *CounterHandle) Metric {
+	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "count"}}
+}
+
+// Percentiles of a histogram, across instances.
+//
+// These four are the whole set, and not by choice: Cloud Monitoring's
+// aligners offer the 99th, 95th, 50th and 5th percentile and nothing
+// else, so there is no P90 to add later. A histogram has no default
+// percentile — which one you mean is the question being asked, so it is
+// written at the call site rather than assumed.
+func P99(h *HistogramHandle) Metric { return percentile(h, "p99") }
+
+// P95 is the 95th percentile.
+func P95(h *HistogramHandle) Metric { return percentile(h, "p95") }
+
+// P50 is the median.
+func P50(h *HistogramHandle) Metric { return percentile(h, "p50") }
+
+// P05 is the 5th percentile — the fast tail, for spotting a workload
+// that got suspiciously cheap.
+func P05(h *HistogramHandle) Metric { return percentile(h, "p05") }
+
+func percentile(h *HistogramHandle, p string) Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: p}}
 }
 
 // derived is a platform metric tako writes the filter for.
@@ -117,14 +150,18 @@ func (h Handler) alertTarget() metricRef {
 // singleton) for its own deployable.
 func ErrorRate(of Target) Metric {
 	t := of.alertTarget()
-	return derived{ref: metricRef{kind: "error_rate", on: t.kind, id: t.id}}
+	return derived{ref: metricRef{kind: "error_rate", on: t.kind, id: t.id, agg: "ratio"}}
 }
 
 // DeadLetters counts messages that exhausted their retries and landed on
-// a queue's dead-letter topic. Above(DeadLetters(q), 0, …) is "anything
-// at all gave up".
+// a queue's dead-letter topic, within the condition's window.
+// Above(DeadLetters(q), 0, …) is "anything at all gave up".
+//
+// Unlike a counter this takes no reading: a per-second dead-letter rate
+// is not a question anyone asks, so the count is the only sensible
+// aggregation and tako picks it.
 func DeadLetters[T any](queue *QueueHandle[T]) Metric {
-	return derived{ref: metricRef{kind: "dead_letters", name: queue.name}}
+	return derived{ref: metricRef{kind: "dead_letters", name: queue.name, agg: "count"}}
 }
 
 // Runs counts a cron's executions — measured where the cron ARRIVES, on
@@ -137,7 +174,7 @@ func DeadLetters[T any](queue *QueueHandle[T]) Metric {
 // it does NOT fire when a run arrives and the handler fails — that is
 // ErrorRate, a separate alert.
 func Runs(cron Handler) Metric {
-	return derived{ref: metricRef{kind: "runs", id: cron.id}}
+	return derived{ref: metricRef{kind: "runs", id: cron.id, agg: "count"}}
 }
 
 // Condition is a metric compared against a threshold for a sustained

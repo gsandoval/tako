@@ -74,6 +74,7 @@ func Below(m Metric, threshold float64, sustained time.Duration) Condition
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
 func ChatSpace(space string) *ChannelHandle
+func Count(c *CounterHandle) Metric
 func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
 func DeadLetters[T any](queue *QueueHandle[T]) Metric
@@ -88,10 +89,15 @@ func Lock(name string) *LockHandle
 func NewID() string
 func NewTestApp(tb testing.TB) *TestApp
 func NotFound() error
+func P05(h *HistogramHandle) Metric
+func P50(h *HistogramHandle) Metric
+func P95(h *HistogramHandle) Metric
+func P99(h *HistogramHandle) Metric
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
 func Permanent(err error) error
 func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
+func Rate(c *CounterHandle) Metric
 func Redirect(target string) (HTML, error)
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
 func Runs(cron Handler) Metric

@@ -48,8 +48,10 @@ type Incident struct {
 }
 
 var (
-	Slow    = tako.Alert(tako.Above(lat, 2000, 5*time.Minute), room)
-	Stalled = tako.Alert(tako.Below(ups, 1, 30*time.Minute), oncall)
+	Slow    = tako.Alert(tako.Above(tako.P99(lat), 2000, 5*time.Minute), room)
+	Typical = tako.Alert(tako.Above(tako.P50(lat), 500, 5*time.Minute), room)
+	Stalled = tako.Alert(tako.Below(tako.Count(ups), 1, 30*time.Minute), oncall)
+	Flooded = tako.Alert(tako.Above(tako.Rate(ups), 50, 5*time.Minute), oncall)
 	Broken  = tako.Alert(tako.Above(tako.ErrorRate(svc), 0.05, 5*time.Minute), oncall, room)
 	Slowest = tako.Alert(tako.Above(tako.ErrorRate(MakeThumb), 0.05, 5*time.Minute), hook)
 	Stuck   = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, 5*time.Minute), oncall)
