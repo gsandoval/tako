@@ -10693,3 +10693,53 @@ var; `Absent` on a metric that cannot be absent).
 5. **No local test surface: accepted**, with the honest consequence
    recorded — alerting's correctness rests on analyzer goldens,
    provisioner fake-server tests, and the live gate walk.
+
+## Y1 — decision 3 resolved by live probe: Cloud Scheduler publishes NO metrics (2026-08-02)
+
+Rather than ask the owner to choose between cutting `Runs(cron)` and
+blocking on an unknown, the unknown was measured.
+
+**Method.** Created `y1-metric-probe` (a `* * * * *` HTTP job) on
+tako-test-01, fired it, confirmed it attempted
+(`lastAttemptTime 2026-08-02T19:09:05Z`), waited out ingestion, then
+paginated the FULL metric-descriptor list for the project — all
+**8,667 descriptors** — matching on both the `cloudscheduler` name
+prefix and the `cloud_scheduler_job` monitored-resource type.
+
+**Result: zero.** 66 descriptors contain "scheduler" and every one
+belongs to Cloud SQL, Composer, GCE or Anthos. Nothing writes to
+`cloud_scheduler_job`, even though that resource type is registered
+(labels `project_id,location,job_id`). Cloud Scheduler publishes no
+Cloud Monitoring metrics. The probe job was deleted; the project is
+clean.
+
+**So a "did my cron run" alert cannot be built from a Cloud Scheduler
+metric — and does not need one.** The cron reaches its service over
+HTTP, and `run.googleapis.com/request_count` carries a **`route`**
+label (verified: labels `response_code,response_code_class,route`,
+resource `cloud_run_revision`). X1 made the route derivable from the
+declaring variable — `var Cleanup` → `/_tako/cron/Cleanup` — so tako can
+write the filter itself:
+
+```go
+var Missed = tako.Alert(tako.Absent(tako.Runs(Cleanup), 26*time.Hour), Oncall)
+```
+
+→ `metric.type="run.googleapis.com/request_count" AND
+resource.labels.service_name="<cron's host service>" AND
+metric.labels.route="/_tako/cron/Cleanup"`, as a
+`conditionAbsent` over 26h.
+
+`Runs(cron)` is therefore **IN v1**, on a verified metric, with no
+dependency on logs.
+
+**What it does and does not catch**, to be stated in the reference page:
+it fires when no request reached the route in the window — which covers
+"Scheduler never fired" AND "fired but never arrived", arguably better
+than a scheduler-side metric would. It does NOT catch "fired, arrived,
+and the handler failed" — that is `ErrorRate`, a separate alert.
+
+**Note the shape this settles:** the one condition that would have
+needed logs is the one the metrics-only scope appeared to rule out, and
+it turned out to be expressible in metrics after all because tako owns
+the route name. Nothing in the metrics-only decision needs revisiting.
