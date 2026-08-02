@@ -11461,3 +11461,80 @@ did not write.
 **STOP — approve Y2a and Y2b as slices before Y1b, after it, or not at
 all?** They are additive to everything Y1 has settled; Y1b's analyzer
 work does not block on either.
+
+## Y2b revised — named situations instead of a Baseline bundle (2026-08-02)
+
+Owner redirected: rather than `tako.Baseline(...)` deriving a bundle,
+give pre-built alerts for KNOWN SITUATIONS that take a parameter and
+require no knowledge of the metric, reading, or window — "dead-letter
+queue got N messages", "cron failed N times".
+
+Better than Baseline, and for a reason worth writing down: a bundle
+gives you alerts you did not write and cannot see without reading the
+deploy summary. A named situation is one line you chose, in your source,
+that still hides everything you should not have to know.
+
+### The shape
+
+```go
+var (
+    Stuck   = tako.Alert(tako.DeadLettered(thumbs, 5), Oncall)
+    Flaky   = tako.Alert(tako.CronFailed(Cleanup, 3), Oncall)
+    Silent  = tako.Alert(tako.CronMissed(Cleanup), Oncall)
+    Failing = tako.Alert(tako.Erroring(svc, 0.05), Oncall, Room)
+    Crawling = tako.Alert(tako.SlowerThan(svc, 2*time.Second, 0.99), Room)
+    Broken  = tako.Alert(tako.JobFailed(settle, 1), Oncall)
+)
+```
+
+No metric names, no readings, no aggregation, no window. Each is a
+`Condition`, so it composes with the existing `tako.Alert` and needs no
+second declaration form.
+
+### What each one knows that the user should not have to
+
+| preset | derives |
+|---|---|
+| `DeadLettered(q, n)` | the queue's dead-letter subscription, `increase` over the default window |
+| `CronFailed(cron, n)` | the cron's route from its VARIABLE (X1), filtered to `response_code_class="5xx"` |
+| `CronMissed(cron)` | the route AND the schedule — `every 6h` becomes a 12h lookback, a daily job 26h, which only works because `Absent` compiles to PromQL |
+| `Erroring(target, frac)` | 5xx over total for a service or one async handler |
+| `SlowerThan(target, d, q)` | `request_latencies` at the quantile |
+| `JobFailed(job, n)` | failed executions of that job |
+
+`CronMissed` is the one that could not have existed before this week:
+it needs the variable-derived route (X1), the schedule from the graph,
+and a lookback past 23h30m (the PromQL finding).
+
+### The knobs are defaulted, not hidden
+
+Each preset takes an optional trailing `Window`, so the default is a
+starting point rather than a ceiling:
+
+```go
+tako.CronFailed(Cleanup, 3)                       // default window
+tako.CronFailed(Cleanup, 3, tako.For(time.Hour))  // your window
+```
+
+That keeps faith with the earlier direction — let the knobs leak — while
+answering the actual request: the common case should be one short line.
+The defaults are documented per preset in `reference/alerts.md`, never
+inferred.
+
+### Layering, stated once
+
+- **Presets** for situations tako understands, because it owns the
+  queue, cron, job and service.
+- **The raw vocabulary** (`Above`/`Below`/`Absent` over
+  `Rate`/`Count`/`Sum`/`Mean`/`Percentile`) for YOUR counters and
+  histograms, which tako cannot name situations for.
+
+Neither replaces the other, and the presets are written in terms of the
+raw vocabulary rather than beside it — so there is one evaluation path,
+and a preset is inspectable as the condition it expands to.
+
+**`tako.Baseline` is withdrawn.** Its one genuine advantage — new queue,
+free alert — is not worth alerts a user did not write.
+
+**STOP — approve Y2a (platform metrics) and Y2b-revised (presets)?**
+Neither blocks Y1b.
