@@ -16,8 +16,10 @@ correctly EXCEPT where this file corrects it. Read this first, then that.
 | index waits halved | done, `52ae1a2` |
 | domain replace race | done, `a3d361e` |
 | U2 — metrics export + graceful shutdown | done + **gated pass** (validation-log, 2026-08-01); absorbed Stage 8 V0–V4 |
-| **U3 — dlq replay** | **NOT STARTED — next** |
-| U4 — shared-cache plan | not started |
+| U3 — dlq replay | done + **gated pass** (validation-log, 2026-08-01) |
+| **U4 — shared-cache plan (docs only)** | **NOT STARTED — next** |
+| V5 — `destroy --plan` | done + **gated pass** |
+| V6 — Footprint/Traffic split | done + **gated pass** |
 
 **Stage 8 is gated** — folded into U2's walk (§6 of
 `validate/metrics.md`) at the user's direction, and covered by U2's
