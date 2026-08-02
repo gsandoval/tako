@@ -1,6 +1,7 @@
 package local
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -12,17 +13,78 @@ import (
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
-// writeReplay drops a record straight into the inbox, which is what the
-// CLI's rename produces.
+// writeReplay drops a record into the inbox in the EXACT shape the
+// dispatcher writes to disk — deadLetterFile, with payload as raw JSON.
+//
+// It used to marshal backends.DeadLetter directly, whose []byte Payload
+// round-trips through base64. That shape never occurs in production, and
+// building the fixture out of it meant these tests passed against a file
+// format nothing writes: the real records failed to decode and were
+// silently skipped, by the drain here AND by tako dlq --local. A test
+// fixture that constructs its own input is only as good as its fidelity
+// to the writer.
 func writeReplay(t *testing.T, dir string, rec backends.DeadLetter) {
 	t.Helper()
 	inbox := filepath.Join(dir, "deadletter", ReplayDir)
 	if err := os.MkdirAll(inbox, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(rec)
+	raw, err := json.Marshal(deadLetterFile{
+		DeadLetter: rec, Payload: rec.Payload, Time: time.Now().UTC()})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(inbox, "1.json"), raw, 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// The regression the fixture was hiding: a record written by the
+// dispatcher itself must decode. This produces a REAL dead letter
+// through a real failed delivery, then reads the file back the way the
+// CLI does.
+func TestOnDiskDeadLetterDecodes(t *testing.T) {
+	dir := t.TempDir()
+	d := NewQueueDispatcher(dir, QueueOptions{MaxAttempts: 1, Backoff: time.Millisecond})
+	dead := make(chan backends.DeadLetter, 1)
+	d.OnDeadLetter(func(dl backends.DeadLetter) { dead <- dl })
+	d.Consume("thumbnails", func(ctx context.Context, p []byte) error {
+		return context.DeadlineExceeded
+	})
+	if err := d.Publish(context.Background(), "thumbnails", []byte(`{"photoID":"x"}`), backends.PublishOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-dead:
+	case <-time.After(3 * time.Second):
+		t.Fatal("no dead letter produced")
+	}
+
+	matches, _ := filepath.Glob(filepath.Join(dir, "deadletter", "thumbnails", "*.json"))
+	if len(matches) != 1 {
+		t.Fatalf("%d files on disk, want 1", len(matches))
+	}
+	raw, err := os.ReadFile(matches[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, when, err := DecodeDeadLetter(raw)
+	if err != nil {
+		t.Fatalf("a record the dispatcher wrote did not decode: %v\n%s", err, raw)
+	}
+	// The payload comes back RE-INDENTED: the file is written with
+	// MarshalIndent so a human can read it, which reformats the embedded
+	// JSON. Handlers unmarshal, so whitespace is invisible to them —
+	// compare semantically rather than byte-for-byte.
+	var compact bytes.Buffer
+	if err := json.Compact(&compact, rec.Payload); err != nil {
+		t.Fatalf("payload is not JSON: %v", err)
+	}
+	if rec.Queue != "thumbnails" || compact.String() != `{"photoID":"x"}` {
+		t.Errorf("decoded %+v, payload %s", rec, compact.String())
+	}
+	if when.IsZero() {
+		t.Error("the record carries no time")
 	}
 }
 

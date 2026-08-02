@@ -47,25 +47,31 @@ curl -s -o /dev/null -w "%{http_code}\n" \
   payload → .tako/data/deadletter/thumbnails/
 ```
 
-List it — note the id at the start of the line:
+List it — the id leads each line:
 
 ```
 go run ../../cmd/tako dlq --local
 ```
 
-Replay it by a **prefix**:
+```
+  1785632565144723000  thumbnails                   attempts 1  permanent: decode image: image: unknown format
+    {"photoID":"lag4xoyd3z5nxgdk"}
+```
+
+Replay it by a **prefix** — any unique leading substring, like a short
+SHA:
 
 ```
-go run ../../cmd/tako dlq --local thumbnails --replay <first-4-digits>
+go run ../../cmd/tako dlq --local thumbnails --replay 1785
 ```
 
 ```
-↩ replayed 1699… → thumbnails
+↩ replayed 1785632565144723000 → thumbnails
   the running tako dev picks these up within a couple of seconds; if dev is down they wait for its next boot
 ```
 
-Within ~2s the dev console shows the redelivery — and, because the
-image is still undecodable, **the message dead-letters again**:
+Within ~2s the dev console shows it land — and, because the image is
+still undecodable, **the message dead-letters again**:
 
 ```
 ↩ replayed 1 dead letter(s) back into delivery
@@ -73,8 +79,26 @@ image is still undecodable, **the message dead-letters again**:
 ```
 
 **That is the pass, not a failure.** Replay is a second chance under
-the same rules, not a promise of success. Confirm the move happened:
-`tako dlq --local` lists ONE dead letter (the new one), not two.
+the same rules, not a promise of success — it rode the real dispatcher,
+got the normal attempts, and came back.
+
+Confirm the MOVE: `tako dlq --local` lists ONE dead letter, with a
+**new id**, not two:
+
+```
+  1785632743831501000  thumbnails                   attempts 1  permanent: decode image: image: unknown format
+    {"photoID":"lag4xoyd3z5nxgdk"}
+```
+
+Same payload, different id — the original left the DLQ when it was
+replayed, and what you are looking at is the failure that followed.
+
+**If `tako dlq --local` says `no dead letters` right after you replayed,
+that is correct**: the record is in `deadletter/replay/` waiting for the
+dev server. It reappears on the DLQ only if redelivery fails again. A
+dev server that is not running (or that lost the port to a stale one —
+check for `port 8080 is already in use`) leaves it in the inbox
+indefinitely, which is the design: the file is the message.
 
 Then fix and replay for the success path — upload a real PNG (§2a of
 `validate/metrics.md` builds one), and replay that message instead.

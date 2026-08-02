@@ -9077,3 +9077,57 @@ Third gate-script defect of the same family in two days (metrics §4
 "upload two or three photos", footprint §3 with no command, this). The
 common root is describing an edit instead of writing it, and the fix
 that keeps working is to perform the walk and paste what came back.
+
+## U3 bug — local dead letters never decoded — 2026-08-01
+
+User, running `validate/dlq-replay.md` §2: *"no dead letters under
+.tako/data/deadletter"* — with the file sitting right there on disk.
+
+**`tako dlq --local` found nothing, and local replay could never have
+worked either.** The dispatcher writes a record whose `payload` is RAW
+JSON (an anonymous struct shadowing the field as `json.RawMessage`, so
+the file reads well for a human). Both readers — the CLI's
+`readLocalDead` and the dispatcher's own `DrainReplays` — declared it as
+`backends.DeadLetter`, whose `Payload []byte` `encoding/json` fills only
+from a base64 STRING. Every real record failed to unmarshal, and both
+readers skipped silently on error.
+
+So U3's entire local half was dead on arrival, in a way no test noticed.
+
+### Why the tests passed
+
+`writeReplay`, the fixture helper, marshalled `backends.DeadLetter`
+directly — producing base64 payloads, a shape **nothing in production
+writes**. Four tests exercised the drain against a file format that
+does not exist. They were not weak assertions; they were correct
+assertions about the wrong input.
+
+This is the sharpest version of a lesson this stage keeps teaching: a
+fixture that constructs its own input tests the fixture as much as the
+code. The metrics wire format had the same shape of miss (unit-tested
+thoroughly, against the wrong resource type).
+
+### Fix
+
+The on-disk shape is now a named type, `deadLetterFile`, declared once
+and used by the writer AND by an exported `DecodeDeadLetter`. Both
+readers go through it, so neither can drift again. `writeReplay` builds
+that type, and a new `TestOnDiskDeadLetterDecodes` produces a REAL dead
+letter through a real failed delivery and decodes the file the CLI
+reads — closing the loop the fixture had opened.
+
+Two smaller things fell out:
+
+- The listing printed the payload with the file's indentation inline,
+  so a record came out ragged across three lines. Compacted for display
+  (`onOneLine`); the file stays pretty-printed, which was its point.
+- A replayed payload comes back re-indented, since `MarshalIndent`
+  reformats the embedded JSON. Invisible to handlers, which unmarshal —
+  the test compares semantically and says why.
+
+Validated live end to end afterwards: produce, list, replay by prefix,
+drain, re-dead-letter with a NEW id. That transcript replaced the
+invented one in §2, which also now says that `no dead letters`
+immediately after a replay is CORRECT (the record is in the inbox), and
+what a stale dev server holding port 8080 looks like — both states the
+walk hits in practice.

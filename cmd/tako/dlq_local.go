@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -56,8 +57,8 @@ func readLocalDead(dir string) ([]localDead, error) {
 		if readErr != nil {
 			return nil
 		}
-		var rec backends.DeadLetter
-		if json.Unmarshal(raw, &rec) != nil {
+		rec, _, decErr := local.DecodeDeadLetter(raw)
+		if decErr != nil {
 			return nil
 		}
 		d := localDead{
@@ -146,7 +147,7 @@ func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) 
 			reason = "permanent: " + reason
 		}
 		fmt.Printf("  %s  %-28s attempts %d  %s\n    %s\n",
-			m.ID, m.localName(), m.Record.Attempts, reason, m.Record.Payload)
+			m.ID, m.localName(), m.Record.Attempts, reason, onOneLine(m.Record.Payload))
 	}
 	if ack {
 		for _, m := range msgs {
@@ -157,6 +158,18 @@ func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) 
 		fmt.Printf("✓ acknowledged %d message(s) — deleted from disk\n", len(msgs))
 	}
 	return nil
+}
+
+// onOneLine collapses a payload for the listing. Records are written
+// with MarshalIndent so the FILE reads well, which leaves the embedded
+// JSON pretty-printed — pasted into a one-line listing that comes out
+// ragged and mis-indented.
+func onOneLine(payload []byte) string {
+	var buf bytes.Buffer
+	if json.Compact(&buf, payload) != nil {
+		return string(payload) // not JSON: show it as it is
+	}
+	return buf.String()
 }
 
 // pickLocalDead resolves an id prefix, matching the cloud path's

@@ -328,11 +328,8 @@ func (d *QueueDispatcher) deadLetter(to delivery, payload []byte, attempts int, 
 	}
 	dir := filepath.Join(d.dir, to.dlDir)
 	if mkErr := os.MkdirAll(dir, 0o755); mkErr == nil {
-		raw, _ := json.MarshalIndent(struct {
-			backends.DeadLetter
-			Payload json.RawMessage `json:"payload"`
-			Time    time.Time       `json:"time"`
-		}{DeadLetter: dl, Payload: payload, Time: time.Now().UTC()}, "", "  ")
+		raw, _ := json.MarshalIndent(deadLetterFile{
+			DeadLetter: dl, Payload: payload, Time: time.Now().UTC()}, "", "  ")
 		name := fmt.Sprintf("%d.json", time.Now().UnixNano())
 		_ = os.WriteFile(filepath.Join(dir, name), raw, 0o644)
 	}
@@ -358,6 +355,35 @@ func (d *QueueDispatcher) WaitIdle(timeout time.Duration) error {
 	case <-time.After(timeout):
 		return fmt.Errorf("queues still busy after %s", timeout)
 	}
+}
+
+// deadLetterFile is the ON-DISK shape of a dead letter, and the only
+// place that shape is written down.
+//
+// It shadows Payload as json.RawMessage on purpose: the file is meant to
+// be read by a human, so the message appears as itself rather than as a
+// base64 blob. That makes the field incompatible with
+// backends.DeadLetter's []byte, which encoding/json fills only from a
+// base64 STRING — decoding a file into that type fails on every real
+// record. Writer and readers therefore share this type; nobody
+// re-declares it.
+type deadLetterFile struct {
+	backends.DeadLetter
+	Payload json.RawMessage `json:"payload"`
+	Time    time.Time       `json:"time"`
+}
+
+// DecodeDeadLetter reads one on-disk dead-letter record. The CLI and the
+// replay drain both go through here so neither can drift from the
+// writer.
+func DecodeDeadLetter(raw []byte) (backends.DeadLetter, time.Time, error) {
+	var f deadLetterFile
+	if err := json.Unmarshal(raw, &f); err != nil {
+		return backends.DeadLetter{}, time.Time{}, err
+	}
+	rec := f.DeadLetter
+	rec.Payload = f.Payload
+	return rec, f.Time, nil
 }
 
 // ReplayDir is the inbox a replayed dead letter is MOVED into. The CLI
@@ -391,8 +417,8 @@ func (d *QueueDispatcher) DrainReplays() (int, error) {
 		if err != nil {
 			continue
 		}
-		var rec backends.DeadLetter
-		if json.Unmarshal(raw, &rec) != nil || rec.Queue == "" {
+		rec, _, err := DecodeDeadLetter(raw)
+		if err != nil || rec.Queue == "" {
 			continue
 		}
 		if !d.replay(rec) {
