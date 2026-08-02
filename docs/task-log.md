@@ -10471,3 +10471,198 @@ the new "some mistakes now belong to the compiler" section, and every
 `tako.Cache`'s TTL became a required positional parameter (0 = never
 expires). That is a real ergonomic change beyond "move the knobs" and
 should be called out in the release notes rather than buried here.
+
+## Y1 — DX proposal: alerting on metrics (2026-08-02) — AWAITING APPROVAL
+
+Scope set by the owner across two rounds: **metrics only, no logs**;
+**threshold and sustained period are required on every condition**; the
+`tako.Incident` topic + Subscribe story is **cut** (an alert delivered
+by your own app goes quiet exactly when it matters, and
+`tako.Webhook(yourOwnEndpoint)` is the same capability with no new
+surface). Written against the post-X2 config-struct surface.
+
+**Which example demands it** (the standing rule): gallery. It has a
+dead-letter queue nobody watches and a nightly cron whose failure is
+invisible for 24 hours. `Stuck` and `Missed` below are gallery's.
+
+### Declaring
+
+```go
+var (
+    Oncall = tako.Email("ops@example.com")
+    Room   = tako.ChatSpace("spaces/AAAA1234")
+    Hook   = tako.Webhook("https://example.com/alerts")
+)
+
+var (
+    Slow    = tako.Alert(tako.Above(thumbMs, 2000, 5*time.Minute), Room)
+    Stalled = tako.Alert(tako.Below(ups, 1, 30*time.Minute), Oncall)
+    Broken  = tako.Alert(tako.Above(tako.ErrorRate(gallery), 0.05, 5*time.Minute), Oncall, Room)
+    Stuck   = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, 5*time.Minute), Oncall)
+)
+```
+
+Signatures:
+
+```go
+func Email(address string) *ChannelHandle
+func ChatSpace(space string) *ChannelHandle
+func Webhook(url string) *ChannelHandle
+
+func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle
+
+func Above(m Metric, threshold float64, sustained time.Duration) Condition
+func Below(m Metric, threshold float64, sustained time.Duration) Condition
+func Absent(m Metric, window time.Duration) Condition
+
+func ErrorRate(svc *ServiceHandle) Metric
+func DeadLetters[T any](q *QueueHandle[T]) Metric
+```
+
+`Metric` is a sealed interface — the `EventSource[T]` pattern at
+`topic.go:40` — implemented by `*CounterHandle`, `*HistogramHandle`, and
+the derived expressions. Nothing outside the SDK can satisfy it, so the
+analyzer can enumerate every subject.
+
+Four shape notes:
+
+- **No config struct, deliberately.** Threshold and period are required,
+  so they are parameters (X2's rule: required config is a parameter,
+  optional config is a struct). Nothing is optional in v1 —
+  `autoClose` and `severity` are framework-owned, the same call `tako.Lock`
+  already makes about its lease policy. No example demands them.
+- **`notify` is a required parameter, `also` is the variadic.** An alert
+  nobody receives is a bug, so it does not compile. No analyzer rule.
+- **Channel names come from the variable** (X1): `var Oncall` deploys as
+  `x1-gallery-channel-oncall`. The argument is the address, not the name.
+- **Alerts are app-scoped**, like `tako.Topic` — they run nowhere, so the
+  analyzer must not partition them into a service.
+
+### Why conditions take handles, not metric names
+
+This is the load-bearing argument, not sugar. Your metrics land on
+`generic_task` with **one cumulative series per instance**;
+`observability.md:187` already tells users to aggregate across `task_id`
+when charting. A condition that forgets is per-instance noise or
+silence.
+
+Passing the handle means tako knows the type and writes the aggregation:
+**Counter → `ALIGN_RATE` + `REDUCE_SUM`; Histogram → `ALIGN_PERCENTILE_95`
++ `REDUCE_MAX`.** A string cannot carry that. Renaming a queue also
+renames its alert's filter instead of orphaning it.
+
+### The platform metrics behind the derived conditions
+
+Verified live against tako-test-01 (`projects.metricDescriptors`):
+
+| condition | metric | verified |
+|---|---|---|
+| `ErrorRate(svc)` | `run.googleapis.com/request_count`, DELTA INT64, labels `response_code,response_code_class,route`, resource `cloud_run_revision` | **yes** |
+| `DeadLetters(q)` | `pubsub.googleapis.com/subscription/dead_letter_message_count`, DELTA INT64, label `response_code`, resource `pubsub_subscription` | **yes** |
+| `Runs(cron)` — "the cron stopped firing" | *unconfirmed* | **no** |
+
+**`Runs(cron)` is not in the surface above, and that is the point.** A
+`starts_with("cloudscheduler.googleapis.com/")` query against
+tako-test-01 returned **zero** metric descriptors, and three
+documentation fetches came back truncated without the section. I will
+not pin a metric name I have not seen. Decision 3 below.
+
+### Destinations map 1:1 onto platform channels
+
+`email`, `google_chat`, `webhook_tokenauth`, `pubsub` are all native
+Cloud Monitoring notification-channel types (verified against the
+channel-type reference). tako writes **zero delivery code**, and
+delivery survives the app being down — which is the whole reason not to
+route alerts through your own service.
+
+### Cloud errors & permissions
+
+**Deployer** gains two roles in `docs/tako-cloud-permissions.md:56`:
+`roles/monitoring.alertPolicyEditor`, `roles/monitoring.notificationChannelEditor`.
+The monitoring API is already enabled by preflight (`preflight.go:99`)
+and the runtime SA already has `roles/monitoring.metricWriter`
+(`grants.go:96`), so the runtime side needs nothing.
+
+| failure | text |
+|---|---|
+| 403 on policy create | `you lack permission to create the alert policy on <project> — grant: gcloud projects add-iam-policy-binding … --role roles/monitoring.alertPolicyEditor` |
+| 403 API disabled | existing `SERVICE_DISABLED` branch — `the monitoring.googleapis.com API is disabled on <project> — enable it: …` |
+| Chat space not installed | `Google Chat space <id> has not installed the Cloud Monitoring app — install it in the space (a Workspace admin may need to approve), then re-run` |
+| email unverified (see decision 4) | text pending the live check |
+
+**Two ordering hazards, both already-seen shapes:**
+
+1. Channels must exist before policies reference them → `reconcileOrder`
+   puts `KindNotificationChannel` before `KindAlertPolicy`.
+2. A Pub/Sub channel needs `roles/pubsub.publisher` for
+   `service-<num>@gcp-sa-monitoring-notification.iam.gserviceaccount.com`,
+   an agent Google creates **lazily on your first Pub/Sub channel**.
+   That is the GCS-service-agent shape `notifications.go:77` already
+   solves with a bounded 90s retry, and the `run.routes.invoke`
+   propagation shape both release-cycle runs hit. It must reuse that
+   pattern deliberately, not rediscover it live.
+
+Both `AlertPolicy` and `NotificationChannel` carry `userLabels`, so
+label-based reconciliation works unchanged — no state file, spec-hash
+in the labels.
+
+### Local: nothing is evaluated, and it says so
+
+An alert is evaluation over a time window; local has no engine, and a
+hand-rolled one would fire on different semantics than Cloud
+Monitoring's aligners. **Conformance is law** (settled decision 9), and
+the honest move for something that cannot be made conformant is not to
+fake it. So:
+
+- `tako dev` lists declared alerts at boot: `3 alerts — evaluated in the
+  cloud only`.
+- `tako test` gets **nothing**. With the Incident story cut there is no
+  delivery path to drive in-process.
+
+**This is the weakest part of the feature and I want it stated plainly
+rather than discovered**: alerting will have no local test surface at
+all. Its whole correctness story is the analyzer goldens, the
+provisioner's fake-server tests, and one live gate walk.
+
+### Surface cost
+
+13 new exported symbols (`Email`, `ChatSpace`, `Webhook`,
+`ChannelHandle`, `Alert`, `AlertHandle`, `Condition`, `Metric`, `Above`,
+`Below`, `Absent`, `ErrorRate`, `DeadLetters`). sdk_lock 134 → ~147.
+Two new provisioner kinds. No new analyzer *option* rules — X2 removed
+that category — but new binding rules (a channel that is not a declared
+var; `Absent` on a metric that cannot be absent).
+
+### Slices
+
+1. **Y1a** — SDK surface + `Metric` sealing; sdk_lock.
+2. **Y1b** — analyzer: alert/channel resources, subject resolution
+   through the existing edge machinery, goldens.
+3. **Y1c** — provisioner: two kinds, `reconcileOrder`, the pubsub
+   service-agent grant with the bounded retry, fake-server tests.
+4. **Y1d** — gallery declares `Stuck`; preflight + permissions doc;
+   `docs/reference/alerts.md`.
+5. **Y1e** — live gate: deploy, force a dead-letter, watch the email
+   arrive, destroy clean.
+
+### Decisions
+
+1. **Pub/Sub as a destination?** You listed it twice. It works, but with
+   the `Incident` type cut the payload is Google's JSON that your own
+   struct must mirror — tako would not own or version it. Include with
+   that caveat documented, or defer until something demands it?
+2. **`ErrorRate(svc *ServiceHandle)` only covers the app service.** A
+   worker service (`gallery-makethumb`) is identified by its `Handler`
+   var. Extend `ErrorRate` to accept a `Handler` too (precedent:
+   `AdvanceCron(cron Handler)`), or ship app-service-only in v1?
+3. **`Runs(cron)`** — cut from v1, or block Y1a until I confirm the
+   Cloud Scheduler metric live by deploying a scheduler job and reading
+   its descriptors? It is the highest-value alert in the set ("your
+   nightly job stopped running") and the only unverified one.
+4. **Email verification** — I could not confirm whether channels created
+   through the API deliver without address verification. It must be a
+   live check before Y1a, not a doc reading.
+5. **No local testability** (above) — accept, or does that change your
+   appetite for the feature?
+
+**STOP — awaiting approval on the shape and decisions 1–5.**
