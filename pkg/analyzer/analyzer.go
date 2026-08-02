@@ -265,7 +265,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			if d.ctor != "Alert" {
 				continue
 			}
-			if r := extractAlert(cfg.Dir, pkg, d.name, d.call, channelVars, handlersByVar, &errs); r != nil {
+			if r := extractAlert(cfg.Dir, pkg, d.name, d.call, channelVars, handlersByVar, resourceVars, endpointVars, &errs); r != nil {
 				graph.Resources = append(graph.Resources, *r)
 			}
 		}

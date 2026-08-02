@@ -106,6 +106,12 @@ type Resource struct {
 	// Condition is the constructor an "alert" resource was built with
 	// (Above, Absent, DeadLettered, CronMissed, …).
 	Condition string `json:"condition,omitempty"`
+	// Alert carries the condition's parameters, LOGICALLY: which
+	// declaration is watched and how, never a metric type or a physical
+	// name. The provisioner maps those, because only it knows the env
+	// prefix and the deployed service names — the same split every other
+	// kind already follows.
+	Alert *AlertCondition `json:"alert,omitempty"`
 	// Channels are the declared channel vars an alert notifies.
 	Channels []string `json:"channels,omitempty"`
 	// Indexes are the entity fields the app actually queries
@@ -270,4 +276,33 @@ type Edge struct {
 	// Verb is the access class: "read", "write", "publish", "sign",
 	// "run", or "call".
 	Verb string `json:"verb"`
+}
+
+// AlertCondition is one alert's condition, as the analyzer sees it.
+type AlertCondition struct {
+	// Op is "above", "below" or "absent".
+	Op string `json:"op"`
+	// SubjectKind names WHAT is watched: counter, histogram, queue,
+	// subscriber, cron, job, singleton, service, route, site, platform.
+	SubjectKind string `json:"subject_kind"`
+	// SubjectName is the declared name (a counter's name, a queue's
+	// name, a route pattern, a platform metric type).
+	SubjectName string `json:"subject_name,omitempty"`
+	// SubjectVar is the declaring var for subjects identified by
+	// declaration rather than name (handlers, services).
+	SubjectVar string `json:"subject_var,omitempty"`
+	// Reading is how the subject is reduced: rate, count, sum, mean,
+	// percentile — or a preset's own name for the derived ones.
+	Reading string `json:"reading"`
+	// Quantile is set when Reading is "percentile" or for SlowerThan.
+	Quantile float64 `json:"quantile,omitempty"`
+	// Threshold is the comparison value; unused for "absent".
+	Threshold float64 `json:"threshold,omitempty"`
+	// ForSeconds is how long the breach must persist — or, for
+	// "absent", the LOOKBACK.
+	ForSeconds int `json:"for_seconds,omitempty"`
+	// EverySeconds is the reduction period; zero means derive it.
+	EverySeconds int `json:"every_seconds,omitempty"`
+	// Matchers are extra label matchers for a platform subject.
+	Matchers []string `json:"matchers,omitempty"`
 }

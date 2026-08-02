@@ -40,3 +40,13 @@ var Photos = tako.API("GET /photos", list)
 func list(ctx tako.Ctx, _ struct{}) (string, error) { return "", nil }
 
 var _ = loose
+
+// Windows: the ceilings are Cloud Monitoring's, measured, and refused
+// here rather than at deploy time as a 400.
+var (
+	TooOften = tako.Alert(tako.Above(tako.Rate(hits), 1, tako.Window{For: time.Minute, Every: 30 * time.Second}), oncall)
+	TooLong  = tako.Alert(tako.Above(tako.Rate(hits), 1, tako.Window{For: 48 * time.Hour}), oncall)
+	NoPeriod = tako.Alert(tako.Below(tako.Count(hits), 1, tako.For(time.Hour)), oncall)
+)
+
+var hits = tako.Counter("hits")

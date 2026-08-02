@@ -11758,3 +11758,56 @@ their metric types, and validating windows against the measured ceilings
 Stopping here rather than writing adapters against a graph that cannot
 feed them. Next: **Y1b2**, condition parameter extraction, then Y1c's
 adapters and fake-server tests on top of it.
+
+## Y1b2 — condition parameters reach the graph (2026-08-02)
+
+The gap Y1c found is closed. `AlertCondition` carries the condition
+LOGICALLY — op, subject kind and name, reading, quantile, threshold, and
+the window — and never a metric type or a physical name. The provisioner
+maps those, because only it knows the env prefix and the deployed
+service names: the same split every other kind already follows.
+
+### Two unit bugs the graph made visible immediately
+
+Rendering the parsed conditions is what caught them; neither would have
+failed a compile or a test:
+
+```
+Piling  thr=600000000000   <- 10*time.Minute as raw NANOSECONDS
+Slow    thr=2000000000     <- 2*time.Second, same
+```
+
+A Go duration constant reaches the analyzer as nanos, while the SDK's
+own constructors convert (`age.Seconds()`, `d.Milliseconds()`). Stored
+raw, a 10-minute backlog would have been compared against a threshold of
+six hundred billion — an alert that can never fire, and one no test
+would have noticed because the number is *there*. Fixed with a `unit`
+per preset, and the fix is visible in the graph: `thr=600`, `thr=2000`.
+
+The same pass caught a route subject with **no route**: `Erroring(List,
+…)` resolved to kind `api` with an empty name, so there would have been
+no `route=` matcher to build and the alert would have watched the whole
+service while claiming to watch one endpoint. Now `route/GET /photos`.
+
+Both are the same lesson as the rest of this feature: the value looked
+present, so only reading it against what it MEANT exposed it.
+
+### presetReadings is a table, not a switch
+
+A new preset cannot be added without an entry — the completeness habit
+the retry allowlist had to learn the hard way.
+
+### Three window rules, carrying the measured ceilings
+
+```
+a Window's Every must be between 1m and 25h — Cloud Monitoring refuses anything else; got 30s
+a threshold Window's For cannot exceed 24h — Cloud Monitoring refuses longer; got 172800s
+tako.Count needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing
+```
+
+Each refuses at analysis time what the API would refuse at deploy time,
+with the real number in the message. The third is the Count decision
+from the amendment, enforced rather than merely documented.
+
+Eight rules now cover alerting. Next: Y1c's adapters, on a graph that
+can finally feed them.

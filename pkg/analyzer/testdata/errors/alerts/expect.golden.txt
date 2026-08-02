@@ -3,3 +3,6 @@ app.go:28:41: tako.CronMissed watches a cron, but alerts.Work is a worker (tako/
 app.go:31:64: tako.SlowerThan quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
 app.go:32:59: tako.Percentile quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
 app.go:35:52: tako.Alert destinations must be channels declared as package-level vars in this module (tako.Email, tako.ChatSpace, tako.Webhook, tako.PubSub) (tako/channel-binding)
+app.go:47:55: a Window's Every must be between 1m and 25h — Cloud Monitoring refuses anything else; got 30s (tako/window)
+app.go:48:55: a threshold Window's For cannot exceed 24h — Cloud Monitoring refuses longer; got 172800s (tako/window)
+app.go:49:56: tako.Count needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing (tako/window)
