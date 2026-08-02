@@ -9587,3 +9587,165 @@ is a routing design, not a naming one.
   wiring, the Scheduler URI and the lease key are asserted to agree.
 
 **STOP — awaiting approval.**
+
+## X1 — one cron, one name: direction A (DX proposal, 2026-08-02)
+
+Supersedes the X1 proposal above, which is WITHDRAWN: it put a mapping
+file under `.tako/` and made `NewTestApp` read it, costing the "your
+tests are just Go tests" property. User-rejected on exactly that ground,
+and rightly.
+
+**Direction A: the declaring variable is the identity, and nothing is
+derived by reflection.**
+
+### The audit that picked the direction
+
+Every service tako deploys is already named from its declaring variable:
+
+| declaration | service |
+|---|---|
+| `var Web = tako.Service()` | `gallery-web` |
+| `var MakeThumb = tako.Worker(thumbs, makeThumb)` | `gallery-makethumb` |
+| `var NotifyOwner = tako.Subscribe(ready, notifyOwner)` | `gallery-notifyowner` |
+| `var Reindex = tako.JobHandler(job, reindex)` | `gallery-reindex` |
+| `var Invoicer = tako.Singleton("invoicer", assignInvoices)` | `shop-invoicer` |
+
+Verified against the generated tree: `gallery`, `gallery-makethumb`,
+`gallery-notifyowner`, `gallery-onuploaded`, `gallery-warmfeed`. So the
+cron ENDPOINT using the variable name was never the anomaly — it is the
+only part of the cron that follows the house rule.
+
+The outlier is `fnName(fn)`, reflection on the function pointer, which
+is the sole place a function name becomes an identity. It stayed
+invisible because for workers, subscribers and jobs the function name is
+never user-facing — `NewTestApp` addresses those by the queue or topic
+they BIND. **Cron is the only handler whose function name a user types**,
+because it binds nothing and `AdvanceCron` had nothing else to use.
+
+### The argument that settles the shape
+
+Tako tests are already value-addressed, everywhere:
+
+```go
+Create.Call(ctx, req)        // the Endpoint value
+links.Get(ctx, "gh")         // the Entity value
+thumbs.Publish(ctx, msg)     // the Queue value
+app.AdvanceCron("cleanupOrphans")   // ← a STRING. the only one.
+```
+
+`AdvanceCron` is the exception, and the string it takes is the one name
+the framework does not otherwise use. Passing the value removes both
+problems at once and needs no mapping, no generated state, and no
+reflection — the variable IS the identity, so referencing it directly is
+the most faithful thing a test can do.
+
+```go
+app.AdvanceCron(Cleanup)
+```
+
+Bare `go test` keeps working, which was the constraint.
+
+### The SDK delta
+
+Small and coherent:
+
+- `TestApp.AdvanceCron(name string)` → `AdvanceCron(h Handler)`.
+- `tako.Singleton(name string, fn, opts...)` → `tako.Singleton(fn, opts...)`
+  (see below).
+- `Handler` gains an unexported registration id so a value can be matched
+  without comparing func pointers; its `name` field stops being an
+  identity and becomes what it honestly is — a log label.
+- **`tako.Cron`'s signature does not change.** It keeps taking a schedule.
+
+`fnName` survives only to label log lines (`handler=makeThumb`), which is
+a fine use for a function name and a poor one for an identity. That
+distinction is the whole slice.
+
+### Singleton, made uniform
+
+`Singleton` is the one declaration where a declared name and a deployed
+name are already different things: it takes `"invoicer"`, uses it as the
+lease/binding identity, and names its service from the VARIABLE anyway.
+Under direction A the argument is redundant — the variable already says
+it — so it goes:
+
+```go
+var Invoicer = tako.Singleton(assignInvoices)   // was ("invoicer", assignInvoices)
+```
+
+Cron and Singleton then read the same way: neither names itself, both are
+identified by their variable. One declaration in the repo
+(`examples/shop/app.go:102`) plus its docs.
+
+### The one real subtlety: the singleflight lease key
+
+Today the key is `cron-<functionName>`, computed in the SDK at
+declaration time — the only place that can see a function name. Under A
+it must be the variable name, which the SDK cannot see.
+
+Proposed: **the runtime owns the identity, not the SDK.**
+`RegisterCron("Cleanup", …)` and `RegisterSingleton("Invoicer", …)`
+already carry the variable name from the analyzer; the lease key becomes
+that. In `NewTestApp` no Register call happens, so the key falls back to
+the registration id — process-local, which is all a test's lease needs,
+since the lease only has to distinguish crons WITHIN a process there.
+
+Worth stating plainly in the docs: **one transitional deploy has old and
+new instances holding different lease keys**, so a single overlapping
+`WithSingleflight` run could double-fire during that rollout. Not worth a
+migration shim for v0; worth a sentence in `cron.md`.
+
+### Error texts
+
+Passing something that is not a cron:
+
+```
+tako: AdvanceCron(MakeThumb): that is a worker, not a cron — workers run
+  when their queue delivers, so publish to the queue and DrainQueues
+```
+
+Passing a zero Handler (a var that was never assigned a constructor):
+
+```
+tako: AdvanceCron: the handler is empty — pass the var a tako.Cron was
+  assigned to, like app.AdvanceCron(Cleanup)
+```
+
+The old string form stops compiling, which is the migration notice; Go
+says `cannot use "cleanupOrphans" (untyped string constant) as
+tako.Handler value`. Blunt but unambiguous, and it cannot be missed.
+
+### Migration cost
+
+Three `AdvanceCron` call sites (gallery `app_test.go:142`,
+`coordination_test.go:121` and `:130`), one `Singleton` declaration
+(`shop/app.go:102`), and the docs that quote them —
+`reference/cron.md`, `reference/singleton.md`, `reference/testing.md`,
+`guide/03-gallery.md`, `guide/05-shop.md`. `testing.md`'s "Mind which
+name" section is deleted rather than reworded: it stops being true.
+
+### Test plan
+
+- `AdvanceCron(Cleanup)` runs the body; the wrong-kind and zero-Handler
+  texts are golden.
+- The cron's endpoint, its Scheduler job name and its lease key are
+  asserted to be the SAME string, from one source — the assertion that
+  would have failed before this slice.
+- A cron declared with an inline closure works and is stable: the earlier
+  measurement showed reflection yields `func1`/`func2` and RENUMBERS when
+  a cron is added above them, so this pins that the identity no longer
+  depends on declaration order.
+- Analyzer goldens for the Singleton signature change.
+- A bare `go test ./...` (no `tako test`, no `.tako/`) still exercises
+  crons — the property the withdrawn proposal traded away.
+
+### Non-goals
+
+The `/_tako/cron/{cron}` dispatcher keeps its shape; a generated route
+per cron is a routing design and its own slice. Worker/Subscribe/
+JobHandler service naming is untouched — it already follows the rule.
+Direction B (declared names everywhere, resource-style) is recorded as
+considered and rejected: it would rename production infrastructure in
+every deployed app to win a consistency argument.
+
+**STOP — awaiting approval.**
