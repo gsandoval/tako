@@ -66,12 +66,20 @@ const ToggleInherit Toggle
 const ToggleOff Toggle
 const ToggleOn Toggle
 func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Route) Endpoint[Req, Res]
+func Above(m Metric, threshold float64, sustained time.Duration) Condition
+func Absent(m Metric, window time.Duration) Condition
+func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle
 func Auth(cfg AuthConfig) *AuthHandle
+func Below(m Metric, threshold float64, sustained time.Duration) Condition
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
+func ChatSpace(space string) *ChannelHandle
 func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
+func DeadLetters[T any](queue *QueueHandle[T]) Metric
+func Email(address string) *ChannelHandle
 func Entity[T any](name string) *EntityHandle[T]
+func ErrorRate(of Target) Metric
 func Errorf(status int, format string, args ...any) error
 func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
@@ -82,16 +90,20 @@ func NewTestApp(tb testing.TB) *TestApp
 func NotFound() error
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
 func Permanent(err error) error
+func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
 func Redirect(target string) (HTML, error)
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
+func Runs(cron Handler) Metric
 func Secret(name string) *SecretHandle
 func Service(cfg ...ServiceConfig) *ServiceHandle
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
 func Site(dir string, cfg ...SiteConfig) *SiteHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
+func Webhook(url string) *ChannelHandle
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+type AlertHandle struct{}
 type AuthConfig struct{Google bool; Password bool}
 type AuthHandle struct{}
 type Blob struct{Reader io.Reader; ContentType string; Size int64}
@@ -99,7 +111,9 @@ type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}
 type Build struct{Command string; Out string}
 type CacheHandle[T any] struct{}
+type ChannelHandle struct{}
 type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
+type Condition struct{}
 type CounterHandle struct{}
 type CronConfig struct{Singleflight bool; Timezone string; Deadline time.Duration; Profile Profile; Footprint Footprint}
 type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
@@ -116,6 +130,7 @@ type HistogramHandle struct{}
 type Iter[T any] struct{}
 type JobHandle[T any] struct{}
 type LockHandle struct{}
+type Metric interface{metricSubject() metricRef}
 type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
 type Profile int
 type PutPolicy struct{MaxSize int64; ContentType string}
@@ -128,6 +143,7 @@ type ServiceHandle struct{}
 type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
 type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool}
 type SiteHandle struct{}
+type Target interface{alertTarget() metricRef}
 type TestApp struct{}
 type Toggle int
 type TopicHandle[T any] struct{}

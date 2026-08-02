@@ -28,6 +28,32 @@ var (
 	reidx      = tako.Job[ReindexParams]("reindex")
 	ups        = tako.Counter("uploads")
 	lat        = tako.Histogram("thumb_ms")
+
+	svc = tako.Service()
+
+	oncall = tako.Email("ops@example.com")
+	room   = tako.ChatSpace("spaces/AAAA1234")
+	hook   = tako.Webhook("https://example.com/alerts")
+	bus    = tako.PubSub(incidents)
+
+	incidents = tako.Topic[Incident]("incidents")
+)
+
+// Incident is the app's own mirror of Google's incident JSON — tako does
+// not own that shape, which is the whole point of Y1's PubSub channel.
+type Incident struct {
+	IncidentID string `json:"incident_id"`
+	State      string `json:"state"`
+	Summary    string `json:"summary"`
+}
+
+var (
+	Slow    = tako.Alert(tako.Above(lat, 2000, 5*time.Minute), room)
+	Stalled = tako.Alert(tako.Below(ups, 1, 30*time.Minute), oncall)
+	Broken  = tako.Alert(tako.Above(tako.ErrorRate(svc), 0.05, 5*time.Minute), oncall, room)
+	Slowest = tako.Alert(tako.Above(tako.ErrorRate(MakeThumb), 0.05, 5*time.Minute), hook)
+	Stuck   = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, 5*time.Minute), oncall)
+	Missed  = tako.Alert(tako.Absent(tako.Runs(Cleanup), 26*time.Hour), oncall, bus)
 )
 
 type Photo struct {

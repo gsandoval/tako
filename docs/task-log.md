@@ -10824,3 +10824,56 @@ that matters; the deterministic evidence is the two fake-server tests.
 
 A gate script that overstates what will happen trains the walker to
 mistrust it, so both were corrected rather than left as folklore.
+
+## Y1a — alerting SDK surface (2026-08-02)
+
+`alert.go`: 11 functions, 2 structs, 2 sealed interfaces. sdk_lock
+**134 → 151**. Nothing runs — every value is a declaration read at
+analysis time, and no code path here executes locally or in a request.
+
+### What the types enforce that a rule would otherwise have to
+
+- **`Alert(when, notify, also...)`** takes the first channel as a
+  PARAMETER. An alert nobody receives does not compile, so there is no
+  "alert has no destination" rule to write, forget, or golden.
+- **`Metric` is sealed** (`metricSubject() metricRef`, unexported), the
+  `EventSource[T]` pattern. Only `*CounterHandle`, `*HistogramHandle`
+  and the derived expressions satisfy it, so the analyzer can enumerate
+  every subject an alert could name.
+- **`Target` is sealed** the same way, over `*ServiceHandle` and
+  `Handler` — which is how decision 2 landed: `ErrorRate(MakeThumb)`
+  alerts on the worker's own deployable, `ErrorRate(svc)` on the app
+  service, and nothing else type-checks.
+- **Threshold and window are parameters, not config** (X2's rule:
+  required config is positional). `Absent` takes no threshold at all —
+  absence IS the condition — so an unused zero cannot be passed.
+
+### Why conditions take handles
+
+Recorded here because it is the design's load-bearing claim: metrics are
+written one cumulative series per instance under `generic_task`, so the
+aggregation must be chosen per subject. Taking the handle lets tako
+derive it from the TYPE — counter → rate + sum across instances,
+histogram → p95 + max — which a metric-name string could not carry.
+Getting this wrong produces an alert that looks configured and is
+per-instance noise.
+
+### Deliberate omissions
+
+No config struct: `autoClose` and `severity` are framework-owned, the
+same call `tako.Lock` makes about its lease policy, and no example
+demands them yet. No `tako.Incident`: `PubSub(topic)` carries Google's
+JSON and the app declares its own struct over it — frozen into the SDK,
+a Google payload change would be an API break.
+
+### Validation
+
+`compile_check_test.go` gained the user-style declarations — six alerts
+across all four channel kinds, including `PubSub` over a topic declared
+LATER in the same var block, which exercises rule 1's corollary that
+constructors are side-effect-free records and init order cannot matter.
+`TestDeclarationsAreRecords` passes, so nothing panicked at init. Full
+suite, vet and gofmt clean.
+
+Next: Y1b (analyzer — alert/channel resources, subject resolution,
+goldens).
