@@ -109,14 +109,48 @@ func notFound(err error) bool {
 // appears to hang.
 var retryBackoff = []time.Duration{time.Second, 3 * time.Second}
 
-// idempotent reports whether re-sending this method is safe. GET and
+// readOnlyVerbs are Google's custom methods that READ despite being
+// POSTs. Google's API convention puts custom methods after a colon
+// (…/projects/p:testIamPermissions), and several of the most-called
+// ones change nothing — so the method alone is too blunt a test for
+// whether re-sending is safe.
+//
+// This list is deliberately an allowlist of verbs known to be reads,
+// never a pattern: :commit, :setIamPolicy, :publish, :pull and
+// :acknowledge are also colon-suffixed POSTs, and retrying any of them
+// can duplicate work.
+var readOnlyVerbs = []string{
+	":testIamPermissions",  // preflight's permission probe
+	":getIamPolicy",        // grant observation
+	":runQuery",            // datastore reads
+	":runAggregationQuery", // datastore counts
+}
+
+// idempotent reports whether re-sending this request is safe. GET and
 // DELETE are by definition; PUT is how the Pub/Sub APIs express "make
-// this exist with this shape", which is also safe to repeat. POST and
-// PATCH are not — a retried create can make two of something — and are
-// deliberately left to fail so the user re-runs a plan that has
-// observed the world again.
-func idempotent(method string) bool {
-	return method == http.MethodGet || method == http.MethodDelete || method == http.MethodPut
+// this exist with this shape", which is also safe to repeat. A POST is
+// not — a retried create can make two of something — UNLESS its URL
+// names one of Google's read-only custom methods above.
+//
+// That exception is not a nicety. The 2026-08-02 X2 release walk died
+// in preflight on `429 Quota exceeded for quota metric 'Read requests'`
+// from cloudresourcemanager: a rate limit on a call that reads,
+// answered by killing a deploy that had not touched anything yet.
+// Method-only idempotency made the single most retry-worthy call in the
+// whole run the one call that could not retry.
+func idempotent(method, url string) bool {
+	if method == http.MethodGet || method == http.MethodDelete || method == http.MethodPut {
+		return true
+	}
+	if method != http.MethodPost {
+		return false
+	}
+	for _, verb := range readOnlyVerbs {
+		if strings.HasSuffix(url, verb) {
+			return true
+		}
+	}
+	return false
 }
 
 // do runs one JSON call. A nil out discards the response body.
@@ -159,10 +193,10 @@ func (c *Client) do(ctx context.Context, method, url string, in, out any) error 
 				}
 				return nil
 			}
-			if !transientStatus(res.StatusCode) || !idempotent(method) || attempt >= len(retryBackoff) {
+			if !transientStatus(res.StatusCode) || !idempotent(method, url) || attempt >= len(retryBackoff) {
 				return parseAPIError(res.StatusCode, url, raw)
 			}
-		} else if !idempotent(method) || attempt >= len(retryBackoff) {
+		} else if !idempotent(method, url) || attempt >= len(retryBackoff) {
 			return err
 		}
 		// A silent retry hides degradation: if an API is having a bad

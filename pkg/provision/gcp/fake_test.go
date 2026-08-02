@@ -310,6 +310,80 @@ func TestCreatesAreNotRetried(t *testing.T) {
 	}
 }
 
+// Google's read-only custom methods are POSTs, and the X2 release walk
+// died on exactly that: preflight's :testIamPermissions took a 429
+// "Quota exceeded for quota metric 'Read requests'" and could not
+// retry, killing a deploy that had touched nothing. A call that reads
+// is safe to re-send whatever verb carries it.
+func TestReadOnlyPostsAreRetried(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	for _, url := range []string{
+		"/v1/projects/p:testIamPermissions",
+		"/v1/projects/p:getIamPolicy",
+		"/v1/projects/p:runQuery",
+	} {
+		t.Run(url, func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				if calls == 1 {
+					w.WriteHeader(429)
+					_, _ = w.Write([]byte(`{"error":{"message":"Quota exceeded for quota metric 'Read requests'"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(`{"permissions":["run.services.create"]}`))
+			}))
+			t.Cleanup(srv.Close)
+			c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+			var out struct {
+				Permissions []string `json:"permissions"`
+			}
+			if err := c.do(context.Background(), http.MethodPost, c.url(crmHost, url), map[string]any{"permissions": []string{"x"}}, &out); err != nil {
+				t.Fatalf("a 429 on a read-only POST must be retried: %v", err)
+			}
+			if calls != 2 {
+				t.Errorf("%d call(s), want 2 — the read was not retried", calls)
+			}
+		})
+	}
+}
+
+// The allowlist is a list, not a pattern: a colon-suffixed POST that
+// MUTATES must still fail fast, or a retried :commit writes twice.
+func TestMutatingCustomMethodsAreNotRetried(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	for _, url := range []string{
+		"/v1/projects/p:commit",
+		"/v1/projects/p:setIamPolicy",
+		"/v1/projects/p/topics/t:publish",
+	} {
+		t.Run(url, func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				w.WriteHeader(429)
+				_, _ = w.Write([]byte(`{"error":{"message":"rate limited"}}`))
+			}))
+			t.Cleanup(srv.Close)
+			c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+			if err := c.do(context.Background(), http.MethodPost, c.url(datastoreHost, url), map[string]any{"a": 1}, nil); err == nil {
+				t.Fatal("a 429 on a mutating POST must surface, not retry")
+			}
+			if calls != 1 {
+				t.Errorf("%d call(s), want 1 — a mutation was retried", calls)
+			}
+		})
+	}
+}
+
 // A permanent refusal must not be retried into a slow failure: 403 is
 // an answer, not a hiccup.
 func TestPermanentFailuresAreNotRetried(t *testing.T) {

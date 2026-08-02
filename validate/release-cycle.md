@@ -78,9 +78,11 @@ go run ../../cmd/tako logs gallery --project $PROJECT --env x1 --since 5m
 means the Scheduler job and the service disagree about the cron's name —
 the exact bug X1 existed to make impossible.
 
-**Expect a 403 first on a fresh deploy.** The Scheduler job's invoker
-grant takes a minute or two to propagate through Cloud Run's front door
-(both 2026-08-02 runs hit it). Fire the job again until the 200 arrives:
+**A 403 first is likely but not certain.** The Scheduler job's invoker
+grant takes a minute or two to propagate through Cloud Run's front door:
+the first two 2026-08-02 runs both hit it, the X2 run did not and
+succeeded on the first fire. Treat it as a window to ride out, not a
+step to expect — loop until the 200 arrives:
 
 ```
 until gcloud scheduler jobs run x1-gallery-cron-cleanup \
@@ -124,10 +126,10 @@ go run ../../cmd/tako destroy --project $PROJECT --env x1
 typed app name.
 
 **Destroy is convergent, so a transient failure is not a problem** — it
-walks the same plan again. A 503 from one of the APIs mid-teardown (seen
-in the 2026-08-02 run) leaves the rest standing; re-run the same command
-and it finishes. Nothing is retried automatically today, so this is on
-you to notice.
+walks the same plan again. Transients on idempotent calls now retry
+automatically and narrate it (`↻ DELETE <resource>: HTTP 503 — retrying
+in 1s`); a failure that survives the retries still leaves the rest
+standing, and re-running the same command finishes it.
 
 ```
 gcloud secrets delete x1-notifier-key --project $PROJECT --quiet

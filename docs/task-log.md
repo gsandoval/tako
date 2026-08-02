@@ -10743,3 +10743,84 @@ and the handler failed" — that is `ErrorRate`, a separate alert.
 needed logs is the one the metrics-only scope appeared to rule out, and
 it turned out to be expressible in metrics after all because tako owns
 the route name. Nothing in the metrics-only decision needs revisiting.
+
+## X2 — cloud verification: full release cycle on tako-test-01 (2026-08-02) — PASS
+
+Ran `validate/release-cycle.md` end to end to close the gap that X2
+shipped green locally but had never reached real infrastructure. All
+five sections pass; the project is clean.
+
+### The claim X2 needed to prove
+
+```
+compute: 2 cpu / 4Gi / concurrency 4 / instances 0–5
+         (profile batch + footprint memory 4Gi, concurrency 4, max 5)
+```
+
+That is `tako.Compute{Profile: tako.ProfileBatch, Footprint: tako.Footprint{
+Memory: "4Gi", Concurrency: 4, MaxInstances: 5}}` — the declaration X2
+rewrote — arriving at Cloud Run with every value intact. The knobs moved
+without dropping any.
+
+Also verified live rather than only in goldens: the renamed security
+text `⚠ 3 mutating route(s) without Route{SignIn: true}`.
+
+### Section results
+
+| § | check | result |
+|---|---|---|
+| 1 | deploy, five services | pass — 45 creates, 7 updates, 3 skips, 2m47s |
+| 2 | cron carries its VARIABLE's name | pass — `x1-gallery-cron-cleanup` → `/_tako/cron/Cleanup`, no `cleanupOrphans` anywhere |
+| 3 | the cron actually runs | pass — `POST /_tako/cron/Cleanup → 200 (557.4ms)` then `cron ok` |
+| 4 | API serves + re-plan converges | pass — `GET /api/photos → 200`; `0 creates, 0 updates, 55 skips, 0 orphans` |
+| 5 | destroy leaves nothing | pass — one pass, no 5xx; no `x1-*` in run, pubsub, service accounts or scheduler |
+
+### The walk paid for itself in preflight
+
+The FIRST deploy attempt died before touching anything:
+
+```
+tako: check permissions: Quota exceeded for quota metric 'Read requests'
+and limit 'Read requests per minute' of service
+'cloudresourcemanager.googleapis.com' (HTTP 429)
+```
+
+Not an X2 regression — the analyzer had already produced the right graph
+(`5 services, 9 endpoints, 1 worker, 3 subscribers, 1 cron`). The bug is
+underneath, and it is the same family as the destroy 5xx fix:
+**`testIamPermissions` is a POST**, and `idempotent()` tested the HTTP
+method alone, so a rate limit on a call that reads nothing but IAM
+killed a deploy that had created nothing. The most retry-worthy call in
+the run was the one call that could not retry.
+
+Google's convention puts custom methods after a colon, and several
+of the most-called ones are reads wearing POST. `idempotent` now takes
+the URL and allows exactly four: `:testIamPermissions`, `:getIamPolicy`,
+`:runQuery`, `:runAggregationQuery`. Deliberately an **allowlist, not a
+pattern** — `:commit`, `:setIamPolicy`, `:publish`, `:pull` and
+`:acknowledge` are colon-suffixed POSTs too, and retrying any of them
+duplicates work. Both halves are pinned:
+`TestReadOnlyPostsAreRetried` and
+`TestMutatingCustomMethodsAreNotRetried`.
+
+Note the quota was charged to project number 764086051850 — the shared
+gcloud OAuth client, not tako-test-01. ADC calls without a quota project
+land in a global pool, so this is a blip a user can hit through no fault
+of their own, which is exactly the case that should retry.
+
+**Honest limit: the new retry never fired in this run.** The 429 did not
+recur on the second attempt. The run proves no regression on the path
+that matters; the deterministic evidence is the two fake-server tests.
+
+### Two script statements were stale; both fixed
+
+- §3 said "**Expect a 403 first on a fresh deploy**". This run fired the
+  cron successfully on the FIRST attempt. The propagation window is real
+  but not deterministic — the two earlier runs hit it, this one did not.
+  Reworded to "likely but not certain", still with the loop.
+- §5 said "Nothing is retried automatically today, so this is on you to
+  notice". False since 58d566b. Rewritten to describe the retry and its
+  `↻` narration.
+
+A gate script that overstates what will happen trains the walker to
+mistrust it, so both were corrected rather than left as folklore.
