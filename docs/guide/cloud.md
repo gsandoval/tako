@@ -34,22 +34,25 @@ convergence, not cleanup you remember to do.
 
 ### The first two minutes after a deploy
 
-A fresh deploy can log a short burst of 403s on the push endpoints,
-looking like this:
+A fresh deploy can log a short burst of 403s on the endpoints tako
+calls with an OIDC token — the push endpoints Pub/Sub delivers to, and
+the `/_tako/cron/*` route Cloud Scheduler triggers — looking like this:
 
 ```
 POST /_tako/push → 403
 The request was not authenticated. … The IAM principal lacks {run.routes.invoke} permission.
 ```
 
-**This is expected and self-healing.** Tako grants the subscription's
-identity `roles/run.invoker` on its service and creates the subscription
-after — the reconcile order is grants, then push subscriptions — but IAM
-changes take up to a couple of minutes to propagate through Cloud Run's
-front door. Pub/Sub retries with backoff, so the messages arrive once
-the grant lands; at-least-once delivery means nothing is lost. Tako
-already treats this class of lag as normal elsewhere: boot retries
-Secret Manager reads for 90 seconds for the same reason.
+**This is expected and self-healing.** Tako grants the calling identity
+`roles/run.invoker` on its service and creates the caller after — the
+reconcile order is grants, then push subscriptions and scheduler jobs —
+but IAM changes take up to a couple of minutes to propagate through
+Cloud Run's front door. Pub/Sub retries with backoff, so messages arrive
+once the grant lands, and at-least-once delivery means nothing is lost.
+A cron that fires inside the window is skipped rather than queued: the
+next scheduled run is the recovery, so trigger it by hand if you cannot
+wait. Tako already treats this class of lag as normal elsewhere — boot
+retries Secret Manager reads for 90 seconds for the same reason.
 
 It is worth a look only if it does NOT stop. Confirm delivery recovered:
 

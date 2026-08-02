@@ -10108,3 +10108,46 @@ The SA is deliberate and documented in the harness — creating one and
 waiting out signBlob propagation costs 90 seconds, so it persists across
 runs like the conformance composite index. It is not swept, and should
 not be.
+
+## Release cycle, second run (2026-08-02)
+
+Re-run of `validate/release-cycle.md` after the transient-retry change,
+against tako-test-01 `--env x1`. **All five sections pass again**: 45
+creates and five services, `/_tako/cron/Cleanup` from the variable name,
+`POST /_tako/cron/Cleanup → 200 (481.4ms)` then `cron ok`, a re-plan at
+0 creates / 0 updates / 55 skips / 0 orphans, and a destroy leaving no
+`x1-*` resource of any kind.
+
+**What this run did NOT prove.** Destroy completed in a single pass with
+no 5xx, so the retry never fired. The run confirms the change caused no
+regression; it does not confirm the retry works in production, because a
+transient cannot be summoned on demand. The deterministic evidence stays
+the four fake-server tests. Saying otherwise would be claiming a live
+proof that did not happen.
+
+Retries are now narrated — `↻ DELETE <resource>: HTTP 503 — retrying in
+1s` on stderr — because a silent retry hides degradation: a deploy that
+takes twice as long should say why. Without it this re-run could not
+have distinguished "no transient occurred" from "a transient occurred
+and was swallowed", which is the question the run was meant to answer.
+
+### The propagation window is wider than documented
+
+Both runs hit `The IAM principal lacks {run.routes.invoke} permission`
+firing the cron, ~60 seconds after deploy — not only on the Pub/Sub push
+endpoints, which is how the previous entry and `guide/cloud.md`
+described it. Any identity tako grants `run.invoker` and then
+immediately uses is exposed: push subscriptions AND the Cloud Scheduler
+job.
+
+One asymmetry worth stating, and now stated in the docs: **Pub/Sub
+retries, Cloud Scheduler does not queue.** A push message inside the
+window is redelivered and nothing is lost; a cron that fires inside it
+is simply skipped, and the next scheduled run is the recovery. For an
+`every 24h` cron that is a day, which is why the walk fires the job by
+hand rather than waiting.
+
+`guide/cloud.md` broadened to both callers with that asymmetry called
+out, `cron.md` gains a pointer, and `release-cycle.md` §3 now tells the
+walker to expect the 403 and gives the until-loop that rides it out —
+both runs needed it, so the script should not pretend otherwise.

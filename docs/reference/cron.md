@@ -93,6 +93,12 @@ the jobs with everything else.
 
 ## Test it
 
+> Immediately after a fresh deploy, a cron that fires can get a 403
+> from Cloud Run's front door while the Scheduler job's invoker grant
+> propagates — a minute or two, self-healing, and the next scheduled
+> run is the recovery. See
+> [the cloud story](../guide/cloud.md#the-first-two-minutes-after-a-deploy).
+
 **The cron's identity is its variable.** `var Cleanup = tako.Cron(...)`
 deploys as the Scheduler job for `/_tako/cron/Cleanup`, leases as
 `cron-Cleanup` under `WithSingleflight`, and is fired in a test as

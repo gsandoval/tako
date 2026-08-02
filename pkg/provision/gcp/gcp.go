@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -164,12 +165,26 @@ func (c *Client) do(ctx context.Context, method, url string, in, out any) error 
 		} else if !idempotent(method) || attempt >= len(retryBackoff) {
 			return err
 		}
+		// A silent retry hides degradation: if an API is having a bad
+		// afternoon, the deploy that took four minutes instead of two
+		// should say why. One line, to stderr, so it never lands in
+		// piped plan output.
+		fmt.Fprintf(os.Stderr, "  ↻ %s %s: %s — retrying in %s\n",
+			method, lastSegment(url), retryReason(res, err), retryBackoff[attempt])
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(retryBackoff[attempt]):
 		}
 	}
+}
+
+// retryReason names what we are waiting out, in the shortest honest way.
+func retryReason(res *http.Response, err error) string {
+	if err != nil {
+		return err.Error()
+	}
+	return fmt.Sprintf("HTTP %d", res.StatusCode)
 }
 
 // transientStatus reports the answers worth trying again: the server

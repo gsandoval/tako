@@ -78,6 +78,17 @@ go run ../../cmd/tako logs gallery --project $PROJECT --env x1 --since 5m
 means the Scheduler job and the service disagree about the cron's name —
 the exact bug X1 existed to make impossible.
 
+**Expect a 403 first on a fresh deploy.** The Scheduler job's invoker
+grant takes a minute or two to propagate through Cloud Run's front door
+(both 2026-08-02 runs hit it). Fire the job again until the 200 arrives:
+
+```
+until gcloud scheduler jobs run x1-gallery-cron-cleanup \
+    --project $PROJECT --location us-central1 >/dev/null 2>&1 &&
+  go run ../../cmd/tako logs gallery --project $PROJECT --env x1 --since 2m | grep -q 'cron ok'
+do sleep 15; done
+```
+
 ## 4. P2: the paths that only run against the real API
 
 Serve a request and upload, which exercises the run, storage, pubsub
