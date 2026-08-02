@@ -115,15 +115,49 @@ check.
 
 ### 3d. Two claims, one service
 
-Put a second cron in gallery with a different footprint from
-`Cleanup`'s. **Crons are how this collision is still possible at all:**
-they run in their package's app service, whereas each worker,
-subscriber, job and singleton owns its own service and `tako.Service`
-is one per package.
+A footprint describes a whole SERVICE, so a service can only carry one.
+Crons are the way two claims can still land on the same one: they run
+in their package's app service, whereas each worker, subscriber, job
+and singleton owns its own service, and `tako.Service` is one per
+package.
+
+gallery has one cron. Add a second, on line 84:
+
+```go
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight())
+	Cleanup2    = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
+		tako.WithFootprint(tako.Footprint{CPU: 2}))
+```
+
+Run `gen graph` and note that **this is not an error yet**:
 
 ```
-service <pkg> cannot carry both footprint (cpu 2) from Sweep and footprint (cpu 4, memory 2Gi) from Purge — one service scales one way; split the packages or align the footprints (tako/mixed-footprint)
+  service gallery (package gallery, profile default + footprint (cpu 2))
 ```
+
+One claim is just a claim — a cron's footprint legitimately sets its
+app service's shape, and the graph shows it applied. There is nothing
+to conflict with, because `Cleanup` pins nothing.
+
+Now give `Cleanup` a DIFFERENT footprint:
+
+```go
+	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
+		tako.WithFootprint(tako.Footprint{CPU: 4, Memory: "2Gi"}))
+	Cleanup2    = tako.Cron("every 24h", cleanupOrphans, tako.WithSingleflight(),
+		tako.WithFootprint(tako.Footprint{CPU: 2}))
+```
+
+```
+app.go:84:2: service gallery cannot carry both footprint (cpu 4, memory 2Gi) from Cleanup and footprint (cpu 2) from Cleanup2 — one service scales one way; split the packages or align the footprints (tako/mixed-footprint)
+```
+
+**Judge:** the error names BOTH claimants and prints what each asked
+for, so you can see which one to change without opening anything else.
+Identical footprints on both crons are accepted — the rule is about
+disagreement, not about counting declarations.
+
+Put gallery back: `git checkout examples/gallery/app.go`.
 
 ### 3e. The migration signal
 

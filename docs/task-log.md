@@ -9044,3 +9044,36 @@ re-derive it.
 Worth noting the near-miss: had the fixture used any other handler kind,
 the honest outcome would have been deleting the rule. A green test on
 the wrong assertion is how a dead rule survives.
+
+## §3d needed two edits, and I wrote one — 2026-08-01
+
+User: *"I don't understand the instructions on 3d. Two claims, one
+service."*
+
+They had already made the edit the step described — a second cron,
+`Cleanup2`, carrying `Footprint{CPU: 2}` — and gotten no error, because
+the step was wrong in a way that reads as correct.
+
+`mixed-footprint` fires on DISAGREEMENT between two claims. gallery's
+`Cleanup` pins nothing, so adding one footprinted cron produces exactly
+one claim, which is simply applied:
+
+```
+service gallery (package gallery, profile default + footprint (cpu 2))
+```
+
+The step said "a second cron with a different footprint from
+`Cleanup`'s" — but `Cleanup` HAS no footprint, so "different from" had
+no referent. Both edits are needed and I wrote one.
+
+Rewritten as two steps, with the intermediate state shown on purpose:
+add the second cron, observe that one claim is legal and applied, THEN
+give the first cron a different footprint and watch the collision. The
+non-error is worth seeing — it is what makes the rule about
+disagreement rather than about counting declarations, and the rewrite
+says that explicitly.
+
+Third gate-script defect of the same family in two days (metrics §4
+"upload two or three photos", footprint §3 with no command, this). The
+common root is describing an edit instead of writing it, and the fix
+that keeps working is to perform the walk and paste what came back.
