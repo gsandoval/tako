@@ -11811,3 +11811,42 @@ from the amendment, enforced rather than merely documented.
 
 Eight rules now cover alerting. Next: Y1c's adapters, on a graph that
 can finally feed them.
+
+## Y1c — logical conditions become PromQL (2026-08-02)
+
+`pkg/provision/alerts.go` maps the analyzer's logical conditions onto
+Google's metric types, resources and label matchers. Every metric type
+and every label name in it was read off the live descriptors, because a
+wrong label produces a policy that watches NOTHING rather than an error
+— the failure mode this whole feature keeps generating.
+
+Six tests, each pinning a way the mapping could be quietly wrong:
+
+- **`CronMissed` doubles the schedule it reads.** A daily cron gets
+  `[172800s]` and forbids a retest window; a 6-hourly one gets
+  `[43200s]` and allows it. This is the case that could not exist under
+  `conditionAbsent`'s 23h30m ceiling.
+- **Names carry the env prefix** — `subscription_id="x1-thumbs"`,
+  `service_name="x1-gallery-makethumb"`. Without it a policy watches
+  another environment's resources and simply never fires.
+- **Route subjects filter to their route**, and the test asserts the
+  matcher appears **twice** in an error-rate query. Filtering only the
+  numerator would divide one route's errors by the whole service's
+  traffic and read far too low — a wrong number, not a missing one.
+  It also asserts the METHOD does not leak: tako's `"GET /api/photos"`
+  is a route pattern, Cloud Run's label is a path.
+- **`AtCapacity` reads MaxInstances from the footprint** (5 → `> 4.5`),
+  so the ceiling lives in one place.
+- **Gauges use neither `rate(` nor `increase(`.** An age or an instance
+  count has no rate; taking one would be meaningless and the API would
+  not complain.
+- **Custom metrics are namespaced per env**, so prod and a preview
+  never share an alert.
+
+### Still ahead in Y1c
+
+The GCP adapters (`List`/`Create`/`Update`/`Delete` for both kinds), the
+desired-state objects, and the Pub/Sub notification service-agent grant
+with the bounded retry `notifications.go:77` already models. The query
+half is the part that was worth pinning first — it is where being wrong
+is invisible.
