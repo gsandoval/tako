@@ -89,6 +89,8 @@ type metricRef struct {
 	agg string
 	// q is the quantile when agg is "percentile".
 	q float64
+	// filters are extra PromQL label matchers for a Platform metric.
+	filters []string
 }
 
 // Recording is a declared Counter or Histogram — something values were
@@ -171,9 +173,9 @@ func Percentile(h *HistogramHandle, q float64) Metric {
 	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "percentile", q: q}}
 }
 
-// Target is something ErrorRate can be measured on: the package's app
-// service (tako.Service) or one async handler, which is its own
-// deployable. Sealed like Metric.
+// Target is something a service-level alert can be measured on: the
+// package's app service (tako.Service) or one async handler, which is
+// its own deployable. Sealed, like Metric.
 type Target interface {
 	alertTarget() metricRef
 }
@@ -186,37 +188,47 @@ func (h Handler) alertTarget() metricRef {
 	return metricRef{kind: "handler", id: h.id}
 }
 
-// ErrorRate is the fraction of requests a service answers with 5xx, over
-// the condition's window. Pass tako.Service's handle for the package's
-// app service, or an async handler var (a worker, subscriber, runner or
-// singleton) for its own deployable.
-func ErrorRate(of Target) Metric {
-	t := of.alertTarget()
-	return derived{ref: metricRef{kind: "error_rate", on: t.kind, id: t.id, agg: "ratio"}}
+// One ROUTE is a target too: request_count and request_latencies both
+// carry a `route` label, so "this endpoint is erroring" is answerable
+// without alerting on the whole service it shares.
+func (e Endpoint[Req, Res]) alertTarget() metricRef {
+	return metricRef{kind: "route", name: e.route}
 }
 
-// DeadLetters counts messages that exhausted their retries and landed on
-// a queue's dead-letter topic, within the condition's window.
-// Above(DeadLetters(q), 0, …) is "anything at all gave up".
-//
-// Unlike a counter this takes no reading: a per-second dead-letter rate
-// is not a question anyone asks, so the count is the only sensible
-// aggregation and tako picks it.
-func DeadLetters[T any](queue *QueueHandle[T]) Metric {
-	return derived{ref: metricRef{kind: "dead_letters", name: queue.name, agg: "count"}}
+// A site is its routes — the static mount and anything served under it.
+func (t *SiteHandle) alertTarget() metricRef {
+	return metricRef{kind: "site", name: t.dir}
 }
 
-// Runs counts a cron's executions — measured where the cron ARRIVES, on
-// the request its schedule makes to its own service, because Cloud
-// Scheduler publishes no metrics of its own.
+// Consumer is something that consumes messages and can therefore fall
+// behind or give up: a Queue, or a Subscribe handler. Subscribers
+// dead-letter independently of one another, so each is its own subject.
+type Consumer interface {
+	consumerRef() metricRef
+}
+
+func (q *QueueHandle[T]) consumerRef() metricRef {
+	return metricRef{kind: "queue", name: q.name}
+}
+
+func (h Handler) consumerRef() metricRef {
+	return metricRef{kind: "subscriber", id: h.id}
+}
+
+// Platform names a Google Cloud metric directly, for the cases the
+// presets and derived readings do not cover.
 //
-// Use it with Absent: "no run in 26 hours" is the alert a daily job
-// wants. It fires whether the schedule never triggered or the request
-// never arrived, which is more than a scheduler-side metric would catch;
-// it does NOT fire when a run arrives and the handler fails — that is
-// ErrorRate, a separate alert.
-func Runs(cron Handler) Metric {
-	return derived{ref: metricRef{kind: "runs", id: cron.id, agg: "count"}}
+// The name is Google's, so it is a string — pretending otherwise would
+// be a lie — but it must be constant, and tako derives the rest: the
+// PromQL mapping (first "/" becomes ":", other specials become "_") and
+// the monitored-resource matcher that a bare selector is rejected
+// without. Find names with `tako metrics <search>`; there are more than
+// eight thousand in a project, which is why there is no list in the docs.
+//
+//	tako.Above(tako.Platform("run.googleapis.com/container/network/sent_bytes_count"),
+//	    1<<30, tako.For(10*time.Minute))
+func Platform(metricType string, filters ...string) Metric {
+	return derived{ref: metricRef{kind: "platform", name: metricType, filters: filters}}
 }
 
 // Window is when a condition is measured. The knobs are deliberately
@@ -296,4 +308,126 @@ type AlertHandle struct {
 // production about when you get woken up.
 func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle {
 	return AlertHandle{when: when, notify: append([]*ChannelHandle{notify}, also...)}
+}
+
+// Presets: named situations.
+//
+// Each is an ordinary Condition, so it composes with tako.Alert like any
+// other — but it names a failure instead of a metric, and derives the
+// query, the reading and the window from what tako already knows about
+// the thing being watched. The raw vocabulary above stays for YOUR
+// counters and histograms, which tako cannot name situations for.
+//
+// Every preset takes an optional trailing Window. The defaults are
+// documented per preset and stated in reference/alerts.md; they are
+// defaults, not a ceiling.
+
+// windowOr picks the caller's window, or the preset's default.
+func windowOr(w []Window, def Window) Window {
+	if len(w) > 0 {
+		return w[0]
+	}
+	return def
+}
+
+// DeadLettered fires when at least n messages have given up — exhausted
+// their retries and landed on the dead-letter topic — within the window
+// (default: 5 minutes).
+//
+// It takes a queue or a SUBSCRIBER, because subscribers fan out with
+// independent fates: one giving up says nothing about the others.
+//
+// Pair it with Backlogged. This one only fires AFTER retries are spent,
+// so a consumer that is merely down shows nothing here for a while.
+func DeadLettered(c Consumer, n int, w ...Window) Condition {
+	ref := c.consumerRef()
+	ref.agg = "dead_letters"
+	return Condition{op: "above", subject: ref, threshold: float64(n),
+		window: windowOr(w, Window{Every: 5 * time.Minute})}
+}
+
+// Backlogged fires when the oldest unacknowledged message has been
+// waiting longer than age (default window: evaluated every minute).
+//
+// This is the "work is piling up" alert, and it is the one that catches
+// a consumer that is down or too slow — before anything has given up.
+func Backlogged(c Consumer, age time.Duration, w ...Window) Condition {
+	ref := c.consumerRef()
+	ref.agg = "backlog_age"
+	return Condition{op: "above", subject: ref, threshold: age.Seconds(),
+		window: windowOr(w, Window{For: 5 * time.Minute})}
+}
+
+// CronFailed fires when a cron ran and failed at least times within the
+// window (default: 1 hour) — its route answering 5xx.
+func CronFailed(cron Handler, times int, w ...Window) Condition {
+	return Condition{op: "above", subject: metricRef{kind: "cron_failed", id: cron.id},
+		threshold: float64(times), window: windowOr(w, Window{Every: time.Hour})}
+}
+
+// CronMissed fires when a cron has not run at all for twice its own
+// schedule — a 6-hourly job gets a 12-hour lookback, a daily one 26
+// hours. tako reads the schedule from the declaration, so there is no
+// interval to repeat and no chance of the two disagreeing.
+//
+// It catches a schedule that never fired AND a run that never arrived.
+// It does NOT catch a run that arrived and failed: that is CronFailed.
+func CronMissed(cron Handler, w ...Window) Condition {
+	return Condition{op: "absent", subject: metricRef{kind: "cron_missed", id: cron.id},
+		window: windowOr(w, Window{})}
+}
+
+// JobFailed fires when at least times executions of the job finished
+// unsuccessfully within the window (default: 1 hour).
+func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition {
+	return Condition{op: "above", subject: metricRef{kind: "job_failed", name: job.name},
+		threshold: float64(times), window: windowOr(w, Window{Every: time.Hour})}
+}
+
+// Erroring fires when the 5xx share of requests exceeds fraction (0–1)
+// for the window (default: 5 minutes).
+//
+// The target may be a whole service, one async handler, a single API or
+// Page route, or a Site — request metrics carry a route label, so an
+// endpoint can be watched without alerting on everything beside it.
+func Erroring(t Target, fraction float64, w ...Window) Condition {
+	ref := t.alertTarget()
+	ref.agg = "error_rate"
+	return Condition{op: "above", subject: ref, threshold: fraction,
+		window: windowOr(w, Window{For: 5 * time.Minute})}
+}
+
+// SlowerThan fires when the given quantile of request latency exceeds d
+// for the window (default: 5 minutes). Same targets as Erroring.
+//
+//	tako.SlowerThan(Photos, 2*time.Second, 0.99)
+func SlowerThan(t Target, d time.Duration, quantile float64, w ...Window) Condition {
+	ref := t.alertTarget()
+	ref.agg = "latency"
+	ref.q = quantile
+	return Condition{op: "above", subject: ref, threshold: float64(d.Milliseconds()),
+		window: windowOr(w, Window{For: 5 * time.Minute})}
+}
+
+// AtCapacity fires when a service sits at its maximum instance count —
+// scaled out as far as it is allowed and shedding whatever arrives next.
+//
+// It takes no threshold: tako reads MaxInstances from the service's
+// footprint, so the number lives in one place.
+func AtCapacity(t Target, w ...Window) Condition {
+	ref := t.alertTarget()
+	ref.agg = "at_capacity"
+	return Condition{op: "above", subject: ref,
+		window: windowOr(w, Window{For: 10 * time.Minute})}
+}
+
+// SingletonDown fires when a singleton's exactly-one instance is not
+// running.
+//
+// A singleton answers nothing but its own health check, so no request
+// metric can see it — this is the only check for a primitive whose
+// entire promise is that one of it exists.
+func SingletonDown(loop Handler, w ...Window) Condition {
+	return Condition{op: "below", subject: metricRef{kind: "singleton_down", id: loop.id},
+		threshold: 1, window: windowOr(w, Window{For: 5 * time.Minute})}
 }

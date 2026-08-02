@@ -69,7 +69,9 @@ func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Rout
 func Above(m Metric, threshold float64, w Window) Condition
 func Absent(m Metric, w Window) Condition
 func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle
+func AtCapacity(t Target, w ...Window) Condition
 func Auth(cfg AuthConfig) *AuthHandle
+func Backlogged(c Consumer, age time.Duration, w ...Window) Condition
 func Below(m Metric, threshold float64, w Window) Condition
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
@@ -77,14 +79,17 @@ func ChatSpace(space string) *ChannelHandle
 func Count(r Recording) Metric
 func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
-func DeadLetters[T any](queue *QueueHandle[T]) Metric
+func CronFailed(cron Handler, times int, w ...Window) Condition
+func CronMissed(cron Handler, w ...Window) Condition
+func DeadLettered(c Consumer, n int, w ...Window) Condition
 func Email(address string) *ChannelHandle
 func Entity[T any](name string) *EntityHandle[T]
-func ErrorRate(of Target) Metric
 func Errorf(status int, format string, args ...any) error
+func Erroring(t Target, fraction float64, w ...Window) Condition
 func For(d time.Duration) Window
 func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
+func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition
 func Job[T any](name string) *JobHandle[T]
 func Lock(name string) *LockHandle
 func Mean(h *HistogramHandle) Metric
@@ -94,16 +99,18 @@ func NotFound() error
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
 func Percentile(h *HistogramHandle, q float64) Metric
 func Permanent(err error) error
+func Platform(metricType string, filters ...string) Metric
 func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
 func Rate(r Recording) Metric
 func Redirect(target string) (HTML, error)
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
-func Runs(cron Handler) Metric
 func Secret(name string) *SecretHandle
 func Service(cfg ...ServiceConfig) *ServiceHandle
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
+func SingletonDown(loop Handler, w ...Window) Condition
 func Site(dir string, cfg ...SiteConfig) *SiteHandle
+func SlowerThan(t Target, d time.Duration, quantile float64, w ...Window) Condition
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 func Sum(h *HistogramHandle) Metric
 func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
@@ -120,6 +127,7 @@ type CacheHandle[T any] struct{}
 type ChannelHandle struct{}
 type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
 type Condition struct{}
+type Consumer interface{consumerRef() metricRef}
 type CounterHandle struct{}
 type CronConfig struct{Singleflight bool; Timezone string; Deadline time.Duration; Profile Profile; Footprint Footprint}
 type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}

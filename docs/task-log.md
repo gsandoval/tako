@@ -11591,3 +11591,55 @@ enumeration I should have done before proposing any of them.
 
 Ten presets total, four of them new, each pointing at a metric confirmed
 to exist with the kind and labels the query needs.
+
+## Y2 — presets and Platform folded into the SDK (2026-08-02)
+
+Nine presets, `tako.Platform`, and the `Consumer` seal. sdk_lock
+159 → **167**.
+
+### Three symbols REMOVED, not kept alongside
+
+`ErrorRate`, `DeadLetters` and `Runs` are gone. Each was a raw Metric
+whose only use was one obvious condition, and the preset says the same
+thing better:
+
+```
+- tako.Above(tako.DeadLetters(thumbs), 5, tako.For(5*time.Minute))
++ tako.DeadLettered(thumbs, 5)
+```
+
+Keeping both would be two spellings of one knob — review 2's rule, and
+the near-identical `DeadLetters`/`DeadLettered` pair would have been a
+standing trap.
+
+### Erroring and SlowerThan reach routes and sites (owner)
+
+`request_count` and `request_latencies` both carry a **`route`** label,
+verified on the live descriptors, so `Target` now seals over four
+things: a Service, an async Handler, one `Endpoint` (API or Page), and a
+`*SiteHandle`.
+
+```go
+Erroring(svc, 0.05)                       // the whole service
+Erroring(List, 0.02)                      // ONE route
+Erroring(site, 0.02)                      // a site's routes
+SlowerThan(List, 2*time.Second, 0.99)     // that route's p99
+```
+
+Per-route was worth having and nearly missed: without it "checkout is
+erroring" would have had to be spelled as "the service containing
+checkout is erroring", which is a different and much noisier claim.
+
+### What each preset knows so the user does not
+
+`CronMissed` reads the SCHEDULE and doubles it — `every 6h` becomes a
+12h lookback, daily becomes 26h — so there is no interval to repeat and
+no way for the two to disagree. `AtCapacity` takes no threshold at all,
+reading `MaxInstances` from the footprint. Both are the derived-IAM
+argument applied to alerting: the graph already knows, so the user
+should not have to say it twice.
+
+Defaults are per preset and documented, with an optional trailing
+`Window` on every one — defaulted, not hidden.
+
+Next: Y1b, the analyzer, against a settled surface.
