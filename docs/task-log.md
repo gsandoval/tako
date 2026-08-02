@@ -11538,3 +11538,56 @@ free alert — is not worth alerts a user did not write.
 
 **STOP — approve Y2a (platform metrics) and Y2b-revised (presets)?**
 Neither blocks Y1b.
+
+## Y2b — the preset catalogue, enumerated against tako's primitives (2026-08-02)
+
+Owner asked what OTHER situations deserve presets, given the resources
+tako offers. Walked every declarable primitive against real metric
+descriptors on tako-test-01 rather than listing from memory — the
+enumeration I should have done before proposing any of them.
+
+| tako primitive | known failure | metric (verified) | preset |
+|---|---|---|---|
+| Queue | work gave up | `subscription/dead_letter_message_count` DELTA | `DeadLettered(q, n)` |
+| Queue | **work is piling up** | `subscription/oldest_unacked_message_age` GAUGE | **`Backlogged(q, age)` — NEW** |
+| Subscribe | a subscriber gave up alone | same, per-subscription | **extend `DeadLettered` to subscribers — NEW** |
+| Cron | ran and failed | `request_count{route,5xx}` DELTA | `CronFailed(cron, n)` |
+| Cron | stopped running | `request_count{route}` absence | `CronMissed(cron)` |
+| Job/Runner | execution failed | `job/completed_execution_count` DELTA, label `result` | `JobFailed(job, n)` |
+| Service | erroring | `request_count{response_code_class}` | `Erroring(t, frac)` |
+| Service | slow | `request_latencies` DELTA DISTRIBUTION | `SlowerThan(t, d, q)` |
+| Service | **capped and shedding** | `container/instance_count` GAUGE | **`AtCapacity(svc)` — NEW** |
+| Singleton | the exactly-one loop is not running | `container/instance_count` GAUGE | **`SingletonDown(loop)` — NEW** |
+
+### The four additions, and why each earns a symbol
+
+- **`Backlogged(q, age)`** is the one I would most regret omitting.
+  `DeadLettered` fires only after a message has exhausted its retries;
+  a queue whose consumer is down or too slow shows nothing until then.
+  Oldest-unacked-age is the signal that work is stuck NOW.
+- **`AtCapacity(svc)` takes no parameter**, because tako already knows
+  `MaxInstances` from the footprint. Same shape as `CronMissed` knowing
+  the schedule: the graph supplies what the user would otherwise repeat.
+- **`DeadLettered` on subscribers** follows tako's own doctrine that
+  subscribers fan out with independent fates and dead-letter
+  independently. Offering it only for queues would contradict the model
+  the docs teach.
+- **`SingletonDown(loop)`** is the only check for a primitive whose
+  entire promise is "exactly one". A singleton serves nothing but its
+  health check, so no request metric can see it; instance count can.
+
+### Declined, with reasons rather than silence
+
+- **Queue DEPTH** (`num_undelivered_messages`): dominated by
+  `Backlogged`. Depth alone is normal under load; depth that is not
+  draining is what age already says.
+- **Bucket, Cache, Lock, Secret**: no failure a preset could name.
+  Cache is per-instance in memory and emits nothing; Lock and Secret
+  failures surface as handler errors, which `Erroring` already covers.
+- **Entity**: `datastore.googleapis.com/api/request_count` carries
+  `response_code`, but a Datastore failure reaches the user as a 5xx
+  from the handler — a second alert on the same incident.
+- **Site, Auth**: part of a service, covered by `Erroring`/`SlowerThan`.
+
+Ten presets total, four of them new, each pointing at a metric confirmed
+to exist with the kind and labels the query needs.
