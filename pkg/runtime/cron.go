@@ -97,6 +97,11 @@ func RegisterCron(name string, h tako.Handler) {
 func CronDispatch() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := r.PathValue("cron")
+		// One mux pattern serves every cron in the service, so the
+		// request's own pattern cannot identify which one ran. Name it,
+		// or all crons share a metric series and CronMissed cannot tell
+		// a dead cron from a healthy one beside it.
+		RefineRoute(r, "/_tako/cron/"+name)
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok {
 			http.Error(w, "cron triggers carry an OIDC bearer token", http.StatusUnauthorized)

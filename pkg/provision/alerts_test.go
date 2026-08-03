@@ -50,6 +50,12 @@ func TestCronMissedDoublesTheScheduleItReads(t *testing.T) {
 	if !strings.Contains(daily, `route="/_tako/cron/Cleanup"`) {
 		t.Errorf("cron route not derived from the variable: %q", daily)
 	}
+	// The cron's dispatcher refines this label per cron; the mux pattern
+	// alone is POST /_tako/cron/{cron} and would merge every cron in the
+	// service into one series.
+	if strings.Contains(daily, "{cron}") {
+		t.Errorf("cron alert watches the wildcard pattern, not one cron: %q", daily)
+	}
 
 	sixHourly, retest6 := query(t, &analyzer.AlertCondition{
 		Op: "absent", Reading: "cron_missed", SubjectKind: "cron", SubjectVar: "gallery.Sweep"})
@@ -70,10 +76,17 @@ func TestSubjectNamesCarryTheEnvPrefix(t *testing.T) {
 	if !strings.Contains(q, `subscription_id="x1-thumbs"`) {
 		t.Errorf("dead-letter subscription not env-prefixed: %q", q)
 	}
+	// The service is the generic_task `job` label, because these are
+	// tako's own metrics now — Cloud Run's route label is never
+	// populated, so its request_count cannot answer per-endpoint
+	// questions at all.
 	svc, _ := query(t, &analyzer.AlertCondition{
 		Op: "above", Reading: "error_rate", SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", Threshold: 0.05})
-	if !strings.Contains(svc, `service_name="x1-gallery-makethumb"`) {
+	if !strings.Contains(svc, `job="x1-gallery-makethumb"`) {
 		t.Errorf("service not env-prefixed: %q", svc)
+	}
+	if strings.Contains(svc, "run_googleapis_com:request_count") {
+		t.Errorf("still reading the platform metric, whose route label is always empty: %q", svc)
 	}
 }
 
@@ -83,15 +96,16 @@ func TestRouteSubjectsFilterToTheirRoute(t *testing.T) {
 	q, _ := query(t, &analyzer.AlertCondition{
 		Op: "above", Reading: "error_rate", SubjectKind: "route",
 		SubjectName: "GET /api/photos", SubjectVar: "gallery.List", Threshold: 0.02})
-	if !strings.Contains(q, `route="/api/photos"`) {
-		t.Fatalf("route matcher missing — the alert would watch the whole service: %q", q)
-	}
-	if strings.Contains(q, `route="GET /api/photos"`) {
-		t.Fatalf("method leaked into the route label: %q", q)
+	// The label value is the ServeMux PATTERN, method included, because
+	// that is what tako writes. Stripping the method — which the first
+	// version did, for Cloud Run's differently-shaped label — produces a
+	// matcher that never matches.
+	if !strings.Contains(q, `route="GET /api/photos"`) {
+		t.Fatalf("route matcher missing or reshaped — the alert would watch the whole service: %q", q)
 	}
 	// The ratio needs BOTH halves filtered, or it divides one route's
 	// errors by the whole service's traffic and reads far too low.
-	if strings.Count(q, `route="/api/photos"`) != 2 {
+	if strings.Count(q, `route="GET /api/photos"`) != 2 {
 		t.Errorf("both numerator and denominator must carry the route: %q", q)
 	}
 }

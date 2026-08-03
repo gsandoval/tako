@@ -11980,3 +11980,53 @@ fails.
 
 Next: point the four broken presets at these metrics, then Y1c's
 adapters.
+
+## Y3b — the four presets ride tako's metrics; and the wildcard trap (2026-08-02)
+
+`cron_failed`, `cron_missed`, `error_rate` and `latency` now read
+`custom.googleapis.com/tako/requests` and `.../request_ms` instead of
+`run.googleapis.com/request_count`, scoped by `namespace` (app-env) and
+`job` (the service) on `generic_task`.
+
+### A second wildcard defect, caught before it shipped
+
+Pointing the presets at the new metric surfaced it: the cron dispatcher
+is mounted ONCE as `POST /_tako/cron/{cron}` and serves every cron in
+the service. `r.Pattern` is therefore the wildcard, so all crons in a
+service would have recorded into a single series — and `CronMissed` on a
+healthy cron would fire whenever any OTHER cron beside it stopped.
+
+The fix is `RefineRoute`: the route label is a POINTER in the request
+context, because the middleware records after the handler returns and a
+value written into a context inside a handler never reaches it. The cron
+dispatcher names what it actually ran:
+
+```go
+RefineRoute(r, "/_tako/cron/"+name)
+```
+
+Two tests cover it — that two crons through one wildcard pattern record
+under two distinct labels, and that an ordinary route still keeps its
+pattern without refinement.
+
+### The tests that had to change, and why that is right
+
+Three assertions in `alerts_test.go` were encoding the WRONG metric:
+they asserted `service_name=` (a `cloud_run_revision` label) and a route
+value with the method stripped. Both were correct for
+`run.googleapis.com/request_count` and both are wrong now:
+
+- the service is the `generic_task` **`job`** label;
+- the route value is the ServeMux **pattern verbatim**, method included,
+  because that is what tako writes. Stripping the method — which the
+  first version did, for Cloud Run's differently-shaped label — produces
+  a matcher that never matches.
+
+They now also assert the negatives that would let the bug back in: that
+no query still reads `run_googleapis_com:request_count`, and that no
+cron alert watches `{cron}`.
+
+Full suite, vet and gofmt clean, conformance included.
+
+Remaining in Y1c: the two GCP adapters, desired-state objects, and the
+Pub/Sub notification service-agent grant.

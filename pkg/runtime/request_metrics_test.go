@@ -109,3 +109,31 @@ func TestRecordingWithNoSinkIsSafe(t *testing.T) {
 		t.Fatalf("status = %d", rec.Code)
 	}
 }
+
+// Crons share ONE mux pattern — POST /_tako/cron/{cron} — so without
+// refinement every cron in a service records into one series, and
+// CronMissed on a healthy cron would fire whenever any other cron in
+// the same service stopped. This is the wildcard case the route label
+// cannot see by itself.
+func TestWildcardDispatchersNameWhatTheyRan(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /_tako/cron/{cron}", func(w http.ResponseWriter, r *http.Request) {
+		RefineRoute(r, "/_tako/cron/"+r.PathValue("cron"))
+	})
+	for _, name := range []string{"Cleanup", "Sweep"} {
+		m := serveThrough(t, mux, http.MethodPost, "/_tako/cron/"+name)
+		if got := m.counters[0].labels["route"]; got != "/_tako/cron/"+name {
+			t.Fatalf("cron %s recorded as %q — every cron would share one series", name, got)
+		}
+	}
+}
+
+// Refinement must not be required: an ordinary route keeps its pattern.
+func TestUnrefinedRoutesKeepTheirPattern(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/photos", func(w http.ResponseWriter, r *http.Request) {})
+	m := serveThrough(t, mux, http.MethodGet, "/api/photos")
+	if got := m.counters[0].labels["route"]; got != "GET /api/photos" {
+		t.Fatalf("route = %q", got)
+	}
+}

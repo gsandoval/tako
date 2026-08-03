@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -190,9 +191,15 @@ func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
+		// The route label is refinable: a dispatcher serving a wildcard
+		// pattern knows which thing it actually ran, and the middleware
+		// does not. Crons are the case — one mux pattern,
+		// POST /_tako/cron/{cron}, serving every cron in the service.
+		rl := &routeLabel{name: r.Pattern}
+		r = r.WithContext(context.WithValue(r.Context(), routeLabelKey{}, rl))
 		next.ServeHTTP(sw, r)
 		took := time.Since(start)
-		recordRequest(r, sw.status, took)
+		recordRequest(r, rl, sw.status, took)
 		logRequest(r, sw.status, took)
 	})
 }
@@ -220,11 +227,14 @@ func SetRequestMetrics(m backends.Metrics) { requestMetrics = m }
 // would be one series per photo and would bankrupt the metric. Go 1.22's
 // ServeMux reports the matched pattern, so this is the framework's own
 // knowledge rather than a guess.
-func recordRequest(r *http.Request, status int, took time.Duration) {
+func recordRequest(r *http.Request, rl *routeLabel, status int, took time.Duration) {
 	if requestMetrics == nil {
 		return
 	}
 	route := r.Pattern
+	if rl != nil && rl.name != "" {
+		route = rl.name
+	}
 	if route == "" {
 		// No pattern matched: a 404. Bucketing those under one label
 		// keeps an unmatched-path flood from minting a series each.
@@ -234,6 +244,27 @@ func recordRequest(r *http.Request, status int, took time.Duration) {
 	requestMetrics.Add(r.Context(), RequestsMetric, labels, 1)
 	requestMetrics.Observe(r.Context(), LatencyMetric,
 		map[string]string{"route": route}, float64(took.Milliseconds()))
+}
+
+// routeLabel is the mutable route name for the request in flight. It is
+// a pointer in the context because the middleware records AFTER the
+// handler returns, and a value written into a context inside the
+// handler would never reach it.
+type routeLabel struct{ name string }
+
+type routeLabelKey struct{}
+
+// RefineRoute names what a wildcard dispatcher actually ran, so its
+// metrics are per-cron rather than per-pattern.
+//
+// Without it every cron in a service shares the label
+// "POST /_tako/cron/{cron}" and no alert can tell one from another —
+// which would make CronMissed fire for a healthy cron whenever any
+// OTHER cron in the same service stopped.
+func RefineRoute(r *http.Request, name string) {
+	if rl, ok := r.Context().Value(routeLabelKey{}).(*routeLabel); ok && rl != nil {
+		rl.name = name
+	}
 }
 
 // statusClass buckets a status into 2xx/3xx/4xx/5xx: five values at

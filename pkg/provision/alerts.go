@@ -75,33 +75,29 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 			fmt.Sprintf("subscription_id=%q", cfg.Name(a.SubjectName)))
 		return comparison("max("+sel+")", a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_failed":
-		sel := selector(metricRequestCount, resourceRun,
-			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
-			fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)),
-			`response_code_class="5xx"`)
+		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)), `status="5xx"`)
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_missed":
-		sel := selector(metricRequestCount, resourceRun,
-			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
-			fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)))
+		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)))
 		return absentQuery(sel, lookback), retestAllowed(lookback), nil
 	case "job_failed":
 		sel := selector(metricJobExecutions, resourceRunJob,
 			fmt.Sprintf("job_name=%q", cfg.Name(a.SubjectName)), `result="failed"`)
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "error_rate":
-		svc := cfg.Name(serviceOf(g, a.SubjectVar))
-		all := selector(metricRequestCount, resourceRun, routeMatchers(a, fmt.Sprintf("service_name=%q", svc))...)
-		bad := selector(metricRequestCount, resourceRun,
-			routeMatchers(a, fmt.Sprintf("service_name=%q", svc), `response_code_class="5xx"`)...)
+		all := takoRequests(cfg, g, a, routeMatcher(a)...)
+		bad := takoRequests(cfg, g, a, append(routeMatcher(a), `status="5xx"`)...)
 		q := fmt.Sprintf("sum(rate(%s[%s])) / sum(rate(%s[%s]))", bad, promDuration(every), all, promDuration(every))
 		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "latency":
-		svc := cfg.Name(serviceOf(g, a.SubjectVar))
-		base := promName(metricRequestLatency)
-		labels := strings.Join(routeMatchers(a, fmt.Sprintf("monitored_resource=%q", resourceRun), fmt.Sprintf("service_name=%q", svc)), ",")
-		q := fmt.Sprintf("histogram_quantile(%g, sum(rate(%s_bucket{%s}[%s])) by (le))",
-			a.Quantile, base, labels, promDuration(every))
+		base := promName(customMetricPrefix + "request_ms")
+		labels := append([]string{
+			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
+			fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
+			fmt.Sprintf("job=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
+		}, routeMatcher(a)...)
+		q := fmt.Sprintf("histogram_quantile(%g, sum(rate(%s_bucket{%s})) by (le))",
+			a.Quantile, base, strings.Join(labels, ",")+"["+promDuration(every)+"]")
 		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "at_capacity", "singleton_down":
 		sel := selector(metricInstanceCount, resourceRun,
@@ -134,23 +130,32 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 	return comparison(counterQuery(sel, a.Reading, every), a.Op, a.Threshold), true, nil
 }
 
-// routeMatchers adds a route= matcher when the subject is one endpoint
-// rather than a whole service — the label that makes per-route alerting
-// possible at all.
-func routeMatchers(a *analyzer.AlertCondition, base ...string) []string {
-	if a.SubjectKind == "route" && a.SubjectName != "" {
-		return append(base, fmt.Sprintf("route=%q", routePath(a.SubjectName)))
-	}
-	return base
+// takoRequests selects tako's OWN per-endpoint counter, scoped to the
+// env and the service.
+//
+// It is tako's rather than run.googleapis.com/request_count because
+// Cloud Run's `route` label is never populated — measured across 88
+// series — so the platform metric cannot answer a question about one
+// endpoint or one cron, and this one can.
+func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, extra ...string) string {
+	matchers := append([]string{
+		fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
+		fmt.Sprintf("job=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
+	}, extra...)
+	return selector(customMetricPrefix+"requests", resourceGenericTask, matchers...)
 }
 
-// routePath strips the method from a declared route: "GET /photos" is
-// one route pattern to tako and a path to Cloud Run's label.
-func routePath(route string) string {
-	if i := strings.IndexByte(route, ' '); i >= 0 {
-		return route[i+1:]
+// routeMatcher narrows to ONE endpoint when the subject is a route.
+//
+// The value is the declared pattern verbatim — "GET /api/photos" — and
+// not a bare path, because the label tako writes IS the ServeMux
+// pattern, method included. Stripping the method here would produce a
+// matcher that never matches.
+func routeMatcher(a *analyzer.AlertCondition) []string {
+	if a.SubjectKind == "route" && a.SubjectName != "" {
+		return []string{fmt.Sprintf("route=%q", a.SubjectName)}
 	}
-	return route
+	return nil
 }
 
 // platformResource guesses the monitored resource for a raw platform
