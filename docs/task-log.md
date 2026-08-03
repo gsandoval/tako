@@ -11850,3 +11850,76 @@ desired-state objects, and the Pub/Sub notification service-agent grant
 with the bounded retry `notifications.go:77` already models. The query
 half is the part that was worth pinning first — it is where being wrong
 is invisible.
+
+## Y1 — DEFECT: Cloud Run's `route` label is empty, and four presets depend on it (2026-08-02)
+
+Owner suggested API endpoints should export count/error/latency metrics
+automatically. Before answering "the platform already does that", I
+checked what the platform actually emits. It does not.
+
+```
+run.googleapis.com/request_count:     44 series, route='' on all 44
+run.googleapis.com/request_latencies: 44 series, route='' on all 44
+```
+
+Two days, both metrics, every series from the real x1 deploy — after 15
+uploads to /api/photos, a GET on the same route, and a cron firing
+/_tako/cron/Cleanup. **The `route` label exists in the descriptor and is
+never populated** for an ordinary Cloud Run service.
+
+### What this breaks, in code already committed
+
+| preset | behaviour |
+|---|---|
+| `CronMissed` | **fires constantly, forever.** `absent_over_time` over a selector matching NO series returns 1 — the alert is permanently true |
+| `CronFailed` | never fires |
+| `Erroring(route)` / `SlowerThan(route)` | never fire |
+
+Service-level `Erroring`/`SlowerThan`, dead letters, backlog, capacity,
+singletons and every custom-metric reading are unaffected: they filter
+on `service_name`, which IS populated.
+
+`CronMissed` is the worst outcome available — not a silent alert but a
+permanent page, and it would have looked like tako working until someone
+read the incident.
+
+### The claim this invalidates
+
+The 2026-08-02 entry "PromQL lookbacks defeat the 23h30m cap" concluded
+that `Runs(cron)` could ride `request_count`'s route label. The lookback
+finding stands; **the route half was wrong**. I verified the label
+EXISTED in the descriptor and never checked that it had a VALUE — the
+same shape as the earlier `increase(...) == 0` mistake, where the query
+was accepted and returned nothing.
+
+Six tests in `alerts_test.go` assert the matcher is PRESENT in the
+generated query. Not one asserts it MATCHES anything, which no unit test
+can. That is the honest limit of testing a query builder without a
+cloud, and it is why the route assumption survived to here.
+
+### The fix is the owner's suggestion, and it is now mandatory
+
+tako must export its own per-endpoint metrics with labels it controls:
+
+```
+custom.googleapis.com/tako/requests     counter, labels: route, status_class
+custom.googleapis.com/tako/request_ms   distribution, labels: route
+```
+
+Then `Erroring`, `SlowerThan`, `CronFailed` and `CronMissed` all read a
+label tako populates, and per-route alerting works because tako is the
+one writing the route.
+
+This is not additive polish — four presets are wrong without it.
+
+**It requires metric LABELS, which `observability.md` currently lists
+under "Not yet": "No metric labels/dimensions".** So the export path
+(U2's `MetricsStore`) has to grow a label dimension before the presets
+can be correct. That is a real slice, not a wiring change.
+
+**STOP — this needs a decision before more Y1c.** Options: (a) build
+per-endpoint export with labels (Y3) and make the four presets ride it;
+(b) drop the four route/cron presets to service-level only, losing
+`CronMissed` entirely; (c) ship service-level presets now and add the
+endpoint ones after Y3. Recommendation: (a), because `CronMissed` is the
+single most valuable alert in the catalogue and (b) deletes it.
