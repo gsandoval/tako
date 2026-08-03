@@ -12715,3 +12715,161 @@ queue. The metric was not broken; it was measuring the wrong thing.
   does not exist at all until the first forward. Any walk that asserts
   "quiet" on this preset must distinguish *no series* from *series at
   zero*; the gate script prints both.
+
+## Z2b — DX proposal: the alerting namespace, and examples/siren (2026-08-03) — AWAITING APPROVAL
+
+Owner-directed. Supersedes the earlier "DeadLettered is blind to
+tako.Permanent" proposal, which fixed one metric; this fixes the family.
+
+### The rule the names broke
+
+Spec Part 1 rule 6 — *no primitive owns a general concept*. Alerting
+claimed `Count`, `Rate`, `Sum`, `Mean`, `Percentile`, `Above`, `Below`,
+`Absent`, `Platform`, `For`, `Email`, `PubSub`. Three are actively
+misleading rather than merely broad:
+
+- `tako.PubSub` is an alert channel, while tako's own pub/sub primitive
+  is `tako.Topic`. The name points at the wrong concept in its own API.
+- `tako.Count` reads a counter; `tako.Counter` declares one.
+- `tako.For` is a bare preposition holding a top-level slot.
+
+Rule 6 also states its own remedy: general concepts become **methods
+scoped to an instance**. That is the lever here, not a prefix.
+
+### Naming scheme
+
+**1. Readings become methods on the handle they read.** Five general
+words leave and none arrive:
+
+```go
+uploads.Rate()            // was tako.Rate(uploads)
+uploads.Count()           // was tako.Count(uploads)
+thumbMs.Sum()             // was tako.Sum(thumbMs)
+thumbMs.Mean()            // was tako.Mean(thumbMs)
+thumbMs.Percentile(0.99)  // was tako.Percentile(thumbMs, 0.99)
+```
+
+**2. Comparisons take a `When` prefix** — specific to conditions, and
+unclaimable by anything else:
+
+```go
+tako.WhenAbove(…)  tako.WhenBelow(…)  tako.WhenAbsent(…)
+```
+
+**3. Channels take an `Alert` prefix**, and `PubSub` is renamed for what
+it actually takes:
+
+```go
+tako.AlertEmail("ops@example.com")
+tako.AlertWebhook("https://…")
+tako.AlertTopic(incidents)          // was tako.PubSub — it takes a tako.Topic
+```
+
+`ChatSpace` is dropped: it needs a real Google Chat space, so no walk can
+prove it works, and an unverifiable channel is worse than an absent one.
+It returns additively when something can test it.
+
+**4. Every condition is `<Subject><Situation>`** — the pattern the good
+names already follow (`CronMissed`, `CronFailed`, `JobFailed`,
+`SingletonDown`) and the bad ones broke:
+
+| was | becomes | watches |
+|---|---|---|
+| `DeadLettered(c, n)` | **gone** | — |
+| `Backlogged(c, age)` | `QueueStalled(c, age, w)` | oldest message's age |
+| — | `QueueBacklogged(c, n, w)` | messages waiting — **new** |
+| `Erroring(t, frac)` | `RequestsErroring(t, frac, w)` | 5xx share |
+| `SlowerThan(t, d, q)` | `RequestsSlow(t, d, q, w)` | latency quantile |
+| `AtCapacity(t)` | `ServiceAtCapacity(t, w)` | instance ceiling |
+| `Platform(type, …)` | `PlatformMetric(type, …)` | a Google metric |
+| `For(d)` | **gone** — use `Window{For: d}` | — |
+
+`RequestsErroring`/`RequestsSlow` name what is measured rather than the
+target, because the target is polymorphic (service, handler, route,
+site) and any primitive-shaped prefix would be a lie for three of the
+four.
+
+**5. The dead-letter queue stops being a symbol.** It becomes a field on
+a queue-scoped config struct, which is rule 2's shape and removes the
+last general word:
+
+```go
+type QueueWatch struct {
+    DeadLetters bool          // watch the dead-letter queue, not the live one
+    For         time.Duration // REQUIRED — how long the level must hold
+}
+```
+
+So the 2×2 is two constructors and one boolean:
+
+```go
+tako.QueueBacklogged(thumbs, 500, tako.QueueWatch{For: 10 * time.Minute})
+tako.QueueBacklogged(thumbs, 1, tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute})
+tako.QueueStalled(thumbs, 30*time.Minute, tako.QueueWatch{For: 5 * time.Minute})
+tako.QueueStalled(thumbs, 24*time.Hour, tako.QueueWatch{DeadLetters: true, For: time.Hour})
+```
+
+Underneath, all four are the same two GAUGES on a subscription
+(`num_undelivered_messages`, `oldest_unacked_message_age`) — measured on
+the live subscription or the `-dead` one. `dead_letter_message_count`
+goes unused: it counts arrivals and cannot see a backlog already
+sitting there.
+
+**6. `For` is required on both queue conditions.** A level crosses
+transiently every time a burst arrives, so "500 deep" means nothing
+without "for how long". Precedent: `Count` refuses to default its
+period, because the period IS the count. Omitting it is an analysis
+error, not a guess:
+
+```
+app.go:31:44: tako.QueueBacklogged needs a sustain window — write tako.QueueWatch{For: …}; a queue crosses any depth for an instant, so how long it stays there IS the alert (tako/window)
+```
+
+### What this costs
+
+`DeadLettered` and `For` are deleted, not deprecated, and eight
+constructors are renamed. Every one is a compile error at the call site,
+never a silent reinterpretation — except `Backlogged(q, 5)` with an
+untyped constant, which would move from 5ns to 5 messages. Nobody writes
+that; it is the one honest gap.
+
+This reverses surface previously approved (the nine-preset catalogue and
+the raw vocabulary). Doing it now is the cheap direction: **anything cut
+can return additively; anything tagged cannot be removed without
+breaking.**
+
+### examples/siren — the app that exists to fail
+
+The existing examples are too busy to double as an alerting testbed:
+gallery's pipeline has to *work* for its own walk, so breaking it on
+purpose fights the walk. `siren` is the sixth example and its entire job
+is to break on command, one failure mode per switch:
+
+```
+GET  /boom?rate=0.5     a route that 5xxs a set fraction   → RequestsErroring
+GET  /slow?ms=3000      a route that sleeps                → RequestsSlow
+POST /flood?n=1000      floods the queue, worker sleeps    → QueueBacklogged
+POST /poison?kind=hard  Permanent → dead-letters at once   → QueueBacklogged{DeadLetters}
+POST /poison?kind=soft  transient → dead-letters after 5   → QueueStalled{DeadLetters}
+POST /pause             worker stops acking                → QueueStalled
+```
+
+plus a cron that can be paused (`CronMissed`), one that always fails
+(`CronFailed`), a job that exits non-zero (`JobFailed`), a singleton
+that can be told to die (`SingletonDown`), a counter and a histogram for
+the reading methods, and three channels — `AlertEmail`, `AlertWebhook`
+pointed at siren's own `/incidents` route, and `AlertTopic` over a
+declared `Incident` topic so the copy-pasteable struct in
+`reference/alerts.md` is code that runs.
+
+`ServiceAtCapacity` gets `MaxInstances: 1` and a `/slow` flood.
+
+Its test suite asserts the GENERATED QUERY per condition — the live
+walk (`validate/stage10.md`) is what proves they fire.
+
+### Sequencing
+
+This lands **before Z3**. Z3 adds `Latency`/`Instances`/`Saturation` —
+three more general words — and they should be born under the scheme as
+`ServiceLatency`/`ServiceInstances`/`ServiceSaturation` rather than
+renamed a week later.

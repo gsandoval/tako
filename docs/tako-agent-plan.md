@@ -332,7 +332,22 @@ incident. Drive a poisoned message through `thumbs` until retries are
 exhausted, watch the policy go from quiet to firing, read the mail.
 Gate Z2: the transition, both directions, in a transcript.
 
-**Z3 — `tako.Latency` / `Instances` / `Saturation`.** The derived
+**Z2b — The alerting namespace, and `examples/siren`.** Spec rule 6 says
+no primitive owns a general concept; alerting claimed `Count`, `Rate`,
+`Sum`, `Above`, `For`, `Email`, `PubSub` and nine more. Readings become
+methods on their handle (rule 6's own remedy), comparisons take `When`,
+channels take `Alert`, conditions become `<Subject><Situation>`, and the
+dead-letter queue stops being a symbol and becomes a field on
+`QueueWatch`. `DeadLettered` and `For` are deleted. `examples/siren` —
+the sixth example, whose entire job is to break on command — is what
+demands every surviving condition, since the standing rule is no feature
+without an example demanding it and the walk found 24 exported symbols
+against five in use. **Lands before Z3**, so Z3's three constructors are
+born under the scheme rather than renamed a week later. Full proposal in
+`task-log.md`. Gate Z2b: the renamed surface, and siren firing every
+condition live.
+
+**Z3 — `tako.ServiceLatency` / `ServiceInstances` / `ServiceSaturation`.** The derived
 platform-metric constructors, approved in the Y2a proposal and never
 built. Today the same questions need a raw `tako.Platform` with a
 Google metric type spelled by hand. Gate Z3: one of each on gallery,
