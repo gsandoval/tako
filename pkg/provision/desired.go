@@ -384,7 +384,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		}
 		objs = append(objs, Object{
 			Kind: KindSchedulerJob,
-			Name: cfg.Name(h.Service) + "-cron-" + strings.ToLower(short),
+			Name: schedulerJobName(cfg, h.Service, short),
 			Spec: map[string]any{
 				"schedule":       sched.UnixCron(),
 				"uri":            cfg.RunURL(h.Service) + "/_tako/cron/" + short,

@@ -24,7 +24,7 @@ func alertGraph() *analyzer.AppGraph {
 		Handlers: []analyzer.Handler{
 			{Kind: "cron", Var: "gallery.Cleanup", Service: "gallery", Schedule: "every 24h"},
 			{Kind: "cron", Var: "gallery.Sweep", Service: "gallery", Schedule: "every 6h"},
-			{Kind: "worker", Var: "gallery.MakeThumb", Service: "gallery-makethumb"},
+			{Kind: "worker", Var: "gallery.MakeThumb", Service: "gallery-makethumb", Binding: "thumbnails"},
 			{Kind: "api", Var: "gallery.List", Service: "gallery", Route: "GET /api/photos"},
 		},
 	}
@@ -77,10 +77,16 @@ func TestCronMissedDoublesTheScheduleItReads(t *testing.T) {
 // wrong environment's resources — the failure that would look like an
 // alert simply never firing.
 func TestSubjectNamesCarryTheEnvPrefix(t *testing.T) {
+	// A real queue with a real consumer: the subscription is the
+	// consumer's, env-prefixed. Written with a queue nothing consumes,
+	// this passed through a fallback path and proved nothing — see
+	// TestSubscriptionMatchersNameSubscriptionsTheDeployCreates for the
+	// defect that hid there.
 	q, _ := query(t, &analyzer.AlertCondition{
-		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbs", Threshold: 5})
-	if !strings.Contains(q, `subscription_id="x1-thumbs"`) {
-		t.Errorf("dead-letter subscription not env-prefixed: %q", q)
+		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
+		SubjectVar: "gallery.thumbs", Threshold: 5})
+	if !strings.Contains(q, `subscription_id="x1-gallery-makethumb"`) {
+		t.Errorf("dead-letter subscription is not the consumer's, env-prefixed: %q", q)
 	}
 	// The service is the generic_task `job` label, because these are
 	// tako's own metrics now — Cloud Run's route label is never
@@ -337,4 +343,57 @@ func parseDurationExpr(t *testing.T, ctor, expr string) time.Duration {
 		t.Fatalf("%s: unknown duration unit %q — teach this test about it", ctor, expr)
 	}
 	return time.Duration(n) * u
+}
+
+// A dead-letter alert filters on `subscription_id`, and that name has to
+// be one the deploy creates. It was not. A queue deploys as a TOPIC and
+// the subscription draining it is named after its CONSUMER, so
+// DeadLettered(thumbs, 1) compiled to subscription_id="x1-thumbnails" —
+// which exists nowhere — and the alert could never fire.
+//
+// It survived the whole Y1 gate. The task log recorded Stuck as "created
+// but never fired, nothing dead-lettered"; the truth was that nothing
+// COULD fire it. A query matching nothing is indistinguishable from a
+// healthy queue, which is the third time that exact sentence has been
+// the diagnosis (see the job label, and the empty route).
+//
+// Found by opening the console link the notification carries. This test
+// is that click, made cheap: both sides read off the same plan.
+func TestSubscriptionMatchersNameSubscriptionsTheDeployCreates(t *testing.T) {
+	cfg := Config{Project: "p", Region: "us-central1", App: "gallery", Env: "x1"}
+	g := alertGraph()
+	for i := range g.Services {
+		g.Services[i].Profile = "default"
+	}
+	images := map[string]string{}
+	for _, s := range g.Services {
+		images[s.Name] = "img"
+	}
+	desired, err := Desired(g, cfg, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := map[string]bool{}
+	for _, o := range desired {
+		if o.Kind == KindPushSubscription || o.Kind == KindPullSubscription {
+			created[o.Name] = true
+		}
+	}
+	if len(created) == 0 {
+		t.Fatal("no subscriptions in the plan — this test is checking nothing")
+	}
+	for _, reading := range []string{"dead_letters", "backlog_age"} {
+		q, _ := query(t, &analyzer.AlertCondition{
+			Op: "above", Reading: reading, SubjectKind: "queue", SubjectName: "thumbnails",
+			SubjectVar: "gallery.thumbs", Threshold: 1})
+		m := regexp.MustCompile(`subscription_id="([^"]*)"`).FindStringSubmatch(q)
+		if m == nil {
+			t.Fatalf("%s: no subscription matcher in %q", reading, q)
+		}
+		if !created[m[1]] {
+			t.Errorf("%s watches subscription_id=%q, which the deploy never creates — it creates %v. "+
+				"The query matches nothing, and a queue that cannot alert looks exactly like a queue that is fine.",
+				reading, m[1], keysOfBool(created))
+		}
+	}
 }

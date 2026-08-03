@@ -89,12 +89,12 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		return customQuery(cfg, a, every)
 	case "dead_letters":
 		sel := selector(metricDeadLetters, resourceSubscription,
-			fmt.Sprintf("subscription_id=%q", cfg.Name(a.SubjectName)))
+			fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a)))
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "backlog_age":
 		// A GAUGE: the latest value is the answer, no rate or increase.
 		sel := selector(metricOldestUnacked, resourceSubscription,
-			fmt.Sprintf("subscription_id=%q", cfg.Name(a.SubjectName)))
+			fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a)))
 		return comparison("max("+sel+")", a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_failed":
 		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)), `status="5xx"`)
@@ -165,6 +165,34 @@ func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, 
 		fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
 	}, extra...)
 	return selector(customMetricPrefix+"requests", resourceGenericTask, matchers...)
+}
+
+// subscriptionOf is the deployed Pub/Sub subscription that a queue or
+// subscriber consumes through — the `subscription_id` every dead-letter
+// and backlog query filters on.
+//
+// It is NOT the queue's own name, which is what the first version used.
+// A queue deploys as a TOPIC; the subscription that drains it is named
+// after its CONSUMER, because subscribers fan out and each needs its
+// own. `DeadLettered(thumbs, 1)` therefore compiled to
+// subscription_id="x1-thumbnails" — a subscription that does not exist
+// in any project — and the alert could never fire. Nothing said so:
+// a query matching nothing looks exactly like a queue that is healthy.
+//
+// Found by opening the console link the notification carries, which is
+// the first time anything asked whether that name named anything.
+func subscriptionOf(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) string {
+	svc := serviceOf(g, a.SubjectVar)
+	if a.SubjectKind == "queue" {
+		if c := consumerServiceOf(g, a.SubjectName); c != "" {
+			svc = c
+		}
+	}
+	if svc == "" {
+		return cfg.Name(a.SubjectName)
+	}
+	// Same derivation as the push-subscription object in desired.go.
+	return cfg.Name(svc)
 }
 
 // metricJob is the generic_task `job` label for a service — the ONE
@@ -322,6 +350,19 @@ func alertObjects(cfg Config, g *analyzer.AppGraph) ([]Object, error) {
 			"query":              query,
 			"evaluationInterval": promDuration(evaluationInterval(r.Alert)),
 			"channels":           strings.Join(shortNames(r.Channels), ","),
+		}
+		// What the mail SAYS. Google's own body for a PromQL condition
+		// is "A PromQL query was observed at 1", which is true and
+		// unusable; tako knows which cron, which schedule, and which
+		// console page, so it writes the body itself.
+		if doc := documentationFor(cfg, g, r); doc.Content != "" {
+			spec["docSubject"] = doc.Subject
+			spec["docContent"] = doc.Content
+			links := make([]any, 0, len(doc.Links))
+			for _, l := range doc.Links {
+				links = append(links, map[string]any{"displayName": l.DisplayName, "url": l.URL})
+			}
+			spec["docLinks"] = links
 		}
 		// A retest window is only meaningful for a THRESHOLD: on an
 		// absence, For is already the lookback, so sending it again as

@@ -177,6 +177,22 @@ type alertPolicy struct {
 	NotificationChannels []string          `json:"notificationChannels,omitempty"`
 	UserLabels           map[string]string `json:"userLabels,omitempty"`
 	Enabled              *bool             `json:"enabled,omitempty"`
+	Documentation        *documentation    `json:"documentation,omitempty"`
+}
+
+// documentation is what the notification body carries. mimeType is the
+// only value the API accepts; links are capped at 3 by the API and the
+// display name at 63 characters, both enforced where they are built.
+type documentation struct {
+	Content  string    `json:"content,omitempty"`
+	MimeType string    `json:"mimeType,omitempty"`
+	Subject  string    `json:"subject,omitempty"`
+	Links    []docLink `json:"links,omitempty"`
+}
+
+type docLink struct {
+	DisplayName string `json:"displayName,omitempty"`
+	URL         string `json:"url,omitempty"`
 }
 
 type alertCondition struct {
@@ -257,7 +273,42 @@ func (a *AlertPolicies) body(ctx context.Context, o provision.Object) (alertPoli
 		NotificationChannels: chans,
 		UserLabels:           labels,
 		Enabled:              &enabled,
+		Documentation:        docOf(o),
 	}, nil
+}
+
+// docOf renders the documentation half of the spec. Absent content
+// means no documentation object at all rather than an empty one, so a
+// policy tako has nothing useful to say about keeps Google's default.
+func docOf(o provision.Object) *documentation {
+	content, _ := o.Spec["docContent"].(string)
+	if content == "" {
+		return nil
+	}
+	d := &documentation{Content: content, MimeType: "text/markdown"}
+	if s, ok := o.Spec["docSubject"].(string); ok {
+		d.Subject = s
+	}
+	links, _ := o.Spec["docLinks"].([]any)
+	for _, raw := range links {
+		l, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		// The API caps links at 3 and refuses a display name past 63
+		// characters; both are silent truncations here rather than a
+		// failed deploy, because a missing link must never be the
+		// reason an alert does not exist.
+		if len(d.Links) == 3 {
+			break
+		}
+		name := fmt.Sprint(l["displayName"])
+		if len(name) > 63 {
+			name = name[:63]
+		}
+		d.Links = append(d.Links, docLink{DisplayName: name, URL: fmt.Sprint(l["url"])})
+	}
+	return d
 }
 
 func (a *AlertPolicies) Create(ctx context.Context, o provision.Object) error {

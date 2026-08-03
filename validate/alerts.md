@@ -80,12 +80,16 @@ for p in json.load(sys.stdin).get('alertPolicies',[]):
         q = c.get('conditionPrometheusQueryLanguage', {})
         print('  cond :', c['displayName'])
         print('  query:', q.get('query'))
+    d = p.get('documentation', {})
+    print('  subject:', d.get('subject'))
+    print('  links  :', [l['displayName'] for l in d.get('links', [])])
+    print('  body   :', (d.get('content') or '<<< NONE — the mail will say \"A PromQL query was observed at 1\" >>>')[:200])
 "
 }
 policies
 ```
 
-Four things in that output, each a defect the first gate found:
+Six things in that output, each a defect a gate found:
 
 1. **Two policies and a channel exist at all.** Planned-but-never-applied
    exits 0 and creates nothing.
@@ -97,6 +101,10 @@ Four things in that output, each a defect the first gate found:
 4. **The tako identity is on `displayName`** (`x1-Silent`), never a
    label — GCP label values forbid uppercase and tako identities are
    exported Go names.
+5. **`documentation.content` is not empty.** Empty means the mail falls
+   back to Google's `A PromQL query was observed at 1`.
+6. **`documentation.subject` is set**, which is what removes the
+   ` on __missing__` tail from the subject line.
 
 ## 3. Fire the subject
 
@@ -198,12 +206,33 @@ ask
 → **`FIRING (absent)`**, and within a couple of minutes the mail:
 
 ```
-[ALERT - WARNING] gallery/x1: cron Cleanup has not run on __missing__
+[ALERT - Warning] gallery/x1: cron Cleanup has not run
 ```
 
-`__missing__` is unavoidable and correct: an absence has no data, so
-there are no resource labels to name the instance. The sentence before
-it is what carries the meaning, which is why §2 checks it.
+No ` on __missing__` tail — tako sets the policy's `documentation.subject`,
+which replaces Google's generated subject line. (An earlier version of
+this walk called that tail unavoidable. It is unavoidable in the
+*default* subject; the field exists.)
+
+**Read the body, not just the subject.** It must say what broke, what it
+is not, and what to run:
+
+```
+**No run of cron `Cleanup` has reached `x1-gallery` in the last 5m.**
+
+Either the schedule never fired, or it fired and the service never answered.
+A run that *did* arrive and then failed is a different alert (`CronFailed`) …
+
+    gcloud scheduler jobs run x1-gallery-cron-cleanup --project <p> --location us-central1
+```
+
+with a **Quick Links** section carrying *Cloud Scheduler* and *Service
+logs*. If the body instead reads `A PromQL query was observed at 1`, the
+documentation did not reach the policy — check §2's readback.
+
+**Paste the scheduler command and run it.** It is the one line in the
+mail a responder will act on without thinking, so a wrong name here is a
+worse failure than a missing body. It must run the job, not 404.
 
 ## 8. Destroy clean
 
@@ -218,12 +247,35 @@ Both policies and the channel go. **Metric descriptors and series stay**
 (§4.6a). Say so in the verdict rather than reading leftover descriptors
 as an incomplete destroy.
 
+## 7b. Click the links
+
+Not optional, and not something a unit test can stand in for. Two of the
+four console link shapes in the first version were wrong: Cloud Run's
+detail pages moved under `/observability/`, so
+`/run/detail/<region>/<svc>/logs` answers **URL not found**; and the
+Pub/Sub link named the queue, which is a *topic*, so it answered
+**Unable to find the resource you requested**.
+
+That second one was not just a bad link. The alert's own query carried
+the same wrong name in `subscription_id`, so `DeadLettered` matched
+nothing and could never fire — found by opening the link, after the
+policy had been created, read back, and gated.
+
+Open every link the mail carries. Each must land on the named resource,
+not a 404 and not a list page you have to search. Then **paste the
+command from the body and run it** — it must run the job.
+
 ## Known gaps in this walk
 
 - **`Stuck` (DeadLettered) is created but never fired.** Closing it
   needs a poisoned message driven through `thumbs` until retries are
   exhausted. Its transition is unproven; say so rather than implying the
-  preset is covered because the policy exists.
+  preset is covered because the policy exists. (Until the subscription
+  name was fixed it could not have fired at all — "never observed
+  firing" and "cannot fire" look identical from here, which is the whole
+  reason §7b exists.)
+- **Nothing detects Google moving a console page again.** The link
+  shapes are verified by hand, here, once per walk.
 - **"Fires exactly once" is not asserted.** Cloud Monitoring has no
   public v3 incident-listing API, so there is nothing to count. Running
   the policy's own query at both moments (§5, §7) is the honest proxy.

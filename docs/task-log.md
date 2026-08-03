@@ -12376,3 +12376,93 @@ link to the service's logs. tako writes no `documentation` today.
 
 Not done — Y1's scope was the condition and the channel, and this is
 new surface. Logged for Y2.
+
+## Y2 — the notification says something (2026-08-02)
+
+Owner-directed after the Y1f mail arrived reading `A PromQL query was
+observed at 1`. Cloud Monitoring cannot do better than that: it knows a
+query returned a number and nothing about what the number meant. tako
+knows the rest at deploy time, so it writes the body.
+
+Verified against the v3 discovery document rather than recalled:
+`documentation` takes `content` (markdown, ≤8192 chars), `mimeType`,
+`links` (≤3, display name ≤63, rendered as the email's Quick Links) —
+and **`subject`**, which replaces Google's generated subject line.
+
+That last field corrects something Y1 stated as fact. `__missing__` was
+documented as "unavoidable and correct" on an absence. It is unavoidable
+in the DEFAULT subject; the override exists, and the subject now reads
+`[ALERT - Warning] gallery/x1: cron Cleanup has not run` with no tail.
+`reference/alerts.md` and `validate/alerts.md` both corrected, with the
+old claim named rather than quietly deleted.
+
+The body is STATIC text. Cloud Monitoring supports `${…}` variables, but
+they resolve from the labels of the series that fired — and an absence
+has no series, so a variable renders `null` in precisely the alert that
+needs it most. Same trap as `__missing__`, one layer down.
+
+### Three defects, and where each came from
+
+**13 — the humanDuration seam.** The first version trimmed Go's string
+form by suffix, so `10m0s` → `10m` → `1`. Caught by the table test, not
+by reading. There is no seam in that string that is safe to cut;
+rebuilt from components.
+
+**14 — the dead-letter query names a subscription that does not exist.**
+`DeadLettered(thumbs, 1)` compiled to `subscription_id="x1-thumbnails"`.
+A queue deploys as a TOPIC; the subscription draining it is named after
+its CONSUMER (`x1-gallery-makethumb`), because subscribers fan out and
+each needs its own. So the query matched nothing and **`Stuck` could
+never fire** — which the Y1 gate recorded as "created but never fired,
+nothing dead-lettered". The truth was stronger and worse.
+
+This is the third instance of one sentence: *a query matching nothing is
+indistinguishable from a healthy system.* The empty `route` label, the
+`job` label spelled three ways, and now this. Fixed with the same shape
+of test that caught the second — both sides read off the same deploy
+plan (`TestSubscriptionMatchersNameSubscriptionsTheDeployCreates`), and
+mutation-checked.
+
+**15 — two console links 404.** `/run/detail/<region>/<svc>/logs`
+answers "URL not found"; the pages moved under `/observability/`. And
+the Pub/Sub link carried defect 14's wrong name, so it answered "Unable
+to find the resource you requested".
+
+### How 14 and 15 were found
+
+By opening the link. Not by a test, not by reading the code — by
+loading the URL the notification carries in a browser and seeing
+"Unable to find the resource you requested". That click is what first
+asked whether `x1-thumbnails` named anything, and the answer took the
+query down with it.
+
+Three layers of checking have now each caught something the layer above
+missed: *was it accepted* (the API said yes to every one of these),
+*is what is stored what I meant* (the readback showed the documentation
+arrived intact — and could not tell that a name inside it was wrong),
+*is what is delivered usable* (a responder clicks the link, and the link
+404s). Only the third layer exists at the width of a real incident, and
+it is the one with no automation behind it.
+
+### What is checked now
+
+`TestEveryConditionKindSaysSomethingActionable` walks all eleven
+readings and requires each body to name what broke, what it is not, and
+what to run — plus the footer, a subject override, and 1–3 links.
+`TestDeadLetterDocsPointAtTheConsumer` pins the link to the worker
+rather than the app service; sending a responder to the wrong service's
+logs is worse than sending them nowhere, because they will believe what
+they find. `TestSchedulerCommandNamesTheDeployedJob` checks the
+paste-able command against the plan's scheduler jobs — the one line in
+the mail somebody will run without thinking.
+
+### Discovered work
+
+- The console link shapes are verified by hand, once. Nothing detects
+  Google moving a page again; a link checker would need network access
+  in CI and a deployed project, so this stays a known gap rather than a
+  pretend test.
+- `Stuck` still has not been observed firing. Defect 14 explains why it
+  never could; the fix is proven by test and by the corrected query, not
+  by an incident. Driving a poisoned message through `thumbs` remains
+  the only way to close it.
