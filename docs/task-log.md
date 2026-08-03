@@ -12251,3 +12251,96 @@ guess wearing a result's clothes.
 
 **Y1e is a FAIL. No validation-log row was written.** Resume brief with
 exact next steps: `docs/y1-resume.md`.
+
+## Y1f — the gate, re-run properly: QUIET then FIRING (2026-08-02)
+
+The re-run of Y1e after fixing defects 10 and 11, plus a twelfth found
+while writing the docs.
+
+**Defect 10 — nothing wired the per-endpoint sink.** `SetRequestMetrics`
+existed, `recordRequest` no-opped on nil, and no boot path called it.
+Fixed in both `BootLocal` and `BootGCP`. Two tests: one boots and looks
+at what boot left behind, one reads `boot.go` for the path no test can
+boot. Mutation-checked — removing either call fails both.
+
+**Defect 11 — the `job` label, three ways.** Settled on the LOGICAL
+service name: `namespace` already carries `<app>-<env>`, so prefixing
+`job` too is a second copy of the env free to disagree with the first.
+Queries dropped `cfg.Name(...)`; the deploy seed moved to a `job` that
+names no service (`tako-deploy`), because a seed labelled like a real
+service would suppress an Absent condition for one window after every
+deploy — an alert silenced at exactly the moment a bad deploy needs it.
+
+The replaced test is the interesting part. `TestSubjectNamesCarryTheEnvPrefix`
+asserted `job="x1-gallery-makethumb"` and passed, because it checked the
+label's SHAPE and never asked whether anything wrote that value. The new
+`TestJobLabelMatchesWhatTheServiceWrites` reads both sides — the
+`TAKO_SERVICE` the deploy plan injects, and the matcher the query
+builds — from the same graph.
+
+**Defect 12, found writing the reference page.** `CronFailed` and
+`JobFailed` document a 1-hour window; `presetEvery` shipped 5 minutes.
+This is defect 6 exactly, one round later: the SDK default is a runtime
+value and the deploy reads source. The test from that round asserted ONE
+preset (`DeadLettered`) while its comment claimed the principle, so two
+more were wrong the whole time. `TestEveryPresetsDefaultWindowSurvivesToTheDeploy`
+now parses every preset's `windowOr` default out of `alert.go` and the
+reading name out of the analyzer's table, and compares against
+`presetEvery`. An hour is the right value: "failed 3 times" over five
+minutes is a question an hourly cron can never answer yes to.
+
+### The gate
+
+```
+=== T+3min: the cron just ran, so the alert MUST be quiet
+QUIET (data present)
+=== what series exist (route must be populated, job must match the query)
+  3 series
+    route='/_tako/cron/Cleanup' status='2xx' job='gallery' ns='gallery-x1' task='0015…9a719' last=2
+    route='' status='' job='gallery'      ns='gallery-x1' task='deploy' last=0   ← last session's seed
+    route='' status='' job='tako-deploy'  ns='gallery-x1' task='deploy' last=0   ← this deploy's seed
+=== now 7 minutes of silence; the 300s window must expire
+=== T+10min: no run in 7 minutes, so the alert MUST be firing
+FIRING (absent)
+```
+
+Both halves, in that order. The middle block is the other half of the
+proof: a populated `route`, a real instance `task_id`, and a cumulative
+2 — the two cron runs. Last session's run had 88 series with `route=''`
+and read the descriptor's schema as evidence.
+
+The policy stored, verified against the API rather than the deploy's own
+summary:
+
+```
+=== x1-Silent severity= WARNING
+  cond : gallery/x1: cron Cleanup has not run
+  query: absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",
+         namespace="gallery-x1",job="gallery",route="/_tako/cron/Cleanup"}[300s])
+```
+
+### What changed in how this was checked
+
+Three questions, run in order, instead of one: *was it accepted* (the
+API said yes), *is what is stored what I meant* (read the policy back),
+*and is the answer different when the world is different* (run the query
+while healthy AND while broken). The third is the only one that can tell
+a working alert from one that fires forever, and it is the one that was
+skipped.
+
+Every fix this round carries a mutation-checked test. Reverting any of
+the three reproduces the original symptom in the failure message.
+
+**Y1f: PASS.** Validation-log row written. `docs/y1-resume.md` retired.
+
+### Discovered work
+
+- `examples/gallery/app.go` declares `tako.Email("darchitect@gmail.com")`
+  — the owner's real address, committed to the acceptance suite because
+  the gate needed a live destination. Replaced with `ops@example.com`
+  now that the walk is done; `validate/alerts.md` says to substitute a
+  real one for the walk.
+- `Stuck` (DeadLettered) is created and never fired — closing it needs a
+  poisoned message driven through `thumbs` until retries are exhausted.
+  Noted as a known gap in `validate/alerts.md` rather than implied
+  covered.

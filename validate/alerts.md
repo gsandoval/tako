@@ -1,0 +1,235 @@
+# validate/alerts.md — Y1: an alert fires when it should, and is quiet when it should
+
+The claim has **two halves, and the second one is the whole gate**:
+
+- **Y1a** — a declared alert becomes a Cloud Monitoring policy and a
+  notification channel, and delivers to a real destination.
+- **Y1b** — the condition is **quiet while the thing it watches is
+  healthy**, and fires only once it is not.
+
+> **Read this before running anything.** The first attempt at this gate
+> passed Y1a, watched an email arrive, and recorded a pass. The
+> condition was a permanent false positive: the query filtered
+> `job="x1-gallery"` and the app wrote `job="gallery"`, so it matched
+> nothing and `absent_over_time` was true forever. **A firing alert and
+> a correct alert are indistinguishable from an inbox.** Only §5 tells
+> them apart, and its result arrived after the verdict had been written.
+>
+> §5 is not optional and does not run last for convenience. Run it
+> **before** you wait for absence, while the subject is provably alive.
+
+**Setup:** run the CLI as `go run ../../cmd/tako …` from
+`examples/gallery`, which declares the two alerts this walk uses:
+
+```go
+oncall = tako.Email("<your-address>")
+Stuck  = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)
+Silent = tako.Alert(tako.CronMissed(Cleanup, tako.For(5*time.Minute)), oncall)
+```
+
+`Silent` overrides the default lookback down to 5 minutes so the walk
+takes ten minutes instead of two days. `PROJECT` is the scratch project.
+
+## 1. Offline truth first
+
+```
+go test ./...
+go test ./pkg/analyzer -run TestErrors/alerts
+go test ./pkg/provision -run 'Alert|Preset|JobLabel|Cron'
+go test ./pkg/runtime  -run 'WiresTheRequestSink|Route|Request'
+```
+
+→ green, and specifically these four, each of which stands for a defect
+that reached the cloud once:
+
+- `TestJobLabelMatchesWhatTheServiceWrites` — the query's `job` matcher
+  is a value some service actually writes. **This is the false positive
+  above, caught offline.**
+- `TestBootLocalWiresTheRequestSink` / `TestEveryBootPathWiresTheRequestSink`
+  — boot wires the per-endpoint sink. Without it every `tako/requests`
+  record is dropped and every route-scoped alert is dead.
+- `TestEveryPresetsDefaultWindowSurvivesToTheDeploy` — each preset's
+  documented default window is the one the deploy applies. SDK defaults
+  are runtime values; the deploy reads source, so they can silently
+  differ.
+- `TestEveryReconciledKindIsApplied` (`./cmd/tako`) — a kind can be
+  planned, printed, and never applied. Both alert kinds were, once.
+
+## 2. Deploy
+
+```
+PROJECT=<test-project>
+printf 'nk_y1' | gcloud secrets create x1-notifier-key --data-file=- --project $PROJECT
+go run ../../cmd/tako deploy --project $PROJECT --env x1 --yes
+```
+
+Expect in the plan: `+ create alert channel oncall`,
+`+ create alert policy Stuck`, `+ create alert policy Silent` — and
+expect them in the **result**, not only the plan. Confirm against the
+API rather than the deploy's own summary:
+
+```
+policies() {
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://monitoring.googleapis.com/v3/projects/$PROJECT/alertPolicies" \
+  | python3 -c "
+import json,sys
+for p in json.load(sys.stdin).get('alertPolicies',[]):
+    print('===', p['displayName'], 'severity=', p.get('severity'))
+    for c in p['conditions']:
+        q = c.get('conditionPrometheusQueryLanguage', {})
+        print('  cond :', c['displayName'])
+        print('  query:', q.get('query'))
+"
+}
+policies
+```
+
+Four things in that output, each a defect the first gate found:
+
+1. **Two policies and a channel exist at all.** Planned-but-never-applied
+   exits 0 and creates nothing.
+2. **`severity = WARNING`**, not empty — an unset severity mails as
+   `[ALERT - No severity]`.
+3. **The condition displayName is a sentence**, not a Go variable:
+   `gallery/x1: cron Cleanup has not run`. It is what the notification's
+   subject line is built from, read at 3am.
+4. **The tako identity is on `displayName`** (`x1-Silent`), never a
+   label — GCP label values forbid uppercase and tako identities are
+   exported Go names.
+
+## 3. Fire the subject
+
+```
+gcloud scheduler jobs run x1-gallery-cron-cleanup --project $PROJECT --location us-central1
+```
+
+A fresh deploy can answer 403 here while the scheduler's invoker grant
+propagates. Retry for a minute before treating it as a failure.
+
+## 4. Wait for the flush
+
+Three minutes: recording is in-process, ships on a **60s** timer, and
+ingestion adds its own lag. A read before that finds nothing, and
+nothing is exactly what an absence condition is looking for — so
+reading too early manufactures the false positive this gate exists to
+catch.
+
+## 5. THE QUIET HALF — run the policy's own query
+
+Ask the query the policy is actually storing (paste it from §2's output,
+do not retype it):
+
+```
+Q='absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="gallery-x1",job="gallery",route="/_tako/cron/Cleanup"}[300s])'
+
+ask() {
+  curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+    "https://monitoring.googleapis.com/v1/projects/$PROJECT/location/global/prometheus/api/v1/query" \
+    --data-urlencode "query=$Q" \
+  | python3 -c "
+import json,sys
+r = json.load(sys.stdin).get('data',{}).get('result',[])
+print('FIRING (absent)' if r else 'QUIET (data present)')
+"
+}
+ask
+```
+
+→ **`QUIET (data present)`**.
+
+**If this says FIRING while the cron is alive, stop. The feature is
+broken**, whatever any email says. Do not continue to §7, and do not
+write a verdict row.
+
+Then look at the series themselves — not the count, the **labels**:
+
+```
+curl -s -G -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  --data-urlencode 'filter=metric.type="custom.googleapis.com/tako/requests"' \
+  --data-urlencode "interval.startTime=$(date -u -v-1H +%Y-%m-%dT%H:%M:%SZ)" \
+  --data-urlencode "interval.endTime=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  "https://monitoring.googleapis.com/v3/projects/$PROJECT/timeSeries" \
+| python3 -c "
+import json,sys
+for t in json.load(sys.stdin).get('timeSeries',[]):
+    m, r = t['metric'].get('labels',{}), t['resource'].get('labels',{})
+    print(f\"route={m.get('route','')!r} status={m.get('status','')!r} job={r.get('job','')!r} ns={r.get('namespace','')!r} task={r.get('task_id','')!r}\")
+"
+```
+
+Require, explicitly:
+
+- a series with **`route='/_tako/cron/Cleanup'`** — a populated route
+  label, the thing Cloud Run's own metric never has;
+- its **`job`** equal to the value the query filters on;
+- more than one route present once the app has served requests, which
+  proves the label is per-endpoint rather than a constant.
+
+A descriptor that *declares* `route` proves nothing. The first gate
+confirmed the schema and never checked a value — every one of the 88
+series it looked at had `route=''`.
+
+## 6. Deliver
+
+The channel needs no verification step: email channels created through
+the API come back with no `verificationStatus` and deliver immediately.
+Confirm the channel exists and is enabled:
+
+```
+curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  "https://monitoring.googleapis.com/v3/projects/$PROJECT/notificationChannels" \
+| python3 -c "
+import json,sys
+for c in json.load(sys.stdin).get('notificationChannels',[]):
+    print(c['displayName'], c['type'], c['labels'], 'enabled=', c.get('enabled'))
+"
+```
+
+## 7. THE FIRING HALF
+
+Let the 5-minute window pass with **no further cron runs** (seven
+minutes is comfortable), then ask again:
+
+```
+ask
+```
+
+→ **`FIRING (absent)`**, and within a couple of minutes the mail:
+
+```
+[ALERT - WARNING] gallery/x1: cron Cleanup has not run on __missing__
+```
+
+`__missing__` is unavoidable and correct: an absence has no data, so
+there are no resource labels to name the instance. The sentence before
+it is what carries the meaning, which is why §2 checks it.
+
+## 8. Destroy clean
+
+```
+echo "gallery" | go run ../../cmd/tako destroy --project $PROJECT --env x1
+gcloud secrets delete x1-notifier-key --project $PROJECT --quiet
+policies    # → empty
+```
+
+Both policies and the channel go. **Metric descriptors and series stay**
+— they are data with a retention period, and tako never deletes data
+(§4.6a). Say so in the verdict rather than reading leftover descriptors
+as an incomplete destroy.
+
+## Known gaps in this walk
+
+- **`Stuck` (DeadLettered) is created but never fired.** Closing it
+  needs a poisoned message driven through `thumbs` until retries are
+  exhausted. Its transition is unproven; say so rather than implying the
+  preset is covered because the policy exists.
+- **"Fires exactly once" is not asserted.** Cloud Monitoring has no
+  public v3 incident-listing API, so there is nothing to count. Running
+  the policy's own query at both moments (§5, §7) is the honest proxy.
+
+## Verdict
+
+Record in `docs/validation-log.md`. A row is only a pass if **§5 said
+QUIET and §7 said FIRING** — one without the other is not a partial
+pass, it is no evidence at all.

@@ -2,10 +2,13 @@ package provision
 
 import (
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
@@ -228,4 +231,110 @@ func TestPresetDefaultsAreAppliedWhereTheDeployReadsThem(t *testing.T) {
 	if !strings.Contains(q, "[300s]") {
 		t.Errorf("DeadLettered default window = %q, want the documented 5 minutes", q)
 	}
+}
+
+// …and it has to hold for EVERY preset, which the check above did not
+// say. It asserted one, the comment above it claimed the principle, and
+// two more presets were quietly wrong the whole time: CronFailed and
+// JobFailed document an hour and were deploying five minutes.
+//
+// One preset checked is a sample. This reads both sides — the SDK's own
+// windowOr default out of alert.go, the reading name out of the
+// analyzer's preset table — so a new preset with a default the deploy
+// does not honour fails here rather than in someone's on-call rotation.
+func TestEveryPresetsDefaultWindowSurvivesToTheDeploy(t *testing.T) {
+	sdk := sdkPresetDefaults(t)   // constructor -> its default Every (0 if it sets none)
+	readings := presetReadings(t) // constructor -> the reading the provisioner sees
+	if len(readings) == 0 || len(sdk) == 0 {
+		t.Fatal("parsed nothing — this test is checking nothing")
+	}
+	for ctor, reading := range readings {
+		want, declared := sdk[ctor]
+		if !declared {
+			t.Errorf("%s is in the analyzer's preset table but declares no default window in alert.go", ctor)
+			continue
+		}
+		if want == 0 {
+			// The preset sets only For; Every derives, and 60s is the
+			// documented derivation.
+			want = defaultEvery
+		}
+		if got := presetEvery(reading); got != want {
+			t.Errorf("tako.%s documents a %s window and the deploy applies %s — "+
+				"the SDK default is a runtime value the deploy never reads, so the doc is the only thing that was right",
+				ctor, want, got)
+		}
+	}
+}
+
+// sdkPresetDefaults reads each preset's windowOr default straight out of
+// the SDK source, because that default is a runtime value: nothing the
+// provisioner can import, and the exact reason the two can drift.
+func sdkPresetDefaults(t *testing.T) map[string]time.Duration {
+	t.Helper()
+	src, err := os.ReadFile("../../alert.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]time.Duration{}
+	fn := regexp.MustCompile(`(?m)^func (\w+)[\[(]`)
+	def := regexp.MustCompile(`windowOr\(w, Window\{([^}]*)\}\)`)
+	every := regexp.MustCompile(`Every:\s*([^,}]+)`)
+	locs := fn.FindAllStringSubmatchIndex(string(src), -1)
+	for i, loc := range locs {
+		end := len(src)
+		if i+1 < len(locs) {
+			end = locs[i+1][0]
+		}
+		body := string(src[loc[1]:end])
+		m := def.FindStringSubmatch(body)
+		if m == nil {
+			continue // not a preset
+		}
+		name := string(src[loc[2]:loc[3]])
+		if e := every.FindStringSubmatch(m[1]); e != nil {
+			out[name] = parseDurationExpr(t, name, strings.TrimSpace(e[1]))
+		} else {
+			out[name] = 0
+		}
+	}
+	return out
+}
+
+// presetReadings reads the analyzer's constructor→reading table, so a
+// preset renamed on one side cannot pass by matching nothing.
+func presetReadings(t *testing.T) map[string]string {
+	t.Helper()
+	src, err := os.ReadFile("../analyzer/alerts.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := regexp.MustCompile(`"(\w+)":\s*\{reading: "(\w+)"`)
+	out := map[string]string{}
+	for _, m := range entry.FindAllStringSubmatch(string(src), -1) {
+		out[m[1]] = m[2]
+	}
+	return out
+}
+
+// parseDurationExpr evaluates the handful of shapes a Go duration
+// constant takes in these defaults: time.Hour, 5 * time.Minute.
+func parseDurationExpr(t *testing.T, ctor, expr string) time.Duration {
+	t.Helper()
+	units := map[string]time.Duration{
+		"time.Second": time.Second, "time.Minute": time.Minute, "time.Hour": time.Hour,
+	}
+	n := 1
+	if i := strings.Index(expr, "*"); i >= 0 {
+		v, err := strconv.Atoi(strings.TrimSpace(expr[:i]))
+		if err != nil {
+			t.Fatalf("%s: cannot read duration %q", ctor, expr)
+		}
+		n, expr = v, strings.TrimSpace(expr[i+1:])
+	}
+	u, ok := units[expr]
+	if !ok {
+		t.Fatalf("%s: unknown duration unit %q — teach this test about it", ctor, expr)
+	}
+	return time.Duration(n) * u
 }

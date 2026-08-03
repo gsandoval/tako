@@ -90,7 +90,10 @@ var (
 // day. The destination is a channel like any other declaration; the
 // alerts name a SITUATION, not a metric.
 var (
-	oncall = tako.Email("darchitect@gmail.com")
+	// Substitute a real address to watch this deliver — validate/alerts.md
+	// walks it. Cloud Monitoring needs no verification step for an email
+	// channel created through the API.
+	oncall = tako.Email("ops@example.com")
 
 	// Anything at all giving up on thumbnails is worth knowing.
 	Stuck = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)

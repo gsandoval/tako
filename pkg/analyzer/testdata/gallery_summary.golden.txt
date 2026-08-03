@@ -69,6 +69,6 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   watching
-    channel oncall → email darchitect@gmail.com
+    channel oncall → email ops@example.com
     alert Stuck — DeadLettered → oncall
     alert Silent — CronMissed → oncall

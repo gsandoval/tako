@@ -45,7 +45,8 @@ documented block):
 gcloud services enable artifactregistry.googleapis.com run.googleapis.com \
   iam.googleapis.com datastore.googleapis.com pubsub.googleapis.com \
   cloudtasks.googleapis.com secretmanager.googleapis.com \
-  cloudscheduler.googleapis.com storage.googleapis.com --project <project>
+  cloudscheduler.googleapis.com storage.googleapis.com \
+  monitoring.googleapis.com --project <project>
 ```
 
 Deployer role bundle (granted to the human/CI principal, project-scoped
@@ -63,6 +64,8 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/cloudtasks.admin` | delayed queues (C-async) |
 | `roles/secretmanager.admin` | secret references (C-config) |
 | `roles/cloudscheduler.admin` | crons (C-async) |
+| `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
+| `roles/monitoring.notificationChannelEditor` | `tako.Email`/`ChatSpace`/`Webhook`/`PubSub` channels (Y1) |
 
 Each C-task's preflight checks only the subset that task touches; the
 full bundle exists so a user can grant once and never think about it
@@ -85,6 +88,14 @@ derive from AppGraph edges only — nothing project-wide, nothing manual
 | worker/subscriber service | its push endpoint grants `roles/run.invoker` to the Pub/Sub push SA only |
 | service reads secret S | `roles/secretmanager.secretAccessor` on S only |
 | service A calls service B (spec §2.12) | `roles/run.invoker` on B for A's SA only |
+| every service | `roles/monitoring.metricWriter` on the project |
+
+The last row is the one exception to edge-derivation, and it is stated
+rather than hidden: counters and histograms produce no usage edge (a
+`tako.Counter` is recorded into, not wired to a service), and every
+service exports per-endpoint metrics whether or not it declares one. So
+the grant is package-wide, like secrets. Cloud Monitoring has no
+per-metric IAM to scope it further.
 
 `tako deploy` prints this derivation as the security summary — the user
 sees every grant and why, every deploy. Removing a declaration removes

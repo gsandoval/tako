@@ -50,8 +50,14 @@ const defaultEvery = time.Minute
 // shipping 60 seconds.
 func presetEvery(reading string) time.Duration {
 	switch reading {
-	case "dead_letters", "cron_failed", "job_failed":
+	case "dead_letters":
 		return 5 * time.Minute
+	case "cron_failed", "job_failed":
+		// An hour, because these count FAILURES: "failed 3 times" over
+		// five minutes is a question an hourly cron can never answer yes
+		// to, and the threshold would read as configured while being
+		// unreachable.
+		return time.Hour
 	}
 	return defaultEvery
 }

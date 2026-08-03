@@ -145,6 +145,39 @@ custom.googleapis.com/tako/uploads      # tako.Counter("uploads")
 custom.googleapis.com/tako/thumb_ms     # tako.Histogram("thumb_ms")
 ```
 
+## The two metrics you never declare
+
+Every deployed service also records **one counter and one histogram per
+endpoint**, without being asked:
+
+```
+custom.googleapis.com/tako/requests     # count, labelled route + status
+custom.googleapis.com/tako/request_ms   # latency, labelled route
+```
+
+`route` is the **declared pattern**, method included — `GET /api/photos`,
+not `/api/photos/8f2c`. That is what keeps the series count bounded: one
+photo or a million is one series either way, where a path label would
+mint one per id. An unmatched path records as `<unmatched>`, so a
+scanner probing random URLs cannot turn into a metrics bill. `status` is
+the class (`2xx`…`5xx`), never the raw code.
+
+Crons and jobs are in here too, under `/_tako/cron/<Name>` — the mux
+pattern alone is `POST /_tako/cron/{cron}`, which would merge every cron
+in a service into one series, so the dispatcher names what it actually
+ran.
+
+**These exist because Cloud Run's own `request_count` cannot answer a
+question about one endpoint.** It publishes a `route` label and leaves it
+empty on every series (measured across 88 of them), so
+`Erroring(someEndpoint, …)` and `SlowerThan(…)` have nothing to filter
+on. Tako writes the label itself, which is what makes per-endpoint
+[alerting](alerts.md) possible at all.
+
+Both are `generic_task` series like the rest, so the `job` label carries
+the service and `task_id` the instance — an endpoint's error rate is
+therefore sliceable by service without any extra declaration.
+
 Find them in Metrics Explorer by pasting that metric type. From the
 command line there is no `gcloud` surface for reading time series —
 `gcloud monitoring` covers dashboards, policies and uptime checks, not
@@ -180,9 +213,15 @@ labels map cleanly:
 | label | value |
 |---|---|
 | `namespace` | `<app>-<env>` — prod and a preview env never merge |
-| `job` | the tako service name, as you wrote it |
+| `job` | the tako service name, as you wrote it — **unprefixed**, because `namespace` already carries the env |
 | `task_id` | the instance |
 | `location` | the region |
+
+`job` being the logical name is load-bearing rather than cosmetic:
+[alert](alerts.md) queries filter on it, and a query that spells the
+label differently from the writer matches nothing — which reads
+identically to a service that has stopped serving. Tako's own alerts
+therefore build the matcher from the same name the deploy injects.
 
 `task_id` is load-bearing, not decoration: every instance of a revision
 would otherwise share one cumulative series, and concurrent writers to a
@@ -294,12 +333,16 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
 
 ## Not yet
 
-- No metric labels/dimensions: `Add` and `Observe` take only a value,
-  so you cannot break `uploads` down by user or status. (The `revision`
-  label and the resource's `task_id` are tako's, not yours — they exist
-  to keep instances from colliding, not to slice by.)
-- No dashboards or alert policies are created for you; tako writes the
-  metrics, you build the views.
+- **No labels on _your_ metrics**: `Add` and `Observe` take only a
+  value, so you cannot break `uploads` down by user or status. Tako's
+  own `requests`/`request_ms` do carry `route` and `status`, but that is
+  the framework labelling what it already knows; there is no way to add
+  a dimension of your own yet. (The `revision` label and the resource's
+  `task_id` are likewise tako's — they keep instances from colliding,
+  not a slicing surface.)
+- No dashboards are created for you; tako writes the metrics, you build
+  the views. **Alert policies are declared** — see
+  [alerts.md](alerts.md) — but nothing charts them.
 - Histogram bucket bounds are fixed (doubling, 1 to 262144) and not
   declarable.
 - `tako logs` fetches once — no `--follow`/streaming, and no
@@ -307,7 +350,8 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
   filter on them). The Logs Explorer does.
 - No log sampling and no level knob: a deployed service logs everything
   `INFO` and above, and there is no `WithLogging` to change that.
-- No log-based metrics or alert policies are created for you.
+- No log-based metrics and no log-based alerting: `tako.Alert` reads
+  metrics only, so "page me when this line appears" has no expression.
 - Log volume is billed by Cloud Logging like any other. Structured
   lines are slightly larger than the text they replaced; a chatty
   handler on a wide-scaling service is the case to watch.

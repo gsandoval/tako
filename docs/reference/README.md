@@ -62,7 +62,9 @@ Two consequences worth knowing:
   transactions, derived indexes
 - [cache.md](cache.md) — `tako.Cache`: per-instance TTL cache
 - [observability.md](observability.md) — `tako.Secret`,
-  `tako.Counter`, `tako.Histogram`, `tako logs`
+  `tako.Counter`, `tako.Histogram`, per-endpoint metrics, `tako logs`
+- [alerts.md](alerts.md) — `tako.Alert`: conditions, presets, and
+  channels that page someone
 
 ## Async
 

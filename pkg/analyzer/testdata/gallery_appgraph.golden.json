@@ -165,8 +165,8 @@
       "var": "gallery.oncall",
       "package": "gallery",
       "channel_kind": "email",
-      "target": "darchitect@gmail.com",
-      "pos": "app.go:93:2"
+      "target": "ops@example.com",
+      "pos": "app.go:96:2"
     },
     {
       "kind": "alert",
@@ -185,7 +185,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:96:2"
+      "pos": "app.go:99:2"
     },
     {
       "kind": "alert",
@@ -203,7 +203,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:100:2"
+      "pos": "app.go:103:2"
     }
   ],
   "handlers": [
