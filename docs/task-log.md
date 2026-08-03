@@ -12344,3 +12344,35 @@ the three reproduces the original symptom in the failure message.
   poisoned message driven through `thumbs` until retries are exhausted.
   Noted as a known gap in `validate/alerts.md` rather than implied
   covered.
+
+## Y1f — delivery confirmed, and the one weak line in the mail (2026-08-02)
+
+The owner's inbox, ~3 minutes before teardown:
+
+```
+[ALERT - Warning] gallery/x1: cron Cleanup has not run on __missing__
+Alert firing · Warning
+A PromQL query was observed at 1
+Policy      x1-Silent
+Condition   gallery/x1: cron Cleanup has not run
+metric : custom.googleapis.com/tako/requests   value : 1
+tako-app : gallery   tako-env : x1   tako-spec-hash : 29938b22458047d5
+```
+
+Defects 8 and 9 are closed by this: the subject was `Silent on
+__missing__` with `[ALERT - No severity]` last session. The policy
+labels ride through, so the mail names the app and env without opening
+the console.
+
+### Discovered work: the body says nothing a responder can act on
+
+`A PromQL query was observed at 1` is Google's own generated summary,
+and `value : 1` is `absent_over_time` returning true — technically
+exact and operationally useless at 3am. Cloud Monitoring policies take
+a `documentation` field whose content is rendered into the
+notification, and tako already knows everything worth putting there:
+which cron, its schedule, the lookback that expired, and the console
+link to the service's logs. tako writes no `documentation` today.
+
+Not done — Y1's scope was the condition and the channel, and this is
+new surface. Logged for Y2.
