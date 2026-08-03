@@ -68,3 +68,7 @@ gallery: 5 services
     histogram thumb_ms
     lock reindex
     entity reindex-runs
+  watching
+    channel oncall → email darchitect@gmail.com
+    alert Stuck — DeadLettered → oncall
+    alert Silent — CronMissed → oncall

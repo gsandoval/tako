@@ -84,8 +84,8 @@ func TestChannelDestinationUsesTheTypesOwnLabel(t *testing.T) {
 // same project must never be observed, updated or deleted.
 func TestForeignPoliciesAreInvisible(t *testing.T) {
 	s := &alertServer{policies: []map[string]any{
-		{"name": "projects/p/alertPolicies/1", "userLabels": map[string]any{"tako-app": "gallery", "tako-env": "x1", "tako-name": "Stuck", "tako-spec-hash": "abc"}},
-		{"name": "projects/p/alertPolicies/2", "userLabels": map[string]any{"tako-app": "gallery", "tako-env": "prod", "tako-name": "Stuck"}},
+		{"name": "projects/p/alertPolicies/1", "displayName": "x1-Stuck", "userLabels": map[string]any{"tako-app": "gallery", "tako-env": "x1", "tako-spec-hash": "abc"}},
+		{"name": "projects/p/alertPolicies/2", "displayName": "Stuck", "userLabels": map[string]any{"tako-app": "gallery", "tako-env": "prod"}},
 		{"name": "projects/p/alertPolicies/3", "displayName": "someone else's policy"},
 	}}
 	pol := &AlertPolicies{C: s.start(t), App: "gallery", Env: "x1", Labels: labelsFor("gallery", "x1")}
@@ -160,10 +160,21 @@ func TestPolicyCarriesQueryChannelsAndLabels(t *testing.T) {
 		t.Errorf("notificationChannels = %v", body["notificationChannels"])
 	}
 	ul, _ := body["userLabels"].(map[string]any)
-	for _, k := range []string{"tako-app", "tako-env", "tako-name", "tako-spec-hash"} {
+	for _, k := range []string{"tako-app", "tako-env", "tako-spec-hash"} {
 		if ul[k] == nil || ul[k] == "" {
 			t.Errorf("userLabels missing %s: %v", k, ul)
 		}
+	}
+	// The NAME must never ride a label: GCP label values forbid
+	// uppercase, and a tako identity is an exported Go var. The live
+	// gate refused `tako-name: "Stuck"` outright.
+	for k, v := range ul {
+		if s, ok := v.(string); ok && s != strings.ToLower(s) {
+			t.Errorf("userLabel %s=%q has uppercase — the API refuses it", k, s)
+		}
+	}
+	if body["displayName"] != "x1-Missed" {
+		t.Errorf("displayName = %v; the declared name rides here, not a label", body["displayName"])
 	}
 }
 

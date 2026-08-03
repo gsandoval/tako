@@ -158,6 +158,52 @@
       "package": "gallery",
       "type": "ReindexRun",
       "pos": "app.go:40:2"
+    },
+    {
+      "kind": "channel",
+      "name": "oncall",
+      "var": "gallery.oncall",
+      "package": "gallery",
+      "channel_kind": "email",
+      "target": "darchitect@gmail.com",
+      "pos": "app.go:93:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Stuck",
+      "var": "gallery.Stuck",
+      "package": "gallery",
+      "condition": "DeadLettered",
+      "alert": {
+        "op": "above",
+        "subject_kind": "queue",
+        "subject_name": "thumbnails",
+        "subject_var": "gallery.thumbs",
+        "reading": "dead_letters",
+        "threshold": 1
+      },
+      "channels": [
+        "gallery.oncall"
+      ],
+      "pos": "app.go:96:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Silent",
+      "var": "gallery.Silent",
+      "package": "gallery",
+      "condition": "CronMissed",
+      "alert": {
+        "op": "absent",
+        "subject_kind": "cron",
+        "subject_var": "gallery.Cleanup",
+        "reading": "cron_missed",
+        "for_seconds": 300
+      },
+      "channels": [
+        "gallery.oncall"
+      ],
+      "pos": "app.go:100:2"
     }
   ],
   "handlers": [

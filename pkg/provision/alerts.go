@@ -40,6 +40,22 @@ const (
 // depend on it (rate, ratio, percentile): the period only smooths.
 const defaultEvery = time.Minute
 
+// presetEvery is each preset's default reduction period.
+//
+// These MUST match the defaults the SDK's preset constructors document,
+// and they live here because the deploy reads SOURCE: a default applied
+// only at runtime never reaches a generated alert, so the SDK's
+// windowOr default was dead weight for anything tako deploys. The gate
+// caught the disagreement — DeadLettered documents 5 minutes and was
+// shipping 60 seconds.
+func presetEvery(reading string) time.Duration {
+	switch reading {
+	case "dead_letters", "cron_failed", "job_failed":
+		return 5 * time.Minute
+	}
+	return defaultEvery
+}
+
 // alertQuery renders one condition as the PromQL Cloud Monitoring will
 // evaluate, plus whether a retest window is still allowed.
 func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (string, bool, error) {
@@ -48,7 +64,7 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 	}
 	every := time.Duration(a.EverySeconds) * time.Second
 	if every == 0 {
-		every = defaultEvery
+		every = presetEvery(a.Reading)
 	}
 	lookback := every
 	if a.Op == "absent" {
@@ -265,19 +281,68 @@ func alertObjects(cfg Config, g *analyzer.AppGraph) ([]Object, error) {
 			return nil, fmt.Errorf("alert %s: %w", r.Var, err)
 		}
 		spec := map[string]any{
-			"displayName":        cfg.Name(r.Name),
+			"displayName": cfg.Name(r.Name),
+			// The condition's name is what the notification SUBJECT
+			// leads with, so it has to be a sentence a woken human can
+			// act on. The live gate's first mail read
+			// "[ALERT - No severity] Silent on __missing__" — the
+			// policy's var name and a placeholder, saying neither what
+			// broke nor where.
+			"conditionName": conditionSentence(cfg, g, r),
+			// Absence on a missing series has no resource labels to
+			// attribute — Google fills "__missing__" — so severity is
+			// the only other signal the subject carries. Framework-owned
+			// at WARNING: an alert tako generated is worth waking for,
+			// and nothing in the catalogue is a pager-grade CRITICAL.
+			"severity":           "WARNING",
 			"query":              query,
 			"evaluationInterval": promDuration(evaluationInterval(r.Alert)),
 			"channels":           strings.Join(shortNames(r.Channels), ","),
 		}
-		// Google refuses a retest window past a 1d1h lookback, so the
-		// duration is omitted rather than sent and rejected.
-		if retest {
+		// A retest window is only meaningful for a THRESHOLD: on an
+		// absence, For is already the lookback, so sending it again as
+		// the duration would make the alert wait twice as long as
+		// declared. Google also refuses any retest past a 1d1h lookback.
+		if retest && r.Alert.Op != "absent" && r.Alert.ForSeconds > 0 {
 			spec["duration"] = promDuration(time.Duration(r.Alert.ForSeconds) * time.Second)
 		}
 		out = append(out, Object{Kind: KindAlertPolicy, Name: r.Name, Spec: spec})
 	}
 	return out, nil
+}
+
+// conditionSentence describes what fired, for the notification subject.
+func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) string {
+	a := r.Alert
+	if a == nil {
+		return r.Name
+	}
+	subject := a.SubjectName
+	if subject == "" {
+		subject = shortNames([]string{a.SubjectVar})[0]
+	}
+	app := cfg.App + "/" + cfg.Env
+	switch a.Reading {
+	case "cron_missed":
+		return fmt.Sprintf("%s: cron %s has not run", app, subject)
+	case "cron_failed":
+		return fmt.Sprintf("%s: cron %s is failing", app, subject)
+	case "dead_letters":
+		return fmt.Sprintf("%s: queue %s is dead-lettering", app, subject)
+	case "backlog_age":
+		return fmt.Sprintf("%s: queue %s is backing up", app, subject)
+	case "job_failed":
+		return fmt.Sprintf("%s: job %s is failing", app, subject)
+	case "error_rate":
+		return fmt.Sprintf("%s: %s is erroring", app, subject)
+	case "latency":
+		return fmt.Sprintf("%s: %s is slow", app, subject)
+	case "at_capacity":
+		return fmt.Sprintf("%s: %s is at its instance ceiling", app, subject)
+	case "singleton_down":
+		return fmt.Sprintf("%s: singleton %s is not running", app, subject)
+	}
+	return fmt.Sprintf("%s: %s", app, r.Name)
 }
 
 // channelTarget renders a channel's destination as the API wants it.

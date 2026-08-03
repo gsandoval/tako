@@ -328,6 +328,31 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindDomainMapping), desired, applier); err != nil {
 		return err
 	}
+	// Alerting last, and channels before policies: a policy names its
+	// channels by resource name, and an app that is still being built
+	// should not page about its own deploy.
+	//
+	// The metric descriptors come first of all, because Cloud Monitoring
+	// refuses a PromQL policy naming a metric that does not exist yet —
+	// and a custom metric does not exist until something writes it, so a
+	// FIRST deploy could otherwise never create its own alerts.
+	if len(plan.Filter(provision.KindAlertPolicy).Entries) > 0 {
+		descriptors := &gcp.MetricDescriptors{C: client}
+		if err := descriptors.Ensure(ctx, graph); err != nil {
+			return err
+		}
+		// A descriptor alone is not enough: PromQL resolves names from
+		// DATA, so the series has to exist before a policy may name it.
+		if err := descriptors.Seed(ctx, graph, cfg.App, cfg.Env, cfg.Region); err != nil {
+			return err
+		}
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindAlertChannel), desired, applier); err != nil {
+		return err
+	}
+	if err := provision.Apply(ctx, plan.Filter(provision.KindAlertPolicy), desired, applier); err != nil {
+		return err
+	}
 
 	fmt.Println()
 	var liveHosts []string

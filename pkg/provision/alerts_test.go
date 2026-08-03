@@ -148,3 +148,16 @@ func TestCustomMetricsAreScopedToTheEnv(t *testing.T) {
 		t.Errorf("declared period not used as the counting window: %q", q)
 	}
 }
+
+// A preset's documented default has to be applied where the deploy can
+// see it. The SDK's windowOr default is a RUNTIME value and the deploy
+// reads source, so a default that lives only in the SDK ships as
+// whatever the provisioner happens to fall back to — the live gate found
+// DeadLettered documenting five minutes and deploying sixty seconds.
+func TestPresetDefaultsAreAppliedWhereTheDeployReadsThem(t *testing.T) {
+	q, _ := query(t, &analyzer.AlertCondition{
+		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbs", Threshold: 1})
+	if !strings.Contains(q, "[300s]") {
+		t.Errorf("DeadLettered default window = %q, want the documented 5 minutes", q)
+	}
+}

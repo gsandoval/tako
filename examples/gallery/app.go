@@ -85,6 +85,21 @@ var (
 	Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 )
 
+// Alerting: gallery is the example that demands it — a dead-letter queue
+// nobody watches, and a nightly cron whose failure is invisible for a
+// day. The destination is a channel like any other declaration; the
+// alerts name a SITUATION, not a metric.
+var (
+	oncall = tako.Email("darchitect@gmail.com")
+
+	// Anything at all giving up on thumbnails is worth knowing.
+	Stuck = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)
+
+	// The window is short here so the gate can watch it fire; a real
+	// daily job would leave it unset and get twice its schedule.
+	Silent = tako.Alert(tako.CronMissed(Cleanup, tako.For(5*time.Minute)), oncall)
+)
+
 // A tako.Blob field makes the request multipart: img streams from the
 // form field, caption arrives beside it.
 type UploadReq struct {

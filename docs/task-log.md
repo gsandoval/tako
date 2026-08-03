@@ -12136,3 +12136,76 @@ Full suite, vet, gofmt and conformance(local) clean.
 what only a real project can answer: whether the generated queries match
 real series, whether a channel delivers, and whether `CronMissed` fires
 exactly once against a genuinely stopped cron.
+
+## Y1e — the live gate: nine defects, and a delivered alert (2026-08-02)
+
+gallery declares `Stuck` (DeadLettered) and `Silent` (CronMissed with a
+5-minute window so it could be watched). Deployed to tako-test-01/x1,
+driven, and destroyed clean.
+
+**The alert reached the owner's inbox.** `tako.Alert(tako.CronMissed(
+Cleanup, tako.For(5*time.Minute)), oncall)` → analyzer → PromQL →
+policy → email, carrying `tako-app: gallery`, `tako-env: x1` and the
+spec hash. That is the one claim nothing offline could make.
+
+It took EIGHT deploys. Every failure was real:
+
+| # | defect | only findable by |
+|---|---|---|
+| 1 | planned but never applied — deploy's phase list had no entry for the new kinds | running a deploy |
+| 2 | GCP label values forbid uppercase; tako identities are exported Go vars | the API refusing it |
+| 3 | a policy cannot name a metric that does not exist | the API refusing it |
+| 4 | descriptors are not enough — PromQL resolves names from DATA | querying PromQL metadata |
+| 5 | a CUMULATIVE point needs start < end strictly | the API refusing it |
+| 6 | preset defaults lived only in the SDK, which the deploy never reads | reading back stored state |
+| 7 | absence sent its lookback as a retest duration too, doubling the wait | reading back stored state |
+| 8 | the notification subject named a Go variable, not a failure | receiving the mail |
+| 9 | severity unset, so every subject read "No severity" | receiving the mail |
+
+### Three layers of checking, each catching what the last could not
+
+- **Was it accepted?** — plan output, exit code, HTTP 200. Caught 1–5.
+- **Is what is STORED what I meant?** — reading policies back. Caught 6
+  and 7, both of which had been accepted happily. Defect 7 is the
+  instructive one: `CronMissed(For(5m))` would have fired at TEN
+  minutes while claiming five — a wrong number in the direction that
+  still looks like it works.
+- **Is what is DELIVERED usable at 3am?** — the mail itself. Caught 8
+  and 9. The alert was correct at every layer above and arrived nearly
+  useless: `[ALERT - No severity] Silent on __missing__`.
+
+`__missing__` is unavoidable — an absence on a series that does not
+exist has no resource labels to attribute — so the human half carries
+the meaning instead: every preset now generates a sentence,
+`gallery/x1: cron Cleanup has not run`. Severity is framework-owned at
+WARNING.
+
+### What this says about the offline tests
+
+They were sound and aimed at the wrong surface. Seven of nine defects
+lived in SEAMS — between plan and apply, between an SDK default and a
+source-reading deploy, between a correct policy and a legible
+notification. The fake server could not have found any of them: it
+encodes what I already believe the API accepts, so it validates my
+model rather than Google's.
+
+Three completeness tests came out of it and remain: apply-coverage (a
+kind in reconcileOrder that deploy never applies), no-uppercase-labels,
+and preset defaults applied where the deploy reads them. Each was
+mutation-checked by breaking the code and confirming the test failed.
+
+### Honest gaps
+
+- **`Stuck` never fired.** Nothing dead-lettered during the walk. Its
+  query is verified against the real metric and the policy was created,
+  but only `CronMissed`'s transition was actually exercised.
+- **Incident counting is not asserted.** Cloud Monitoring exposes no
+  public v3 API for listing incidents, so "exactly once" was checked by
+  running the policy's own query at both moments — quiet with data
+  present, firing after the window — and by the single mail that
+  arrived. That is a proxy, not a count.
+- The email channel needs **no verification**: `verificationStatus` is
+  absent on an API-created channel. That closes the Y1 decision-4
+  question, which had been unresolved since the proposal.
+
+Destroy removed policies before the channel and left the project clean.

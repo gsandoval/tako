@@ -17,6 +17,15 @@ import (
 // every other kind. Neither API lists by label filter, so observation
 // lists everything and keeps what carries tako's labels; a project has
 // tens of these, not thousands.
+//
+// The NAME does not ride a label, and cannot: GCP label values match
+// [\p{Ll}\p{Lo}\p{N}_-] — no uppercase — while a tako identity is a Go
+// VARIABLE name, and an exported one is capitalized by the language.
+// `tako-name: "Stuck"` is refused with
+// `character "S" at position 0 is not a non-uppercased letter`.
+// So the name rides the displayName, which has no such charset, and
+// observation reads it back by removing the env prefix — the same rule
+// Config.Name applied to write it.
 
 // AlertChannels owns notification channels.
 type AlertChannels struct {
@@ -73,7 +82,7 @@ func (a *AlertChannels) List(ctx context.Context) ([]provision.Observed, error) 
 			continue
 		}
 		observed = append(observed, provision.Observed{
-			Kind: provision.KindAlertChannel, Name: ch.UserLabels["tako-name"],
+			Kind: provision.KindAlertChannel, Name: unprefixed(ch.DisplayName, a.Env),
 			SpecHash: ch.UserLabels["tako-spec-hash"], ID: ch.Name,
 		})
 	}
@@ -82,7 +91,7 @@ func (a *AlertChannels) List(ctx context.Context) ([]provision.Observed, error) 
 
 func (a *AlertChannels) body(o provision.Object) notificationChannel {
 	kind := fmt.Sprint(o.Spec["channelKind"])
-	labels := map[string]string{"tako-name": o.Name, "tako-spec-hash": provision.SpecHash(o.Spec)}
+	labels := map[string]string{"tako-spec-hash": provision.SpecHash(o.Spec)}
 	for k, v := range a.Labels {
 		labels[k] = v
 	}
@@ -163,6 +172,7 @@ type alertPolicy struct {
 	Name                 string            `json:"name,omitempty"`
 	DisplayName          string            `json:"displayName,omitempty"`
 	Combiner             string            `json:"combiner,omitempty"`
+	Severity             string            `json:"severity,omitempty"`
 	Conditions           []alertCondition  `json:"conditions,omitempty"`
 	NotificationChannels []string          `json:"notificationChannels,omitempty"`
 	UserLabels           map[string]string `json:"userLabels,omitempty"`
@@ -196,7 +206,7 @@ func (a *AlertPolicies) List(ctx context.Context) ([]provision.Observed, error) 
 			continue
 		}
 		observed = append(observed, provision.Observed{
-			Kind: provision.KindAlertPolicy, Name: p.UserLabels["tako-name"],
+			Kind: provision.KindAlertPolicy, Name: unprefixed(p.DisplayName, a.Env),
 			SpecHash: p.UserLabels["tako-spec-hash"], ID: p.Name,
 		})
 	}
@@ -204,7 +214,7 @@ func (a *AlertPolicies) List(ctx context.Context) ([]provision.Observed, error) 
 }
 
 func (a *AlertPolicies) body(ctx context.Context, o provision.Object) (alertPolicy, error) {
-	labels := map[string]string{"tako-name": o.Name, "tako-spec-hash": provision.SpecHash(o.Spec)}
+	labels := map[string]string{"tako-spec-hash": provision.SpecHash(o.Spec)}
 	for k, v := range a.Labels {
 		labels[k] = v
 	}
@@ -235,10 +245,15 @@ func (a *AlertPolicies) body(ctx context.Context, o provision.Object) (alertPoli
 		cond.Duration = d
 	}
 	enabled := true
+	condName := fmt.Sprint(o.Spec["conditionName"])
+	if condName == "" || condName == "<nil>" {
+		condName = o.Name
+	}
 	return alertPolicy{
 		DisplayName:          fmt.Sprint(o.Spec["displayName"]),
 		Combiner:             "OR",
-		Conditions:           []alertCondition{{DisplayName: o.Name, PromQL: &cond}},
+		Severity:             fmt.Sprint(o.Spec["severity"]),
+		Conditions:           []alertCondition{{DisplayName: condName, PromQL: &cond}},
 		NotificationChannels: chans,
 		UserLabels:           labels,
 		Enabled:              &enabled,
@@ -286,4 +301,14 @@ func (a *AlertPolicies) Delete(ctx context.Context, name string) error {
 // and this env's. A foreign policy in the same project is never touched.
 func ownedBy(labels map[string]string, app, env string) bool {
 	return labels["tako-app"] == app && labels["tako-env"] == env
+}
+
+// unprefixed recovers a declared name from the deployed displayName by
+// removing the env prefix Config.Name added. prod deploys bare names, so
+// there is nothing to remove there.
+func unprefixed(displayName, env string) string {
+	if env == "" || env == "prod" {
+		return displayName
+	}
+	return strings.TrimPrefix(displayName, env+"-")
 }

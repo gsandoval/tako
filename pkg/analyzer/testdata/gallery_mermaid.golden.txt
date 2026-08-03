@@ -33,6 +33,9 @@ flowchart LR
   r_histogram_thumb_ms(["histogram thumb_ms"])
   r_lock_reindex(["lock reindex"])
   r_entity_reindex_runs[("entity reindex-runs")]
+  r_channel_oncall(["channel oncall"])
+  r_alert_Stuck(["alert Stuck"])
+  r_alert_Silent(["alert Silent"])
   r_bucket_photos -. "photos.Uploaded" .-> h_gallery_OnUploaded
   r_queue_thumbnails --> h_gallery_MakeThumb
   r_topic_photo_ready --> h_gallery_NotifyOwner

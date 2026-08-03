@@ -33,6 +33,25 @@ func Summary(g *AppGraph) string {
 			if r.Package != svc.Package || r.Kind == "service" {
 				continue
 			}
+			// Channels and alerts belong to the APP, not to a service:
+			// they run nowhere. Printing them under each service of a
+			// package makes five copies read as five alerts.
+			if r.Kind == "channel" || r.Kind == "alert" {
+				continue
+			}
+			fmt.Fprintf(&b, "    %s\n", ResourceLine(r))
+		}
+	}
+	// App-scoped declarations, once, after the services they watch.
+	var watching []Resource
+	for _, r := range g.Resources {
+		if r.Kind == "channel" || r.Kind == "alert" {
+			watching = append(watching, r)
+		}
+	}
+	if len(watching) > 0 {
+		fmt.Fprintf(&b, "  watching\n")
+		for _, r := range watching {
 			fmt.Fprintf(&b, "    %s\n", ResourceLine(r))
 		}
 	}
