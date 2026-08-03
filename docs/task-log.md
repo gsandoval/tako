@@ -12030,3 +12030,47 @@ Full suite, vet and gofmt clean, conformance included.
 
 Remaining in Y1c: the two GCP adapters, desired-state objects, and the
 Pub/Sub notification service-agent grant.
+
+## Y1c — the GCP adapters (2026-08-02)
+
+`AlertChannels` and `AlertPolicies` implement `KindApplier`. Both carry
+ownership and the spec hash in `userLabels`, so label-based
+reconciliation works unchanged — no state file, same discipline as every
+other kind.
+
+### Five tests, each pinning a way this silently pages nobody
+
+- **The destination lands in the type's own label key.** Google names it
+  differently per channel type — `email_address`, `space`, `url`,
+  `topic` — and a wrong key creates a channel that delivers nowhere
+  while looking created. Table-tested across all four.
+- **Foreign policies are invisible.** Neither API filters by label, so
+  observation lists everything and keeps only what carries this app AND
+  this env. The fixture includes a prod-env policy and a stranger's, and
+  both must be ignored — the `pr-42`-destroying-prod class of bug from
+  C6.
+- **A policy naming a missing channel is refused**, not created. Google
+  accepts a policy with an empty channel list happily; it just never
+  tells anyone. Refusing names the channel in the error.
+- **The policy carries the PromQL condition, its channels and all four
+  ownership labels** — and asserts NO duration is sent when the lookback
+  is long, which is the 1d1h retest rule the probes measured.
+- **A disabled Monitoring API observes as empty**, so destroy never
+  demands an API the app never enabled. The rule the T3 gate established
+  for Cloud Tasks, applied here.
+
+`provision.Observed` gained an `ID`, because these two kinds are created
+with server-assigned names: a delete has to use what a list told it
+rather than build a path from the name.
+
+Channel and policy updates are delete-then-create: a channel's type
+cannot be patched and a policy's condition is most of its spec, so
+recreate is the honest shape rather than a partial update that leaves
+one field stale.
+
+Full suite, vet, gofmt and conformance(local) clean. `RefineRoute` is a
+new `pkg/runtime` export, so `runtime_lock.golden` was regenerated
+deliberately — it reaches generated code and belongs in release notes.
+
+Remaining before the live gate: wiring `alertObjects` into the deploy
+plan and the Pub/Sub notification service-agent grant.

@@ -233,3 +233,83 @@ func maxInstancesOf(g *analyzer.AppGraph, v string) int {
 	}
 	return 100 // the default profile ceiling
 }
+
+// alertObjects turns the graph's channels and alerts into managed
+// objects. Channels come first in reconcileOrder, so a policy always
+// finds the channels it names.
+func alertObjects(cfg Config, g *analyzer.AppGraph) ([]Object, error) {
+	var out []Object
+	for _, r := range g.Resources {
+		if r.Kind != "channel" {
+			continue
+		}
+		out = append(out, Object{
+			Kind: KindAlertChannel,
+			Name: r.Name,
+			Spec: map[string]any{
+				"channelKind": r.ChannelKind,
+				"displayName": cfg.Name(r.Name),
+				// A pubsub channel names a TOPIC, which needs the full
+				// resource path and the env prefix the topic deployed
+				// under — the same name the topic reconciler used.
+				"target": channelTarget(cfg, r),
+			},
+		})
+	}
+	for _, r := range g.Resources {
+		if r.Kind != "alert" {
+			continue
+		}
+		query, retest, err := alertQuery(cfg, g, r.Alert)
+		if err != nil {
+			return nil, fmt.Errorf("alert %s: %w", r.Var, err)
+		}
+		spec := map[string]any{
+			"displayName":        cfg.Name(r.Name),
+			"query":              query,
+			"evaluationInterval": promDuration(evaluationInterval(r.Alert)),
+			"channels":           strings.Join(shortNames(r.Channels), ","),
+		}
+		// Google refuses a retest window past a 1d1h lookback, so the
+		// duration is omitted rather than sent and rejected.
+		if retest {
+			spec["duration"] = promDuration(time.Duration(r.Alert.ForSeconds) * time.Second)
+		}
+		out = append(out, Object{Kind: KindAlertPolicy, Name: r.Name, Spec: spec})
+	}
+	return out, nil
+}
+
+// channelTarget renders a channel's destination as the API wants it.
+func channelTarget(cfg Config, r analyzer.Resource) string {
+	if r.ChannelKind == "pubsub" {
+		return fmt.Sprintf("projects/%s/topics/%s", cfg.Project, cfg.Name(r.Target))
+	}
+	return r.Target
+}
+
+// evaluationInterval is how often the policy runs. It tracks the
+// reduction period, floored at a minute — the API's own minimum.
+func evaluationInterval(a *AlertConditionAlias) time.Duration {
+	if a != nil && a.EverySeconds >= 60 {
+		return time.Duration(a.EverySeconds) * time.Second
+	}
+	return time.Minute
+}
+
+// AlertConditionAlias keeps the signature above readable.
+type AlertConditionAlias = analyzer.AlertCondition
+
+// shortNames drops the package qualifier from declared channel vars:
+// the object's name is the var, not the import path.
+func shortNames(vars []string) []string {
+	out := make([]string, 0, len(vars))
+	for _, v := range vars {
+		if dot := strings.LastIndexByte(v, '.'); dot >= 0 {
+			out = append(out, v[dot+1:])
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
+}

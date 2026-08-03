@@ -76,6 +76,11 @@ type Object struct {
 type Observed struct {
 	Kind Kind
 	Name string
+	// ID is the API's own resource name, when the object's identity and
+	// its address differ. Alert policies and notification channels are
+	// created with a server-assigned id, so a delete has to look up what
+	// a list told it rather than construct a path from the name.
+	ID string
 	// SpecHash is the tako-spec-hash recorded on the object; empty when
 	// the object predates tako or lost its annotation.
 	SpecHash string
