@@ -112,8 +112,30 @@ Six things in that output, each a defect a gate found:
 gcloud scheduler jobs run x1-gallery-cron-cleanup --project $PROJECT --location us-central1
 ```
 
-A fresh deploy can answer 403 here while the scheduler's invoker grant
-propagates. Retry for a minute before treating it as a failure.
+**That command exits 0 when the trigger is ACCEPTED, not when the run
+succeeds.** On a fresh deploy the invocation that follows is usually a
+403 while the scheduler's invoker grant propagates, and the exit code
+says nothing about it. Verify the run landed:
+
+```
+gcloud scheduler jobs describe x1-gallery-cron-cleanup \
+  --project $PROJECT --location us-central1 --format='value(status.code)'
+```
+
+Empty is success. `7` is PERMISSION_DENIED — retry, for up to a few
+minutes. Then confirm the service answered rather than trusting the
+scheduler's own view:
+
+```
+gcloud logging read 'resource.labels.service_name="x1-gallery" httpRequest.requestUrl:"/_tako/cron/Cleanup"' \
+  --project $PROJECT --limit 3 --freshness=20m --format='value(timestamp,httpRequest.status)'
+```
+
+This is not pedantry. A walk that skipped it reported §5 as FIRING and
+looked like a feature defect; the cron had 403'd, so **the alert was
+correct** and the gate script was wrong — it had checked an exit code
+where it needed a status. Which is the same mistake, one level up, that
+this whole walk exists to catch.
 
 ## 4. Wait for the flush
 

@@ -12466,3 +12466,84 @@ the mail somebody will run without thinking.
   never could; the fix is proven by test and by the corrected query, not
   by an incident. Driving a poisoned message through `thumbs` remains
   the only way to close it.
+
+## Y2 — the delivery cycle, and an alert that caught a real failure (2026-08-03)
+
+Run to close the gap the previous entry left open: the body was proven
+STORED, never proven DELIVERED.
+
+### It was already delivered
+
+The owner forwarded the 10:40 PM mail and it carries the full
+documentation — headline, the "what it is not" paragraph, the schedule,
+the paste-able command, the footer, and a Quick Links section. So the
+body renders in a real inbox.
+
+Whether it carried the CORRECTED links was answerable without guessing.
+The mail prints `tako-spec-hash: 62ad0f3b284fa048`; today's deploy of
+the fixed policy produced the same hash; and a local check confirmed the
+hash is sensitive to a link URL (changing one character of one link
+moved it from `b7030dc9d6bd9f05` to `5f7ab539fa3afff5`). Identical hash
+therefore means identical links. The fix redeploy landed before that
+incident re-opened — `AlertPolicies.Update` deletes and re-creates, so
+the incident re-fired against the new policy.
+
+One honest limit, visible in the mail: Google's own
+`A PromQL query was observed at 1` is still there. The documentation is
+appended under "Policy documentation", it does not replace the generated
+summary. Only the SUBJECT is replaceable.
+
+### The first run of the cycle failed, and the alert was right
+
+```
+=== the cron is alive, so the alert MUST be quiet
+FIRING (absent)
+  1 series: route='' status='' job='tako-deploy' task='deploy'
+```
+
+The cron series was missing entirely. Not a metrics bug — the cron had
+**not run**:
+
+```
+status.code 7 (PERMISSION_DENIED)
+403 The IAM principal lacks {run.routes.invoke} permission
+```
+
+A fresh deploy's scheduler invoker grant had not propagated. So
+`CronMissed` reported "cron Cleanup has not run" about a cron that had
+not run. **The feature was correct and the gate script was wrong.**
+
+The script fired with `gcloud scheduler jobs run` and took its exit code
+as success. That command exits 0 when the trigger is ACCEPTED; the
+invocation that follows can 403, and the exit code never mentions it.
+Checking an exit code where a status was needed — the same substitution
+of shape for value that this walk was written to catch, one level up, in
+the walk itself.
+
+This is also the first time an alert here caught a failure it was not
+staged to catch. `CronMissed`'s own body claims it fires when "the
+schedule never fired, OR it fired and the service never answered". The
+second clause had never been exercised. It has now, by accident.
+
+`validate/alerts.md` §3 now requires `status.code` and a 200 in the
+service log before anything is asserted, with this run named as why.
+
+### The cycle, re-run against a landed cron
+
+```
+run SUCCEEDED on attempt 1 (status.code empty = OK)
+  2026-08-03T10:46:34Z  200      ← the run that landed
+  2026-08-03T10:34:59Z  403      ← the one that did not
+=== the cron is alive, so the alert MUST be quiet
+QUIET (data present)
+=== after 7 minutes of silence, the alert MUST be firing
+FIRING (absent)
+```
+
+Both halves, against the policy spec that ships.
+
+### Discovered work
+
+- Google's generated summary line cannot be suppressed. `documentation`
+  appends; only `subject` replaces. Nothing to do about it — recorded so
+  it is not rediscovered as a defect.

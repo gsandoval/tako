@@ -296,6 +296,82 @@ module path.
 
 ---
 
+## Stages 5–9 (closed; decomposed in `task-log.md`, not here)
+
+The plan stopped at Stage 4 while five stages ran out of the task log
+and the Stage 7 handoff — a gap logged as discovered work on 2026-08-01
+and closed here so the plan is again the place to look.
+
+| Stage | What it was | Slices | State |
+|---|---|---|---|
+| 5 | Operator surface | S1–S3 | closed, verdicts recorded |
+| 6 | Close the gaps | T1–T4 | closed, verdicts recorded |
+| 7 | The operator era | U1–U4 | closed, verdicts recorded |
+| 8 | The explicit service | V0–V6 | closed, verdicts recorded |
+| 9 | DX round | U3, V5, V6, P1, X2 | closed, verdicts recorded |
+
+Alerting (Y1, Y2) ran after Stage 9 without a stage of its own. Stage 10
+adopts it and closes it out.
+
+## Stage 10 — Close alerting, then ship (proposed 2026-08-03) — AWAITING APPROVAL
+
+*Standing rule applies: one feature, one gate. Every slice is DX
+proposal → approval → implement → agent-side scripted + live validation
+→ human verdict in `docs/validation-log.md`.*
+
+**Z1 — Y2 delivery, and the two rows.** No new surface: run the
+`validate/alerts.md` walk end to end against the CURRENT policy spec and
+record the verdicts Y1 and Y2 are both waiting on. Y1 has been sitting
+at *pass (agent-side)* since 2026-08-02; Y2 has no row at all.
+Gate Z1: the human signs both rows.
+
+**Z2 — `DeadLettered` observed firing.** The only preset whose
+transition has never been seen, and the one whose query was wrong for
+the whole of Y1 — the fix is proven by test and readback, never by an
+incident. Drive a poisoned message through `thumbs` until retries are
+exhausted, watch the policy go from quiet to firing, read the mail.
+Gate Z2: the transition, both directions, in a transcript.
+
+**Z3 — `tako.Latency` / `Instances` / `Saturation`.** The derived
+platform-metric constructors, approved in the Y2a proposal and never
+built. Today the same questions need a raw `tako.Platform` with a
+Google metric type spelled by hand. Gate Z3: one of each on gallery,
+live.
+
+**Z4 — `tako metrics <search>`.** The CLI that lists metric descriptors
+so a `Platform` metric type can be found. A project publishes upwards of
+8,000 descriptors, which is why the reference deliberately carries no
+list — and why, without this, `Platform` is only usable by someone who
+already knows the name. Gate Z4: find a metric neither of us knew,
+from the CLI alone.
+
+**Z5 — Housekeeping (no gate, one commit).** Nothing user-facing except
+one error text, which needs its wording approved like any other:
+Cloud Tasks' 7-day name-reuse block currently surfaces Google's raw
+message and should name the wait and suggest `--env`; `analyzer.go` and
+`edges.go` are not gofmt-clean; this plan's stage table is now current.
+
+**Z6 — Publish.** R3 completed the API review and the publish *prep*.
+The remaining act is the owner's: `git push origin main`, `git tag
+v0.1.0`, push the tag. Gate Z6: a fresh-project full cycle against the
+PUBLISHED module path, which is the one thing no local run can fake.
+
+### Deliberately NOT scheduled
+
+Designed and argued, waiting on a trigger rather than on time:
+
+- **Load balancer + Firebase Hosting** for domains — `docs/domain-options.md`
+  carries the four-way comparison, live pricing, and the trigger
+  conditions for each. Domain mappings ship today.
+- **Parked, logged, unscheduled:** multi-service dev routing, styled
+  error pages, the migrating `tako rename` (rename is a data migration;
+  detection shipped, the command did not), session cache, email
+  account-creation UI, VPC, per-command `--help`.
+- **Console-link rot.** Two link shapes were wrong in Y2 and were found
+  by hand. Detecting a future move would need network access and a
+  deployed project in CI; it stays a per-walk human check rather than a
+  test that pretends.
+
 ## Standing rules
 
 - **No gate skipping, no gate batching.** One feature, one gate. If the human
