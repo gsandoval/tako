@@ -110,7 +110,7 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		labels := append([]string{
 			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
 			fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
-			fmt.Sprintf("job=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
+			fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
 		}, routeMatcher(a)...)
 		q := fmt.Sprintf("histogram_quantile(%g, sum(rate(%s_bucket{%s})) by (le))",
 			a.Quantile, base, strings.Join(labels, ",")+"["+promDuration(every)+"]")
@@ -156,10 +156,28 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, extra ...string) string {
 	matchers := append([]string{
 		fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
-		fmt.Sprintf("job=%q", cfg.Name(serviceOf(g, a.SubjectVar))),
+		fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
 	}, extra...)
 	return selector(customMetricPrefix+"requests", resourceGenericTask, matchers...)
 }
+
+// metricJob is the generic_task `job` label for a service — the ONE
+// definition of it, because a query that names the label differently
+// from the writer matches nothing and every alert over it reads as
+// permanently absent. That is precisely what shipped: the app wrote
+// job="gallery", the query asked for job="x1-gallery", and CronMissed
+// fired forever on a cron that was running fine.
+//
+// The value is the LOGICAL service name, unprefixed, because it is not
+// a GCP resource name — nothing looks a series up by it, so there is no
+// collision to avoid — and the sibling `namespace` label already
+// separates environments as <app>-<env>. Prefixing here would only be a
+// second, redundant copy of the env free to disagree with the first.
+//
+// The writing side is pkg/backends/gcp.WhoAmI, which reads TAKO_SERVICE;
+// the deploy injects TAKO_SERVICE = svc.Name in desired.go. All three
+// must agree, and TestJobLabelMatchesWhatTheServiceWrites checks it.
+func metricJob(service string) string { return service }
 
 // routeMatcher narrows to ONE endpoint when the subject is a route.
 //

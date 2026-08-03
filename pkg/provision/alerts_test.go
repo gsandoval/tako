@@ -1,6 +1,9 @@
 package provision
 
 import (
+	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -79,15 +82,80 @@ func TestSubjectNamesCarryTheEnvPrefix(t *testing.T) {
 	// The service is the generic_task `job` label, because these are
 	// tako's own metrics now — Cloud Run's route label is never
 	// populated, so its request_count cannot answer per-endpoint
-	// questions at all.
+	// questions at all. That label is NOT env-prefixed; see
+	// TestJobLabelMatchesWhatTheServiceWrites for why, and for the check
+	// that keeps the two sides together.
 	svc, _ := query(t, &analyzer.AlertCondition{
 		Op: "above", Reading: "error_rate", SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", Threshold: 0.05})
-	if !strings.Contains(svc, `job="x1-gallery-makethumb"`) {
-		t.Errorf("service not env-prefixed: %q", svc)
-	}
 	if strings.Contains(svc, "run_googleapis_com:request_count") {
 		t.Errorf("still reading the platform metric, whose route label is always empty: %q", svc)
 	}
+}
+
+// The `job` matcher is the one label a query and the app it watches must
+// spell identically, and nothing forced them to. They drifted three
+// ways: the app wrote the logical name, the deploy's seed wrote the app
+// name, the query asked for the env-prefixed name. Nothing matched, so
+// absent_over_time was permanently true and CronMissed fired forever on
+// a cron that ran on time — a false positive that survived a live gate,
+// because a firing alert and a correct alert look identical in an inbox.
+//
+// The previous test asserted the query was env-prefixed. It passed. It
+// was checking the shape of the label instead of asking whether anything
+// writes that value.
+//
+// This one reads BOTH sides from the same graph: the value the deploy
+// injects as TAKO_SERVICE (which pkg/backends/gcp.WhoAmI copies into the
+// job label) and the value the alert query matches on.
+func TestJobLabelMatchesWhatTheServiceWrites(t *testing.T) {
+	cfg := Config{Project: "p", Region: "us-central1", App: "gallery", Env: "x1"}
+	g := alertGraph()
+	images := map[string]string{}
+	for i, s := range g.Services {
+		images[s.Name] = "img"
+		g.Services[i].Profile = "default" // Desired refuses an unset profile
+	}
+	desired, err := Desired(g, cfg, images)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What the RUNNING service will write, straight off the deploy plan.
+	written := map[string]string{}
+	for _, o := range desired {
+		if o.Kind != KindRunService {
+			continue
+		}
+		env, _ := o.Spec["env"].(map[string]any)
+		written[fmt.Sprint(env["TAKO_SERVICE"])] = o.Name
+	}
+	if len(written) == 0 {
+		t.Fatal("no run services in the plan — this test is checking nothing")
+	}
+
+	// What the alert QUERY will look for, for a handler in each service.
+	for _, h := range g.Handlers {
+		q, _ := query(t, &analyzer.AlertCondition{
+			Op: "above", Reading: "error_rate", SubjectKind: "handler",
+			SubjectVar: h.Var, Threshold: 0.05})
+		m := regexp.MustCompile(`job="([^"]*)"`).FindStringSubmatch(q)
+		if m == nil {
+			t.Fatalf("%s: query carries no job matcher: %q", h.Var, q)
+		}
+		if _, ok := written[m[1]]; !ok {
+			t.Errorf("%s: the alert matches job=%q, but no service writes that — "+
+				"services write %v. The query matches nothing and the alert reads as permanently absent.",
+				h.Var, m[1], keysOf(written))
+		}
+	}
+}
+
+func keysOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Per-route alerting is the point of the route label: an endpoint

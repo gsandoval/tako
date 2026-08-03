@@ -121,6 +121,11 @@ func BootGCP() error {
 		// recordings the final in-flight requests made.
 		hooks.OnShutdown(metrics.Close)
 	}
+	// The per-endpoint metrics the middleware records go to the same sink
+	// a handler's own tako.Count would. Wiring it here rather than inside
+	// http.go is what makes "every service exports requests and
+	// request_ms" true of deployed services and not only of tests.
+	SetRequestMetrics(hooks.Metrics)
 	// Leases are objects in the framework bucket — the real §4.4
 	// mechanism, shared with the deploy lease.
 	hooks.Lease = gcpb.NewLeaseStore(c)
@@ -187,6 +192,7 @@ func BootLocal(dir string) error {
 	}
 	booted = app
 	hooks.CronSkipped = narrateCronSkip
+	SetRequestMetrics(hooks.Metrics)
 	return nil
 }
 

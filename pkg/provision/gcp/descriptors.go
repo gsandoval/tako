@@ -32,6 +32,12 @@ type MetricDescriptors struct {
 	C *Client
 }
 
+// seedJob is the generic_task `job` value the deploy's seed points carry.
+// Services write their own logical name there (pkg/provision.metricJob);
+// this one deliberately names no service, so no query scoped to a
+// service can ever match a seed point.
+const seedJob = "tako-deploy"
+
 type metricDescriptor struct {
 	Type        string            `json:"type"`
 	MetricKind  string            `json:"metricKind"`
@@ -100,6 +106,13 @@ func Declared(g *analyzer.AppGraph) []metricDescriptor {
 // a reading. It is written under task_id "deploy", which keeps it out of
 // any instance's series — instances write their own, and aggregation
 // across task_id is what every query already does.
+//
+// It is also written under job "tako-deploy" and NOT under the app or
+// any service name (seedJob). The seed is not a service, and a job label
+// that collides with a real one makes the deploy look like a writer:
+// an Absent condition scoped to that service would see the seed and stay
+// quiet for one window after every deploy — an alert suppressed at
+// exactly the moment a bad deploy would need it.
 func (m *MetricDescriptors) Seed(ctx context.Context, g *analyzer.AppGraph, app, env, region string) error {
 	// A CUMULATIVE point spans an interval, and the API requires
 	// start < end strictly — sending one instant for both is refused
@@ -127,7 +140,7 @@ func (m *MetricDescriptors) Seed(ctx context.Context, g *analyzer.AppGraph, app,
 			"metric": map[string]any{"type": d.Type, "labels": labels},
 			"resource": map[string]any{"type": "generic_task", "labels": map[string]string{
 				"project_id": m.C.Project, "location": region,
-				"namespace": app + "-" + env, "job": app, "task_id": "deploy",
+				"namespace": app + "-" + env, "job": seedJob, "task_id": "deploy",
 			}},
 			"metricKind": "CUMULATIVE", "valueType": d.ValueType,
 			"points": []map[string]any{{
