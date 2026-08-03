@@ -12209,3 +12209,45 @@ mutation-checked by breaking the code and confirming the test failed.
   question, which had been unresolved since the proposal.
 
 Destroy removed policies before the channel and left the project clean.
+
+## Y1e — CORRECTION: the gate was a FAIL, not a pass (2026-08-02)
+
+The entry above ("nine defects, and a delivered alert") presents the
+live gate as a pass on the strength of an email arriving. **That
+conclusion is wrong and the entry stands uncorrected above only because
+this log records what was believed at the time.**
+
+The delayed half of the gate script reported after that write-up was
+committed:
+
+```
+right after a run (cron alive → must be QUIET):  ABSENT (would fire)
+after 7 minutes of silence:                      ABSENT (would fire)
+```
+
+`CronMissed` never went quiet. It was a **permanent false positive** —
+precisely the failure predicted when the empty `route` label was found,
+and shipped anyway. The mail proved DELIVERY, not correctness: a firing
+alert and a correct alert look identical from an inbox, and the only
+thing separating them is the assertion I did not wait for.
+
+Two further defects, both mine:
+
+- **10. `SetRequestMetrics` is never called.** The sink exists,
+  `recordRequest` no-ops on nil, and no boot path wires it — so every
+  per-endpoint metric vanishes. The live project held exactly one
+  series, the deploy seed. The five tests pass because they inject the
+  sink themselves: a test that supplies a dependency cannot notice a
+  missing injection.
+- **11. The `job` label disagrees three ways** — app writes
+  `TAKO_SERVICE` (logical), the seed writes the app name, queries filter
+  the env-prefixed name. Nothing ever matched.
+
+What the process should have caught: the gate script contained the
+right assertion (quiet-when-healthy) and I wrote the verdict before its
+result came back. The lesson is not "test more" — it is that a
+conclusion drawn from the half of the evidence that had arrived is a
+guess wearing a result's clothes.
+
+**Y1e is a FAIL. No validation-log row was written.** Resume brief with
+exact next steps: `docs/y1-resume.md`.
