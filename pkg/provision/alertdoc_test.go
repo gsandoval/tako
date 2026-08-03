@@ -29,11 +29,11 @@ func TestEveryConditionKindSaysSomethingActionable(t *testing.T) {
 			[]string{"cron `Cleanup`", "gcloud scheduler jobs run x1-gallery-cron-cleanup", "CronFailed"}},
 		{"cron_failed", &analyzer.AlertCondition{
 			Op: "above", Reading: "cron_failed", SubjectKind: "cron", SubjectVar: "gallery.Cleanup", Threshold: 3},
-			[]string{"Cron `Cleanup` ran and failed", "3 failures", "cron=Cleanup"}},
+			[]string{"Cron `Cleanup` ran and failed at least", "3 failures", "cron=Cleanup"}},
 		{"dead_letters", &analyzer.AlertCondition{
 			Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
 			SubjectVar: "gallery.thumbs", Threshold: 1},
-			[]string{"exhausted their retries", "tako dlq thumbnails", "--ack"}},
+			[]string{"exhausted their retries", "at least 1 message", "tako dlq gallery-makethumb", "--ack"}},
 		{"backlog_age", &analyzer.AlertCondition{
 			Op: "above", Reading: "backlog_age", SubjectKind: "queue", SubjectName: "thumbnails",
 			SubjectVar: "gallery.thumbs", Threshold: 600},
@@ -237,5 +237,46 @@ func TestHumanDurationHasNoTrimmingSeam(t *testing.T) {
 		if got := humanDuration(d); got != want {
 			t.Errorf("humanDuration(%s) = %q, want %q", d, got, want)
 		}
+	}
+}
+
+// The dlq command in a dead-letter body has to name something
+// `tako dlq` accepts. Dead letters are held PER CONSUMER — one dead
+// topic per async service, none per queue — so the queue name, which is
+// what a reader of the alert would reach for, is exactly the wrong
+// argument. Pasted, it answered:
+//
+//	tako: no async service named "thumbnails" — async services: …
+//
+// The cron body's command was cross-checked against the deploy plan and
+// was right; this one was not checked and was wrong. Same gap, one
+// command over.
+func TestDlqCommandNamesAnAsyncService(t *testing.T) {
+	g := alertGraph()
+	async := map[string]bool{}
+	for _, h := range g.Handlers {
+		if h.Kind == "worker" || h.Kind == "subscribe" {
+			async[h.Service] = true
+		}
+	}
+	if len(async) == 0 {
+		t.Fatal("no async services in the fixture — this test is checking nothing")
+	}
+	d := doc(t, &analyzer.AlertCondition{
+		Op: "atleast", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
+		SubjectVar: "gallery.thumbs", Threshold: 1}, "Stuck")
+	var named string
+	for _, line := range strings.Split(d.Content, "\n") {
+		if strings.Contains(line, "tako dlq") {
+			named = strings.Fields(line)[2]
+			break
+		}
+	}
+	if named == "" {
+		t.Fatal("no dlq command in the body")
+	}
+	if !async[named] {
+		t.Errorf("body says `tako dlq %s`, but the async services are %v — the command errors when pasted",
+			named, keysOfBool(async))
 	}
 }

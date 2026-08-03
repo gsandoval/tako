@@ -12547,3 +12547,171 @@ Both halves, against the policy spec that ships.
 - Google's generated summary line cannot be suppressed. `documentation`
   appends; only `subject` replaces. Nothing to do about it — recorded so
   it is not rediscovered as a defect.
+
+## Z2 — DX proposal: `DeadLettered` is blind to `tako.Permanent` (2026-08-03) — AWAITING APPROVAL
+
+Found by the Z2 walk. Not a typo — a structural gap between what the
+preset measures and what the word means.
+
+### What happens now
+
+A handler can reach the dead-letter topic two ways:
+
+1. **Retry exhaustion.** The handler nacks five times, Pub/Sub gives up
+   and forwards the message to the dead topic. `dead_letter_message_count`
+   on the consumer's subscription increments.
+2. **`tako.Permanent`.** Pub/Sub cannot express "nack without retry", so
+   `pkg/runtime/push.go` publishes to the dead topic ITSELF and answers
+   204. Pub/Sub sees a **successful delivery**. The metric never moves.
+
+`DeadLettered` reads that metric, so **it cannot see path 2 at all** —
+and path 2 is the common one: a malformed payload, a corrupt image, a
+schema that no longer parses. The Z2 walk poisoned `thumbs` with an
+undecodable image, watched the dead letter arrive (`tako dlq` shows
+`decode image: image: unknown format`), and the alert stayed quiet for
+twelve minutes because nothing was wrong with the metric — the metric
+was right, and measuring the wrong thing.
+
+`tako dlq` shows BOTH kinds. So the CLI and the alert disagree about
+what "dead-lettered" means, and the alert is the one that is wrong.
+
+### Proposed
+
+Read the **dead subscription's backlog** instead of the source
+subscription's forward count:
+
+```
+max(pubsub_googleapis_com:subscription_num_undelivered_messages{
+  monitored_resource="pubsub_subscription",
+  subscription_id="<service>-dead"}) >= n
+```
+
+That is the same queue `tako dlq` reads, so the alert and the CLI agree
+by construction, and both paths land in it.
+
+### What changes for the user
+
+The doc comment, and the meaning:
+
+```go
+// BEFORE: fires when at least n messages have given up — exhausted
+//         their retries and landed on the dead-letter topic — within
+//         the window (default: 5 minutes).
+
+// AFTER:  fires when at least n messages are WAITING in the dead-letter
+//         queue — however they got there: retries exhausted, or a
+//         handler returning tako.Permanent.
+```
+
+Three consequences, stated plainly because they are the reason this
+needs approval and not just a commit:
+
+- **It becomes a level, not a rate.** A dead letter that nobody drains
+  keeps the alert firing until it is drained. That is arguably the point
+  — "there is unhandled poison in the queue" is a condition, not an
+  event — but it is a real change: today's version goes quiet on its own
+  after the window, the proposed one does not until you run
+  `tako dlq … --ack` or `--replay`.
+- **`Window.Every` stops meaning anything** for this preset, because a
+  gauge has no counting window. `Window.For` still works and becomes the
+  useful knob: "at least n waiting, sustained for 10 minutes" ignores a
+  message that is about to be replayed.
+- **`Backlogged` and `DeadLettered` become the same SHAPE** — both
+  gauges on a subscription, one on age and one on depth. That reads as a
+  simplification rather than a coincidence.
+
+### Alternative considered and rejected
+
+Count publishes to the dead TOPIC (`send_message_operation_count`).
+It catches both paths and stays a rate, so nothing above changes. But it
+counts *arrivals* and cannot see a backlog that is already there: an
+alert that goes quiet while a hundred dead letters sit unread is the
+failure mode this preset exists to prevent.
+
+### Not in this proposal
+
+`Backlogged` is unaffected — it already reads a gauge on the source
+subscription, and oldest-unacked-age is unrelated to how a message dies.
+
+## Z2 — `DeadLettered` observed firing, and the off-by-one that would have hidden it (2026-08-03)
+
+The preset whose transition had never been seen, and whose query was
+wrong for the whole of Y1.
+
+### Defect 16, found by reading the doc against the operator
+
+Three presets document **"at least n"** and compiled to **`> n`**:
+`DeadLettered`, `CronFailed`, `JobFailed`. So
+`DeadLettered(thumbs, 1)` — the way anyone says "tell me when anything
+gives up" — needed TWO dead letters.
+
+The error is in the quiet direction, which is the direction nobody
+notices: the alert simply does not arrive, and a queue that is not
+alerting looks like a queue that is fine.
+
+Fixed with an `atleast` op compiling to `>=`. The thresholds that
+document "exceeds" (`Erroring`, `SlowerThan`, `Backlogged`) keep strict
+`>`. Two tests: one pins the operator per preset, one reads the SDK's
+own doc comment and fails if a preset says "at least" while compiling
+with anything but `atleast`.
+
+**The fix was load-bearing for this very walk.** The alert fired at
+`value=1`. Under `> 1` it would have stayed silent, and the walk would
+have gone looking for a metrics bug that was not there.
+
+### Defect 17: the command in the mail did not work
+
+The `DeadLettered` body printed:
+
+```
+tako dlq thumbnails --project … --env x1
+```
+
+Pasted, that answers:
+
+```
+tako: no async service named "thumbnails" — async services: gallery-onuploaded, gallery-makethumb, …
+```
+
+Dead letters are held **per consumer** — one dead topic per async
+service, none per queue — so the queue name, which is exactly what a
+reader of the alert reaches for, is the wrong argument. The cron body's
+command was cross-checked against the deploy plan and was right; this
+one was never checked. Same gap, one command over. Fixed, and
+`TestDlqCommandNamesAnAsyncService` now checks it against the graph's
+async services.
+
+### The transition, live
+
+```
+=== the alert must be QUIET before the poison lands
+quiet (no series)
+  t+5m  raw=FIRING  value=0      ← the metric series appears
+  t+6m  raw=FIRING  value=1      ← the forward is counted
+=== the alert is FIRING at t+6m: FIRING  value=1
+```
+
+Produced by uploading a `text/plain` payload, which fails transiently
+five times until Pub/Sub gives up and forwards. Confirmed in the DLQ
+itself, not inferred:
+
+```
+$ tako dlq gallery-makethumb --project tako-test-01 --env x1
+  20878337811428352  2026-08-03 07:58:53  decode image: image: unknown format
+    {"photoID":"srwl4u5rdnmdn5ta"}
+```
+
+**Z2's goal is met: `DeadLettered` goes from quiet to firing on a real
+dead letter.** With one large caveat, which is the next entry up as a
+DX proposal awaiting approval: it fires for retry exhaustion and is
+structurally blind to `tako.Permanent`, which is the commoner path. The
+first poison in this walk — an undecodable image — took that path, and
+the alert stayed quiet for twelve minutes while a dead letter sat in the
+queue. The metric was not broken; it was measuring the wrong thing.
+
+### Discovered work
+
+- Pub/Sub dead-letter metrics took ~5 minutes to surface, and the series
+  does not exist at all until the first forward. Any walk that asserts
+  "quiet" on this preset must distinguish *no series* from *series at
+  zero*; the gate script prints both.

@@ -129,6 +129,13 @@ func comparison(query, op string, threshold float64) string {
 	switch op {
 	case "below":
 		return fmt.Sprintf("%s < %g", query, threshold)
+	case "atleast":
+		// The counting presets say "at least n" — DeadLettered(thumbs, 1)
+		// is meant to fire on the FIRST dead letter. Compiled as "> 1" it
+		// needed two, so the alert a user asked for by its documented
+		// meaning was off by one in the quiet direction: it under-reports,
+		// which is the direction nobody notices.
+		return fmt.Sprintf("%s >= %g", query, threshold)
 	default:
 		return fmt.Sprintf("%s > %g", query, threshold)
 	}

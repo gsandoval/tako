@@ -175,7 +175,7 @@
       "package": "gallery",
       "condition": "DeadLettered",
       "alert": {
-        "op": "above",
+        "op": "atleast",
         "subject_kind": "queue",
         "subject_name": "thumbnails",
         "subject_var": "gallery.thumbs",

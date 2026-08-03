@@ -397,3 +397,85 @@ func TestSubscriptionMatchersNameSubscriptionsTheDeployCreates(t *testing.T) {
 		}
 	}
 }
+
+// "At least n" has to compile to >= n. Three presets document that
+// wording and compiled to "> n", so DeadLettered(thumbs, 1) — the way
+// you say "tell me when anything gives up" — needed TWO dead letters.
+//
+// The error is in the quiet direction, which is the direction nobody
+// notices: the alert simply does not arrive, and a queue that is not
+// alerting looks like a queue that is fine. Found by reading the preset
+// doc against the operator before the Z2 walk, not by the walk.
+func TestAtLeastPresetsFireOnTheNthEvent(t *testing.T) {
+	cases := []struct {
+		reading string
+		cond    *analyzer.AlertCondition
+	}{
+		{"dead_letters", &analyzer.AlertCondition{Op: "atleast", Reading: "dead_letters",
+			SubjectKind: "queue", SubjectName: "thumbnails", SubjectVar: "gallery.thumbs", Threshold: 1}},
+		{"cron_failed", &analyzer.AlertCondition{Op: "atleast", Reading: "cron_failed",
+			SubjectKind: "cron", SubjectVar: "gallery.Cleanup", Threshold: 3}},
+		{"job_failed", &analyzer.AlertCondition{Op: "atleast", Reading: "job_failed",
+			SubjectKind: "job", SubjectName: "Import", Threshold: 2}},
+	}
+	for _, tc := range cases {
+		q, _ := query(t, tc.cond)
+		want := fmt.Sprintf(">= %g", tc.cond.Threshold)
+		if !strings.Contains(q, want) {
+			t.Errorf("%s compiles to %q, want %q — \"at least %g\" must include %g itself",
+				tc.reading, q, want, tc.cond.Threshold, tc.cond.Threshold)
+		}
+	}
+	// The thresholds that mean "exceeds" keep strict >.
+	for _, reading := range []string{"error_rate", "latency"} {
+		q, _ := query(t, &analyzer.AlertCondition{Op: "above", Reading: reading,
+			SubjectKind: "route", SubjectName: "GET /api/photos", SubjectVar: "gallery.List",
+			Threshold: 0.05, Quantile: 0.99, ForSeconds: 300})
+		if strings.Contains(q, ">=") {
+			t.Errorf("%s uses >=, but it documents \"exceeds\": %q", reading, q)
+		}
+	}
+}
+
+// The analyzer's preset table and the SDK's own wording must agree about
+// which presets count "at least". Reading one and writing the other is
+// how they came apart.
+func TestAtLeastWordingMatchesTheOperator(t *testing.T) {
+	src, err := os.ReadFile("../../alert.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	table, err := os.ReadFile("../analyzer/alerts.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := regexp.MustCompile(`"(\w+)":\s*\{reading: "\w+"[^}]*op: "(\w+)"`)
+	fn := regexp.MustCompile(`(?m)^func (\w+)[\[(]`)
+	docs := map[string]string{}
+	// ONLY the doc comment, which is the wording under test. Running the
+	// block to the next func's start swallows that func's doc comment and
+	// reports its neighbour's wording — the first version did, and blamed
+	// Backlogged for CronFailed's "at least".
+	for _, loc := range fn.FindAllStringSubmatchIndex(text, -1) {
+		head := text[:loc[0]]
+		if j := strings.LastIndex(head, "\n\n"); j >= 0 {
+			head = head[j:]
+		}
+		docs[text[loc[2]:loc[3]]] = head
+	}
+	for _, m := range entry.FindAllStringSubmatch(string(table), -1) {
+		ctor, op := m[1], m[2]
+		doc, ok := docs[ctor]
+		if !ok {
+			continue
+		}
+		saysAtLeast := strings.Contains(doc, "at least")
+		if saysAtLeast && op != "atleast" {
+			t.Errorf("tako.%s documents \"at least\" but compiles with op %q — it will miss the nth event", ctor, op)
+		}
+		if !saysAtLeast && op == "atleast" {
+			t.Errorf("tako.%s compiles with op \"atleast\" but its doc does not say so", ctor)
+		}
+	}
+}

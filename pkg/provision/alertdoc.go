@@ -80,17 +80,22 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		d.Links = []docLink{schedulerLink(cfg), serviceLogsLink(cfg, service)}
 
 	case "cron_failed":
-		fmt.Fprintf(&b, "**Cron `%s` ran and failed more than %s in the last %s.**\n\n",
+		fmt.Fprintf(&b, "**Cron `%s` ran and failed at least %s in the last %s.**\n\n",
 			subject, times(a.Threshold), humanDuration(every))
 		b.WriteString("The schedule is firing — the handler is answering 5xx. Its own log lines carry `cron=" + subject + "`.\n")
 		d.Links = []docLink{serviceLogsLink(cfg, service), schedulerLink(cfg)}
 
 	case "dead_letters":
-		fmt.Fprintf(&b, "**Queue `%s` dead-lettered more than %s in the last %s.**\n\n",
+		fmt.Fprintf(&b, "**Queue `%s` dead-lettered at least %s in the last %s.**\n\n",
 			subject, messages(a.Threshold), humanDuration(every))
 		b.WriteString("Those messages exhausted their retries and will not be delivered again — they are on the dead-letter topic, not lost.\n\n")
-		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s          # peek\n", subject, cfg.Project, cfg.Env)
-		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s --ack    # drain\n", subject, cfg.Project, cfg.Env)
+		// `tako dlq` takes the async SERVICE, not the queue: dead letters
+		// are held per consumer, so there is one dead topic per service
+		// and none per queue. The first version printed the queue name
+		// and the pasted command answered
+		// `no async service named "thumbnails"`.
+		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s          # peek\n", service, cfg.Project, cfg.Env)
+		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s --ack    # drain\n", service, cfg.Project, cfg.Env)
 		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
 
 	case "backlog_age":
@@ -101,7 +106,7 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
 
 	case "job_failed":
-		fmt.Fprintf(&b, "**Job `%s` had more than %s finish unsuccessfully in the last %s.**\n\n",
+		fmt.Fprintf(&b, "**Job `%s` had at least %s finish unsuccessfully in the last %s.**\n\n",
 			subject, executions(a.Threshold), humanDuration(every))
 		b.WriteString("A failed execution is a task that returned an error or exceeded its timeout.\n")
 		d.Links = []docLink{jobLink(cfg, subject)}

@@ -232,11 +232,11 @@ var presetReadings = map[string]struct {
 	valueArg int
 	op       string
 }{
-	"DeadLettered":  {reading: "dead_letters", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
+	"DeadLettered":  {reading: "dead_letters", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
 	"Backlogged":    {reading: "backlog_age", unit: time.Second, hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
-	"CronFailed":    {reading: "cron_failed", subject: "cron", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
+	"CronFailed":    {reading: "cron_failed", subject: "cron", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
 	"CronMissed":    {reading: "cron_missed", subject: "cron", quantArg: -1, op: "absent"},
-	"JobFailed":     {reading: "job_failed", subject: "job", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
+	"JobFailed":     {reading: "job_failed", subject: "job", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
 	"Erroring":      {reading: "error_rate", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
 	"SlowerThan":    {reading: "latency", unit: time.Millisecond, hasValue: true, valueArg: 1, quantArg: 2, op: "above"},
 	"AtCapacity":    {reading: "at_capacity", quantArg: -1, op: "above"},

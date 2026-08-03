@@ -289,13 +289,17 @@ command from the body and run it** — it must run the job.
 
 ## Known gaps in this walk
 
-- **`Stuck` (DeadLettered) is created but never fired.** Closing it
-  needs a poisoned message driven through `thumbs` until retries are
-  exhausted. Its transition is unproven; say so rather than implying the
-  preset is covered because the policy exists. (Until the subscription
-  name was fixed it could not have fired at all — "never observed
-  firing" and "cannot fire" look identical from here, which is the whole
-  reason §7b exists.)
+- **`DeadLettered` sees retry exhaustion only.** Proven firing in Z2
+  (quiet → `value=1`), driven by a `text/plain` upload that fails five
+  times until Pub/Sub forwards it. It is **blind to `tako.Permanent`**:
+  the runtime publishes those to the dead topic itself and ACKs, so
+  Pub/Sub records a successful delivery and the metric never moves. A
+  walk that poisons with an undecodable image will watch a dead letter
+  arrive and the alert stay quiet — correctly, for now. Fix proposed and
+  awaiting approval (`task-log.md`, Z2 DX proposal).
+- **This preset's metric has no series until the first forward.**
+  Distinguish *no series* from *series at zero*; only the second means
+  "measured, and nothing is wrong". Allow ~5 minutes.
 - **Nothing detects Google moving a console page again.** The link
   shapes are verified by hand, here, once per walk.
 - **"Fires exactly once" is not asserted.** Cloud Monitoring has no
