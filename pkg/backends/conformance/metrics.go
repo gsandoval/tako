@@ -28,14 +28,14 @@ func RunMetrics(t *testing.T, open func(t *testing.T) backends.Metrics) {
 
 	t.Run("recording accepts what handlers actually pass", func(t *testing.T) {
 		m := open(t)
-		m.Add(ctx, "uploads", 1)
-		m.Add(ctx, "uploads", 0)      // a no-op increment is not an error
-		m.Add(ctx, "corrections", -1) // counters may be corrected downward
-		m.Observe(ctx, "thumb_ms", 0)
-		m.Observe(ctx, "thumb_ms", 0.5) // below any sane bucket floor
-		m.Observe(ctx, "thumb_ms", 1e9) // above any sane bucket ceiling
-		m.Observe(ctx, "ratio", -1)     // negative samples are legal floats
-		m.Add(ctx, strings.Repeat("n", 200), 1)
+		m.Add(ctx, "uploads", nil, 1)
+		m.Add(ctx, "uploads", nil, 0)      // a no-op increment is not an error
+		m.Add(ctx, "corrections", nil, -1) // counters may be corrected downward
+		m.Observe(ctx, "thumb_ms", nil, 0)
+		m.Observe(ctx, "thumb_ms", nil, 0.5) // below any sane bucket floor
+		m.Observe(ctx, "thumb_ms", nil, 1e9) // above any sane bucket ceiling
+		m.Observe(ctx, "ratio", nil, -1)     // negative samples are legal floats
+		m.Add(ctx, strings.Repeat("n", 200), nil, 1)
 	})
 
 	// Fire-and-forget means the ctx is not a gate. A handler that records
@@ -48,8 +48,8 @@ func RunMetrics(t *testing.T, open func(t *testing.T) backends.Metrics) {
 		done := make(chan struct{})
 		go func() {
 			defer close(done)
-			m.Add(dead, "failures", 1)
-			m.Observe(dead, "failed_ms", 12)
+			m.Add(dead, "failures", nil, 1)
+			m.Observe(dead, "failed_ms", nil, 12)
 		}()
 		select {
 		case <-done:
@@ -70,8 +70,8 @@ func RunMetrics(t *testing.T, open func(t *testing.T) backends.Metrics) {
 			go func() {
 				defer wg.Done()
 				for j := 0; j < 500; j++ {
-					m.Add(ctx, "uploads", 1)
-					m.Observe(ctx, "thumb_ms", float64(j))
+					m.Add(ctx, "uploads", nil, 1)
+					m.Observe(ctx, "thumb_ms", nil, float64(j))
 				}
 			}()
 		}

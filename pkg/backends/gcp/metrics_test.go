@@ -61,8 +61,8 @@ func TestCounterWritesCumulativeTotal(t *testing.T) {
 	m := testStore(t, f)
 	ctx := context.Background()
 
-	m.Add(ctx, "uploads", 2)
-	m.Add(ctx, "uploads", 3)
+	m.Add(ctx, "uploads", nil, 2)
+	m.Add(ctx, "uploads", nil, 3)
 	if err := m.flush(ctx, false); err != nil {
 		t.Fatal(err)
 	}
@@ -109,7 +109,7 @@ func TestCounterWritesCumulativeTotal(t *testing.T) {
 
 	// The second flush carries the TOTAL, not what accrued since. That is
 	// what makes a dropped flush recoverable.
-	m.Add(ctx, "uploads", 1)
+	m.Add(ctx, "uploads", nil, 1)
 	m.lastFlush = time.Time{}
 	if err := m.flush(ctx, false); err != nil {
 		t.Fatal(err)
@@ -128,7 +128,7 @@ func TestHistogramWritesDistribution(t *testing.T) {
 	// gallery's thumb_ms lives here: small images, single-digit to a few
 	// hundred milliseconds.
 	for _, v := range []float64{5, 9, 120, 300} {
-		m.Observe(ctx, "thumb_ms", v)
+		m.Observe(ctx, "thumb_ms", nil, v)
 	}
 	if err := m.flush(ctx, false); err != nil {
 		t.Fatal(err)
@@ -190,7 +190,7 @@ func TestIdleServiceWritesNothing(t *testing.T) {
 	if err := m.flush(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
-	m.Add(context.Background(), "uploads", 1)
+	m.Add(context.Background(), "uploads", nil, 1)
 	if err := m.flush(context.Background(), false); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +210,7 @@ func TestClientErrorIsNotRetried(t *testing.T) {
 	f := newFakeMonitoring(t)
 	f.status = http.StatusBadRequest
 	m := testStore(t, f)
-	m.Add(context.Background(), "uploads", 1)
+	m.Add(context.Background(), "uploads", nil, 1)
 	if err := m.flush(context.Background(), false); err == nil {
 		t.Fatal("a 400 must surface as an error for the caller to log")
 	}
@@ -229,15 +229,15 @@ func TestRecordingDoesNotWaitOnTheAPI(t *testing.T) {
 	m := NewMetricsStore(&Client{HC: slow.Client(), Opts: Options{Project: "p"}}, Identity{Job: "x"})
 	m.base = slow.URL
 
-	m.Add(context.Background(), "uploads", 1)
+	m.Add(context.Background(), "uploads", nil, 1)
 	go func() { _ = m.flush(context.Background(), false) }()
 
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for i := 0; i < 1000; i++ {
-			m.Add(context.Background(), "uploads", 1)
-			m.Observe(context.Background(), "thumb_ms", 12)
+			m.Add(context.Background(), "uploads", nil, 1)
+			m.Observe(context.Background(), "thumb_ms", nil, 12)
 		}
 	}()
 	select {

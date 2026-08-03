@@ -1,4 +1,6 @@
+const LatencyMetric untyped string
 const ReplayAttr untyped string
+const RequestsMetric untyped string
 func BlobHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.Blob], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
 func Boot()
 func BootGCP() error
@@ -40,6 +42,7 @@ func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
 func Serve(h net/http.Handler)
 func SessionHandler() net/http.Handler
 func SetQueueRate(queue string, perSec int)
+func SetRequestMetrics(m github.com/gsandoval/tako/pkg/backends.Metrics)
 func SignInPage(providers ...string) net/http.Handler
 func SignOutHandler() net/http.Handler
 func SignedURLHandler() net/http.Handler

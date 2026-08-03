@@ -21,7 +21,7 @@ type CounterHandle struct {
 // Add increments the counter by delta. Fire-and-forget: recording never
 // fails and never blocks the handler.
 func (c *CounterHandle) Add(ctx Ctx, delta int64) {
-	metricsBackend(ctx).Add(ctx, c.name, delta)
+	metricsBackend(ctx).Add(ctx, c.name, nil, delta)
 }
 
 // Histogram declares a distribution metric. The name must be a string
@@ -37,7 +37,7 @@ type HistogramHandle struct {
 
 // Observe records one sample. Fire-and-forget, like Counter.Add.
 func (h *HistogramHandle) Observe(ctx Ctx, value float64) {
-	metricsBackend(ctx).Observe(ctx, h.name, value)
+	metricsBackend(ctx).Observe(ctx, h.name, nil, value)
 }
 
 // metricsBackend returns the wired metrics sink (see queueBackend).

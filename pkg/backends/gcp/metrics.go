@@ -6,7 +6,9 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -52,9 +54,9 @@ type MetricsStore struct {
 	start time.Time
 
 	mu       sync.Mutex
-	counters map[string]int64
-	dists    map[string]*distribution
-	dirty    map[string]bool
+	counters map[seriesKey]int64
+	dists    map[seriesKey]*distribution
+	dirty    map[seriesKey]bool
 
 	// flushMu serializes flushes so the ticker and the shutdown Close
 	// cannot interleave. They genuinely can overlap: Close stops the
@@ -116,33 +118,35 @@ func NewMetricsStore(c *Client, who Identity) *MetricsStore {
 		who:      who,
 		base:     c.url(monitoringHost, ""),
 		start:    time.Now(),
-		counters: map[string]int64{},
-		dists:    map[string]*distribution{},
-		dirty:    map[string]bool{},
+		counters: map[seriesKey]int64{},
+		dists:    map[seriesKey]*distribution{},
+		dirty:    map[seriesKey]bool{},
 		stop:     make(chan struct{}),
 	}
 }
 
 // Add increments a counter. Fire-and-forget, per the contract: it takes
 // a lock and returns, and can neither fail nor block on I/O.
-func (m *MetricsStore) Add(ctx context.Context, name string, delta int64) {
+func (m *MetricsStore) Add(ctx context.Context, name string, labels map[string]string, delta int64) {
+	k := seriesKey{kind: "c", name: name, labels: encodeLabels(labels)}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.counters[name] += delta
-	m.dirty["c/"+name] = true
+	m.counters[k] += delta
+	m.dirty[k] = true
 }
 
 // Observe records one sample into the named distribution.
-func (m *MetricsStore) Observe(ctx context.Context, name string, value float64) {
+func (m *MetricsStore) Observe(ctx context.Context, name string, labels map[string]string, value float64) {
+	k := seriesKey{kind: "h", name: name, labels: encodeLabels(labels)}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d := m.dists[name]
+	d := m.dists[k]
 	if d == nil {
 		d = &distribution{buckets: make([]int64, histBuckets+2)}
-		m.dists[name] = d
+		m.dists[k] = d
 	}
 	d.record(value)
-	m.dirty["h/"+name] = true
+	m.dirty[k] = true
 }
 
 // Start begins flushing every interval until Close. The ticker is the
@@ -247,30 +251,30 @@ func (m *MetricsStore) drain() []map[string]any {
 	}
 	now := time.Now()
 	var out []map[string]any
-	for name, total := range m.counters {
-		if !m.dirty["c/"+name] {
+	for k, total := range m.counters {
+		if !m.dirty[k] {
 			continue
 		}
-		out = append(out, m.point(name, "INT64", now,
+		out = append(out, m.point(k, "INT64", now,
 			map[string]any{"int64Value": strconv.FormatInt(total, 10)}))
 	}
-	for name, d := range m.dists {
-		if !m.dirty["h/"+name] {
+	for k, d := range m.dists {
+		if !m.dirty[k] {
 			continue
 		}
-		out = append(out, m.point(name, "DISTRIBUTION", now,
+		out = append(out, m.point(k, "DISTRIBUTION", now,
 			map[string]any{"distributionValue": d.wire()}))
 	}
-	m.dirty = map[string]bool{}
+	m.dirty = map[seriesKey]bool{}
 	return out
 }
 
 // point renders one time series with a single cumulative point.
-func (m *MetricsStore) point(name, valueType string, now time.Time, value map[string]any) map[string]any {
+func (m *MetricsStore) point(k seriesKey, valueType string, now time.Time, value map[string]any) map[string]any {
 	return map[string]any{
 		"metric": map[string]any{
-			"type":   "custom.googleapis.com/tako/" + name,
-			"labels": map[string]string{"revision": m.who.Revision},
+			"type":   "custom.googleapis.com/tako/" + k.name,
+			"labels": metricLabels(k.labels, m.who.Revision),
 		},
 		"resource": map[string]any{
 			"type": "generic_task",
@@ -346,4 +350,61 @@ func (d *distribution) wire() map[string]any {
 		},
 		"bucketCounts": counts,
 	}
+}
+
+// seriesKey identifies one time series: a metric and its label set. The
+// labels are encoded canonically so the key stays comparable — a map
+// cannot be one.
+type seriesKey struct {
+	kind   string // "c" counter, "h" histogram
+	name   string
+	labels string
+}
+
+// encodeLabels renders a label set canonically: sorted, so the same
+// labels always produce the same series rather than two that drift
+// apart.
+func encodeLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(k)
+		b.WriteByte('=')
+		b.WriteString(labels[k])
+	}
+	return b.String()
+}
+
+// decodeLabels recovers the label set for a flush.
+func decodeLabels(enc string) map[string]string {
+	if enc == "" {
+		return nil
+	}
+	out := map[string]string{}
+	for _, pair := range strings.Split(enc, ",") {
+		if eq := strings.IndexByte(pair, '='); eq > 0 {
+			out[pair[:eq]] = pair[eq+1:]
+		}
+	}
+	return out
+}
+
+// metricLabels merges a series' own labels with the revision that rides
+// along on every tako metric.
+func metricLabels(enc, revision string) map[string]string {
+	out := map[string]string{"revision": revision}
+	for k, v := range decodeLabels(enc) {
+		out[k] = v
+	}
+	return out
 }

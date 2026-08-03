@@ -11923,3 +11923,60 @@ per-endpoint export with labels (Y3) and make the four presets ride it;
 `CronMissed` entirely; (c) ship service-level presets now and add the
 endpoint ones after Y3. Recommendation: (a), because `CronMissed` is the
 single most valuable alert in the catalogue and (b) deletes it.
+
+## Y3 — tako exports its own per-endpoint metrics (2026-08-02)
+
+The fix for the route-label defect. Owner's framing was right and needed
+no options: the metric should carry a route label alongside the service
+and instance — and two of those three already existed.
+
+`generic_task` has carried `job` (the tako service name) and `task_id`
+(the instance) since U2. Only the ROUTE was missing, and it had to come
+from tako because Cloud Run never populates its own.
+
+### The label dimension
+
+`backends.Metrics` grew a `labels` parameter. `tako.Counter` and
+`tako.Histogram` pass **nil** — user-declared metrics still have no
+dimensions, exactly as `observability.md` says. The parameter exists for
+the metrics tako records about itself:
+
+```
+custom.googleapis.com/tako/requests     labels: route, status
+custom.googleapis.com/tako/request_ms   labels: route
+```
+
+`MetricsStore` now keys series by `{kind, name, labels}` with the label
+set encoded canonically (sorted), so the same labels always produce the
+same series instead of two that drift apart.
+
+### Cardinality is the design, not an afterthought
+
+- **The route label is the PATTERN, not the path.**
+  `/api/photos/{id}/image` is one series however many photos exist; a
+  path label would be one series per id. Go 1.22's ServeMux reports the
+  matched pattern, so this is the framework's own knowledge rather than
+  string-munging.
+- **Unmatched paths share `<unmatched>`.** Otherwise a scanner probing
+  random URLs mints a series each and becomes a metrics bill.
+- **Status is bucketed to 2xx/3xx/4xx/5xx**, never the raw code: five
+  values at most.
+
+Five tests cover exactly these, including the one that would have caught
+the original defect — an assertion that the route label has the RIGHT
+VALUE, not merely that a route label exists.
+
+### Not duplication of the platform
+
+Worth stating because the opposite mistake already happened once, in P1,
+where tako wrote a request log Cloud Run already emitted. The difference
+is measured: Cloud Run's `request_count` and `request_latencies` publish
+a `route` label that is empty on every series. Per-endpoint alerting is
+impossible from platform metrics; it is possible from these.
+
+Recording is nil-safe: an unwired sink is normal in tests and in any
+embedding that skips boot, and recording must never be why a handler
+fails.
+
+Next: point the four broken presets at these metrics, then Y1c's
+adapters.

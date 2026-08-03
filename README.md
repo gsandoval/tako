@@ -42,6 +42,11 @@ type Greeting struct {
 go install github.com/gsandoval/tako/cmd/tako@latest
 ```
 
+From a checkout of this repo, `make install` does the same thing with
+your working tree. Either way the binary lands in `$GOBIN` (falling
+back to `$GOPATH/bin`, usually `~/go/bin`) — run `make where` to see
+the exact path, and make sure it's on your `PATH`.
+
 **1. A project** (~1 min):
 
 ```

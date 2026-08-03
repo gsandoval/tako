@@ -30,7 +30,7 @@ func (m *MetricsLog) OnMetric(fn func(kind, name string, value float64, total in
 	m.onMetric = fn
 }
 
-func (m *MetricsLog) Add(ctx context.Context, name string, delta int64) {
+func (m *MetricsLog) Add(ctx context.Context, name string, labels map[string]string, delta int64) {
 	m.mu.Lock()
 	m.counters[name] += delta
 	total := m.counters[name]
@@ -42,7 +42,7 @@ func (m *MetricsLog) Add(ctx context.Context, name string, delta int64) {
 	}
 }
 
-func (m *MetricsLog) Observe(ctx context.Context, name string, value float64) {
+func (m *MetricsLog) Observe(ctx context.Context, name string, labels map[string]string, value float64) {
 	m.mu.Lock()
 	m.counts[name]++
 	count := m.counts[name]

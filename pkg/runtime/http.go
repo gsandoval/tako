@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gsandoval/tako/pkg/backends"
 	"io"
 	"net/http"
 	"os"
@@ -178,13 +179,77 @@ func Serve(h http.Handler) {
 // on where the service is running — a terse dev-console line locally, a
 // structured httpRequest in the cloud — and logRequest owns that choice
 // so this middleware stays about timing and status.
+//
+// It also records the per-endpoint metrics, and that is not duplication
+// of what Cloud Run publishes: Cloud Run's request_count and
+// request_latencies carry a `route` label that is NEVER POPULATED for an
+// ordinary service (measured: 88 series, empty on every one). Alerting
+// on one endpoint is therefore impossible from platform metrics alone,
+// and tako writes the route because tako is the only one that knows it.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		logRequest(r, sw.status, time.Since(start))
+		took := time.Since(start)
+		recordRequest(r, sw.status, took)
+		logRequest(r, sw.status, took)
 	})
+}
+
+// RequestsMetric and LatencyMetric are the per-endpoint metrics every
+// tako service records without being asked. Their names are part of the
+// deploy contract: the provisioner writes alert queries against them.
+const (
+	RequestsMetric = "requests"
+	LatencyMetric  = "request_ms"
+)
+
+// requestMetrics is the sink, wired by boot. Nil in tests that do not
+// care, because recording must never be the reason a handler fails.
+var requestMetrics backends.Metrics
+
+// SetRequestMetrics wires the per-endpoint sink.
+func SetRequestMetrics(m backends.Metrics) { requestMetrics = m }
+
+// recordRequest counts the request and times it, labelled by the ROUTE
+// PATTERN rather than the path.
+//
+// The pattern is what keeps cardinality bounded: /api/photos/{id}/image
+// is one series no matter how many photos exist, where the raw path
+// would be one series per photo and would bankrupt the metric. Go 1.22's
+// ServeMux reports the matched pattern, so this is the framework's own
+// knowledge rather than a guess.
+func recordRequest(r *http.Request, status int, took time.Duration) {
+	if requestMetrics == nil {
+		return
+	}
+	route := r.Pattern
+	if route == "" {
+		// No pattern matched: a 404. Bucketing those under one label
+		// keeps an unmatched-path flood from minting a series each.
+		route = "<unmatched>"
+	}
+	labels := map[string]string{"route": route, "status": statusClass(status)}
+	requestMetrics.Add(r.Context(), RequestsMetric, labels, 1)
+	requestMetrics.Observe(r.Context(), LatencyMetric,
+		map[string]string{"route": route}, float64(took.Milliseconds()))
+}
+
+// statusClass buckets a status into 2xx/3xx/4xx/5xx: five values at
+// most, so the label cannot grow without bound.
+func statusClass(status int) string {
+	switch {
+	case status >= 500:
+		return "5xx"
+	case status >= 400:
+		return "4xx"
+	case status >= 300:
+		return "3xx"
+	case status >= 200:
+		return "2xx"
+	}
+	return "1xx"
 }
 
 type statusWriter struct {
