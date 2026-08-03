@@ -263,6 +263,23 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		add(target{TargetSubscription, cfg.Name(h.Service)}, "roles/pubsub.subscriber", pubsubAgent)
 	}
 
+	// A Pub/Sub alert channel is delivered by Cloud Monitoring's OWN
+	// service agent, not by anything tako runs, so that agent needs
+	// publisher on the topic the channel names.
+	//
+	// Google creates this agent LAZILY, on the first Pub/Sub channel in
+	// the project — the same shape as the GCS agent above, which
+	// BucketNotifications already rides out with a bounded retry. The
+	// grant is written here regardless: granting to an agent that does
+	// not exist yet is accepted, and waiting for it would be a deploy
+	// that hangs on Google's provisioning.
+	monAgent := "serviceAccount:service-" + cfg.ProjectNumber + "@gcp-sa-monitoring-notification.iam.gserviceaccount.com"
+	for _, r := range g.Resources {
+		if r.Kind == "channel" && r.ChannelKind == "pubsub" && r.Target != "" {
+			add(target{TargetTopic, cfg.Name(r.Target)}, "roles/pubsub.publisher", monAgent)
+		}
+	}
+
 	targets := make([]target, 0, len(bindings))
 	for t := range bindings {
 		targets = append(targets, t)

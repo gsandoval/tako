@@ -198,6 +198,8 @@ func runDeploy(args []string) error {
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	tasks := &gcp.TasksQueues{C: client}
 	domains := &gcp.DomainMappings{C: client, Labels: cfg.Labels(), Say: sayf}
+	channels := &gcp.AlertChannels{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels()}
+	policies := &gcp.AlertPolicies{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -209,7 +211,7 @@ func runDeploy(args []string) error {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains, channels, policies)
 	if err != nil {
 		return err
 	}
@@ -249,7 +251,7 @@ func runDeploy(args []string) error {
 	defer release()
 	fmt.Printf("  lease        acquired (%s on %s/%s/%s)\n", holder(), t.project, app, t.env)
 
-	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
+	applier := provision.Route(repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains, channels, policies)
 	if err := provision.Apply(ctx, plan.Filter(provision.KindRepo, provision.KindServiceAccount,
 		provision.KindBucket, provision.KindDatastoreIndex, provision.KindTopic,
 		provision.KindPullSubscription, provision.KindTasksQueue), desired, applier); err != nil {

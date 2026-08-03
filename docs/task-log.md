@@ -12074,3 +12074,65 @@ deliberately — it reaches generated code and belongs in release notes.
 
 Remaining before the live gate: wiring `alertObjects` into the deploy
 plan and the Pub/Sub notification service-agent grant.
+
+## Y1c — deploy wiring and the Pub/Sub grant (2026-08-02)
+
+`alertObjects` is in `Desired`, both adapters are routed in deploy and
+registered as deleters in destroy, and observation covers them — so a
+channel or policy that drifts is seen, and a destroy removes them.
+
+### The grant that makes a Pub/Sub channel work at all
+
+Cloud Monitoring delivers a Pub/Sub channel through **its own** service
+agent, not through anything tako runs, so that agent needs
+`roles/pubsub.publisher` on the topic:
+
+```
+service-<number>@gcp-sa-monitoring-notification.iam.gserviceaccount.com
+```
+
+Google creates it LAZILY, on the first Pub/Sub channel in the project —
+the same shape as the GCS agent that `BucketNotifications` already rides
+out with a bounded retry. The grant is written regardless: granting to
+an agent that does not exist yet is accepted, and waiting for Google to
+provision one would be a deploy that hangs.
+
+### The test I nearly shipped vacuous
+
+`TestPubSubChannelGrantsTheMonitoringAgent` first FAILED because my
+assertion read the grant spec's shape wrongly (`bindings` is not
+`[]map[string]any`). Loosening it to a string match made it pass — which
+is exactly how a test starts asserting nothing.
+
+So I mutated the code to check the test could still fail: changing the
+role to `roles/pubsub.subscriber` **fails the test**, so it is reading
+the role and not just the presence of the agent's name. Worth doing
+because a green test that cannot fail is worse than no test — it is a
+claim of coverage that is not there.
+
+### End to end
+
+`TestAlertsReachTheDesiredPlan` walks graph → objects → spec and pins
+three things a unit of the query builder alone could not: the Pub/Sub
+channel's target is the FULL env-prefixed topic path
+(`projects/p/topics/x1-incidents`, the same name the topic reconciler
+created), a 48h absence plans NO duration, and the policy's channel list
+uses the short var names both adapters key on.
+
+The CLI confirms the human path:
+
+```
+    channel oncall → email ops@example.com
+    channel bus → pubsub incidents
+    alert Stuck — DeadLettered → oncall
+    alert Piling — Backlogged → oncall, bus
+    alert Missed — CronMissed → oncall
+    alert Slow — SlowerThan → oncall
+```
+
+Full suite, vet, gofmt and conformance(local) clean.
+
+**Y1 is now complete except the live gate.** Everything from here is
+what only a real project can answer: whether the generated queries match
+real series, whether a channel delivers, and whether `CronMissed` fires
+exactly once against a genuinely stopped cron.

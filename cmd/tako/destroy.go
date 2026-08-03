@@ -65,12 +65,14 @@ func runDestroy(args []string) error {
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
+	channels := &gcp.AlertChannels{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels()}
+	policies := &gcp.AlertPolicies{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
 	managedSA, err := sas.ManagedEmails(ctx)
 	if err != nil {
 		return err
 	}
 	grants := &gcp.Grants{C: client, Desired: desired, ManagedSA: managedSA}
-	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains)
+	observed, err := observeAll(ctx, repos, sas, buckets, indexes, topics, notifications, pulls, runs, jobs, grants, subs, scheds, tasks, domains, channels, policies)
 	if err != nil {
 		return err
 	}
@@ -165,6 +167,8 @@ func runDestroy(args []string) error {
 	deleters := map[provision.Kind]interface {
 		Delete(ctx context.Context, name string) error
 	}{
+		provision.KindAlertPolicy:        policies,
+		provision.KindAlertChannel:       channels,
 		provision.KindDomainMapping:      domains,
 		provision.KindSchedulerJob:       scheds,
 		provision.KindTasksQueue:         tasks,

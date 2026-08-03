@@ -533,6 +533,12 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		)
 	}
 
+	alerts, err := alertObjects(cfg, g)
+	if err != nil {
+		return nil, err
+	}
+	objs = append(objs, alerts...)
+
 	objs = append(objs, deriveGrants(g, cfg)...)
 	return objs, nil
 }
