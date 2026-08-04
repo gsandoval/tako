@@ -353,7 +353,7 @@ built. Today the same questions need a raw `tako.Platform` with a
 Google metric type spelled by hand. Gate Z3: one of each on gallery,
 live.
 
-**Z4 — `tako metrics <search>`.** The CLI that lists metric descriptors
+**Z4 — `tako metrics <search>`. DONE 2026-08-04.** The CLI that lists metric descriptors
 so a `Platform` metric type can be found. A project publishes upwards of
 8,000 descriptors, which is why the reference deliberately carries no
 list — and why, without this, `Platform` is only usable by someone who
