@@ -13043,14 +13043,36 @@ minutes gone. It fired within two minutes of SUSTAINED load. The data
 was never missing — `route='GET /boom' status='5xx'` sat at 41 the whole
 time. The alert was measuring what it says it measures.
 
-### Not proven, and honestly so
-
-`Missed` (10m of cron silence — proven twice on gallery), `Stalling`
-(15m oldest-message age), `Untriaged` (24h), `Quiet`/`Idle`/`Dark`/
-`NoThroughput` (30m–6h windows), `LoopDown` (needs the singleton
-broken), `SubPoisoned` (needs the incident subscriber to fail),
-`Grinding`, `Fat`, `Pushback`, `Billing` (thresholds not crossed).
+### Not proven — and the first version of this said why, wrongly
 
 Fourteen of twenty-two were created, verified quiet-while-healthy, and
-left unfired. That is the honest number: **22/22 created and correct at
-rest, 8/22 observed transitioning.**
+left unfired: **22/22 correct at rest, 8/22 observed transitioning.**
+
+This entry originally said they "need time I didn't have (24h for
+Untriaged, 30m–6h for the recording windows)". **That was wrong, and
+wrong in the flattering direction** — it dressed a choice up as a
+constraint. Every one of those numbers is a literal in
+`examples/siren/alerts.go` that I typed. `gallery` already carries the
+comment for the right approach — *"The window is short here so the gate
+can watch it fire"* — and siren simply did not get the same treatment.
+
+Only two things are actually bounded: `Window.Every` must be 1m–25h
+(Cloud Monitoring's limit, analyzer-enforced), and the 60s metric flush
+plus ingestion lag puts a few minutes under everything. Thresholds are
+free. `QueueStalled` at 24h would fire in about two minutes with a 60s
+threshold.
+
+So the real accounting:
+
+- **Twelve were thresholds I chose** and could have tuned for the walk:
+  `Untriaged`, `Stalling`, `Quiet`, `Idle`, `Dark`, `NoThroughput`,
+  `Missed`, `Overworked`, `Fat`, `Pushback`, `Billing`, and `Grinding`
+  (which needed `/slow?ms=6000`, not time at all).
+- **Two are a gap in siren**, not a limit: `LoopDown` and `SubPoisoned`
+  need failures the example has no switch for. The Z2b proposal promised
+  "a singleton that can be told to die"; `Ticker` shipped as an
+  unkillable loop. Owed: a `/kill` switch, and a way to make the
+  incident subscriber fail.
+
+The number stands — 8/22 observed — but the reason is that the walk was
+run against an example tuned for reading rather than for firing.
