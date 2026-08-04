@@ -35,6 +35,10 @@ Local — nothing outside this directory is touched:
                        what every declared alert compiles to: the PromQL,
                        the notification sentence, and the constructor it
                        came from — so a preset can be read and forked
+  tako docs [--port 8090] [--open]
+                       serve the guide, the reference and the SDK's
+                       exported signatures from this binary — no
+                       network, no checkout needed
   tako build [--push <repo>]
                        build digest-pinned distroless images (no Docker
                        daemon); --push CROSSES THE LINE below: uploads
@@ -134,6 +138,10 @@ func main() {
 		}
 	case "alerts":
 		if err := runAlerts(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "docs":
+		if err := runDocs(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "metrics":

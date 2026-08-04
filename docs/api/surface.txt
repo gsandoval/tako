@@ -1,0 +1,189 @@
+    func (*BucketHandle).Delete(ctx Ctx, key string) error
+    func (*BucketHandle).Exists(ctx Ctx, key string) (bool, error)
+    func (*BucketHandle).Get(ctx Ctx, key string) (Blob, error)
+    func (*BucketHandle).List(ctx Ctx, prefix string) Iter[ObjectInfo]
+    func (*BucketHandle).Put(ctx Ctx, key string, blob Blob) error
+    func (*BucketHandle).SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error)
+    func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error)
+    func (*CacheHandle[T]).Delete(ctx Ctx, key string) error
+    func (*CacheHandle[T]).Exists(ctx Ctx, key string) (bool, error)
+    func (*CacheHandle[T]).Get(ctx Ctx, key string) (T, error)
+    func (*CacheHandle[T]).GetOrFill(ctx Ctx, key string, fill func(Ctx) (T, error)) (T, error)
+    func (*CacheHandle[T]).Put(ctx Ctx, key string, value T) error
+    func (*CounterHandle).Add(ctx Ctx, delta int64)
+    func (*CounterHandle).Count() Metric
+    func (*CounterHandle).Rate() Metric
+    func (*EntityHandle[T]).Delete(ctx Ctx, id string) error
+    func (*EntityHandle[T]).Exists(ctx Ctx, id string) (bool, error)
+    func (*EntityHandle[T]).Get(ctx Ctx, id string) (T, error)
+    func (*EntityHandle[T]).Put(ctx Ctx, entity T) error
+    func (*EntityHandle[T]).Query(ctx Ctx) *EntityQuery[T]
+    func (*EntityHandle[T]).Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error
+    func (*EntityHandle[T]).Update(ctx Ctx, id string, mutate func(*T)) error
+    func (*EntityQuery[T]).All() ([]T, error)
+    func (*EntityQuery[T]).Count() (int64, error)
+    func (*EntityQuery[T]).First() (T, error)
+    func (*EntityQuery[T]).Iter() Iter[T]
+    func (*EntityQuery[T]).Limit(n int) *EntityQuery[T]
+    func (*EntityQuery[T]).OrderBy(field string) *EntityQuery[T]
+    func (*EntityQuery[T]).Page(cursor string) (EntityPage[T], error)
+    func (*EntityQuery[T]).Where(field string, op string, value any) *EntityQuery[T]
+    func (*HistogramHandle).Count() Metric
+    func (*HistogramHandle).Mean() Metric
+    func (*HistogramHandle).Observe(ctx Ctx, value float64)
+    func (*HistogramHandle).Percentile(q float64) Metric
+    func (*HistogramHandle).Rate() Metric
+    func (*HistogramHandle).Sum() Metric
+    func (*Iter[T]).Err() error
+    func (*Iter[T]).Next() (T, bool)
+    func (*JobHandle[T]).Run(ctx Ctx, params T) error
+    func (*LockHandle).Do(ctx Ctx, fn func(Ctx) error) error
+    func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
+    func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
+    func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
+    func (*RequestMsHandle).Count() Metric
+    func (*RequestMsHandle).Mean() Metric
+    func (*RequestMsHandle).Percentile(q float64) Metric
+    func (*RequestMsHandle).Rate() Metric
+    func (*RequestMsHandle).Sum() Metric
+    func (*RequestsHandle).Count() Metric
+    func (*RequestsHandle).Fraction() Metric
+    func (*RequestsHandle).Rate() Metric
+    func (*RequestsHandle).Status(class string) *RequestsHandle
+    func (*SecretHandle).Value() string
+    func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
+    func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
+    func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
+    func (*TestApp).Advance(d time.Duration)
+    func (*TestApp).AdvanceCron(cron Handler)
+    func (*TestApp).Chaos()
+    func (*TestApp).Ctx(as ...User) Ctx
+    func (*TestApp).DrainQueues()
+    func (*TestApp).HTMX(as ...User) Ctx
+    func (*TestApp).SetSecret(name string, value string)
+    func (*TestApp).SignIn(name string) User
+    func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
+    func (Ctx).IsHTMX() bool
+    func (Ctx).Log() *log/slog.Logger
+    func (Ctx).MaybeUser() (User, bool)
+    func (Ctx).Task() (index int, count int)
+    func (Ctx).User() User
+    func (Endpoint[Req, Res]).Call(ctx Ctx, req Req) (Res, error)
+    func (EntityTx[T any]).Delete(id string) error
+    func (EntityTx[T any]).Get(id string) (T, error)
+    func (EntityTx[T any]).Put(entity T) error
+    func (PutPolicy).Headers() map[string]string
+    func (context.Context).Deadline() (deadline time.Time, ok bool)
+    func (context.Context).Done() <-chan struct{}
+    func (context.Context).Err() error
+    func (context.Context).Value(key any) any
+const ProfileBatch Profile
+const ProfileDefault Profile
+const ProfileLatency Profile
+const ToggleInherit Toggle
+const ToggleOff Toggle
+const ToggleOn Toggle
+func API[Req, Res any](route string, fn func(Ctx, Req) (Res, error), cfg ...Route) Endpoint[Req, Res]
+func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertHandle
+func AlertEmail(address string) *ChannelHandle
+func AlertTopic[T any](topic *TopicHandle[T]) *ChannelHandle
+func AlertWebhook(url string) *ChannelHandle
+func Auth(cfg AuthConfig) *AuthHandle
+func Bucket(name string) *BucketHandle
+func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
+func Counter(name string) *CounterHandle
+func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
+func CronFailed(cron Handler, times int, w ...Window) Condition
+func CronMissed(cron Handler, w ...Window) Condition
+func Entity[T any](name string) *EntityHandle[T]
+func Errorf(status int, format string, args ...any) error
+func Histogram(name string) *HistogramHandle
+func IsNotFound(err error) bool
+func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition
+func Job[T any](name string) *JobHandle[T]
+func Lock(name string) *LockHandle
+func NewID() string
+func NewTestApp(tb testing.TB) *TestApp
+func NotFound() error
+func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
+func Permanent(err error) error
+func PlatformMetric(metricType string, filters ...string) Metric
+func QueueBacklogged(c Consumer, n int, w QueueWatch) Condition
+func QueueMetric(c Consumer, metricType string, filters ...string) Metric
+func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition
+func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
+func Redirect(target string) (HTML, error)
+func RedirectPermanent(target string) (HTML, error)
+func RequestMs(t Target) *RequestMsHandle
+func Requests(t Target) *RequestsHandle
+func RequestsErroring(t Target, fraction float64, w ...Window) Condition
+func RequestsSlow(t Target, d time.Duration, quantile float64, w ...Window) Condition
+func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
+func Secret(name string) *SecretHandle
+func Service(cfg ...ServiceConfig) *ServiceHandle
+func ServiceAtCapacity(t Target, w ...Window) Condition
+func ServiceInstances(t Target) Metric
+func ServiceMetric(t Target, metricType string, filters ...string) Metric
+func ServicePercentile(t Target, metricType string, q float64, filters ...string) Metric
+func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
+func SingletonDown(loop Handler, w ...Window) Condition
+func Site(dir string, cfg ...SiteConfig) *SiteHandle
+func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
+func WhenAbove(m Metric, threshold float64, w Window) Condition
+func WhenAbsent(m Metric, w Window) Condition
+func WhenAtLeast(m Metric, n float64, w Window) Condition
+func WhenBelow(m Metric, threshold float64, w Window) Condition
+func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
+type AlertHandle struct{}
+type AuthConfig struct{Google bool; Password bool}
+type AuthHandle struct{}
+type Blob struct{Reader io.Reader; ContentType string; Size int64}
+type BucketEvent struct{}
+type BucketHandle struct{Uploaded BucketEvent}
+type Build struct{Command string; Out string}
+type CacheHandle[T any] struct{}
+type ChannelHandle struct{}
+type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
+type Condition struct{}
+type Consumer interface{consumerRef() metricRef}
+type CounterHandle struct{}
+type CronConfig struct{Singleflight bool; Timezone string; Deadline time.Duration; Profile Profile; Footprint Footprint}
+type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
+type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
+type Endpoint[Req any, Res any] struct{}
+type EntityHandle[T any] struct{}
+type EntityPage[T any] struct{Items []T; Cursor string; More bool}
+type EntityQuery[T any] struct{}
+type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
+type EventSource[T any] interface{eventSource(T); sourceName() string}
+type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; CPUAlwaysOn Toggle; StartupBoost Toggle}
+type HTML struct{}
+type Handler struct{}
+type HistogramHandle struct{}
+type Iter[T any] struct{}
+type JobHandle[T any] struct{}
+type LockHandle struct{}
+type Metric interface{metricSubject() metricRef}
+type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
+type Profile int
+type PutPolicy struct{MaxSize int64; ContentType string}
+type QueueHandle[T any] struct{}
+type QueueWatch struct{DeadLetters bool; For time.Duration}
+type RequestMsHandle struct{}
+type RequestsHandle struct{}
+type Route struct{SignIn bool; Private bool}
+type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
+type SecretHandle struct{}
+type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
+type ServiceHandle struct{}
+type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
+type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool; NotFound string}
+type SiteHandle struct{}
+type Target interface{alertTarget() metricRef}
+type TestApp struct{}
+type Toggle int
+type TopicHandle[T any] struct{}
+type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
+type User struct{ID string; Email string; Name string}
+type Window struct{For time.Duration; Every time.Duration}

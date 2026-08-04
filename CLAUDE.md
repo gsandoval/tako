@@ -106,7 +106,7 @@ when they do.)
 ## Repo map
 
 ```
-cmd/tako/          CLI (dev, deploy, gen, test, logs, destroy, prune)
+cmd/tako/          CLI (dev, deploy, gen, test, logs, alerts, docs, destroy, prune)
 *.go (root)        user-facing SDK, package tako — normative, changes are their own task
 pkg/analyzer/      go/packages + go/types → AppGraph; testdata/ goldens
 pkg/codegen/       AppGraph → .tako/gen/<service>/main.go
@@ -116,6 +116,8 @@ pkg/backends/      interface contracts + conformance suite
   gcp/             GCS, Datastore, Pub/Sub, Tasks (Phase E+)
 pkg/provision/     stateless GCP reconciler (Phase E+)
 pkg/devserver/     tako dev: watch → analyze → generate → go run
+pkg/docserver/     tako docs: renders the embedded guide/reference/api
 examples/          hello, shortlink, gallery, journal, shop
-docs/              tech spec, implementation plan, agent plan
+docs/              tech spec, implementation plan, agent plan; guide/ +
+                   reference/ + api/ are go:embed'ed and served by tako docs
 ```

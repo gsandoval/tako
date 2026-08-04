@@ -19,10 +19,11 @@ path.
 ## What is API, and what is not
 
 **The root `tako` package is the API.** Every symbol in it is locked
-(`testdata/sdk_lock.golden`, 148 entries) and reviewed; changing one is
-its own task with its own written review, never a side effect. That is
-the surface your application code imports, and the one this reference
-documents.
+(`testdata/sdk_lock.golden`) and reviewed; changing one is its own task
+with its own written review, never a side effect. That is the surface
+your application code imports, and the one this reference documents.
+`tako docs` serves that lock as its **api** page — every exported
+symbol, with the page here that explains it.
 
 **Everything under `pkg/…` is tako's internals** — the analyzer, the
 code generator, the runtime, the provisioner, the backends. They are

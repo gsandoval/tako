@@ -12,8 +12,26 @@ tako dev [--chaos]       run the app locally with reload (--chaos: seeded
 tako test [args]         analyze, refresh generated code, then go test ./...
 tako gen graph [--json | --mermaid]
 tako gen client ts [--out <path>]
+tako alerts [name] [--env prod]
+                         what each declared alert compiles to — PromQL,
+                         notification sentence, and the call it came from
+tako docs [--port 8090] [--open]
+                         the guide, the reference and the SDK's exported
+                         signatures, served from this binary
 tako build [--push <repo>]
 ```
+
+`tako docs` serves the documentation that shipped inside the binary —
+no checkout, no network, nothing fetched. Three sections: the
+[guide](../guide/README.md), this [reference](README.md), and an **api**
+page generated from the same lock file the API-freeze test compares
+against, so it cannot quietly lose a symbol. The pages are as old as the
+binary, which is the point: they describe the SDK you are compiling
+against rather than whatever is on main.
+
+Serving is all it does, so there is no subcommand and no `--serve`
+flag — a flag that must always be passed is a flag that should not
+exist. It listens on `127.0.0.1` only.
 
 `tako test` never runs against stale generated code — it regenerates
 first and calls out drift (`regenerated: shop was stale`). Bare
@@ -71,9 +89,6 @@ tako rollback          return traffic to the previous revision set
 tako prune [--data]    delete orphans tako once managed
 tako dlq [service] --ack   drain the printed dead-letter messages for good
 tako dlq <service> --replay <id>|--all   re-deliver, then remove from the DLQ (a MOVE)
-tako alerts [name] [--env prod]
-                       what each declared alert compiles to — PromQL,
-                       notification sentence, and the call it came from
 tako destroy           delete everything labeled for this app
 tako destroy --plan    show what it would delete, delete nothing
 ```
@@ -126,7 +141,9 @@ parser:
 
 - Unknown flags name their command's real surface, e.g.
   `unknown flag "--x" (tako gen graph accepts --json or --mermaid)`,
-  `unknown flag "--x" (tako gen client ts accepts --out <path>)`.
+  `unknown flag "--x" (tako gen client ts accepts --out <path>)`,
+  `unknown flag "--x" (tako docs accepts --port <n> and --open)`.
+- `port 8090 is already in use — pass --port to pick another`
 - `tako gen client generates TypeScript today — run: tako gen client ts`
 - Bare `tako` (or an unknown command) prints the full usage — which
   ends with the confirmation ladder and the flag-resolution rule.
@@ -144,4 +161,9 @@ parser:
   by design, not a missing feature.
 - No per-command `--help`: the single usage screen still fits;
   revisit if the surface grows past one screen.
+- `tako docs` has no search. Find-in-page over one reference page is
+  enough for twenty-four of them, and a search index is a real feature
+  that should wait for a demand. It also does not publish: there is no
+  `--build` that emits HTML for hosting, and nothing about it touches an
+  eventual public docs site.
 - `tako gen client` speaks TypeScript only.

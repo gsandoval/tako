@@ -14531,3 +14531,169 @@ Z6 (publish) is what waits on these; its blocker was the flautas
 friction logs, and FL1–FL4 are those logs answered. The verdicts still
 need to travel back to `flautas/docs/friction.md` under its ADR 0008,
 which is a flauta-session job — tako never patches flauta.
+
+## Z7 — `tako docs`, built (2026-08-04)
+
+Approved by the owner ("proceed with the documentation server") against
+the proposal above. Shipped as proposed, with three deviations and one
+correction, all below.
+
+### Where the embed had to live
+
+`//go:embed` patterns cannot escape the directory of the package that
+declares them, and no `..` is allowed. So neither `cmd/tako` nor
+`pkg/docserver` can embed `docs/guide`; the only package that can is
+`docs` itself, which is why `docs/embed.go` exists and holds nothing
+else. The alternative — embedding from the module root — would have put
+284KB of markdown in the SDK package that **every tako application
+imports**. Verified it does not:
+
+```
+$ go list -deps github.com/gsandoval/tako | grep -c tako/docs
+0
+$ go list -deps ./cmd/tako | grep tako/docs
+github.com/gsandoval/tako/docs
+```
+
+The CLI carries the docs; a user's binary does not. 284KB against a
+21.5MB binary, and it is what makes the command work for someone who ran
+`go install` and has no checkout.
+
+### The api page, and the copy it reads
+
+The api section needed the exported surface as *data*, and the one place
+the surface is written down is `testdata/sdk_lock.golden` — which the
+docs package also cannot reach (`..` again, and `testdata` is invisible
+to the go tool besides). So `docs/api/surface.txt` is a copy, and
+`TestEmbeddedSurfaceMatchesTheSDKLock` pins it byte-for-byte with a
+`-update` path. **Copying under equality was the deliberate choice over
+re-deriving**: two renderings of "the exported surface" can disagree,
+one copy under equality cannot.
+
+What the lock does not carry is where each symbol is *explained*, so
+`symbolPage` says — 110 entries, one per top-level symbol, methods
+following their type. That table looked like a maintenance cost until
+the test was written, and then it turned out to be the point: **a new
+exported symbol with no reference page now fails a test.** Mutation-
+verified rather than assumed:
+
+```
+$ echo "func Ghost() error" >> docs/api/surface.txt
+$ go test ./pkg/docserver/ -run TestEveryExportedSymbolHasAReferencePage
+    docserver_test.go:121: Ghost is exported and no reference page documents it — add it to symbolPage
+```
+
+One symbol is mapped to nothing on purpose. `tako.Handler` is what
+`Cron`, `Worker`, `Subscribe` and `Singleton` return and what an alert
+can target; every page that produces one mentions it in passing and none
+of them defines it. It prints on the api page under **"Not on a
+reference page yet"**, so the gap is visible to a reader and not only to
+us, and the test holds the list of such symbols to exactly that one.
+
+### The link check, which was the reason to build this
+
+The proposal singled it out: `reference/alerts.md` gained links to
+`observability.md` and `footprint.md` during Y2 and nothing verified
+they resolved. They do. So do the other 124, the 1 same-page anchor, and
+all 54 links into the repository:
+
+```
+checked 125 links between docs, 1 anchors, 54 into the repository; 0 external, unchecked
+```
+
+Both arms mutation-tested, because a checker that has never failed is a
+checker nobody has tested:
+
+```
+    docserver_test.go:58: reference/cli.md links to "queue.md#errors-you-will-meet" — reference/queue.md has no section with that anchor
+    docserver_test.go:69: reference/alerts.md links to "observabilty.md#the-two-metrics-you-never-declare", and docs/reference/observabilty.md does not exist
+```
+
+The anchors exist because the renderer turns headings into IDs
+(`parser.WithAutoHeadingID`) and the sanitizer is told to keep them —
+without that every `#section` link in the docs would silently land at
+the top of a page and nothing would have noticed.
+
+### Links to files the binary cannot serve
+
+54 of them: `../../examples/shop/app.go`, `../../validate/shop.md`,
+`../domain-options.md`. There is nothing to serve them from, and a dead
+`<a>` tells a reader less than a path does — so they render as the
+repo-relative path in monospace, next to the sentence that linked them.
+
+Except when the sentence **is** the path. "From
+`[examples/shortlink](../../examples/shortlink/app.go)`:" appears all
+over the reference, and printing the path after text the path already
+contains says the same thing twice. A link text the target contains is
+replaced by the target rather than followed by it.
+
+### Sanitizing our own documentation
+
+goldmark renders, bluemonday sanitizes — the pipeline `pkg/runtime`
+already has (settled decision #13). The input here is tako's own docs,
+which is exactly the argument for sanitizing it anyway: a renderer with
+an exception for trusted input is a renderer with an exception, and this
+one listens on a port. It listens on `127.0.0.1` only, for the same
+reason.
+
+### Deviations from the approved proposal
+
+1. **Grouping** is read out of `reference/README.md` at build time
+   rather than restated in code — the proposal said "grouped the way
+   `docs/reference/README.md` already groups them", and parsing that
+   file is the only version of that sentence with no second copy to keep
+   true. A heading whose bullets are prose is not a group, which is what
+   keeps the "What is API, and what is not" section from becoming one.
+2. **The error text prints `tako: port 8090 is already in use — pass
+   --port to pick another`**, not `tako docs:`. Every CLI error in tako
+   goes through one `fail()` with one prefix, and inventing a
+   per-command prefix for this one error would be the deviation.
+3. **The symbol count in the startup line is computed, not fixed.** The
+   proposal said 171; the lock is 189 lines today. A hand-counted number
+   in a banner is a number that goes stale.
+
+### A correction the docs needed
+
+`reference/cli.md` listed `tako alerts` under **Cloud, mutating**. It
+touches no cloud — FA2's own doc comment opens "Nothing here touches the
+cloud" — and `tako` help has always had it under Local. Moved, along
+with `tako docs`. Also dropped "148 entries" from `reference/README.md`:
+the lock has 110 top-level symbols and 189 lines, the number had been
+wrong for some time, and a count restated in prose is a count that
+drifts. The api page carries it now, generated.
+
+### One bug the tests did not have
+
+`referenceOrder` listed the index twice — the leftovers sweep matched on
+`Name + ".md"`, and the index's `Name` is `""`. It surfaced as
+`reference (25 pages)` in the startup banner for a reference of 24, i.e.
+in the one place a reader would see it. `TestEveryEmbeddedPageRenders`
+now asserts the page count equals the file count, each page once.
+
+### Validation
+
+`validate/docs.md`, run in full. The step that matters:
+
+```
+$ go build -o /tmp/tako ./cmd/tako && cd /tmp && ./tako docs --port 8091
+📖 tako docs → http://localhost:8091
+   guide (9 chapters) · reference (24 pages) · api (189 symbols)
+   ^C to stop
+```
+
+Served every page from `/tmp`, with no tako source anywhere near it. If
+that step needs the repository the feature does not exist.
+
+### Discovered work (unscheduled)
+
+- **`tako.Handler` is undocumented.** Above; the api page says so out
+  loud now. A reference page — or a paragraph in an existing one — would
+  close it.
+- **No search.** Find-in-page over one reference page is enough for
+  twenty-four of them; a search index waits for a demand. Recorded in
+  `cli.md` under "Not yet" rather than left as a silent absence.
+
+### API change
+
+None. `docs` and `pkg/docserver` are internals, like everything outside
+the root package.

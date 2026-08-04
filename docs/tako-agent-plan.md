@@ -381,10 +381,12 @@ path, and it is unscheduled until the friction logs land. (Note: the
 repo has NO git remote configured yet — `git remote -v` is empty — so
 the push step needs one added first.)
 
-**Z7 — `tako docs`.** Serve the guide, the reference and the SDK's
-exported signatures locally, so the documentation is readable without a
-browser tab open on GitHub and without the repo checked out. Proposal in
-`task-log.md`.
+**Z7 — `tako docs`. DONE 2026-08-04** (approved and built after Stage 11;
+listed here because Stage 10 is where it was proposed). Serves the guide,
+the reference and the SDK's exported signatures from a `go:embed`ed copy
+inside the binary — no checkout, no network. The api page is generated
+from the same lock file the API-freeze test compares against, and a
+symbol with no reference page fails a test. Proposal in `task-log.md`.
 
 ## Stage 11 — Alerting you can fork, then the flautas gaps (2026-08-04)
 
@@ -434,6 +436,11 @@ order FL1 → FL3 → FL4 → FL2.
 Gate FL (agent-side): every example suite green against `local`,
 conformance included, with the write-between-pages case pinning FL4.
 Live gates for FL1/FL4 remain part of the batched human walk.
+
+**Z7 — `tako docs`. DONE 2026-08-04**, after FL. Details in the Stage 10
+entry above; gate (agent-side) is `validate/docs.md`, including the step
+that matters most — a binary built into `/tmp`, run from `/tmp`, serving
+every page.
 
 **Z6 — Publish. Now unblocked by FL1–FL4**, and still the owner's:
 `git remote` (none is configured), `git push`, `git tag v0.1.0`, plus a
