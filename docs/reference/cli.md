@@ -34,7 +34,33 @@ tako logs [service] [--since 15m]     recent logs for the deployed services
 tako dlq [service]                    peek dead-lettered messages per async service
 tako dlq <service> --replay <id>      put one dead letter back into delivery
 tako dlq --local [carrier]            the same, against .tako/data
+tako metrics <search> [--limit 20]    find a metric type to alert on
 ```
+
+`tako metrics` is a substring search over the project's metric
+descriptors — around eight thousand of them, which is why
+[alerts.md](alerts.md) carries no list. It prints two things a raw
+descriptor listing does not, and each of them is a failure that
+otherwise costs a deploy to discover:
+
+```
+$ tako metrics container/startup --project my-project
+
+✓ run.googleapis.com/container/startup_latencies
+    DELTA DISTRIBUTION · on cloud_run_job, cloud_run_revision, cloud_run_worker_pool
+    Distribution of time spent starting a new container instance in milliseconds.
+    tako.ServicePercentile(svc, "run.googleapis.com/container/startup_latencies", 0.99)
+
+✓ nameable — a policy can be created against it today
+```
+
+**The constructor**, because the metric's shape decides it: a
+DISTRIBUTION is published only as `_bucket`/`_count`/`_sum`, so naming
+one the way its own documentation writes it produces a policy Cloud
+Monitoring refuses. **And whether the name resolves in your project
+today** — a policy naming something Cloud Monitoring cannot see is
+refused when it is created, and a service you have never used
+contributes no names.
 
 ## Cloud, mutating
 
