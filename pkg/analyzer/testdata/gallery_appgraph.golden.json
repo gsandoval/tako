@@ -182,7 +182,8 @@
         "reading": "queue_depth",
         "threshold": 1,
         "for_seconds": 600,
-        "on": "dead"
+        "on": "dead",
+        "ctor": "QueueBacklogged"
       },
       "channels": [
         "gallery.oncall"
@@ -200,7 +201,8 @@
         "subject_kind": "cron",
         "subject_var": "gallery.Cleanup",
         "reading": "cron_missed",
-        "for_seconds": 300
+        "for_seconds": 300,
+        "ctor": "CronMissed"
       },
       "channels": [
         "gallery.oncall"

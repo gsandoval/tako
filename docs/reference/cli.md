@@ -71,6 +71,9 @@ tako rollback          return traffic to the previous revision set
 tako prune [--data]    delete orphans tako once managed
 tako dlq [service] --ack   drain the printed dead-letter messages for good
 tako dlq <service> --replay <id>|--all   re-deliver, then remove from the DLQ (a MOVE)
+tako alerts [name] [--env prod]
+                       what each declared alert compiles to — PromQL,
+                       notification sentence, and the call it came from
 tako destroy           delete everything labeled for this app
 tako destroy --plan    show what it would delete, delete nothing
 ```

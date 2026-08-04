@@ -432,6 +432,31 @@ deploy declares the descriptors and seeds one zero point per metric.
 Without that, alerting would work on the second deploy and not the
 first.
 
+## Reading what you wrote
+
+`tako alerts` prints what every declared alert actually compiles to. It
+touches no cloud — an alert is a property of the code, and only the
+env-prefixed names inside it depend on where it would deploy, which is
+what `--env` selects.
+
+```
+$ tako alerts Slowing --env prod
+
+Slowing · shop/prod: GET /slow is slow
+  when   evaluated every 1m0s, sustained 2m0s
+  query  histogram_quantile(0.99, sum(rate(custom_googleapis_com:tako_request_ms_bucket{monitored_resource="generic_task",namespace="shop-prod",job="shop",route="GET /slow"}[60s])) by (le)) > 2000
+  notify oncall
+  from   tako.RequestsSlow
+```
+
+The `from` line is the point. A preset is a starting point, not a
+ceiling: read what it compiles to, then write your own version with the
+threshold, window or label you actually wanted. You cannot fork what you
+cannot identify.
+
+The query is printed whole and unwrapped so it can be pasted into the
+metrics explorer and run as-is.
+
 ## Errors you'll meet
 
 At analysis time, verbatim:

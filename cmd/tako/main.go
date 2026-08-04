@@ -31,6 +31,10 @@ Local — nothing outside this directory is touched:
   tako gen client ts [--out <path>]
                        generate a typed TypeScript client for the app's
                        api endpoints (default .tako/gen/client/ts/api.ts)
+  tako alerts [name] [--env prod]
+                       what every declared alert compiles to: the PromQL,
+                       the notification sentence, and the constructor it
+                       came from — so a preset can be read and forked
   tako build [--push <repo>]
                        build digest-pinned distroless images (no Docker
                        daemon); --push CROSSES THE LINE below: uploads
@@ -126,6 +130,10 @@ func main() {
 		}
 	case "logs":
 		if err := runLogs(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "alerts":
+		if err := runAlerts(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "metrics":

@@ -318,4 +318,13 @@ type AlertCondition struct {
 	// unscoped PlatformMetric keeps it in SubjectName, which is the
 	// whole subject it has.)
 	MetricType string `json:"metric_type,omitempty"`
+	// Ctor is the SDK constructor this condition was written with —
+	// "RequestsSlow", "WhenAbove". Recorded so `tako alerts` can say
+	// which call produced a query, which is what makes a preset
+	// forkable: you cannot rewrite by hand what you cannot identify.
+	//
+	// Derived here rather than reconstructed from Reading downstream. A
+	// second reading→constructor table would be a copy free to drift
+	// from this one, which is the failure FA1 was about.
+	Ctor string `json:"ctor,omitempty"`
 }

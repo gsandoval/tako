@@ -324,7 +324,7 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 	handlersByVar map[string]*Handler, resVars map[types.Object]resRef, endpointVars map[types.Object]string,
 	errs *ErrorList) *AlertCondition {
 
-	spec := &AlertCondition{}
+	spec := &AlertCondition{Ctor: ctor}
 	var windowArgs []ast.Expr
 
 	if p, isPreset := presetReadings[ctor]; isPreset {

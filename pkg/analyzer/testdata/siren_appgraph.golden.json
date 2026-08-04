@@ -97,7 +97,8 @@
         "subject_var": "siren.Boom",
         "reading": "error_rate",
         "threshold": 0.05,
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "RequestsErroring"
       },
       "channels": [
         "siren.oncall"
@@ -118,7 +119,8 @@
         "reading": "latency",
         "quantile": 0.99,
         "threshold": 2000,
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "RequestsSlow"
       },
       "channels": [
         "siren.oncall",
@@ -140,7 +142,8 @@
         "reading": "queue_depth",
         "threshold": 50,
         "for_seconds": 120,
-        "on": "live"
+        "on": "live",
+        "ctor": "QueueBacklogged"
       },
       "channels": [
         "siren.oncall"
@@ -161,7 +164,8 @@
         "reading": "queue_age",
         "threshold": 60,
         "for_seconds": 120,
-        "on": "live"
+        "on": "live",
+        "ctor": "QueueStalled"
       },
       "channels": [
         "siren.oncall"
@@ -182,7 +186,8 @@
         "reading": "queue_depth",
         "threshold": 1,
         "for_seconds": 120,
-        "on": "dead"
+        "on": "dead",
+        "ctor": "QueueBacklogged"
       },
       "channels": [
         "siren.oncall",
@@ -204,7 +209,8 @@
         "reading": "queue_age",
         "threshold": 120,
         "for_seconds": 120,
-        "on": "dead"
+        "on": "dead",
+        "ctor": "QueueStalled"
       },
       "channels": [
         "siren.oncall"
@@ -225,7 +231,8 @@
         "reading": "queue_depth",
         "threshold": 1,
         "for_seconds": 120,
-        "on": "dead"
+        "on": "dead",
+        "ctor": "QueueBacklogged"
       },
       "channels": [
         "siren.oncall"
@@ -243,7 +250,8 @@
         "subject_kind": "cron",
         "subject_var": "siren.Sweep",
         "reading": "cron_missed",
-        "for_seconds": 480
+        "for_seconds": 480,
+        "ctor": "CronMissed"
       },
       "channels": [
         "siren.oncall"
@@ -262,7 +270,8 @@
         "subject_var": "siren.Flaky",
         "reading": "cron_failed",
         "threshold": 1,
-        "every_seconds": 300
+        "every_seconds": 300,
+        "ctor": "CronFailed"
       },
       "channels": [
         "siren.oncall"
@@ -282,7 +291,8 @@
         "subject_var": "siren.Rebuild",
         "reading": "job_failed",
         "threshold": 1,
-        "every_seconds": 300
+        "every_seconds": 300,
+        "ctor": "JobFailed"
       },
       "channels": [
         "siren.oncall"
@@ -301,7 +311,8 @@
         "subject_name": "Ticker",
         "subject_var": "siren.Ticker",
         "reading": "singleton_down",
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "SingletonDown"
       },
       "channels": [
         "siren.oncall"
@@ -320,7 +331,8 @@
         "subject_name": "work",
         "subject_var": "siren.Grind",
         "reading": "at_capacity",
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "ServiceAtCapacity"
       },
       "channels": [
         "siren.oncall"
@@ -340,7 +352,8 @@
         "subject_var": "siren.hits",
         "reading": "rate",
         "threshold": 0.01,
-        "for_seconds": 300
+        "for_seconds": 300,
+        "ctor": "WhenBelow"
       },
       "channels": [
         "siren.oncall"
@@ -361,7 +374,8 @@
         "reading": "percentile",
         "quantile": 0.99,
         "threshold": 5000,
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -382,7 +396,8 @@
         "reading": "count",
         "threshold": 1,
         "for_seconds": 300,
-        "every_seconds": 60
+        "every_seconds": 60,
+        "ctor": "WhenBelow"
       },
       "channels": [
         "siren.oncall"
@@ -402,7 +417,8 @@
         "subject_var": "siren.workMs",
         "reading": "sum",
         "threshold": 20000,
-        "every_seconds": 300
+        "every_seconds": 300,
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -422,7 +438,8 @@
         "subject_var": "siren.workMs",
         "reading": "mean",
         "threshold": 800,
-        "for_seconds": 120
+        "for_seconds": 120,
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -442,7 +459,8 @@
         "subject_var": "siren.workMs",
         "reading": "rate",
         "threshold": 0.001,
-        "for_seconds": 300
+        "for_seconds": 300,
+        "ctor": "WhenBelow"
       },
       "channels": [
         "siren.oncall"
@@ -462,7 +480,8 @@
         "subject_var": "siren.hits",
         "reading": "count",
         "for_seconds": 600,
-        "every_seconds": 60
+        "every_seconds": 60,
+        "ctor": "WhenAbsent"
       },
       "channels": [
         "siren.oncall"
@@ -484,7 +503,8 @@
         "threshold": 1,
         "for_seconds": 120,
         "scoped_to": "service_metric",
-        "metric_type": "run.googleapis.com/container/memory/allocation_time"
+        "metric_type": "run.googleapis.com/container/memory/allocation_time",
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -509,7 +529,8 @@
           "response_class=\"ack\""
         ],
         "scoped_to": "queue_metric",
-        "metric_type": "pubsub.googleapis.com/subscription/push_request_count"
+        "metric_type": "pubsub.googleapis.com/subscription/push_request_count",
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -532,7 +553,8 @@
         "threshold": 0.2,
         "for_seconds": 60,
         "scoped_to": "service_percentile",
-        "metric_type": "run.googleapis.com/container/cpu/utilizations"
+        "metric_type": "run.googleapis.com/container/cpu/utilizations",
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -553,7 +575,8 @@
         "reading": "platform",
         "threshold": 2,
         "for_seconds": 120,
-        "scoped_to": "service_instances"
+        "scoped_to": "service_instances",
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -572,7 +595,8 @@
         "subject_name": "pubsub.googleapis.com/topic/byte_cost",
         "reading": "platform",
         "threshold": 1,
-        "every_seconds": 300
+        "every_seconds": 300,
+        "ctor": "WhenAbove"
       },
       "channels": [
         "siren.oncall"
@@ -592,7 +616,8 @@
         "subject_var": "siren.Grind",
         "reading": "platform",
         "for_seconds": 600,
-        "scoped_to": "service_instances"
+        "scoped_to": "service_instances",
+        "ctor": "WhenAbsent"
       },
       "channels": [
         "siren.oncall"

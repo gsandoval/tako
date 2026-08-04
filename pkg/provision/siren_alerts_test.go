@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -35,27 +34,20 @@ func TestSirenQueries(t *testing.T) {
 	}
 	cfg := Config{Project: "p", ProjectNumber: "1", Region: "us-central1", App: "siren", Env: "x1"}
 
-	type row struct{ name, query, sentence string }
-	var rows []row
-	for _, r := range g.Resources {
-		if r.Kind != "alert" {
-			continue
-		}
-		q, _, err := alertQuery(cfg, g, r.Alert)
-		if err != nil {
-			t.Errorf("%s: %v", r.Name, err)
-			continue
-		}
-		rows = append(rows, row{r.Name, q, conditionSentence(cfg, g, r)})
+	// Through DescribeAlerts, which is what `tako alerts` prints. One
+	// renderer, so the golden this repo reads and the command a user
+	// reads can never disagree about what a condition compiles to.
+	rows, err := DescribeAlerts(cfg, g)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
 	}
 	if len(rows) < 20 {
 		t.Fatalf("only %d alert queries — siren declares the whole catalogue", len(rows))
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 
 	var b strings.Builder
 	for _, r := range rows {
-		fmt.Fprintf(&b, "%s\n  %s\n  %s\n\n", r.name, r.sentence, r.query)
+		fmt.Fprintf(&b, "%s\n  %s\n  %s\n\n", r.Name, r.Sentence, r.Query)
 	}
 	compareGoldenFile(t, filepath.Join("testdata", "siren_queries.golden.txt"), b.String())
 }
