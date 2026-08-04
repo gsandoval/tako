@@ -12873,3 +12873,77 @@ This lands **before Z3**. Z3 adds `Latency`/`Instances`/`Saturation` —
 three more general words — and they should be born under the scheme as
 `ServiceLatency`/`ServiceInstances`/`ServiceSaturation` rather than
 renamed a week later.
+
+## Z2b — the rename and examples/siren, built (2026-08-03)
+
+Owner-approved. Three commits: the namespace, the example, the docs.
+
+### What the namespace became
+
+Readings are methods on the handle they read — `uploads.Rate()`,
+`thumbMs.Percentile(0.99)`. That is spec rule 6's OWN remedy for a
+general concept ("methods scoped to a store instance"), and it removed
+five top-level words without adding one. The `Recording` interface went
+with them.
+
+`When` on comparisons, `Alert` on channels, `<Subject><Situation>` on
+conditions, and the dead-letter queue demoted from a symbol to a
+`QueueWatch` field — because the two queues are the same two gauges on
+the same kind of subscription and nothing else differs. `PubSub` became
+`AlertTopic`: it takes a `tako.Topic`, and the old name pointed at the
+wrong concept inside tako's own API.
+
+`Platform` could not express its common case AT ALL. Filters are pasted
+verbatim, so scoping to your own service needed an env-prefixed physical
+name that does not exist at declaration time — the bare name matches
+nothing, and omitting the filter matches every service in the project.
+`ServiceMetric`/`QueueMetric` take the object and write the matcher.
+
+### Six defects the query golden found
+
+`examples/siren` declares 22 alerts across all 15 readings. Rendering
+every generated query beside its notification sentence, and READING IT,
+found:
+
+1. **The latency query was malformed.** The range selector was appended
+   to the label list, so it landed inside the braces —
+   `{…,route="GET /slow"[60s]}` — which Cloud Monitoring answers with a
+   400. Every latency alert had been broken since Y1.
+2. **`SingletonDown` compared instance count `< 0`.** The preset takes
+   no threshold argument, so the analyzer read zero. The only check a
+   singleton has could not fire.
+3. **`JobFailed` matched `job_name` on the job's name.** A Cloud Run job
+   deploys under its RUNNER SERVICE's name. Third matcher in this
+   feature to name something no deploy creates.
+4. **`WhenAbsent` on a recording compiled to a threshold comparison**,
+   which cannot express absence: an empty result set compares to nothing.
+5. **Histogram queries carried no namespace**, so a preview env's series
+   moved prod's p99.
+6. **Raw readings had no notification sentence**, so their subject line
+   was the Go variable name — defect 8 again, surviving in the half that
+   had no example.
+
+Three more surfaced while wiring the analyzer, none caused by the
+rename: `Counter`/`Histogram` vars were never registered in
+`resourceVars` (so a raw reading resolved to no subject and would have
+generated `custom.googleapis.com/tako/` with an empty name); channel
+constructors were dispatched from a hand-copied case list; and
+`checkQuantiles` matched constructors only, so a `Percentile` written as
+a method would have gone unchecked.
+
+### The pattern, stated once more
+
+Nine of these were invisible to every test that existed, and visible in
+about four minutes of reading a rendered artifact. The through-line of
+this whole feature is that **a query is not checkable by looking at the
+code that builds it** — only by looking at what it built. The golden is
+now that artifact, and three tests stand where the reading did: matchers
+must name objects the plan creates, queries must be structurally
+well-formed, and a comparison must be reachable.
+
+### Not done
+
+siren has never been deployed. Everything above is offline: goldens,
+structure, analysis. Whether 22 policies actually create, and whether
+each goes quiet then fires, is the Z2b live walk in
+`validate/stage10.md`, and it is the only thing that can close it.
