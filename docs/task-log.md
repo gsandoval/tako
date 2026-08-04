@@ -13380,3 +13380,96 @@ The first version of the CLI made the same error in its own output —
 marking every metric "has data", including the GCE ones. Caught by
 reading the output rather than by a test, which is the fourth time that
 has been the mechanism in this feature.
+
+## Z7 — DX proposal: `tako docs` (2026-08-04) — AWAITING APPROVAL
+
+Owner-requested: serve the documentation locally.
+
+### Surface
+
+```
+tako docs                      serve on :8090, print the URL
+tako docs --port 9000          somewhere else
+tako docs --open               and open a browser
+```
+
+No subcommand and no `--serve` flag: serving IS what `tako docs` does,
+and a flag that must always be passed is a flag that should not exist.
+
+```
+$ tako docs
+📖 tako docs → http://localhost:8090
+   guide (9 chapters) · reference (24 pages) · api (171 symbols)
+   ^C to stop
+```
+
+### What it serves
+
+Three sections, from three sources, and the third is the interesting one:
+
+- **guide** — `docs/guide/*.md`, the example-driven arc
+  (hello → shortlink → gallery → journal → shop → blog) plus the local
+  and cloud stories.
+- **reference** — `docs/reference/*.md`, one page per primitive.
+- **api** — every exported symbol with its signature, generated from
+  the SDK lock the API-freeze test already maintains
+  (`testdata/sdk_lock.golden`, 171 entries). Not hand-written, so it
+  cannot drift: the test that fails when the surface changes is the same
+  thing that feeds this page.
+
+Grouped the way `docs/reference/README.md` already groups them, because
+that grouping is a considered one and a second ordering would be a
+second thing to keep true.
+
+### Embedded, not read from disk
+
+`go:embed` the two directories into the binary. ~197KB of markdown,
+which is nothing next to a Go binary, and it is what makes the command
+work for someone who ran `go install` and has no tako checkout — the
+case that matters, since the whole point is reading the docs without
+GitHub open.
+
+The cost is honest: docs shipped in a binary are as old as the binary.
+A `tako docs` from an installed v0.1.0 shows v0.1.0's docs, which is
+correct behaviour rather than a limitation — the docs match the SDK you
+are compiling against.
+
+### Rendering
+
+goldmark, already a dependency (spec §2.11 renders markdown for
+`tako.Page`). Sanitized through bluemonday like every other rendered
+markdown in tako, and the same reasoning applies even though the input
+is ours: a renderer with an exception for trusted input is a renderer
+with an exception.
+
+One stylesheet, inlined. No JavaScript, no external fonts, no CDN —
+`tako docs` must work on a plane.
+
+### What it is NOT
+
+- Not a static-site generator, and not `tako.Site`. It is a read-only
+  local server for the docs that ship with the binary.
+- **Not published anywhere.** No `--build` to emit HTML for hosting;
+  nothing about this touches the eventual public docs site.
+- Not searchable in v1. Browser find-in-page over a single reference
+  page is enough for 24 pages, and a search index is a real feature that
+  should wait for a demand.
+
+### Errors you'll meet
+
+```
+tako docs: port 8090 is already in use — pass --port to pick another
+```
+
+### Testing
+
+The renderer and the API-page generation are unit-testable without a
+server: every embedded file parses, every internal link between docs
+resolves to a page that exists, and the API page lists exactly the
+symbols in the lock. That last one is the same completeness habit the
+apply-coverage and preset-default tests have — the lock is the source,
+so the page cannot silently lose a symbol.
+
+**The link check earns its place**: `reference/alerts.md` gained links
+to `observability.md` and `footprint.md` during Y2, and nothing verifies
+those resolve today.
