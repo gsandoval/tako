@@ -15,6 +15,10 @@ var NotifyOwner = tako.Subscribe(ready, notifyOwner)
 var WarmFeed    = tako.Subscribe(ready, warmFeed)
 ```
 
+Each subscriber var is a [`tako.Handler`](handler.md), and each is its
+own deployable with its own dead letter — which is what lets two
+subscribers on one topic fail independently.
+
 The name must be a string constant (analyzer-enforced). `Subscribe`
 binds a handler to any **event source** — a topic, or a bucket's
 `Uploaded` event ([bucket.md](bucket.md)) — and accepts `WithProfile`

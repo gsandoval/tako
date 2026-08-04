@@ -77,6 +77,8 @@ Two consequences worth knowing:
   events
 - [cron.md](cron.md) — `tako.Cron` (+ `WithSingleflight`)
 - [lock.md](lock.md) — `tako.Lock`: leases, `Do`/`TryDo`
+- [handler.md](handler.md) — `tako.Handler`: the value every
+  background declaration returns, and what you name it for
 
 ## Compute
 

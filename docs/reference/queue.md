@@ -11,6 +11,9 @@ var clicks = tako.Queue[Click]("clicks")
 var CountClick = tako.Worker(clicks, countClick)
 ```
 
+The worker var is a [`tako.Handler`](handler.md): the exported name is
+what the service deploys as and what an alert names.
+
 The name must be a string constant (analyzer-enforced). A queue has
 **exactly one** worker — a second one is an analysis error, with a
 pointer to the fix (see below). `tako.Worker` accepts `WithProfile`

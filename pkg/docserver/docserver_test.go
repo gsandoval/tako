@@ -106,10 +106,11 @@ func TestEveryLinkBetweenDocsResolves(t *testing.T) {
 func TestEveryExportedSymbolHasAReferencePage(t *testing.T) {
 	site := built(t)
 
-	// Symbols nothing documents. Adding to this list is the deliberate
-	// act it should be: the api page prints them under their own
-	// heading, so the gap is visible to a reader too.
-	known := map[string]bool{"Handler": true}
+	// Symbols nothing documents. Empty, and meant to stay that way:
+	// adding to this list is the deliberate act it should be, and the
+	// api page prints whatever is in it under its own heading, so the
+	// gap is visible to a reader and not only here.
+	known := map[string]bool{}
 
 	pages := map[string]bool{}
 	for _, p := range site.Reference {

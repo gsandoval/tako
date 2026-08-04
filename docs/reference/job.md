@@ -19,6 +19,10 @@ settle = tako.Job[SettleParams]("settle")
 Settle = tako.Runner(settle, runSettle)
 ```
 
+The job is the carrier; the runner var is a
+[`tako.Handler`](handler.md), and it is the one that becomes the
+deployed Cloud Run Job.
+
 `tako.Job[T](name)` declares the job and its parameter type; the name
 must be a string constant (analyzer-enforced). `tako.Runner` binds
 the body — like every async handler it is `func(Ctx, T) error`, and a

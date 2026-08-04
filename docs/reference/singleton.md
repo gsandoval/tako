@@ -19,6 +19,9 @@ From [examples/shop](../../examples/shop/app.go):
 Invoicer = tako.Singleton(assignInvoices)
 ```
 
+`Invoicer` is a [`tako.Handler`](handler.md) — what `SingletonDown`
+names when the loop stops running.
+
 `Singleton` takes only its loop: the declaring variable is the identity — `Invoicer` deploys as `shop-invoicer` — which is the same rule that names every other service tako creates. `Singleton`
 accepts a `tako.SingletonConfig` whose Footprint honors only CPU and
 Memory fields — the scaling knobs (min=1/max=1/concurrency=1) are the

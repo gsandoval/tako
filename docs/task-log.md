@@ -14697,3 +14697,74 @@ that step needs the repository the feature does not exist.
 
 None. `docs` and `pkg/docserver` are internals, like everything outside
 the root package.
+
+## Z7a — `tako.Handler` documented (2026-08-04)
+
+Discovered work from Z7, closed the same day. The api page had one
+symbol under **"Not on a reference page yet"**; that heading is empty
+now, and the `known` list in
+`TestEveryExportedSymbolHasAReferencePage` is empty with it — so the
+next undocumented export is a test failure with nowhere to hide.
+
+### Where it went
+
+`docs/reference/handler.md`, filed under **Async** in the reference
+index. It bends the rubric and says so, the way `cli.md` does: a
+`Handler` is not a feature you declare, it is the value five features
+return — `Worker`, `Subscribe`, `Runner`, `Cron`, `Singleton`. **Five,
+not the four the Z7 entry said**: `Runner` returns one too, which the
+type's own doc comment has said all along.
+
+The page is reachable from where a reader actually is, not only from
+the index: each of the five producer pages now names the type in its
+Declare section. That took the link count from 125 to 145, all
+resolving.
+
+### What was worth writing down
+
+- **The var name is the identity.** `MakeThumb` in package `gallery`
+  deploys as `gallery-makethumb` — `pkg.Name + "-" + ToLower(varName)`
+  in `pkg/analyzer/workers.go`. The handler FUNCTION's name is a log
+  label; the type's own comment records that using it as an identity
+  once gave crons a second name that disagreed with the deployed one.
+- **A Handler is a name, not a callable.** No exported methods, on
+  purpose: invoking a worker directly would be a second way to run the
+  work, one that skips the queue that gives it retries, a dead letter
+  and at-least-once delivery.
+- **Not every Handler is a service.** `Runner` becomes a Cloud Run
+  **Job**; the other four become services. The first draft of the page
+  said "each Handler becomes its own Cloud Run service" and `job.md`
+  contradicted it — caught by reading the page it linked to.
+
+### Three claims the draft got wrong, and how
+
+Every one was caught by checking the code rather than by review, which
+is the argument for writing reference prose next to a grep:
+
+1. **"Nothing is registered by declaring a Handler."** False:
+   `handlers.go` keeps an `asyncRegistry` so `NewTestApp` can wire every
+   worker without a handler list. It is read only by tests — the
+   approved rule-1 carve-out — and the page now says exactly that
+   instead of overstating the purity.
+2. **"Renaming a Handler var … classifies as a REPLACE."** False.
+   `provision.go` marks a same-kind orphan+create pair a **rename
+   suspect**; a replace is a different class. The page now describes the
+   orphan, the suspect line, and that compute orphans are stateless and
+   pruned.
+3. **Snippets that would not analyze.** The alert examples were written
+   without windows; `tako/window` requires a period on a Count reading.
+   They now match the forms `examples/siren` actually declares.
+
+### Discovered work (unscheduled)
+
+- **`cache.md` documents an option that does not exist.** "‍`WithTTL` is
+  the only Cache option" — there is no `WithTTL` anywhere in the tree;
+  the TTL is the second argument to `tako.Cache`. Found while reading
+  the page for house style. The docserver's link check cannot catch
+  prose that names a symbol which never existed; **an api-surface check
+  over the reference's inline `tako.X` mentions would**, and that is
+  worth its own slice rather than a patch here.
+
+### API change
+
+None.

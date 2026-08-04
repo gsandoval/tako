@@ -10,6 +10,9 @@ cloud (T2), one declaration for both.
 var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
 ```
 
+`Cleanup` is a [`tako.Handler`](handler.md) — the value you hand to
+`CronMissed`, `CronFailed` and `app.AdvanceCron`.
+
 The schedule must be a string constant (analyzer-enforced), in either
 form: `"every <Go duration>"` (`every 10m`, `every 6h`, `every 24h`)
 or a 5-field unix-cron expression (`"0 3 * * *"`, `"0 9-17 * * 1-5"`).

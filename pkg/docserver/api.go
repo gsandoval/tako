@@ -352,6 +352,9 @@ var symbolPage = map[string]string{
 	"CronConfig":   "cron.md",
 	"Lock":         "lock.md",
 	"LockHandle":   "lock.md",
+	// The value Worker, Subscribe, Runner, Cron and Singleton all
+	// return. Filed under Async because four of the five are.
+	"Handler": "handler.md",
 
 	// Compute
 	"Job":             "job.md",
@@ -380,10 +383,4 @@ var symbolPage = map[string]string{
 	"User":       "auth.md",
 	"NewTestApp": "testing.md",
 	"TestApp":    "testing.md",
-
-	// Handler is what Cron, Worker, Subscribe and Singleton return, and
-	// what an alert can target. Every page that produces one mentions
-	// it in passing; none of them defines it. Left "" deliberately —
-	// see the note above symbolPage.
-	"Handler": "",
 }
