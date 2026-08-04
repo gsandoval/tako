@@ -1,0 +1,88 @@
+Billing
+  siren/x1: topic/byte_cost is above 1.073741824e+09
+  max(pubsub_googleapis_com:topic_byte_cost{monitored_resource="pubsub_topic",topic_id="x1-incidents"}) > 1.073741824e+09
+
+Dark
+  siren/x1: nothing is recording hits
+  absent_over_time(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[21600s])
+
+Erroring
+  siren/x1: GET /boom is erroring
+  sum(rate(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /boom",status="5xx"}[60s])) / sum(rate(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /boom"}[60s])) > 0.05
+
+Failing
+  siren/x1: cron Flaky is failing
+  sum(increase(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/cron/Flaky",status="5xx"}[3600s])) >= 1
+
+Fat
+  siren/x1: container/memory/utilizations is above 0.9
+  max(run_googleapis_com:container_memory_utilizations{monitored_resource="cloud_run_revision",service_name="x1-siren-grind"}) > 0.9
+
+Grinding
+  siren/x1: work_ms p99 is above 5000
+  histogram_quantile(0.99, sum(rate(custom_googleapis_com:tako_work_ms_bucket{monitored_resource="generic_task",namespace="siren-x1"}[60s])) by (le)) > 5000
+
+Idle
+  siren/x1: hits count is below 1
+  sum(increase(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[3600s])) < 1
+
+JobBad
+  siren/x1: job rebuild is failing
+  sum(increase(run_googleapis_com:job_completed_execution_count{monitored_resource="cloud_run_job",job_name="x1-siren-rebuilder",result="failed"}[3600s])) >= 1
+
+LoopDown
+  siren/x1: singleton Ticker is not running
+  max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-ticker",state="active"}) < 1
+
+Maxed
+  siren/x1: service x1-siren-grind is at its instance ceiling
+  max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-grind",state="active"}) > 0.5
+
+Missed
+  siren/x1: cron Sweep has not run
+  absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/cron/Sweep"}[600s])
+
+NoThroughput
+  siren/x1: work_ms per second is below 0.001
+  sum(rate(custom_googleapis_com:tako_work_ms_count{monitored_resource="generic_task",namespace="siren-x1"}[60s])) < 0.001
+
+Overworked
+  siren/x1: work_ms total is above 600000
+  sum(increase(custom_googleapis_com:tako_work_ms_sum{monitored_resource="generic_task",namespace="siren-x1"}[600s])) > 600000
+
+Piling
+  siren/x1: queue work is backing up
+  max(pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind"}) >= 50
+
+Poisoned
+  siren/x1: queue work is dead-lettering
+  max(pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind-dead"}) >= 1
+
+Pushback
+  siren/x1: subscription/push_request_count is above 10
+  max(pubsub_googleapis_com:subscription_push_request_count{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind",response_class="4xx"}) > 10
+
+Quiet
+  siren/x1: hits per second is below 0.01
+  sum(rate(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) < 0.01
+
+Slowing
+  siren/x1: GET /slow is slow
+  histogram_quantile(0.99, sum(rate(custom_googleapis_com:tako_request_ms_bucket{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /slow"}[60s])) by (le)) > 2000
+
+Sluggish
+  siren/x1: work_ms mean is above 800
+  sum(increase(custom_googleapis_com:tako_work_ms_sum{monitored_resource="generic_task",namespace="siren-x1"}[60s])) / sum(increase(custom_googleapis_com:tako_work_ms_count{monitored_resource="generic_task",namespace="siren-x1"}[60s])) > 800
+
+Stalling
+  siren/x1: queue work is stalling
+  max(pubsub_googleapis_com:subscription_oldest_unacked_message_age{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind"}) > 900
+
+SubPoisoned
+  siren/x1: queue incidents is dead-lettering
+  max(pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource="pubsub_subscription",subscription_id="x1-siren-onalert-dead"}) >= 1
+
+Untriaged
+  siren/x1: dead letters of queue work are going untriaged
+  max(pubsub_googleapis_com:subscription_oldest_unacked_message_age{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind-dead"}) > 86400
+

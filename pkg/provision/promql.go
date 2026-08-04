@@ -90,10 +90,13 @@ func counterQuery(sel, agg string, window time.Duration) string {
 // histogramQuery is a reading of a distribution. Every form goes through
 // the _bucket/_count/_sum decomposition, because the bare name resolves
 // to nothing.
-func histogramQuery(metricType, resource, agg string, q float64, window time.Duration) string {
+func histogramQuery(metricType, resource, agg string, q float64, window time.Duration, matchers ...string) string {
 	w := promDuration(window)
 	base := promName(metricType)
-	res := fmt.Sprintf("{monitored_resource=%q}", resource)
+	// The matchers belong INSIDE the selector, and namespace is always
+	// one of them: without it a histogram alert reads every environment's
+	// series at once, so a preview deploy moves prod's p99.
+	res := fmt.Sprintf("{%s}", strings.Join(append([]string{fmt.Sprintf("monitored_resource=%q", resource)}, matchers...), ","))
 	switch agg {
 	case "percentile":
 		// by (le) is what makes this a quantile over the histogram

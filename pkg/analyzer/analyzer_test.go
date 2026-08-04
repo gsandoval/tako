@@ -212,3 +212,67 @@ func TestShopSummary(t *testing.T) {
 	}
 	compareGolden(t, "testdata/shop_summary.golden.txt", []byte(Summary(g)))
 }
+
+// TestSirenGraph goldens examples/siren — the app that exists to fail,
+// and therefore the only place every alerting condition is declared. If
+// a condition stops resolving its subject, this is where it shows.
+func TestSirenGraph(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/siren")})
+	if err != nil {
+		t.Fatalf("Analyze(examples/siren): %v", err)
+	}
+	got, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = append(got, '\n')
+	compareGolden(t, "testdata/siren_appgraph.golden.json", got)
+}
+
+// Every alert in siren must resolve to a real subject. An unresolved one
+// generates a query against an empty name — which matches nothing, and
+// reads exactly like a healthy system. That is the failure this whole
+// slice keeps rediscovering, so it gets an assertion of its own rather
+// than living inside a golden nobody reads line by line.
+func TestSirenAlertsAllResolveASubject(t *testing.T) {
+	g, err := Analyze(Config{Dir: repoPath(t, "examples/siren")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alerts int
+	readings := map[string]bool{}
+	for _, r := range g.Resources {
+		if r.Kind != "alert" || r.Alert == nil {
+			continue
+		}
+		alerts++
+		a := r.Alert
+		readings[a.Reading] = true
+		if a.Reading == "" {
+			t.Errorf("%s has no reading", r.Name)
+		}
+		if a.SubjectKind == "" {
+			t.Errorf("%s resolved no subject kind — its query would name nothing", r.Name)
+		}
+		if a.SubjectName == "" && a.SubjectVar == "" {
+			t.Errorf("%s resolved neither a subject name nor a var", r.Name)
+		}
+		if len(r.Channels) == 0 {
+			t.Errorf("%s notifies nobody", r.Name)
+		}
+	}
+	if alerts < 20 {
+		t.Fatalf("only %d alerts in siren — it exists to demand the whole catalogue", alerts)
+	}
+	// The catalogue, as a set: a reading with no example demanding it
+	// does not ship.
+	for _, want := range []string{
+		"rate", "count", "sum", "mean", "percentile", "platform",
+		"queue_depth", "queue_age", "cron_missed", "cron_failed",
+		"job_failed", "error_rate", "latency", "at_capacity", "singleton_down",
+	} {
+		if !readings[want] {
+			t.Errorf("no alert in siren reads %q — either demand it here or cut it", want)
+		}
+	}
+}

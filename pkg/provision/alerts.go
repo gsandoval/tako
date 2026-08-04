@@ -40,6 +40,47 @@ const (
 // depend on it (rate, ratio, percentile): the period only smooths.
 const defaultEvery = time.Minute
 
+// direction words the comparison for a human: "is above", not ">".
+func direction(op string) string {
+	switch op {
+	case "below":
+		return "is below"
+	case "atleast":
+		return "reached"
+	}
+	return "is above"
+}
+
+// readingPhrase names the aggregation in a sentence.
+func readingPhrase(a *analyzer.AlertCondition) string {
+	switch a.Reading {
+	case "rate":
+		return "per second"
+	case "count":
+		return "count"
+	case "sum":
+		return "total"
+	case "mean":
+		return "mean"
+	case "percentile":
+		return fmt.Sprintf("p%s", trimZeros(a.Quantile*100))
+	}
+	return a.Reading
+}
+
+func trimZeros(f float64) string {
+	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%g", f), "0"), ".")
+}
+
+// shortMetric drops the domain from a Google metric type so a subject
+// line reads as a name rather than a URL.
+func shortMetric(metricType string) string {
+	if i := strings.Index(metricType, "/"); i >= 0 {
+		return metricType[i+1:]
+	}
+	return metricType
+}
+
 // presetEvery is each preset's default reduction period.
 //
 // These MUST match the defaults the SDK's preset constructors document,
@@ -106,8 +147,13 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)))
 		return absentQuery(sel, lookback), retestAllowed(lookback), nil
 	case "job_failed":
+		// A Cloud Run job is named for the RUNNER SERVICE that executes
+		// it, not for the job's declared name — the deploy creates
+		// x1-siren-rebuilder, never x1-rebuild. Naming the job here made
+		// JobFailed match nothing, which is the third time a matcher has
+		// named a thing no deploy creates.
 		sel := selector(metricJobExecutions, resourceRunJob,
-			fmt.Sprintf("job_name=%q", cfg.Name(a.SubjectName)), `result="failed"`)
+			fmt.Sprintf("job_name=%q", cfg.Name(runnerServiceOf(g, a.SubjectName))), `result="failed"`)
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "error_rate":
 		all := takoRequests(cfg, g, a, routeMatcher(a)...)
@@ -121,13 +167,27 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 			fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
 			fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
 		}, routeMatcher(a)...)
-		q := fmt.Sprintf("histogram_quantile(%g, sum(rate(%s_bucket{%s})) by (le))",
-			a.Quantile, base, strings.Join(labels, ",")+"["+promDuration(every)+"]")
+		// The range selector goes AFTER the closing brace. Built by
+		// appending it to the label list, it landed inside them —
+		// {…,route="GET /slow"[60s]} — which is a syntax error Cloud
+		// Monitoring rejects with a 400. Every latency alert was
+		// malformed, and nothing rendered a query to look at until the
+		// siren golden did.
+		q := fmt.Sprintf("histogram_quantile(%g, sum(rate(%s_bucket{%s}[%s])) by (le))",
+			a.Quantile, base, strings.Join(labels, ","), promDuration(every))
 		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "at_capacity", "singleton_down":
 		sel := selector(metricInstanceCount, resourceRun,
 			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))), `state="active"`)
 		threshold := a.Threshold
+		if a.Reading == "singleton_down" {
+			// A singleton is exactly one instance, and the preset takes
+			// no threshold argument — so the analyzer has none to read
+			// and this is where the number lives. It was defaulting to
+			// zero, and an instance count is never below zero: the one
+			// check a singleton has could not fire.
+			threshold = 1
+		}
 		if a.Reading == "at_capacity" {
 			// No threshold was asked for: the ceiling is the service's
 			// own MaxInstances, which the graph already carries.
@@ -146,8 +206,23 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 	// namespace keeps prod and a preview env from sharing an alert, the
 	// same way it keeps them from sharing a series.
 	ns := fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env)
+	// Absence is not a threshold: WhenAbsent asks whether the series
+	// exists at all, and comparing a count to a number can never answer
+	// that — an empty result set compares to nothing and yields nothing.
+	// Compiled as a comparison it was a condition that could never fire.
+	if a.Op == "absent" {
+		lookback := time.Duration(a.ForSeconds) * time.Second
+		if lookback == 0 {
+			lookback = every
+		}
+		suffix := ""
+		if a.SubjectKind == "histogram" {
+			suffix = "_count"
+		}
+		return absentQuery(selector(metric+suffix, resourceGenericTask, ns), lookback), retestAllowed(lookback), nil
+	}
 	if a.SubjectKind == "histogram" {
-		q := histogramQuery(metric, resourceGenericTask, a.Reading, a.Quantile, every)
+		q := histogramQuery(metric, resourceGenericTask, a.Reading, a.Quantile, every, ns)
 		return comparison(q, a.Op, a.Threshold), true, nil
 	}
 	sel := selector(metric, resourceGenericTask, ns)
@@ -274,6 +349,17 @@ func platformResource(metricType string) string {
 		return resourceGenericTask
 	}
 	return resourceGenericTask
+}
+
+// runnerServiceOf resolves the service that RUNS a declared job, which
+// is the name its Cloud Run Job deploys under.
+func runnerServiceOf(g *analyzer.AppGraph, job string) string {
+	for _, h := range g.Handlers {
+		if h.Kind == "job" && h.Binding == job {
+			return h.Service
+		}
+	}
+	return job
 }
 
 // serviceOf resolves the service a handler var belongs to.
@@ -438,9 +524,23 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 	case "latency":
 		return fmt.Sprintf("%s: %s is slow", app, subject)
 	case "at_capacity":
-		return fmt.Sprintf("%s: %s is at its instance ceiling", app, subject)
+		return fmt.Sprintf("%s: service %s is at its instance ceiling", app, cfg.Name(serviceOf(g, a.SubjectVar)))
 	case "singleton_down":
 		return fmt.Sprintf("%s: singleton %s is not running", app, subject)
+	case "platform":
+		metric := a.MetricType
+		if metric == "" {
+			metric = a.SubjectName
+		}
+		return fmt.Sprintf("%s: %s %s %g", app, shortMetric(metric), direction(a.Op), a.Threshold)
+	case "rate", "count", "sum", "mean", "percentile":
+		// The raw readings had no sentence at all, so their subject line
+		// was the Go variable name — the same defect the presets were
+		// fixed for, left behind in the half nobody had an example of.
+		if a.Op == "absent" {
+			return fmt.Sprintf("%s: nothing is recording %s", app, a.SubjectName)
+		}
+		return fmt.Sprintf("%s: %s %s %s %g", app, a.SubjectName, readingPhrase(a), direction(a.Op), a.Threshold)
 	}
 	return fmt.Sprintf("%s: %s", app, r.Name)
 }

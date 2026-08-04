@@ -1,0 +1,769 @@
+{
+  "module": "siren",
+  "services": [
+    {
+      "name": "siren",
+      "package": "siren",
+      "handlers": [
+        "siren.Boom",
+        "siren.Slow",
+        "siren.Flood",
+        "siren.Poison",
+        "siren.Pause",
+        "siren.Sink",
+        "siren.Sweep",
+        "siren.Flaky"
+      ],
+      "profile": "default"
+    },
+    {
+      "name": "siren-grind",
+      "package": "siren",
+      "handlers": [
+        "siren.Grind"
+      ],
+      "profile": "default",
+      "footprint": {
+        "concurrency": 1,
+        "max_instances": 1
+      }
+    },
+    {
+      "name": "siren-onalert",
+      "package": "siren",
+      "handlers": [
+        "siren.OnAlert"
+      ],
+      "profile": "default"
+    },
+    {
+      "name": "siren-rebuilder",
+      "package": "siren",
+      "handlers": [
+        "siren.Rebuilder"
+      ],
+      "profile": "batch",
+      "job": true
+    },
+    {
+      "name": "siren-ticker",
+      "package": "siren",
+      "handlers": [
+        "siren.Ticker"
+      ],
+      "profile": "singleton",
+      "singleton": true
+    }
+  ],
+  "resources": [
+    {
+      "kind": "channel",
+      "name": "oncall",
+      "var": "siren.oncall",
+      "package": "siren",
+      "channel_kind": "email",
+      "target": "ops@example.com",
+      "pos": "alerts.go:20:2"
+    },
+    {
+      "kind": "channel",
+      "name": "hook",
+      "var": "siren.hook",
+      "package": "siren",
+      "channel_kind": "webhook_tokenauth",
+      "target": "https://siren.example.com/incidents",
+      "pos": "alerts.go:21:2"
+    },
+    {
+      "kind": "channel",
+      "name": "feed",
+      "var": "siren.feed",
+      "package": "siren",
+      "channel_kind": "pubsub",
+      "target": "incidents",
+      "pos": "alerts.go:22:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Erroring",
+      "var": "siren.Erroring",
+      "package": "siren",
+      "condition": "RequestsErroring",
+      "alert": {
+        "op": "above",
+        "subject_kind": "route",
+        "subject_name": "GET /boom",
+        "subject_var": "siren.Boom",
+        "reading": "error_rate",
+        "threshold": 0.05,
+        "for_seconds": 300
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:33:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Slowing",
+      "var": "siren.Slowing",
+      "package": "siren",
+      "condition": "RequestsSlow",
+      "alert": {
+        "op": "above",
+        "subject_kind": "route",
+        "subject_name": "GET /slow",
+        "subject_var": "siren.Slow",
+        "reading": "latency",
+        "quantile": 0.99,
+        "threshold": 2000,
+        "for_seconds": 300
+      },
+      "channels": [
+        "siren.oncall",
+        "siren.hook"
+      ],
+      "pos": "alerts.go:36:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Piling",
+      "var": "siren.Piling",
+      "package": "siren",
+      "condition": "QueueBacklogged",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "queue",
+        "subject_name": "work",
+        "subject_var": "siren.work",
+        "reading": "queue_depth",
+        "threshold": 50,
+        "for_seconds": 600,
+        "on": "live"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:48:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Stalling",
+      "var": "siren.Stalling",
+      "package": "siren",
+      "condition": "QueueStalled",
+      "alert": {
+        "op": "above",
+        "subject_kind": "queue",
+        "subject_name": "work",
+        "subject_var": "siren.work",
+        "reading": "queue_age",
+        "threshold": 900,
+        "for_seconds": 300,
+        "on": "live"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:52:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Poisoned",
+      "var": "siren.Poisoned",
+      "package": "siren",
+      "condition": "QueueBacklogged",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "queue",
+        "subject_name": "work",
+        "subject_var": "siren.work",
+        "reading": "queue_depth",
+        "threshold": 1,
+        "for_seconds": 600,
+        "on": "dead"
+      },
+      "channels": [
+        "siren.oncall",
+        "siren.feed"
+      ],
+      "pos": "alerts.go:57:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Untriaged",
+      "var": "siren.Untriaged",
+      "package": "siren",
+      "condition": "QueueStalled",
+      "alert": {
+        "op": "above",
+        "subject_kind": "queue",
+        "subject_name": "work",
+        "subject_var": "siren.work",
+        "reading": "queue_age",
+        "threshold": 86400,
+        "for_seconds": 3600,
+        "on": "dead"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:62:2"
+    },
+    {
+      "kind": "alert",
+      "name": "SubPoisoned",
+      "var": "siren.SubPoisoned",
+      "package": "siren",
+      "condition": "QueueBacklogged",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "subscriber",
+        "subject_name": "incidents",
+        "subject_var": "siren.OnAlert",
+        "reading": "queue_depth",
+        "threshold": 1,
+        "for_seconds": 600,
+        "on": "dead"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:66:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Missed",
+      "var": "siren.Missed",
+      "package": "siren",
+      "condition": "CronMissed",
+      "alert": {
+        "op": "absent",
+        "subject_kind": "cron",
+        "subject_var": "siren.Sweep",
+        "reading": "cron_missed",
+        "for_seconds": 600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:75:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Failing",
+      "var": "siren.Failing",
+      "package": "siren",
+      "condition": "CronFailed",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "cron",
+        "subject_var": "siren.Flaky",
+        "reading": "cron_failed",
+        "threshold": 1,
+        "every_seconds": 3600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:80:2"
+    },
+    {
+      "kind": "alert",
+      "name": "JobBad",
+      "var": "siren.JobBad",
+      "package": "siren",
+      "condition": "JobFailed",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "job",
+        "subject_name": "rebuild",
+        "subject_var": "siren.Rebuild",
+        "reading": "job_failed",
+        "threshold": 1,
+        "every_seconds": 3600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:83:2"
+    },
+    {
+      "kind": "alert",
+      "name": "LoopDown",
+      "var": "siren.LoopDown",
+      "package": "siren",
+      "condition": "SingletonDown",
+      "alert": {
+        "op": "below",
+        "subject_kind": "singleton",
+        "subject_name": "Ticker",
+        "subject_var": "siren.Ticker",
+        "reading": "singleton_down",
+        "for_seconds": 300
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:87:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Maxed",
+      "var": "siren.Maxed",
+      "package": "siren",
+      "condition": "ServiceAtCapacity",
+      "alert": {
+        "op": "above",
+        "subject_kind": "worker",
+        "subject_name": "work",
+        "subject_var": "siren.Grind",
+        "reading": "at_capacity",
+        "for_seconds": 600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:92:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Quiet",
+      "var": "siren.Quiet",
+      "package": "siren",
+      "condition": "WhenBelow",
+      "alert": {
+        "op": "below",
+        "subject_kind": "counter",
+        "subject_name": "hits",
+        "subject_var": "siren.hits",
+        "reading": "rate",
+        "threshold": 0.01,
+        "for_seconds": 1800
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:106:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Grinding",
+      "var": "siren.Grinding",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "histogram",
+        "subject_name": "work_ms",
+        "subject_var": "siren.workMs",
+        "reading": "percentile",
+        "quantile": 0.99,
+        "threshold": 5000,
+        "for_seconds": 600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:111:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Idle",
+      "var": "siren.Idle",
+      "package": "siren",
+      "condition": "WhenBelow",
+      "alert": {
+        "op": "below",
+        "subject_kind": "counter",
+        "subject_name": "hits",
+        "subject_var": "siren.hits",
+        "reading": "count",
+        "threshold": 1,
+        "for_seconds": 7200,
+        "every_seconds": 3600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:115:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Overworked",
+      "var": "siren.Overworked",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "histogram",
+        "subject_name": "work_ms",
+        "subject_var": "siren.workMs",
+        "reading": "sum",
+        "threshold": 600000,
+        "every_seconds": 600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:119:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Sluggish",
+      "var": "siren.Sluggish",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "histogram",
+        "subject_name": "work_ms",
+        "subject_var": "siren.workMs",
+        "reading": "mean",
+        "threshold": 800,
+        "for_seconds": 600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:124:2"
+    },
+    {
+      "kind": "alert",
+      "name": "NoThroughput",
+      "var": "siren.NoThroughput",
+      "package": "siren",
+      "condition": "WhenBelow",
+      "alert": {
+        "op": "below",
+        "subject_kind": "histogram",
+        "subject_name": "work_ms",
+        "subject_var": "siren.workMs",
+        "reading": "rate",
+        "threshold": 0.001,
+        "for_seconds": 1800
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:128:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Dark",
+      "var": "siren.Dark",
+      "package": "siren",
+      "condition": "WhenAbsent",
+      "alert": {
+        "op": "absent",
+        "subject_kind": "counter",
+        "subject_name": "hits",
+        "subject_var": "siren.hits",
+        "reading": "count",
+        "for_seconds": 21600,
+        "every_seconds": 3600
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:133:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Fat",
+      "var": "siren.Fat",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "worker",
+        "subject_name": "work",
+        "subject_var": "siren.Grind",
+        "reading": "platform",
+        "threshold": 0.9,
+        "for_seconds": 600,
+        "scoped_to": "service_metric",
+        "metric_type": "run.googleapis.com/container/memory/utilizations"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:146:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Pushback",
+      "var": "siren.Pushback",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "queue",
+        "subject_name": "work",
+        "subject_var": "siren.work",
+        "reading": "platform",
+        "threshold": 10,
+        "every_seconds": 300,
+        "matchers": [
+          "response_class=\"4xx\""
+        ],
+        "scoped_to": "queue_metric",
+        "metric_type": "pubsub.googleapis.com/subscription/push_request_count"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:151:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Billing",
+      "var": "siren.Billing",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "platform",
+        "subject_name": "pubsub.googleapis.com/topic/byte_cost",
+        "reading": "platform",
+        "threshold": 1073741824,
+        "every_seconds": 3600,
+        "matchers": [
+          "topic_id=\"x1-incidents\""
+        ]
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:161:2"
+    },
+    {
+      "kind": "queue",
+      "name": "work",
+      "var": "siren.work",
+      "package": "siren",
+      "type": "Task",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
+      "pos": "app.go:27:2"
+    },
+    {
+      "kind": "topic",
+      "name": "incidents",
+      "var": "siren.alerts",
+      "package": "siren",
+      "type": "Incident",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
+      "pos": "app.go:28:2"
+    },
+    {
+      "kind": "counter",
+      "name": "hits",
+      "var": "siren.hits",
+      "package": "siren",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
+      "pos": "app.go:30:2"
+    },
+    {
+      "kind": "histogram",
+      "name": "work_ms",
+      "var": "siren.workMs",
+      "package": "siren",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
+      "pos": "app.go:31:2"
+    },
+    {
+      "kind": "job",
+      "name": "rebuild",
+      "var": "siren.Rebuild",
+      "package": "siren",
+      "type": "RebuildArgs",
+      "max_attempts": 5,
+      "min_backoff_seconds": 10,
+      "max_backoff_seconds": 300,
+      "pos": "app.go:221:2"
+    }
+  ],
+  "handlers": [
+    {
+      "kind": "api",
+      "var": "siren.Boom",
+      "package": "siren",
+      "service": "siren",
+      "route": "GET /boom",
+      "req_type": "BoomReq",
+      "req_ref": "siren.BoomReq",
+      "res_ref": "string",
+      "bindings": [
+        {
+          "field": "Rate",
+          "kind": "query",
+          "name": "rate",
+          "type": "float64"
+        }
+      ],
+      "pos": "app.go:71:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Slow",
+      "package": "siren",
+      "service": "siren",
+      "route": "GET /slow",
+      "req_type": "SlowReq",
+      "req_ref": "siren.SlowReq",
+      "res_ref": "string",
+      "bindings": [
+        {
+          "field": "Ms",
+          "kind": "query",
+          "name": "ms",
+          "type": "int"
+        }
+      ],
+      "pos": "app.go:87:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Flood",
+      "package": "siren",
+      "service": "siren",
+      "route": "POST /flood",
+      "req_type": "FloodReq",
+      "req_ref": "siren.FloodReq",
+      "res_ref": "string",
+      "bindings": [
+        {
+          "field": "N",
+          "kind": "query",
+          "name": "n",
+          "type": "int"
+        },
+        {
+          "field": "HoldMs",
+          "kind": "query",
+          "name": "hold_ms",
+          "type": "int"
+        }
+      ],
+      "pos": "app.go:105:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Poison",
+      "package": "siren",
+      "service": "siren",
+      "route": "POST /poison",
+      "req_type": "PoisonReq",
+      "req_ref": "siren.PoisonReq",
+      "res_ref": "string",
+      "bindings": [
+        {
+          "field": "Kind",
+          "kind": "query",
+          "name": "kind",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:134:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Pause",
+      "package": "siren",
+      "service": "siren",
+      "route": "POST /pause",
+      "req_ref": "struct{}",
+      "res_ref": "string",
+      "pos": "app.go:149:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Sink",
+      "package": "siren",
+      "service": "siren",
+      "route": "POST /incidents",
+      "req_type": "Incident",
+      "req_ref": "siren.Incident",
+      "res_ref": "string",
+      "has_body": true,
+      "pos": "app.go:162:5"
+    },
+    {
+      "kind": "worker",
+      "var": "siren.Grind",
+      "package": "siren",
+      "service": "siren-grind",
+      "footprint": {
+        "concurrency": 1,
+        "max_instances": 1
+      },
+      "binding": "work",
+      "pos": "app.go:174:5"
+    },
+    {
+      "kind": "subscribe",
+      "var": "siren.OnAlert",
+      "package": "siren",
+      "service": "siren-onalert",
+      "binding": "incidents",
+      "binding_kind": "topic",
+      "pos": "app.go:197:5"
+    },
+    {
+      "kind": "cron",
+      "var": "siren.Sweep",
+      "package": "siren",
+      "service": "siren",
+      "schedule": "every 5m",
+      "pos": "app.go:205:5"
+    },
+    {
+      "kind": "cron",
+      "var": "siren.Flaky",
+      "package": "siren",
+      "service": "siren",
+      "schedule": "every 10m",
+      "pos": "app.go:213:5"
+    },
+    {
+      "kind": "job",
+      "var": "siren.Rebuilder",
+      "package": "siren",
+      "service": "siren-rebuilder",
+      "binding": "rebuild",
+      "pos": "app.go:222:2"
+    },
+    {
+      "kind": "singleton",
+      "var": "siren.Ticker",
+      "package": "siren",
+      "service": "siren-ticker",
+      "binding": "Ticker",
+      "pos": "app.go:239:5"
+    }
+  ],
+  "edges": [
+    {
+      "from": "siren.Flood",
+      "to": "work",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    },
+    {
+      "from": "siren.Poison",
+      "to": "work",
+      "to_kind": "queue",
+      "kind": "resource",
+      "verb": "publish"
+    }
+  ]
+}

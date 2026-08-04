@@ -205,16 +205,23 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "lock"}
 				}
 			}
-			// Channels dispatch off channelKinds rather than a case list,
-			// so adding one cannot leave it undispatched. A hand-copied
-			// list here is what made the renamed constructors silently
-			// stop being collected — every alert then reported its
-			// destination as undeclared.
-			if _, isChannel := channelKinds[d.ctor]; isChannel {
-				if r := extractChannel(d.ctor, cfg.Dir, pkg, d.name, d.call, topicVars, &errs); r != nil {
-					graph.Resources = append(graph.Resources, *r)
-					channelVars[pkg.TypesInfo.Defs[d.name]] = r.Var
-				}
+		}
+		// Channels come after every resource, because an AlertTopic names
+		// a declared topic and declaration order in the file is not the
+		// author's problem: a channel written above its topic resolved to
+		// nothing when this shared the loop above.
+		//
+		// The dispatch reads channelKinds rather than a case list, so
+		// adding a channel cannot leave it uncollected — a hand-copied
+		// list here is what made the renamed constructors silently stop
+		// being collected.
+		for _, d := range decls {
+			if _, isChannel := channelKinds[d.ctor]; !isChannel {
+				continue
+			}
+			if r := extractChannel(d.ctor, cfg.Dir, pkg, d.name, d.call, topicVars, &errs); r != nil {
+				graph.Resources = append(graph.Resources, *r)
+				channelVars[pkg.TypesInfo.Defs[d.name]] = r.Var
 			}
 		}
 		for _, d := range decls {
