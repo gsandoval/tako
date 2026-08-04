@@ -4,7 +4,8 @@ Written 2026-08-04 before a context clear. Everything here is verified
 state, not recollection; where something is unverified it says so.
 
 **Status: Z1–Z4 are done agent-side and await the owner's verdicts.
-Z5 is unstarted. Z6 is removed. Z7 is proposed, unapproved.**
+Z5 is unstarted. Z6 is removed. Z7 is proposed, unapproved. FL1–FL4
+(§4) are proposed, unapproved, and are the work Z6 now waits on.**
 
 Verify that claim before trusting it:
 
@@ -99,7 +100,141 @@ they resolve.
 
 ---
 
-## 4. THE OPEN QUESTION (owner, to answer after the resume)
+## 4. FL1–FL4 — the flautas gaps, which are now the release gate
+
+Proposed 2026-08-04, unapproved. **This is the work Z6 was removed in
+favour of**: publishing is blocked on the flautas friction logs, and
+these four slices are those logs answered. Nothing here is optional to
+a v0.1.0 tag; the ordering below is the only open question.
+
+Source: flauta's friction log (sibling repo, `docs/friction.md`,
+entries dated 2026-08-02), kept under its ADR 0008 — an app-side
+workaround is the default, promotion to a tako task is the exception.
+Four entries: two promoted by flauta, one reopened here on evidence
+flauta did not have, one closed with no task.
+
+*A note on the record: this plan was first written into
+`tako-agent-plan.md` as "Stage 11" and was dropped from that file by
+69be83e while uncommitted (two agents, one worktree). The parked-list
+line at the bottom of that file still points at "FL2, Stage 11" and now
+points here instead. If Stage 11 is wanted as a durable stage rather
+than a section of a resume brief, it should be restored there — this
+brief is by nature ephemeral.*
+
+**The standing rules are unchanged.** One feature, one gate; DX
+proposal first; **no feature without an example demanding it** — each
+slice below names the example that will demand it, and nothing ships on
+an outside consumer's word alone.
+
+**FL1 — `tako.RedirectPermanent`.** A Page handler can only redirect
+303 (hard-wired in `pkg/runtime/page.go`), and the SDK's only permanent
+redirect is `SiteConfig.Redirects` — a map literal read at analysis
+time, so it cannot carry data decided per request. Verified, and there
+is no clean workaround: the three flauta found are build-time-only
+308s, an honest-but-temporary 303, or both mechanisms at once. Add a
+`status` to `HTML` (widening the `hooks.HTMLParts` tuple), keep
+`Redirect` at 303, serve 301 from the new constructor, leave the htmx
+path identical — `HX-Redirect` + 200 either way, because permanence
+means nothing to a client that is not a crawler. Example: journal grows
+a slug rename that mints a moved-URL record and serves 301 from the
+store — a redirect decided per request from entity data, which is the
+whole of the gap. Gate FL1: rename a post, watch the old URL answer
+301, and the same route answer `HX-Redirect` under htmx.
+
+**FL2 — `SiteConfig{NotFound: "404.html"}`.** Unparks the styled error
+page. Two paths 404 today and both answer in plain text: `pageError`
+for a handler's `tako.NotFound()`, and the site handler for a static
+miss — which is why a handler-side result type cannot close this alone
+and a config field can. Cheaper than it looks: `RegisterSiteTemplates`
+already receives `SiteOptions` and installs `renderSite` as package
+state, so both paths can render the site's own layout with no codegen
+restructuring. A missing or broken template falls back to today's plain
+text — a 404 never becomes a 500. Example: journal has both paths
+already. Three calls for the proposal: whether `NotFound` resolves as a
+template first and falls back to a static file in the site dir, so
+generators that already emit `404.html` just work (recommended);
+whether 500s are in scope (recommended: no); whether htmx requests get
+the rendered document like everyone else (recommended: yes — one
+behavior, no mode switch). Gate FL2: a mistyped URL and a missing post
+both answer 404 wearing the site.
+
+**FL3 — `Query.Count()`.** flauta rated this workaround-fine and it was
+headed for the not-scheduled list. Reopened on a fact flauta could not
+see from outside, and the owner asked for it to be reconsidered only if
+Datastore made it simple. It does. The gcp backend is a hand-rolled
+Datastore v1 REST client, not the Go library (`go.mod` has no
+`cloud.google.com/go/datastore`), and `runAggregationQuery` is a
+sibling endpoint of the `runQuery` it already speaks: the same query
+object built today, wrapped in `{aggregations: [{count: {}}]}`. One new
+verb and one response field — server-side, billed per index scan rather
+than per matched entity, no new dependency. Local counts what it
+already filters. One call for the proposal: `Count` ignores `Limit`
+(recommended — `Limit` shapes a page, `Count` answers the total, which
+is the question a numbered pager asks). Example: journal's home listing
+renders "page N of M" instead of a bare first-50. Gate FL3: the total
+is right on both backends, including with filters.
+
+**FL4 — `Query.Page(cursor)`.** Called out by the owner as definitely
+important, and the slice with the sharp edge. `Page(after string)
+(EntityPage[T], error)` joins `All`/`First`/`Iter` as an executor,
+returning items, an opaque cursor and whether more remain; the empty
+string starts at the beginning. On gcp the cursor is nearly in hand
+already — `Query` reads `endCursor` on every batch and uses it
+internally to drain them, then throws it away at the API boundary.
+
+The edge is that it cannot always be handed back honestly. The backend
+deliberately falls back to a client-side sort when the order is the
+default id order, or cannot push down beside an inequality filter
+(`pkg/backends/gcp/entity.go`, the comment above the order block); in
+that case the server's cursor is not a position in the order the caller
+asked for, and returning it would silently skip or repeat rows. So the
+rule is uniform across both backends: **`Page` requires an explicit
+`OrderBy`**, refused with a runtime error rather than guessed — never a
+query that pages locally and lies in cloud.
+
+This is a backend-interface change (`backends.EntityQuery` gains a
+start cursor; `Query` must return an end cursor), so local implements a
+**keyset** cursor — the last row's `(sort value, id)` resumed as a
+compound predicate — not an offset, because only keyset matches
+Datastore's behaviour when rows are written between pages. That
+agreement is the conformance case, written first: insert and delete
+between page 1 and page 2, both backends observe the same thing.
+Example: gallery's `GET /api/photos` takes `?cursor=` and returns the
+next one. Gate FL4: page through gallery on both backends, with a write
+landing mid-walk.
+
+**Closed with no task — the site domain through the config seam.**
+flauta asked for nothing and is right: `tako/config-literal` refusing a
+variable is what lets the deploy plan be computed without running the
+app. One duplicated string held by a test is the smaller cost.
+Recorded so the question is not reopened from outside later.
+
+**Not promoted.** flauta's log also carries four gaps known from
+planning and not yet hit in code — no full-text query, no image
+processing, no roles in auth, no configurable markdown pipeline. Two
+are standing non-goals (admin primitives; anything that turns Entity
+into "the database"), and all four are unhit. They stay in the
+consumer's log until an example here demands them.
+
+**Ordering — the open call.** FL1 first: it is the only one blocking an
+outside project's design as written (flauta's ADR 0014 needs superseding
+with an honest-303 story if tako declines it), and it is the smallest.
+FL3 before FL4: it is a single endpoint and warms the aggregation path,
+while FL4 changes the backend interface and needs a cloud gate. FL2 is
+independent of all three and can land anywhere. Suggested: **FL1 → FL3
+→ FL4 → FL2**, against Z5 and Z7 which are unrelated and can interleave.
+Not yet decided, and worth an owner's minute — the alternative reading
+is that FL2 goes first because it is the only one a reader of the site
+would ever notice.
+
+**Verdicts travel back.** When a slice lands, its entry in
+`flautas/docs/friction.md` needs closing on the flauta side under its
+ADR 0008. That is a flauta-session job — tako never patches flauta, and
+the flauta agent appears to hold read-only access here.
+
+---
+
+## 5. THE OPEN QUESTION (owner, to answer after the resume)
 
 > Can every alert built in Z1–Z4 be written using plain tako alert
 > constructs?
@@ -164,7 +299,7 @@ surface look tidier.
 
 ---
 
-## 5. Standing constraints
+## 6. Standing constraints
 
 Never `git push`, never tag — commit on a feature branch, ff-merge to
 main, delete the branch; the owner pushes. Exclude
@@ -180,7 +315,7 @@ note. Do not offer it as a next step.
 
 ---
 
-## 6. What this feature taught, worth not relearning
+## 7. What this feature taught, worth not relearning
 
 Written down because it was rediscovered four times.
 
