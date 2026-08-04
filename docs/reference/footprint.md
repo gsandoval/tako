@@ -79,7 +79,7 @@ refusals: 60m for a service (past that you want a
 
 `CPUAlwaysOn` is a three-state `Toggle`, not a `bool`, because a struct
 whose zero value means "inherit" cannot otherwise express "explicitly
-off". `tako.On` forces allocation on a Default-profile service;
+off". `tako.ToggleOn` forces allocation on a Default-profile service;
 `tako.ToggleOff` forces it off on Latency.
 
 `StartupBoost` gives a starting instance extra CPU until it is serving.

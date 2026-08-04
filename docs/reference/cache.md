@@ -11,8 +11,11 @@ From [examples/gallery](../../examples/gallery/app.go):
 var feed = tako.Cache[[]Photo]("feed", time.Minute)
 ```
 
-The name must be a string constant (analyzer-enforced). `WithTTL` is
-the only Cache option; no declared TTL means entries never expire.
+The name must be a string constant (analyzer-enforced). The TTL is a
+second **parameter**, not an option — a cache without an expiry policy
+is a decision, not a default worth making silently — so there is no way
+to declare a cache without answering the question. A zero TTL is the
+way to say "never expires", out loud.
 
 ## Use
 

@@ -342,7 +342,7 @@ is reduced over changes what the alert *means*.
 
 ## Absence
 
-`tako.Absent` compiles to PromQL's `absent_over_time`, not to Cloud
+`tako.WhenAbsent` compiles to PromQL's `absent_over_time`, not to Cloud
 Monitoring's `conditionAbsent`, which caps at 23h30m — shorter than a
 daily cron's own period, so it could never watch one. A PromQL lookback
 has no such ceiling: `[26h]` and `[7d]` are both accepted.
@@ -547,6 +547,7 @@ histogram has `.Percentile`.
   escalation ladder and no per-condition severity.
 
 - **No dashboards.**
-- No `tako.ServiceLatency`/`ServiceInstances`/`ServiceSaturation`
-  shorthands for the common platform metrics — write them as
-  `tako.ServiceMetric` for now.
+- No shorthands for most platform metrics — latency and saturation
+  are still written as `tako.ServiceMetric` with the metric type
+  spelled out. `tako.ServiceInstances` is the one that shipped, and
+  `tako metrics <search>` is how you find a type to name.

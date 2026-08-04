@@ -14768,3 +14768,87 @@ is the argument for writing reference prose next to a grep:
 ### API change
 
 None.
+
+## Z7b — the api-surface check over the docs (2026-08-04)
+
+Discovered work from Z7a, closed the same day. The docs name the SDK 522
+times across the guide and the reference, and nothing checked that the
+things they name exist. Three of them did not.
+
+### The check
+
+`TestEveryTakoSymbolTheDocsNameExists` scans every embedded page for
+`tako.X` and requires X in the lock — as a declaration or as a method.
+Methods count because the docs legitimately write `tako.Percentile` for
+a reading method, and a `tako/quantile` error text tako itself emits
+does the same.
+
+The pattern requires a capital after the dot, which is what keeps the
+image labels (`tako.app`, `tako.service`) out of the sweep. Mutation-
+verified rather than assumed:
+
+```
+reference/lock.md:103: the docs name tako.WithLease, and tako exports no such symbol
+```
+
+### What it found
+
+1. **`tako.Absent`** (alerts.md) — the constructor is `tako.WhenAbsent`,
+   which the same page writes correctly four times elsewhere. One
+   sentence kept a name that never shipped.
+2. **`tako.On`** (footprint.md) — the constant is `tako.ToggleOn`, and
+   the very next clause says `tako.ToggleOff` correctly.
+3. **`tako.ServiceLatency`** (alerts.md) — in a "Not yet" bullet
+   promising three shorthands tako does not have. **One of the three has
+   since shipped**: `tako.ServiceInstances` is in the lock. So the
+   bullet was stale in the direction that matters least to a compiler
+   and most to a reader — it told them to write `ServiceMetric` by hand
+   for something with a constructor. Rewritten to name the one that
+   exists and point at `tako metrics <search>` for finding the rest.
+
+Worth noticing about #3: prose that names an ABSENT feature is a real
+category, and writing it as `tako.X` makes it indistinguishable from a
+claim that the symbol exists. The rule this test creates is a good one —
+if tako does not have it, do not write it with the `tako.` prefix.
+
+### What it deliberately does not check
+
+**The `WithX` vocabulary.** The reference alone has 59 mentions —
+`WithProfile`, `WithFootprint`, `WithSingleflight`, `WithAuth`,
+`WithPrivate`, `WithDelay` — and tako exports no `With` anything;
+options are fields on config structs. That looked like 59 more bugs
+until the spec and the API reviews turned out to use the same names:
+§4 of the tech spec discusses "conflicting `WithProfile` values",
+`api-review-2.md` groups the surface by `WithBuild` / `WithAuth` /
+`WithParallel`. They are the project's names for option FAMILIES, not
+claims about Go symbols.
+
+So the check requires the qualifier: **`tako.X` asserts "this is API",
+bare `WithX` does not.** Whether the docs should keep a vocabulary the
+Go surface does not share is a question about the docs' voice, not a
+correctness bug, and it is not one to settle inside a test.
+
+### The limit, stated
+
+cache.md said "`WithTTL` is the only Cache option" — which motivated
+this whole slice — and this check does **not** catch it. Not because of
+the vocabulary rule but because the sentence is wrong about something
+subtler: `tako.Cache` has no options at all. The TTL is a required
+second parameter, deliberately (`cache.go`: "a cache without an expiry
+policy is a decision, not a default worth making silently"), and the
+page also claimed you could omit it. Fixed by hand.
+
+**No symbol check catches a sentence that is wrong about a symbol that
+exists.** That is the honest ceiling here, and the reason the reference
+rubric puts real transcripts and verbatim error texts on every page.
+
+### Discovered work (unscheduled)
+
+- **The `WithX` vocabulary question**, above. Either the docs adopt the
+  config-struct names, or the vocabulary is stated somewhere as
+  deliberate. Today it is neither, and a reader who greps for
+  `WithSingleflight` finds nothing.
+
+### API change
+
+None.
