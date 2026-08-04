@@ -13076,3 +13076,104 @@ So the real accounting:
 
 The number stands — 8/22 observed — but the reason is that the walk was
 run against an example tuned for reading rather than for firing.
+
+## Z2b — the walk re-run with tuned windows: 18 of 22, and a third instance of one trap (2026-08-04)
+
+Owner-directed after the last entry's "needed time" was corrected. The
+windows were tuned the way gallery's already were, two switches were
+added, and the run got most of the way.
+
+### What was fixed in siren first
+
+- **`/pause` never worked.** It flipped an `atomic.Bool` in the API
+  service, and `grind` read it in the WORKER service — a different
+  process under the partition rule. A switch wired to nothing, passing a
+  walk. Deleted: `/flood` builds a backlog without it.
+- **`/kill` could not be built as proposed.** A singleton that returns
+  is restarted five seconds later, forever (`pkg/runtime/job.go`) —
+  that is what a singleton IS. So nothing the loop does to itself
+  reaches zero instances, and the honest reproduction is external:
+  `gcloud run services delete`.
+- **`/incident?fail=true`** added: publishes a poison incident that
+  `OnAlert` refuses, so a SUBSCRIBER's own dead-letter queue fills.
+- Every window shortened, with the reason in a file header rather than
+  implied.
+
+### The result
+
+**22 created. 18 observed firing.**
+
+Phase C, under load, fifteen at once: `Erroring`, `Slowing`, `Sluggish`,
+`Grinding`, `Overworked`, `Piling`, `Stalling`, `Poisoned`,
+`SubPoisoned`, `Maxed`, `Missed`, `Untriaged`, `JobBad`, `Fat`,
+`LoopDown`. Then `Dark` once nothing was writing, `Pushing` after a
+label fix, and `Failing` (proven in the first walk).
+
+### Defect 24 — `WhenBelow` cannot detect a stop
+
+Thirteen minutes with nothing writing `hits`, and `Quiet`, `Idle` and
+`NoThroughput` never fired. Measured, not inferred:
+
+```
+sum(rate(custom_googleapis_com:tako_hits{…}[60s]))  →  EMPTY
+```
+
+A comparison needs something to compare. When a metric stops being
+written its series disappears, the query returns an empty result, and
+`empty < 0.01` is empty. **The alert goes quiet exactly when the thing
+has failed hardest.**
+
+`WhenBelow`'s doc comment said it was "the shape for *this stopped
+happening as often as it should*", which reads as covering a stop. It
+does not. Corrected, and siren now declares `Quiet` and `Dark` as a
+deliberate PAIR over one recording — below for "slowed down", absent for
+"stopped".
+
+### Defect 25 — `SingletonDown` resolved itself while the singleton was down
+
+Same root cause, worse consequence. `SingletonDown` compiled to
+`max(instance_count) < 1`. A deleted service stops publishing an
+instance count, so:
+
+```
+19 minutes after deleting the service:
+  max(instance_count)           EMPTY
+  max(instance_count) < 1       EMPTY      ← the old query: QUIET
+  absent(max(instance_count))   1          ← the new half: FIRING
+```
+
+It fired for the few minutes the series lingered at zero, then went
+quiet — **an alert that pages once and then reports healthy while the
+outage continues.** Now compiled as `(max(…) < 1) or (absent(max(…)))`,
+and verified holding at 19 minutes, which is where it previously
+resolved.
+
+### The trap, three times in one feature
+
+1. Y1: `increase(x[26h]) == 0` never fires on missing data — the reason
+   `CronMissed` compiles to `absent_over_time`.
+2. Here: `WhenBelow` on a stopped recording.
+3. Here: `SingletonDown` on a deleted service.
+
+All three are the same sentence: **an empty result set satisfies no
+comparison.** It is worth stating as a rule rather than rediscovering:
+any condition that means "less than expected" needs an absence arm, or
+it is silent in the worst case. The presets that mean it now have one;
+`WhenBelow` is documented as half of a pair rather than fixed, because
+the operator is the user's choice and changing it silently would be the
+surprise.
+
+### Also found
+
+`response_class="2xx"` matched nothing — Pub/Sub's classes are `ack`,
+`unreachable`, `remote_server_5xx`. A label VALUE assumed rather than
+looked up, in the file demonstrating how not to do that. And `Billing`
+had `topic_id="z2-work"` hardcoded — an env-prefixed physical name in an
+example, which is the exact trap `ServiceMetric`/`QueueMetric` exist to
+close.
+
+### Still not observed
+
+`Quiet`, `Idle`, `NoThroughput` — and now known to be **unobservable as
+written**, not merely unstaged. That is a better answer than the one
+this walk started with.

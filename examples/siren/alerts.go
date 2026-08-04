@@ -7,6 +7,18 @@ import "github.com/gsandoval/tako"
 // Every condition tako can express, declared once, against the switches
 // in app.go. This file IS the acceptance criterion for alerting: if a
 // constructor is not used here, nothing demands it and it does not ship.
+//
+// THE WINDOWS AND THRESHOLDS HERE ARE TUNED FOR THE WALK, NOT FOR
+// PRODUCTION. Nobody wants a two-minute dead-letter-triage alert; the
+// realistic value is a day. They are short so that a gate can watch
+// every one of them fire in an afternoon rather than over a week —
+// gallery's `Silent` carries the same note for the same reason.
+//
+// The first walk left fourteen of twenty-two unfired and the write-up
+// called it "needing time". It was not time, it was these numbers. Only
+// two things are actually fixed: Window.Every must be 1m–25h (Cloud
+// Monitoring's limit), and the 60s metric flush plus ingestion lag puts
+// a couple of minutes under everything.
 
 // ── where alerts go ─────────────────────────────────────────────────
 //
@@ -17,7 +29,7 @@ import "github.com/gsandoval/tako"
 // service is unreachable in exactly the outage a page is for.
 
 var (
-	oncall = tako.AlertEmail("ops@example.com")
+	oncall = tako.AlertEmail("darchitect@gmail.com")
 	hook   = tako.AlertWebhook("https://siren.example.com/incidents")
 	feed   = tako.AlertTopic(alerts)
 )
@@ -31,10 +43,10 @@ var (
 
 var (
 	Erroring = tako.Alert(
-		tako.RequestsErroring(Boom, 0.05, tako.Window{For: 5 * time.Minute}), oncall)
+		tako.RequestsErroring(Boom, 0.05, tako.Window{For: 2 * time.Minute}), oncall)
 
 	Slowing = tako.Alert(
-		tako.RequestsSlow(Slow, 2*time.Second, 0.99, tako.Window{For: 5 * time.Minute}), oncall, hook)
+		tako.RequestsSlow(Slow, 2*time.Second, 0.99, tako.Window{For: 2 * time.Minute}), oncall, hook)
 )
 
 // ── queues ──────────────────────────────────────────────────────────
@@ -46,25 +58,25 @@ var (
 var (
 	// The consumer is not keeping up.
 	Piling = tako.Alert(
-		tako.QueueBacklogged(work, 50, tako.QueueWatch{For: 10 * time.Minute}), oncall)
+		tako.QueueBacklogged(work, 50, tako.QueueWatch{For: 2 * time.Minute}), oncall)
 
 	// Work is going stale — nothing has failed, it is just not moving.
 	Stalling = tako.Alert(
-		tako.QueueStalled(work, 15*time.Minute, tako.QueueWatch{For: 5 * time.Minute}), oncall)
+		tako.QueueStalled(work, time.Minute, tako.QueueWatch{For: 2 * time.Minute}), oncall)
 
 	// Anything at all in the dead-letter queue. One is the honest
 	// threshold: there is no good number of dead letters.
 	Poisoned = tako.Alert(
-		tako.QueueBacklogged(work, 1, tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}),
+		tako.QueueBacklogged(work, 1, tako.QueueWatch{DeadLetters: true, For: 2 * time.Minute}),
 		oncall, feed)
 
 	// Nobody is triaging: poison that has sat unread since yesterday.
 	Untriaged = tako.Alert(
-		tako.QueueStalled(work, 24*time.Hour, tako.QueueWatch{DeadLetters: true, For: time.Hour}), oncall)
+		tako.QueueStalled(work, 2*time.Minute, tako.QueueWatch{DeadLetters: true, For: 2 * time.Minute}), oncall)
 
 	// A subscriber has its own fate, and its own dead-letter queue.
 	SubPoisoned = tako.Alert(
-		tako.QueueBacklogged(OnAlert, 1, tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
+		tako.QueueBacklogged(OnAlert, 1, tako.QueueWatch{DeadLetters: true, For: 2 * time.Minute}), oncall)
 )
 
 // ── scheduled and background work ───────────────────────────────────
@@ -73,24 +85,24 @@ var (
 	// The lookback is twice the schedule when left unset; 10 minutes
 	// here so a walk does not take an hour.
 	Missed = tako.Alert(
-		tako.CronMissed(Sweep, tako.Window{For: 10 * time.Minute}), oncall)
+		tako.CronMissed(Sweep, tako.Window{For: 8 * time.Minute}), oncall)
 
 	// A cron that RAN and failed is a different alert from one that
 	// never arrived.
 	Failing = tako.Alert(
-		tako.CronFailed(Flaky, 1, tako.Window{Every: time.Hour}), oncall)
+		tako.CronFailed(Flaky, 1, tako.Window{Every: 5 * time.Minute}), oncall)
 
 	JobBad = tako.Alert(
-		tako.JobFailed(Rebuild, 1, tako.Window{Every: time.Hour}), oncall)
+		tako.JobFailed(Rebuild, 1, tako.Window{Every: 5 * time.Minute}), oncall)
 
 	// The only check there is for a singleton.
 	LoopDown = tako.Alert(
-		tako.SingletonDown(Ticker, tako.Window{For: 5 * time.Minute}), oncall)
+		tako.SingletonDown(Ticker, tako.Window{For: 2 * time.Minute}), oncall)
 
 	// No threshold: the ceiling is Grind's own MaxInstances, so the
 	// number lives in one place.
 	Maxed = tako.Alert(
-		tako.ServiceAtCapacity(Grind, tako.Window{For: 10 * time.Minute}), oncall)
+		tako.ServiceAtCapacity(Grind, tako.Window{For: 2 * time.Minute}), oncall)
 )
 
 // ── your own recordings ─────────────────────────────────────────────
@@ -104,34 +116,43 @@ var (
 	// hundred seconds, which is the kind of number that has to be
 	// thought about rather than defaulted.
 	Quiet = tako.Alert(
-		tako.WhenBelow(hits.Rate(), 0.01, tako.Window{For: 30 * time.Minute}), oncall)
+		tako.WhenBelow(hits.Rate(), 0.01, tako.Window{For: 5 * time.Minute}), oncall)
 
 	// Any quantile works, not only the four Cloud Monitoring's aligner
 	// enum offers.
 	Grinding = tako.Alert(
-		tako.WhenAbove(workMs.Percentile(0.99), 5000, tako.Window{For: 10 * time.Minute}), oncall)
+		tako.WhenAbove(workMs.Percentile(0.99), 5000, tako.Window{For: 2 * time.Minute}), oncall)
 
 	// Counting needs a period, because the period IS the count.
 	Idle = tako.Alert(
-		tako.WhenBelow(hits.Count(), 1, tako.Window{For: 2 * time.Hour, Every: time.Hour}), oncall)
+		tako.WhenBelow(hits.Count(), 1, tako.Window{For: 5 * time.Minute, Every: time.Minute}), oncall)
 
 	// Total work done, as opposed to how many pieces.
 	Overworked = tako.Alert(
-		tako.WhenAbove(workMs.Sum(), 600000, tako.Window{Every: 10 * time.Minute}), oncall)
+		tako.WhenAbove(workMs.Sum(), 20000, tako.Window{Every: 5 * time.Minute}), oncall)
 
 	// A mean hides the tail; it is here because "the average got worse"
 	// is still a real question for throughput-shaped work.
 	Sluggish = tako.Alert(
-		tako.WhenAbove(workMs.Mean(), 800, tako.Window{For: 10 * time.Minute}), oncall)
+		tako.WhenAbove(workMs.Mean(), 800, tako.Window{For: 2 * time.Minute}), oncall)
 
 	// Throughput, from a histogram: it counts its observations.
 	NoThroughput = tako.Alert(
-		tako.WhenBelow(workMs.Rate(), 0.001, tako.Window{For: 30 * time.Minute}), oncall)
+		tako.WhenBelow(workMs.Rate(), 0.001, tako.Window{For: 5 * time.Minute}), oncall)
 
 	// Nothing is writing this metric AT ALL, which is different from it
-	// reading low.
+	// reading low — and the difference is not a nicety.
+	//
+	// `Quiet` above cannot catch a stop. When a metric stops being
+	// written its series disappears, so its query returns nothing, and
+	// `nothing < 0.01` is nothing: the alert goes quiet exactly when the
+	// thing has failed hardest. The walk proved it — thirteen minutes
+	// with no writer at all and `Quiet` never fired, while `Dark` did.
+	//
+	// So the pair is the point. WhenBelow for "slowed down", WhenAbsent
+	// for "stopped", declared together over the same recording.
 	Dark = tako.Alert(
-		tako.WhenAbsent(hits.Count(), tako.Window{For: 6 * time.Hour, Every: time.Hour}), oncall)
+		tako.WhenAbsent(hits.Count(), tako.Window{For: 10 * time.Minute, Every: time.Minute}), oncall)
 )
 
 // ── Google's own metrics ────────────────────────────────────────────
@@ -150,22 +171,32 @@ var (
 	// so by name rather than letting the deploy fail on Google's 400.
 	Fat = tako.Alert(
 		tako.WhenAbove(tako.ServiceMetric(Grind,
-			"run.googleapis.com/container/memory/allocation_time"), 1e9,
-			tako.Window{For: 10 * time.Minute}), oncall)
+			"run.googleapis.com/container/memory/allocation_time"), 1,
+			tako.Window{For: 2 * time.Minute}), oncall)
 
-	Pushback = tako.Alert(
+	// response_class="ack", not "2xx". The walk found this by watching
+	// the alert stay quiet while deliveries were obviously happening:
+	// Pub/Sub's classes are ack / unreachable / remote_server_5xx, and
+	// "2xx" was a value assumed rather than looked up. A label value is
+	// exactly as checkable as a label name, and exactly as silent when
+	// wrong — nothing errors, the query just matches nothing.
+	Pushing = tako.Alert(
 		tako.WhenAbove(tako.QueueMetric(work,
 			"pubsub.googleapis.com/subscription/push_request_count",
-			`response_class="4xx"`), 10,
+			`response_class="ack"`), 1,
 			tako.Window{Every: 5 * time.Minute}), oncall)
 
-	// The escape hatch: no tako object, so every matcher is yours —
-	// including the one that says WHICH topic. Omit it and this reads
-	// every topic in the project, which is the trap ServiceMetric and
-	// QueueMetric exist to close.
+	// The escape hatch, used for what it is actually good at: a reading
+	// with no tako object to scope it. This is every topic in the
+	// project, which is a real question ("what is Pub/Sub costing me")
+	// and the one shape ServiceMetric and QueueMetric cannot express.
+	//
+	// The first version filtered `topic_id="z2-work"` — an env-prefixed
+	// physical name hardcoded into an example, which is precisely the
+	// trap the scoped constructors exist to close, committed in the file
+	// demonstrating them.
 	Billing = tako.Alert(
 		tako.WhenAbove(tako.PlatformMetric(
-			"pubsub.googleapis.com/topic/byte_cost",
-			`topic_id="x1-incidents"`), 1<<30,
-			tako.Window{Every: time.Hour}), oncall)
+			"pubsub.googleapis.com/topic/byte_cost"), 1,
+			tako.Window{Every: 5 * time.Minute}), oncall)
 )

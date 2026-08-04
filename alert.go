@@ -292,7 +292,18 @@ func WhenAbove(m Metric, threshold float64, w Window) Condition {
 }
 
 // WhenBelow holds while the metric stays under threshold for the window
-// — the shape for "this stopped happening as often as it should".
+// — the shape for "this is happening less often than it should".
+//
+// It does NOT catch "this stopped". A comparison needs something to
+// compare: when a metric stops being written its series disappears, the
+// query returns an empty result, and `empty < threshold` is empty. The
+// alert stays quiet precisely when the thing has failed hardest —
+// measured, not reasoned about.
+//
+// WhenAbsent is the other half, and the two are complements rather than
+// alternatives: WhenBelow for "slowed down", WhenAbsent for "stopped".
+// Declaring both against one recording is the honest way to cover a
+// metric you care about.
 func WhenBelow(m Metric, threshold float64, w Window) Condition {
 	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: w}
 }

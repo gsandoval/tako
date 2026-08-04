@@ -15,7 +15,6 @@ package siren
 
 import (
 	"fmt"
-	"sync/atomic"
 	"time"
 
 	"github.com/gsandoval/tako"
@@ -55,9 +54,16 @@ type Incident struct {
 	} `json:"incident"`
 }
 
-// paused stops the worker acking, so the live queue backs up without
-// anything failing. It is the difference between "stalled" and "dying".
-var paused atomic.Bool
+// There is deliberately no /pause switch.
+//
+// The first version had one: an atomic.Bool the API endpoint flipped and
+// the worker read. It never did anything, and could not — under the
+// partition rule a worker is its OWN service, so the flag was set in one
+// process and read in another. The walk was passing a switch that was
+// wired to nothing.
+//
+// A backlog needs no switch anyway: /flood with a hold builds one, which
+// is what QueueBacklogged and QueueStalled watch.
 
 // ── the switches ────────────────────────────────────────────────────
 
@@ -144,13 +150,30 @@ func poison(ctx tako.Ctx, req PoisonReq) (string, error) {
 	return "poisoned: " + kind, nil
 }
 
-// Pause stops the worker acking without failing anything, so the live
-// queue ages while nothing dead-letters.
-var Pause = tako.API("POST /pause", pause)
+// IncidentReq asks for an incident that the subscriber cannot handle.
+type IncidentReq struct {
+	Fail bool `query:"fail"`
+}
 
-func pause(ctx tako.Ctx, _ struct{}) (string, error) {
-	paused.Store(!paused.Load())
-	return fmt.Sprintf("paused=%v", paused.Load()), nil
+// Emit publishes an incident onto the alerts topic — the switch behind
+// QueueBacklogged on a SUBSCRIBER's dead-letter queue.
+//
+// A subscriber has its own fate and its own dead topic, so one giving up
+// says nothing about the others. This is the only way to prove that
+// without breaking a real consumer.
+var Emit = tako.API("POST /incident", emit)
+
+func emit(ctx tako.Ctx, req IncidentReq) (string, error) {
+	var in Incident
+	in.Incident.PolicyName = "siren-self-test"
+	in.Incident.State = "open"
+	if req.Fail {
+		in.Incident.State = "poison"
+	}
+	if err := alerts.Publish(ctx, in); err != nil {
+		return "", err
+	}
+	return "emitted " + in.Incident.State, nil
 }
 
 // Sink receives incidents from the webhook channel, so an alert can be
@@ -176,9 +199,6 @@ var Grind = tako.Worker(work, grind, tako.Compute{
 })
 
 func grind(ctx tako.Ctx, t Task) error {
-	for paused.Load() {
-		time.Sleep(time.Second)
-	}
 	if t.HoldMs > 0 {
 		time.Sleep(time.Duration(t.HoldMs) * time.Millisecond)
 	}
@@ -197,6 +217,9 @@ func grind(ctx tako.Ctx, t Task) error {
 var OnAlert = tako.Subscribe(alerts, onAlert)
 
 func onAlert(ctx tako.Ctx, in Incident) error {
+	if in.Incident.State == "poison" {
+		return fmt.Errorf("onAlert: cannot route a poison incident")
+	}
 	ctx.Log().Warn("incident routed", "policy", in.Incident.PolicyName, "state", in.Incident.State)
 	return nil
 }
@@ -236,6 +259,16 @@ func rebuild(ctx tako.Ctx, a RebuildArgs) error {
 
 // Ticker is the singleton: SingletonDown is the only check there is for
 // a primitive whose whole promise is that one of it exists.
+//
+// There is deliberately no /kill switch, and the reason is a property of
+// tako rather than an omission. A singleton that returns — with an error
+// or without — is RESTARTED five seconds later, forever
+// (pkg/runtime/job.go). That is the point of a singleton, so nothing the
+// loop can do to itself will make its instance count reach zero.
+//
+// SingletonDown therefore fires on things OUTSIDE the app: the service
+// deleted, scaled away, or failing to start. The walk stages it with
+// `gcloud run services delete`, which is the honest reproduction.
 var Ticker = tako.Singleton(tick)
 
 func tick(ctx tako.Ctx) error {

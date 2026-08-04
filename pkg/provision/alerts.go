@@ -179,6 +179,23 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 	case "at_capacity", "singleton_down":
 		sel := selector(metricInstanceCount, resourceRun,
 			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))), `state="active"`)
+		if a.Reading == "singleton_down" {
+			// A below-comparison cannot fire on an empty result set, and
+			// a singleton that is properly gone STOPS PUBLISHING an
+			// instance count. So `< 1` alerts for the few minutes the
+			// series lingers at zero and then goes quiet — the alert
+			// resolves itself while the singleton is still down, which
+			// is worse than never firing.
+			//
+			// `absent()` is the other half: it yields 1 exactly when the
+			// vector is empty. Measured on a deleted service, where the
+			// v3 API still returned points while PromQL saw nothing.
+			//
+			// Third appearance of this trap in one feature, after
+			// increase(...)==0 for a missed cron and WhenBelow for a
+			// stopped recording.
+			return fmt.Sprintf("(max(%s) < 1) or (absent(max(%s)))", sel, sel), retestAllowed(lookback), nil
+		}
 		threshold := a.Threshold
 		if a.Reading == "singleton_down" {
 			// A singleton is exactly one instance, and the preset takes
