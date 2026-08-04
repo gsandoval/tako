@@ -13656,3 +13656,167 @@ No new permissions and no new call — this reads a failure the deploy
 already receives. No preflight is possible: name reuse is only knowable
 by attempting the create, since Google exposes no "is this name
 available" endpoint and no listing of recently-deleted names.
+
+## Stage 10 — the open question answered, by rendering both halves (2026-08-04)
+
+> Can every alert built in Z1–Z4 be written using plain tako alert
+> constructs?
+
+**No — but not for the reason the resume brief expected, and the real
+reason is a better argument.** Answered by compiling each raw
+alternative through `alertQuery` and putting it beside the preset's
+line from `siren_queries.golden.txt`, rather than by reading
+signatures. Two defects fell out of doing it that way, which is the
+third time this stage that rendering the artifact found what reading
+the code did not.
+
+### The brief's headline claim is wrong
+
+The brief says "there is no raw reader for tako's OWN per-endpoint
+metrics… nothing in the SDK surface can name them." There is.
+`PlatformMetric` takes any metric type and any raw matchers, and
+`platformResource` already maps the `custom.googleapis.com/tako/`
+prefix to `generic_task`. Rendered:
+
+```
+PlatformMetric("custom.googleapis.com/tako/requests",
+    `job="gallery"`, `route="GET /api/photos"`, `status="5xx"`)
+→ max(custom_googleapis_com:tako_requests{monitored_resource="generic_task",
+    job="gallery",route="GET /api/photos",status="5xx"}) > 1
+```
+
+So naming is not the barrier. Two other things are, and both are
+sharper.
+
+**1. The `namespace` label cannot be written at declaration time.** It
+is `App + "-" + Env` (`alerts.go` `takoRequests`), so the honest value
+is `gallery-x1` — a string that only exists after a deploy and changes
+per environment. A hand-written `PlatformMetric` over tako's own
+metrics either omits it, and matches every environment including
+previews, or hard-codes one and silently matches nothing everywhere
+else. This is the identical argument `ServiceMetric`'s own doc comment
+makes about `service_name`, applied to a label no constructor scopes.
+
+**2. The raw Google-metric path has exactly ONE reduction: `max()`.**
+`platformQuery` falls through to `"max(" + scopedSelector(...) + ")"`
+for every unscoped and scoped-metric case; the only exception is
+`ServicePercentile`. But `tako/requests` is a DELTA counter, and every
+preset over it needs a reduction the raw path cannot produce:
+
+| preset | reduction it needs |
+|---|---|
+| `RequestsErroring` | ratio of two `sum(rate(…))` |
+| `RequestsSlow` | `histogram_quantile` over `_bucket` |
+| `CronFailed` | `sum(increase(…))` |
+| `CronMissed` | `absent_over_time(…)` |
+| `JobFailed` | `sum(increase(…))` |
+
+`max()` of a delta counter is neither a rate nor a count. So even with
+every matcher written correctly by hand, none of those five is
+reachable — the gap is REDUCTION, not naming, and it is not closed by
+adding a constructor that names a metric.
+
+### What IS expressible, rendered side by side
+
+Verified by compiling both and comparing the strings, not by reasoning
+about them:
+
+| preset | raw equivalent | verdict |
+|---|---|---|
+| `ServiceAtCapacity(Grind)` | `WhenAbove(ServiceInstances(Grind), max-0.5, w)` | **byte-identical** |
+| `SingletonDown(Ticker)` | `WhenBelow(ServiceInstances(Ticker), 1, w)` | **byte-identical** |
+| `QueueBacklogged(work, 50, w)` | `WhenAbove(QueueMetric(work, "…/num_undelivered_messages"), 50, w)` | **off by one** |
+| `QueueStalled(work, 60s, w)` | `WhenAbove(QueueMetric(work, "…/oldest_unacked_message_age"), 60, w)` | **off by one** |
+
+The two identical ones still cost the user something: `ServiceAtCapacity`
+compiles `MaxInstances - 0.5`, so writing it raw means knowing the
+half-unit idiom AND duplicating a number that already lives in the
+service's footprint — a copy that goes stale silently when the
+footprint changes.
+
+The off-by-one is not a rounding quibble. Counting presets compile with
+the `atleast` operator (`>= 50`); the raw vocabulary has only
+`WhenAbove` (`> 50`). A user rewriting `QueueBacklogged(work, 50, w)`
+by hand gets a condition needing 51, in the quiet direction — which is
+exactly the defect `atleast` was introduced to fix, reappearing the
+moment someone leaves the presets.
+
+### Two defects found while rendering
+
+Both are in shipped surface, both are the "well-formed query that
+matches nothing" shape, and both are logged as discovered work rather
+than fixed here.
+
+**D1 — `WhenAbsent` on any Google-metric constructor compiles to its
+inverse.** `alertQuery`'s `platform` case ignores the op and hands the
+query to `comparison`, whose default arm is `> threshold`; an absent
+condition carries threshold 0. So:
+
+```
+WhenAbsent(ServiceMetric(Svc, "run.googleapis.com/container/instance_count"), w)
+→ max(run_googleapis_com:container_instance_count{…,service_name="x1-gallery"}) > 0
+```
+
+That fires when the metric IS present and goes quiet when it vanishes —
+the precise opposite of what was asked. Nothing rejects it: the
+analyzer accepts `WhenAbsent` with any `Metric`, and `absent_over_time`
+is only ever reached from `customQuery` and `cron_missed`. Same family
+as the `increase(x[26h]) == 0` lesson in §7, and the raw half is where
+it survived.
+
+**D2 — a user-written `subscription_id` matcher on `QueueMetric`
+duplicates the label instead of overriding it.**
+
+```
+QueueMetric(work, "…/num_undelivered_messages", `subscription_id="x1-gallery-makethumb-dead"`)
+→ max(…{monitored_resource="pubsub_subscription",
+    subscription_id="x1-gallery-makethumb",subscription_id="x1-gallery-makethumb-dead"})
+```
+
+Two contradictory matchers on one label. This is the obvious thing to
+try when reaching for the dead-letter subscription raw, and it is the
+fourth instance of a matcher naming something no deploy has. tako
+supplies `subscription_id` and `service_name` itself; a user matcher on
+a label tako already writes should be refused at analysis time with the
+constructor that does scope it named, not silently concatenated.
+
+### So: are the presets sugar, or load-bearing?
+
+**Load-bearing, for everything measured on tako's own metrics** — nine
+of the twenty-four golden conditions. The presets are the only way to
+reach a rate, an increase, a ratio, an absence or a quantile over
+`tako/requests` and `tako/request_ms`, and the only thing that scopes
+`namespace` to the deployed environment. For Google's own metrics they
+are close to sugar: two compile byte-identically to a raw pair, and two
+more differ only by the missing `atleast`.
+
+**The follow-up is a design choice, not a backlog item, and the brief's
+last option is the strongest one.** The metric names, the `namespace`
+scheme and the `job`/`route` label spellings are tako's implementation
+detail — three of them have already been changed once this stage, each
+time because a query matched nothing. Exposing a `RouteMetric` or
+`EndpointMetric` constructor freezes all of that as API, and the raw
+path would also need a reduction vocabulary (`Rate`, `Increase`,
+`Ratio`) it does not have, which is a much larger surface than the
+question implies. The narrow reading — presets are deliberately the
+only door to framework-internal metrics — costs nothing and is already
+what the code does.
+
+If anything is added, the argument is strongest for the two cases that
+are about GOOGLE's metrics rather than tako's, where the vocabulary
+already fits: a `DeadLetters(c)` selector so `QueueMetric` can name the
+`-dead` subscription tako derives (which D2 shows users will otherwise
+try to write by hand and get silently wrong), and an `atleast`-shaped
+comparison so a hand-written counting condition is not off by one.
+Neither exposes a tako metric name.
+
+### Discovered work (unscheduled)
+
+- **D1: `WhenAbsent` over `ServiceMetric`/`QueueMetric`/`PlatformMetric`
+  compiles to `> 0`,** the inverse of the request. Either compile it to
+  `absent_over_time` like the custom-metric path, or refuse it — but not
+  silently invert it.
+- **D2: `QueueMetric`/`ServiceMetric` concatenate a user matcher onto a
+  label tako already supplies,** producing a contradictory selector.
+  Refuse at analysis time, naming the constructor that scopes it.
+- Neither is in Z5's scope and neither is fixed here.
