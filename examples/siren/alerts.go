@@ -29,7 +29,7 @@ import "github.com/gsandoval/tako"
 // service is unreachable in exactly the outage a page is for.
 
 var (
-	oncall = tako.AlertEmail("darchitect@gmail.com")
+	oncall = tako.AlertEmail("ops@example.com")
 	hook   = tako.AlertWebhook("https://siren.example.com/incidents")
 	feed   = tako.AlertTopic(alerts)
 )
