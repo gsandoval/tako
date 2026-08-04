@@ -6,6 +6,7 @@ package journal
 // gallery's http_test.go.
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/cookiejar"
@@ -554,5 +555,71 @@ func TestRedirectAndRedirectPermanentDifferOnPlainRequests(t *testing.T) {
 		if res.StatusCode != code {
 			t.Errorf("%s answered %d, want %d", path, res.StatusCode, code)
 		}
+	}
+}
+
+// The home page reports a total that is not the size of its page.
+//
+// Count ignoring Limit is the whole decision, and the only way to see it
+// is with more posts than a page holds — so this writes past pageSize.
+// Without Count the page could say "here are 50" and never "of 60"; the
+// alternative was reading every matching post to render one number.
+func TestHomeCountsEveryPostNotJustThePage(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "ada")
+
+	const posts = pageSize + 10
+	for i := 0; i < posts; i++ {
+		res, err := c.PostForm(srv.URL+"/p", url.Values{
+			"title": {fmt.Sprintf("Post %d", i)}, "body": {"body"}, "_csrf": {token}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+	}
+
+	res, err := c.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	want := fmt.Sprintf("Showing %d of %d posts.", pageSize, posts)
+	if !strings.Contains(string(body), want) {
+		t.Fatalf("home does not report the total — want %q", want)
+	}
+}
+
+// A filtered count counts the filter, not the kind. An unpublished post
+// is in the store and must not be in the number.
+func TestHomeCountRespectsTheFilter(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "ada")
+
+	res, err := c.PostForm(srv.URL+"/p", url.Values{
+		"title": {"Draft"}, "body": {"body"}, "_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	id := strings.TrimPrefix(res.Header.Get("Location"), "/p/")
+
+	// Unpublish it: the filter is Published = true.
+	un, err := c.PostForm(srv.URL+"/p/"+id+"/publish", url.Values{"_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	un.Body.Close()
+
+	home, err := c.Get(srv.URL + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer home.Body.Close()
+	body, _ := io.ReadAll(home.Body)
+	if strings.Contains(string(body), "Showing") {
+		t.Fatalf("home counted an unpublished post:\n%s", body)
 	}
 }

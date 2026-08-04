@@ -7,8 +7,9 @@
   <p><textarea name="body" rows="4" placeholder="Write in markdown…"></textarea></p>
   <p><button>Publish</button></p>
 </form>
-{{ if not . }}<p>Nothing here yet — write the first post above.</p>{{ end }}
+{{ if not .Posts }}<p>Nothing here yet — write the first post above.</p>{{ end }}
+{{ if .Posts }}<p class="count">Showing {{ .Shown }} of {{ .Total }} posts.</p>{{ end }}
 <div id="posts">
-{{ range . }}{{ template "post-card.html" . }}{{ end }}
+{{ range .Posts }}{{ template "post-card.html" . }}{{ end }}
 </div>
 {{ end }}

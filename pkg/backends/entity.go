@@ -23,6 +23,14 @@ type Entity interface {
 	Exists(ctx context.Context, kind, id string) (bool, error)
 	// Query returns the documents of kind matching q, in q's order.
 	Query(ctx context.Context, kind string, q EntityQuery) ([][]byte, error)
+	// Count returns how many documents of kind match q's FILTERS.
+	//
+	// q.Limit and q.Order are ignored: Limit shapes a page and Count
+	// answers the total, which is the question a numbered pager asks;
+	// and an order can only change a count by excluding rows that lack
+	// the sort key, which would be a wrong answer rather than a
+	// different one.
+	Count(ctx context.Context, kind string, q EntityQuery) (int64, error)
 	// Update atomically applies mutate to the document under (kind, id).
 	// It returns ErrNotFound when the id is absent, and mutate's error
 	// unchanged when mutate fails.

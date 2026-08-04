@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
@@ -247,11 +248,15 @@ func normalize(v any) any {
 	return out
 }
 
-func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQuery) ([][]byte, error) {
+// filteredQuery builds the kind-and-filter half of a Datastore query.
+//
+// Shared by Query and Count rather than written twice: a count that
+// filters differently from the page it describes is worse than no count,
+// because a pager would confidently render "page 3 of 2".
+func filteredQuery(kind string, fs []backends.Filter) (map[string]any, error) {
 	query := map[string]any{"kind": []map[string]any{{"name": kind}}}
-
 	var filters []map[string]any
-	for _, f := range q.Filters {
+	for _, f := range fs {
 		op, ok := datastoreOps[f.Op]
 		if !ok {
 			return nil, fmt.Errorf("unsupported filter op %q", f.Op)
@@ -270,6 +275,71 @@ func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQ
 		query["filter"] = filters[0]
 	default:
 		query["filter"] = map[string]any{"compositeFilter": map[string]any{"op": "AND", "filters": filters}}
+	}
+	return query, nil
+}
+
+// Count answers server-side, through runAggregationQuery — a sibling
+// endpoint of the runQuery this client already speaks, taking the same
+// query object wrapped in an aggregation.
+//
+// That matters for cost as much as correctness: Datastore bills an
+// aggregation per index entry scanned rather than per entity returned,
+// so counting ten thousand matches does not read ten thousand entities.
+// Doing it client-side would have meant paging the whole result set to
+// throw it away.
+//
+// The query carries NO order and NO limit. A limit would cap the total
+// at a page size, and an order would exclude entities missing the sort
+// property — Datastore's index-backed sort only sees entities that have
+// the field, so an ordered count can silently answer low.
+func (s *EntityStore) Count(ctx context.Context, kind string, q backends.EntityQuery) (int64, error) {
+	nested, err := filteredQuery(kind, q.Filters)
+	if err != nil {
+		return 0, err
+	}
+	body := map[string]any{
+		"partitionId": s.partition(),
+		"aggregationQuery": map[string]any{
+			"nestedQuery":  nested,
+			"aggregations": []map[string]any{{"count": map[string]any{}, "alias": "total"}},
+		},
+	}
+	var out struct {
+		Batch struct {
+			AggregationResults []struct {
+				AggregateProperties map[string]struct {
+					IntegerValue string `json:"integerValue"`
+				} `json:"aggregateProperties"`
+			} `json:"aggregationResults"`
+		} `json:"batch"`
+	}
+	if err := s.c.do(ctx, "POST", s.url("runAggregationQuery"), body, &out); err != nil {
+		return 0, err
+	}
+	if len(out.Batch.AggregationResults) == 0 {
+		// An empty kind still answers with a result carrying zero. No
+		// results at all means the shape changed under us, and guessing
+		// zero would report "nothing matched" for "we did not ask".
+		return 0, fmt.Errorf("datastore returned no aggregation result for kind %q", kind)
+	}
+	prop, ok := out.Batch.AggregationResults[0].AggregateProperties["total"]
+	if !ok {
+		return 0, fmt.Errorf("datastore aggregation carried no %q property for kind %q", "total", kind)
+	}
+	// int64 crosses Datastore's JSON as a STRING, so this is a parse and
+	// not a cast.
+	n, err := strconv.ParseInt(prop.IntegerValue, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("datastore count %q is not a number: %w", prop.IntegerValue, err)
+	}
+	return n, nil
+}
+
+func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQuery) ([][]byte, error) {
+	query, err := filteredQuery(kind, q.Filters)
+	if err != nil {
+		return nil, err
 	}
 
 	// An explicit order pushes down (with __key__ as the deterministic

@@ -194,6 +194,41 @@ func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQ
 	return docs, nil
 }
 
+// Count walks the same filter the scan uses and counts what survives.
+//
+// It shares matches() with Query rather than re-deriving the predicate,
+// because a count that disagrees with the page it describes is worse
+// than no count: a pager would render "page 3 of 2".
+//
+// Limit and Order are deliberately not consulted — see the contract on
+// backends.Entity.
+func (s *EntityStore) Count(ctx context.Context, kind string, q backends.EntityQuery) (int64, error) {
+	var n int64
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(kind))
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			var fields map[string]any
+			if err := json.Unmarshal(v, &fields); err != nil {
+				return fmt.Errorf("stored document %s/%s is not valid JSON: %w", kind, k, err)
+			}
+			for _, f := range q.Filters {
+				if !matches(fields[f.Field], f.Op, normalize(f.Value)) {
+					return nil
+				}
+			}
+			n++
+			return nil
+		})
+	})
+	if err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func matches(fieldVal any, op string, want any) bool {
 	c := compare(fieldVal, want)
 	if c == incomparable {

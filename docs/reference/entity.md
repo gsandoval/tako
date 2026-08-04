@@ -35,7 +35,26 @@ error. `Update` is a transactional read-modify-write:
 Queries build on the store and touch only indexed fields —
 `q.Where("Owner", "=", owner).OrderBy("-Created").Limit(100).All()`.
 `Where` takes one of `=` `<` `<=` `>` `>=`; `OrderBy` is `-`-prefixed
-for descending; `All`, `First`, or `Iter` execute.
+for descending; `All`, `First`, `Iter`, or `Count` execute.
+
+`Count` returns how many entities match, and **ignores `Limit`**:
+
+```go
+list, err := posts.Query(ctx).Where("Published", "=", true).
+	OrderBy("-Created").Limit(50).All()
+total, err := posts.Query(ctx).Where("Published", "=", true).Count()
+// "Showing 50 of 214"
+```
+
+That is the decision, not an oversight. `Limit` shapes a page; the total
+is not a property of the page, and `Limit(50).Count()` returning 50
+would answer a question nobody asked. Ordering is ignored too — it
+cannot change how many things match.
+
+On `gcp` this is a Datastore aggregation, billed per index entry scanned
+rather than per entity returned, so counting a large match does not read
+it. On `local` it walks the same filter the scan uses. The conformance
+suite holds the two to the same answers, filters included.
 
 `Tx` runs a multi-entity transaction scoped to this store; an error
 rolls back and returns unchanged, so `tako.Errorf` statuses compose —

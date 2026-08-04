@@ -14322,3 +14322,64 @@ number — nothing else in the stack notices if they merge:
 ### API change
 
 `sdk_lock.golden` gains `func RedirectPermanent(target string) (HTML, error)`.
+
+## FL3 — `Query.Count()` (2026-08-04)
+
+Conformance case first, then both backends — the standing order for
+anything with two implementations.
+
+### The mechanisms are completely different, which is the point
+
+`gcp` answers server-side through `runAggregationQuery`, a sibling
+endpoint of the `runQuery` the hand-rolled Datastore client already
+speaks: the same query object wrapped in
+`{aggregations: [{count: {}, alias: "total"}]}`. No new dependency, and
+Datastore bills an aggregation per index entry SCANNED rather than per
+entity returned — so counting ten thousand matches does not read ten
+thousand entities. Doing it client-side would have meant paging the
+whole result set to throw it away.
+
+`local` walks the same filter its scan walks, sharing `matches()` with
+`Query` rather than re-deriving the predicate. A count that disagrees
+with the page it describes is worse than no count: a pager would
+confidently render "page 3 of 2".
+
+Two mechanisms, one contract, held together by the conformance suite —
+which is exactly the case that suite exists for.
+
+### Count ignores Limit AND Order
+
+`Limit` was the approved call. `Order` came out of writing the gcp side
+and is the sharper of the two: Datastore's index-backed sort only sees
+entities that HAVE the sort property, so an order surviving into the
+aggregation makes the count answer **low** rather than error. A number
+that looks like an answer.
+
+Both are conformance cases, so neither can regress in one backend only.
+
+### It refuses to guess
+
+An aggregation response tako cannot read is an error, not a zero. Three
+cases are tested — no results, an unexpected alias, a non-numeric value
+— because reporting "nothing matched" for "we did not understand the
+answer" is precisely the quiet wrongness this stage has spent itself on.
+`int64` also crosses Datastore's JSON as a STRING, so reading it is a
+parse rather than a cast.
+
+### What demands it
+
+journal's home page renders "Showing 50 of 214". Before this, the page
+could say "here are 50" and had no way to say "of 214" — the only route
+to the total was reading every matching post and discarding the bodies,
+a read per post to render one number.
+
+Its test writes `pageSize + 10` posts, because the decision under test
+is only visible past a page boundary. A second test unpublishes a post
+and asserts it leaves the count: a count that ignores its filter is not
+a count of anything.
+
+### API change
+
+`sdk_lock.golden` gains `func (*EntityQuery[T]).Count() (int64, error)`,
+and `backends.Entity` gains `Count` — a backend-interface change, so
+every implementation had to move together.

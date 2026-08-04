@@ -58,12 +58,36 @@ var (
 	Rename  = tako.Page("POST /p/{id}/rename", rename, tako.Route{SignIn: true})
 )
 
+// HomeView is the home page's data: one page of posts, and how many
+// there are in total.
+//
+// The total is what Count is for. Before it, the page could say "here
+// are 50 posts" and had no way to say "of 214" — the only way to learn
+// the total was to read every matching entity and throw the bodies
+// away, which costs a read per post to render one number.
+type HomeView struct {
+	Posts []Post
+	Total int64
+	Shown int
+}
+
+const pageSize = 50
+
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
-	list, err := posts.Query(ctx).Where("Published", "=", true).OrderBy("-Created").Limit(50).All()
+	published := func() *tako.EntityQuery[Post] {
+		return posts.Query(ctx).Where("Published", "=", true)
+	}
+	list, err := published().OrderBy("-Created").Limit(pageSize).All()
 	if err != nil {
 		return tako.HTML{}, err
 	}
-	return site.Render(ctx, "home.html", list)
+	// Count ignores Limit, which is the point: this is the total, not
+	// the size of the page above.
+	total, err := published().Count()
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	return site.Render(ctx, "home.html", HomeView{Posts: list, Total: total, Shown: len(list)})
 }
 
 type ReadReq struct {

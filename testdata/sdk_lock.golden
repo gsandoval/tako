@@ -21,6 +21,7 @@
     func (*EntityHandle[T]).Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error
     func (*EntityHandle[T]).Update(ctx Ctx, id string, mutate func(*T)) error
     func (*EntityQuery[T]).All() ([]T, error)
+    func (*EntityQuery[T]).Count() (int64, error)
     func (*EntityQuery[T]).First() (T, error)
     func (*EntityQuery[T]).Iter() Iter[T]
     func (*EntityQuery[T]).Limit(n int) *EntityQuery[T]

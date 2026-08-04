@@ -254,6 +254,24 @@ func (q *EntityQuery[T]) First() (T, error) {
 	return all[0], nil
 }
 
+// Count executes the query and returns how many entities match.
+//
+//	total, err := posts.Query(ctx).Where("Published", "=", true).Count()
+//
+// It answers the question a numbered pager asks — "how many are there" —
+// and so it IGNORES Limit. Limit shapes a page; the total is not a
+// property of the page. `Limit(50).Count()` returns every match, not 50.
+//
+// On the cloud backend this is a Datastore aggregation, billed per index
+// entry scanned rather than per entity returned, so counting a large
+// match does not read it.
+func (q *EntityQuery[T]) Count() (int64, error) {
+	if q.err != nil {
+		return 0, q.err
+	}
+	return entityBackend(q.ctx).Count(q.ctx, q.h.name, q.q)
+}
+
 // Iter executes the query and iterates matching entities.
 func (q *EntityQuery[T]) Iter() Iter[T] {
 	all, err := q.All()

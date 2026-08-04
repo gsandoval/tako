@@ -232,6 +232,99 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 		}
 	})
 
+	// Count is a server-side aggregation on gcp (runAggregationQuery) and
+	// a walk of what local already filtered. Two entirely different
+	// mechanisms answering one question, which is exactly the shape the
+	// conformance suite exists for.
+	t.Run("count answers the whole match, filters included", func(t *testing.T) {
+		s := seed(t)
+		for _, c := range []struct {
+			name string
+			q    backends.EntityQuery
+			want int64
+		}{
+			{"everything", backends.EntityQuery{}, 3},
+			{"equality filter", backends.EntityQuery{
+				Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "memo"}}}, 2},
+			{"range filter", backends.EntityQuery{
+				Filters: []backends.Filter{{Field: "hits", Op: ">", Value: 1}}}, 2},
+			{"ANDed filters", backends.EntityQuery{Filters: []backends.Filter{
+				{Field: "owner", Op: "=", Value: "memo"},
+				{Field: "hits", Op: ">", Value: 1}}}, 1},
+			{"no matches is zero, not an error", backends.EntityQuery{
+				Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "nobody"}}}, 0},
+		} {
+			got, err := s.Count(ctx, "links", c.q)
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if got != c.want {
+				t.Errorf("%s: count = %d, want %d", c.name, got, c.want)
+			}
+		}
+	})
+
+	// Count IGNORES Limit, and that is a decision rather than an
+	// oversight: Limit shapes a page, Count answers the total, and the
+	// question a numbered pager asks is "how many are there" — not "how
+	// many are there, up to the size of one page", which it already
+	// knows.
+	t.Run("count ignores limit", func(t *testing.T) {
+		s := seed(t)
+		got, err := s.Count(ctx, "links", backends.EntityQuery{Limit: 1})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 3 {
+			t.Errorf("count with Limit 1 = %d, want 3 — Limit shapes a page, Count answers the total", got)
+		}
+	})
+
+	// Order cannot change a count. On gcp the aggregation is built from
+	// the same query object the scan uses, so an order that survives into
+	// it is a chance for a sort key's absence to silently drop rows —
+	// Datastore excludes entities missing the sort property.
+	t.Run("count is unchanged by ordering", func(t *testing.T) {
+		s := seed(t)
+		plain, err := s.Count(ctx, "links", backends.EntityQuery{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ordered, err := s.Count(ctx, "links", backends.EntityQuery{Order: "-created"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plain != ordered {
+			t.Errorf("count = %d unordered, %d ordered — ordering must not change a total", plain, ordered)
+		}
+	})
+
+	t.Run("count sees writes and deletes", func(t *testing.T) {
+		s := seed(t)
+		if err := s.Put(ctx, "links", "d", doc("d", "memo", 9, "2026-07-04T10:00:00Z")); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Count(ctx, "links", backends.EntityQuery{
+			Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "memo"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 3 {
+			t.Errorf("count after put = %d, want 3", got)
+		}
+		if err := s.Delete(ctx, "links", "a"); err != nil {
+			t.Fatal(err)
+		}
+		got, err = s.Count(ctx, "links", backends.EntityQuery{
+			Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "memo"}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got != 2 {
+			t.Errorf("count after delete = %d, want 2", got)
+		}
+	})
+
 	t.Run("tx commits all writes together", func(t *testing.T) {
 		s := open(t)
 		err := s.Tx(ctx, "links", func(tx backends.EntityTxOps) error {
