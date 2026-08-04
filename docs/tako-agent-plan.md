@@ -386,6 +386,42 @@ exported signatures locally, so the documentation is readable without a
 browser tab open on GitHub and without the repo checked out. Proposal in
 `task-log.md`.
 
+## Stage 11 — Alerting you can fork, then the flautas gaps (2026-08-04)
+
+Two groups. FA came first by the owner's direction; FL is the release
+gate and Z6 waits on it.
+
+**FA1 — the metric contract, locked. DONE 2026-08-04.** `internal/metrics`
+is the one definition of every metric tako writes; the runtime records
+through it, descriptors derive from it, and the provisioner's matchers
+are spelled from it. A lock golden pins the names, and a test asserts the
+rendered queries only match labels the runtime writes — verified by
+mutation. Found one drift: `1xx` was missing from the documented status
+set.
+
+**FA2 — `tako alerts`. DONE 2026-08-04.** What each declared alert
+compiles to: PromQL, notification sentence, and the constructor it came
+from. No cloud, no project. `DescribeAlerts` is one renderer shared with
+the siren golden.
+
+**FA3 — the request readings. DONE 2026-08-04.** `tako.Requests(t)` and
+`tako.RequestMs(t)` carry the same reading methods a declared Counter or
+Histogram carries, plus `Status(class)` and `Fraction()`. Shipped
+`Fraction` in place of the proposal's general `Ratio` — no example
+divides unrelated metrics; deviation recorded in `task-log.md`.
+
+**FA4 — `WhenAtLeast`. DONE 2026-08-04.** `>= n`, so a hand-written
+counting condition is not off by one against the preset it replaced.
+
+Gate FA (batched, agent-side): `pkg/provision/testdata/twins` asserts
+each preset and its hand-written twin compile to identical PromQL. Six
+do. A preset with no twin is reported, so coverage cannot erode quietly.
+
+**FL1–FL4 — the flautas gaps. NEXT, unapproved.** `RedirectPermanent`,
+`SiteConfig{NotFound}`, `Query.Count()`, `Query.Page(cursor)`. Full
+proposal in `stage10-resume.md` §4; publishing (Z6) is blocked on these.
+The open call is ordering — suggested FL1 → FL3 → FL4 → FL2.
+
 ### Deliberately NOT scheduled
 
 Designed and argued, waiting on a trigger rather than on time:

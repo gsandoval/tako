@@ -4,7 +4,8 @@ Written 2026-08-04 before a context clear. Everything here is verified
 state, not recollection; where something is unverified it says so.
 
 **Status: Z1–Z4 are done agent-side and await the owner's verdicts.
-Z5 is DONE (§2). D1/D2 are fixed; FA1–FA4 are proposed, unapproved. Z6 is removed. Z7 is proposed, unapproved.
+Z5 is DONE (§2). D1/D2 are fixed. FA1–FA4 are DONE (Stage 11 in the
+plan). FL1–FL4 (§4) are next and still unapproved. Z6 is removed. Z7 is proposed, unapproved.
 FL1–FL4 (§4) are proposed, unapproved, and are the work Z6 now waits
 on. §5's open question is ANSWERED (see §5).**
 
