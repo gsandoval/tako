@@ -13321,3 +13321,62 @@ instance — so `> 0` was the only threshold it could ever cross and it
 fired at baseline. A tautology reads exactly like a working alert.
 Pointing it at the service that actually scales is what made it a
 demonstration.
+
+## Z4 — `tako metrics <search>` (2026-08-04)
+
+The command that makes `ServiceMetric` and `PlatformMetric` usable by
+someone who does not already know the name. A project publishes ~8,000
+descriptors, which is why the reference carries no list.
+
+It prints two things a raw descriptor listing does not, and each stands
+for a failure that otherwise costs a deploy:
+
+- **the constructor**, chosen from the metric's SHAPE. A DISTRIBUTION
+  has no bare name, so `ServiceMetric` on one produces a policy Cloud
+  Monitoring refuses; the search says `ServicePercentile` instead.
+- **whether the name is resolvable here today**, because a policy naming
+  something the project cannot see is refused at creation.
+
+```
+$ tako metrics container/startup --project tako-test-01
+✓ run.googleapis.com/container/startup_latencies
+    DELTA DISTRIBUTION · on cloud_run_job, cloud_run_revision, cloud_run_worker_pool
+    Distribution of time spent starting a new container instance in milliseconds.
+    tako.ServicePercentile(svc, "run.googleapis.com/container/startup_latencies", 0.99)
+
+✓ nameable — a policy can be created against it today
+```
+
+Gate met: `container/startup_latencies` is a metric neither of us knew,
+found from the CLI alone, with the right constructor.
+
+### CORRECTION to Z2b's defect 23
+
+Building this found that Z2b's explanation was **imprecise, and stated
+as fact**. It said a metric's absence from the PromQL name list meant
+"nothing has written this metric in this project yet — PromQL resolves
+names from data".
+
+The name list is 18,278 entries and includes
+`agent_googleapis_com:cpu_load_15m` in a project that has never run a
+GCE instance. So it is a catalogue of RESOLVABLE NAMES, not of metrics
+with data. What absence actually means is narrower and wider at once: a
+DISTRIBUTION never appears under its bare name at all, and a name for a
+service the project has not used does not appear yet — the four Pub/Sub
+and Run metrics Z2b flagged are all present now that z2 and z3 have
+exercised them.
+
+The behaviour Z2b shipped was right; the mechanism it asserted was a
+guess from one observation. The preflight message said the wrong thing
+and now reads:
+
+```
+      Cloud Monitoring cannot resolve this name in this project, so the
+      policy is refused. Check the spelling with `tako metrics <search>`;
+      a name for a service you have not used here yet appears once you have
+```
+
+The first version of the CLI made the same error in its own output —
+marking every metric "has data", including the GCE ones. Caught by
+reading the output rather than by a test, which is the fourth time that
+has been the mechanism in this feature.

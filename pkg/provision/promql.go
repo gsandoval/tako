@@ -32,6 +32,11 @@ import (
 )
 
 // promName maps a Cloud Monitoring metric type to its PromQL name.
+// PromName is the exported spelling, for callers outside this package
+// that need the same mapping — the CLI's metric search, so a name it
+// prints and a name a query builds can never be derived differently.
+func PromName(metricType string) string { return promName(metricType) }
+
 func promName(metricType string) string {
 	i := strings.Index(metricType, "/")
 	if i < 0 {

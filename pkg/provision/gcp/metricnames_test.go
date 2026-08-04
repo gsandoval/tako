@@ -43,7 +43,7 @@ func TestPreflightExplainsANonDistribution(t *testing.T) {
 		t.Errorf("Typo lists parts %v — it is simply unknown, and saying otherwise sends the reader hunting for a suffix", got)
 	}
 	msg := UnresolvableError(bad).Error()
-	for _, want := range []string{"Hot", "DISTRIBUTION", "_bucket", "Typo", "nothing has written this metric"} {
+	for _, want := range []string{"Hot", "DISTRIBUTION", "_bucket", "Typo", "cannot resolve this name"} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the message never mentions %q:\n%s", want, msg)
 		}

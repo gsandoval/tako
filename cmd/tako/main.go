@@ -38,6 +38,7 @@ Local — nothing outside this directory is touched:
 
 Cloud, read-only:
   tako logs [service] [--since 15m]
+  tako metrics <search> [--limit 20]
                        recent logs for the deployed services
   tako dlq [service]   peek dead-lettered messages per async service
 
@@ -125,6 +126,10 @@ func main() {
 		}
 	case "logs":
 		if err := runLogs(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "metrics":
+		if err := runMetrics(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "destroy":

@@ -199,7 +199,24 @@ including the one that says which resource.
 Optional trailing strings are extra label matchers, verbatim PromQL.
 There is no list of metric names in these docs on purpose: a project
 publishes upwards of eight thousand descriptors, so any list here would
-be both incomplete and stale.
+be both incomplete and stale. Search for one instead:
+
+```
+$ tako metrics utilizations --project my-project
+
+✓ run.googleapis.com/container/cpu/utilizations
+    DELTA DISTRIBUTION · on cloud_run_job, cloud_run_revision, cloud_run_worker_pool
+    Container CPU utilization distribution across all container instances.
+    tako.ServicePercentile(svc, "run.googleapis.com/container/cpu/utilizations", 0.99)
+
+✓ nameable — a policy can be created against it today
+```
+
+It prints the constructor because the metric's SHAPE decides it — a
+DISTRIBUTION has no bare name, so `ServiceMetric` on one produces a
+policy Cloud Monitoring refuses. And it marks whether the name is
+resolvable in your project today, because a policy naming something
+Cloud Monitoring cannot see is refused at creation.
 
 ## Windows
 
@@ -395,8 +412,7 @@ histogram has `.Percentile`.
 - **No severity or routing rules.** Every policy is created `WARNING`,
   and every channel on an alert gets every incident — there is no
   escalation ladder and no per-condition severity.
-- **No `tako metrics` command yet**, so finding a metric type means the
-  Metrics Explorer or the `metricDescriptors` API.
+
 - **No dashboards.**
 - No `tako.ServiceLatency`/`ServiceInstances`/`ServiceSaturation`
   shorthands for the common platform metrics — write them as

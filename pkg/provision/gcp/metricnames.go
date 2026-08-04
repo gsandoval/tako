@@ -69,11 +69,13 @@ func UnresolvableError(bad []UnresolvableMetric) error {
 			b.WriteString("      alert on one of those instead of the bare name\n")
 			continue
 		}
-		b.WriteString("      nothing has written this metric in this project yet — PromQL resolves\n")
-		b.WriteString("      names from data, so the policy cannot be created until it has some\n")
+		b.WriteString("      Cloud Monitoring cannot resolve this name in this project, so the\n")
+		b.WriteString("      policy is refused. Check the spelling with `tako metrics <search>`;\n")
+		b.WriteString("      a name for a service you have not used here yet appears once you have\n")
 	}
 	b.WriteString("\ntako seeds its own metrics for this reason and cannot seed Google's.\n")
-	b.WriteString("Deploy without the alert, let the resource run once, then deploy again.")
+	b.WriteString("Find the right name with `tako metrics <search>`, which marks what this\n")
+	b.WriteString("project can name today.")
 	return fmt.Errorf("%s", b.String())
 }
 
