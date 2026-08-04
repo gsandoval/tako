@@ -49,6 +49,37 @@ Pretty URLs work (`/about` → `about/index.html`); `WithRedirect`
 answers with a permanent 308. Declared API/Page routes win over the
 site by mux precedence; the site takes the rest.
 
+### The 404 page
+
+```go
+tako.Site("./web", tako.SiteConfig{NotFound: "404.html"})
+```
+
+One field, both ways a request can miss: a mistyped URL that matches no
+static file, and a handler returning `tako.NotFound()`. To a visitor
+they are one experience, and only one of them could ever be answered by
+something a handler returns — nothing runs on a static miss, so there is
+nothing to return a status from. That is why this is site config rather
+than a result type.
+
+It resolves as a **template first** (`templates/404.html`, rendered
+inside `layout.html` like any page), then as a **static file** in the
+site directory — so a generator that already emits `404.html` just
+works.
+
+A missing or broken 404 page falls back to plain text. **A 404 never
+becomes a 500**: the visitor already could not find what they wanted,
+and an error page that errors turns "we don't have that" into "we are
+broken".
+
+500s stay plain text always, and deliberately. A 500 means something in
+the process is already wrong; running the template engine to say so is
+the worst moment to depend on it.
+
+htmx requests get the rendered document like everyone else — one
+behaviour, no mode switch. A partial saying "not found" swapped into a
+page is a worse answer than a page.
+
 The `templates/` subtree is the one part never served raw: it backs
 `site.Render` / `site.Fragment` ([pages.md](pages.md)).
 `layout.html` is OPTIONAL — a site whose shell comes from a static

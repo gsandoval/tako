@@ -417,10 +417,29 @@ Gate FA (batched, agent-side): `pkg/provision/testdata/twins` asserts
 each preset and its hand-written twin compile to identical PromQL. Six
 do. A preset with no twin is reported, so coverage cannot erode quietly.
 
-**FL1–FL4 — the flautas gaps. NEXT, unapproved.** `RedirectPermanent`,
-`SiteConfig{NotFound}`, `Query.Count()`, `Query.Page(cursor)`. Full
-proposal in `stage10-resume.md` §4; publishing (Z6) is blocked on these.
-The open call is ordering — suggested FL1 → FL3 → FL4 → FL2.
+**FL1–FL4 — the flautas gaps. ALL DONE 2026-08-04**, in the suggested
+order FL1 → FL3 → FL4 → FL2.
+
+- **FL1 `tako.RedirectPermanent`** — 301 from a per-request target;
+  htmx unchanged. journal renames a slug and forwards from the store.
+- **FL3 `Query.Count()`** — a Datastore aggregation on gcp, a filtered
+  walk on local, ignoring both `Limit` and `Order`. journal's home
+  renders "Showing 50 of 214".
+- **FL4 `Query.Page(cursor)`** — keyset on both backends, refusing
+  without an explicit `OrderBy` and `Limit`. gallery's feed takes
+  `?cursor=`.
+- **FL2 `SiteConfig{NotFound}`** — one field for both 404 paths, with
+  a plain-text fallback so a 404 never becomes a 500. journal has both.
+
+Gate FL (agent-side): every example suite green against `local`,
+conformance included, with the write-between-pages case pinning FL4.
+Live gates for FL1/FL4 remain part of the batched human walk.
+
+**Z6 — Publish. Now unblocked by FL1–FL4**, and still the owner's:
+`git remote` (none is configured), `git push`, `git tag v0.1.0`, plus a
+fresh-project cycle against the published module path. The verdicts also
+need to travel back to `flautas/docs/friction.md` under its ADR 0008 —
+a flauta-session job; tako never patches flauta.
 
 ### Deliberately NOT scheduled
 

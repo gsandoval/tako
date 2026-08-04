@@ -25,7 +25,15 @@ var (
 
 	// site serves ./web embedded in the service binary; its templates/
 	// subtree backs site.Render and is never served statically.
-	site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
+	site = tako.Site("./web", tako.SiteConfig{
+		Redirects: map[string]string{"/about-us": "/about"},
+		// One field, both ways a request can miss: a mistyped URL that
+		// matches no static file, and a handler returning
+		// tako.NotFound() for a post that is not there. To a visitor
+		// they are the same experience, and only one of them could ever
+		// have been answered by something a handler returns.
+		NotFound: "404.html",
+	})
 
 	// auth injects /api/_session (Identity Platform's Google flow in the
 	// cloud; the dev bar's test users locally). Sessions are revocable

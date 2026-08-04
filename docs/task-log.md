@@ -14451,3 +14451,83 @@ implementations moved together, as with FL3.
 
 `Photo` gains an indexed `Created`: a cursor names a position in an
 order, so the field the feed is ordered by has to be indexed.
+
+## FL2 — `SiteConfig{NotFound: "404.html"}` (2026-08-04)
+
+Last of the four. The three calls in the proposal were taken as
+recommended: template first with a static-file fallback, 500s out of
+scope, htmx gets the document.
+
+### One field, because it is one experience
+
+Two entirely different paths 404 today: `pageError` for a handler's
+`tako.NotFound()`, and the site handler for a static miss. A
+handler-side result type could never have closed this — on a static miss
+NOTHING RAN, so there is nothing to return a status from. That is the
+whole argument for it being site config, and it is why the field covers
+both rather than the pages half only.
+
+Cheaper than it looked, as the proposal guessed: `RegisterSiteTemplates`
+already receives `SiteOptions` and installs the renderers as package
+state, so both paths reach one `writeNotFoundPage` with no codegen
+restructuring.
+
+### The failure policy is the part that matters on a bad day
+
+A missing 404 page, one that does not parse, or one that fails at render
+all fall back to today's plain text. **A 404 never becomes a 500.** The
+visitor already could not find what they wanted; an error page that
+errors turns "we don't have that" into "we are broken", which is a worse
+thing to say and a harder one to debug. All three failure shapes are
+tested.
+
+500s keep plain text, and that is a decision rather than laziness: a 500
+means something in this process is already wrong, and running the
+template engine to report it is the worst moment to depend on it.
+
+### A mistake caught by an existing test
+
+The first version exported `WriteNotFoundPage`, and `TestRuntimeLock`
+failed — that surface is imported by generated code in users'
+repositories. Both callers are inside `package runtime`, so it had no
+business being exported. The lock did exactly what it is for.
+
+### Coverage the goldens did not have
+
+journal has no codegen golden, so `NotFound`'s trip from analyzer to
+generated main was pinned by nothing. `TestSiteOptionsCarryEveryDeclared
+Field` covers it: a `SiteConfig` field the analyzer reads and codegen
+drops is an option that silently does nothing, which reads as the
+feature not working rather than as a bug.
+
+The journal harness also had to grow the site mount it never had — the
+generated main mounts the site at "/", and without that a mistyped URL
+was answered by the mux rather than by tako.
+
+### API change
+
+`sdk_lock.golden`: `SiteConfig` gains `NotFound string`.
+
+## Stage 11 — FL1–FL4 all landed (2026-08-04)
+
+Ordering ran as suggested: FL1 → FL3 → FL4 → FL2. Every example test
+passes against `local`, conformance included.
+
+What the four taught, beyond their own features:
+
+1. **A cursor cannot be rebuilt from the rows it points past.** FL4's
+   cache had to change shape, and anyone adding paging to a cached list
+   will meet the same wall.
+2. **`Count` had to ignore `Order` as well as `Limit`** — an ordered
+   Datastore count silently drops entities missing the sort property,
+   which answers LOW rather than failing.
+3. **A test can be wrong before the code is.** FL4's HTTP walk raced an
+   async worker and read 24 of 25, which is exactly what a dropped row
+   would look like.
+4. **`trimZeros` had been rendering p50 as "p5" since Z3** — found in
+   FA3 only because a new alert used a quantile with a trailing zero.
+
+Z6 (publish) is what waits on these; its blocker was the flautas
+friction logs, and FL1–FL4 are those logs answered. The verdicts still
+need to travel back to `flautas/docs/friction.md` under its ADR 0008,
+which is a flauta-session job — tako never patches flauta.

@@ -54,6 +54,9 @@ func extractSite(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	if u, set := stringField(dir, pkg, cfg, "DevProxy", "SiteConfig", errs); set {
 		r.DevProxy = u
 	}
+	if nf, set := stringField(dir, pkg, cfg, "NotFound", "SiteConfig", errs); set {
+		r.NotFound = nf
+	}
 	if b, set := nestedLit(dir, pkg, cfg, "Build", "Build", errs); set {
 		cmd, ok1 := stringField(dir, pkg, b, "Command", "Build", errs)
 		out, ok2 := stringField(dir, pkg, b, "Out", "Build", errs)

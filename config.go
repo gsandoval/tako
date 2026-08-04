@@ -154,6 +154,23 @@ type SiteConfig struct {
 	// fully trusted (never user-supplied). Sanitized output is the
 	// default because user-supplied markdown is an XSS vector.
 	TrustedHTML bool
+	// NotFound is the page a 404 renders, for BOTH ways a request can
+	// miss: a mistyped URL that matches no static file, and a handler
+	// returning tako.NotFound(). One field covers both because they are
+	// one experience to a visitor, and because a handler-side result
+	// type could never have covered the static miss at all.
+	//
+	//	tako.SiteConfig{NotFound: "404.html"}
+	//
+	// It resolves as a TEMPLATE first (templates/404.html, rendered
+	// inside layout.html like any page) and falls back to a static file
+	// in the site directory — so a generator that already emits
+	// 404.html just works.
+	//
+	// A missing or broken 404 page falls back to today's plain text. A
+	// 404 never becomes a 500: the visitor already could not find what
+	// they wanted, and an error page that errors helps nobody.
+	NotFound string
 }
 
 // AuthConfig declares which sign-in providers the app offers. At least

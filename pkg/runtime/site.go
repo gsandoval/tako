@@ -30,6 +30,10 @@ type SiteOptions struct {
 	// site request to a generator's own dev server (Vite/Hugo HMR)
 	// instead of serving the FS.
 	DevProxy string
+	// NotFound is the page a 404 renders: a template under templates/,
+	// or a static file in the site directory. Empty keeps the plain
+	// text.
+	NotFound string
 }
 
 // fingerprinted matches build-tool cache-busting names: app.3f2a1c.js,
@@ -74,6 +78,48 @@ type siteServer struct {
 	etags map[string]string // file path → strong etag (content hash)
 }
 
+// notFound answers a static miss. This is the half a handler-side result
+// type could never have covered — nothing ran, so there was nothing to
+// return a status from — and it is why NotFound is a SiteConfig field
+// rather than something a page returns.
+//
+// The declared page resolves as a TEMPLATE first, then as a static file
+// in the site directory, so a generator that already emits 404.html
+// just works. Either way a failure falls through to plain text: a 404
+// never becomes a 500.
+func (s *siteServer) notFound(w http.ResponseWriter, r *http.Request) {
+	if s.opts.NotFound != "" {
+		if writeNotFoundPage(r.Context(), w) {
+			return
+		}
+		if s.writeStaticNotFound(w) {
+			return
+		}
+	}
+	http.NotFound(w, r)
+}
+
+// writeStaticNotFound serves the declared page as a file from the site
+// directory — the generator-emitted 404.html case.
+func (s *siteServer) writeStaticNotFound(w http.ResponseWriter) bool {
+	file, err := s.open(path.Clean(strings.TrimPrefix(s.opts.NotFound, "/")))
+	if err != nil {
+		return false
+	}
+	defer file.Close()
+	body, err := io.ReadAll(file)
+	if err != nil {
+		return false
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(body)
+	return true
+}
+
 func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -86,7 +132,7 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	// templates/ is site.Render's input, never a static asset.
 	if p == "templates" || strings.HasPrefix(p, "templates/") {
-		http.NotFound(w, r)
+		s.notFound(w, r)
 		return
 	}
 	if p == "." || p == "/" {
@@ -107,7 +153,7 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if err != nil {
-			http.NotFound(w, r)
+			s.notFound(w, r)
 			return
 		}
 	}

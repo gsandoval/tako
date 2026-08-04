@@ -48,6 +48,7 @@
       "var": "journal.site",
       "package": "journal",
       "dir": "web",
+      "not_found": "404.html",
       "redirects": [
         {
           "from": "/about-us",
@@ -64,7 +65,7 @@
       "providers": [
         "google"
       ],
-      "pos": "app.go:33:2"
+      "pos": "app.go:41:2"
     }
   ],
   "handlers": [
@@ -76,7 +77,7 @@
       "route": "GET /",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:53:2"
+      "pos": "app.go:61:2"
     },
     {
       "kind": "page",
@@ -95,7 +96,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:54:2"
+      "pos": "app.go:62:2"
     },
     {
       "kind": "page",
@@ -105,7 +106,7 @@
       "route": "GET /write",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:55:2"
+      "pos": "app.go:63:2"
     },
     {
       "kind": "page",
@@ -131,7 +132,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:56:2"
+      "pos": "app.go:64:2"
     },
     {
       "kind": "page",
@@ -151,7 +152,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:57:2"
+      "pos": "app.go:65:2"
     },
     {
       "kind": "page",
@@ -177,7 +178,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:58:2"
+      "pos": "app.go:66:2"
     }
   ],
   "edges": [

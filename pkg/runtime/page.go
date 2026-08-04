@@ -52,6 +52,7 @@ var siteTemplates map[string]*template.Template
 // errors are recorded per template and surface at render time with the
 // template named — the dev loop iterates on exactly that text.
 func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
+	notFoundPage = opts.NotFound
 	hooks.RenderSite = renderSite
 	hooks.RenderFragment = renderFragment
 	siteTrustedHTML = opts.TrustedHTML
@@ -355,14 +356,55 @@ func csrfValidAgainst(r *http.Request, token string) bool {
 	return csrfMatches(sent, token)
 }
 
-// pageError renders errors as plain text pages: explicit statuses
-// (NotFound, decode 400s) as-is; everything else an opaque 500 — the
-// real error is logged with the request id, never sent to the client.
+// pageError renders errors as pages: explicit statuses (NotFound, decode
+// 400s) as-is; everything else an opaque 500 — the real error is logged
+// with the request id, never sent to the client.
+//
+// A 404 wears the site when SiteConfig.NotFound names a page. Only 404:
+// a 500 means something in this process is already broken, and running
+// the template engine to say so is the worst moment to depend on it.
 func pageError(w http.ResponseWriter, ctx tako.Ctx, reqID string, err error) {
 	if he, ok := err.(interface{ HTTPStatus() int }); ok {
+		if he.HTTPStatus() == http.StatusNotFound && writeNotFoundPage(ctx, w) {
+			return
+		}
 		http.Error(w, err.Error(), he.HTTPStatus())
 		return
 	}
 	ctx.Log().Error("page error", "err", err)
 	http.Error(w, "internal error (req "+reqID+")", http.StatusInternalServerError)
+}
+
+// notFoundPage is the site's declared 404, installed by
+// RegisterSiteTemplates alongside the renderers. It is package state for
+// the same reason renderSite is: the generated main wires the site once,
+// and both 404 paths — a handler's tako.NotFound() and the site
+// handler's static miss — have to reach it from different places.
+var notFoundPage string
+
+// writeNotFoundPage renders the site's 404 page, reporting whether it
+// managed to. A false answer means the caller should fall back to plain
+// text — which is the whole failure policy: a missing or broken 404
+// template must never turn a 404 into a 500. The visitor already could
+// not find what they wanted; an error page that errors helps nobody.
+//
+// Both 404 paths call it: a handler's tako.NotFound() through
+// pageError, and the site handler's static miss.
+func writeNotFoundPage(ctx context.Context, w http.ResponseWriter) bool {
+	if notFoundPage == "" {
+		return false
+	}
+	markup, err := renderSite(ctx, notFoundPage, nil)
+	if err != nil {
+		return false
+	}
+	h := w.Header()
+	h.Set("Content-Type", "text/html; charset=utf-8")
+	h.Set("Cache-Control", "no-cache")
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
+	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	w.WriteHeader(http.StatusNotFound)
+	_, _ = w.Write(markup)
+	return true
 }

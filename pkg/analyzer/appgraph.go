@@ -149,6 +149,9 @@ type Resource struct {
 	// TrustedHTML is the markdown posture opt-out (WithTrustedHTML):
 	// raw HTML in markdown passes through unsanitized.
 	TrustedHTML bool `json:"trusted_html,omitempty"`
+	// NotFound is the page a 404 renders — a template name under
+	// templates/, or a static file in the site directory.
+	NotFound string `json:"not_found,omitempty"`
 	// Domain is a WithDomain claim (Kind "service"); applyDomains
 	// projects it onto the declaring package's app service.
 	Domain string `json:"domain,omitempty"`

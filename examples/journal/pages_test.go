@@ -6,6 +6,7 @@ package journal
 // gallery's http_test.go.
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -26,7 +27,12 @@ func servePages(t *testing.T) *httptest.Server {
 	if err := runtime.BootLocal(t.TempDir()); err != nil {
 		t.Fatal(err)
 	}
-	runtime.RegisterSiteTemplates(os.DirFS("web"), runtime.SiteOptions{})
+	// Mirrors what codegen emits from the app's tako.Site declaration.
+	// The 404 page has to be here for the same reason it is there: both
+	// halves of the feature — a handler's tako.NotFound() and the site
+	// handler's static miss — read it from the wired options.
+	siteOpts := runtime.SiteOptions{NotFound: "404.html"}
+	runtime.RegisterSiteTemplates(os.DirFS("web"), siteOpts)
 	mux := http.NewServeMux()
 	mux.Handle("/api/_session", runtime.SessionHandler())
 	mux.Handle("GET /api/_session/signin", runtime.SignInPage("google"))
@@ -60,6 +66,16 @@ func servePages(t *testing.T) *httptest.Server {
 		return tako.RedirectPermanent("/elsewhere")
 	})
 	mux.Handle("POST /moved", runtime.PageHandler(alwaysMoved, nil))
+	// Harness-only: a route that always fails, so the 500 path can be
+	// held to plain text.
+	alwaysBroken := tako.Page("GET /boom", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return tako.HTML{}, errors.New("something came apart")
+	})
+	mux.Handle("GET /boom", runtime.PageHandler(alwaysBroken, nil))
+	// The site takes everything the declared routes did not, exactly as
+	// the generated main mounts it — which is what makes a mistyped URL
+	// a SITE 404 rather than the mux's bare one.
+	mux.Handle("/", runtime.SiteHandler(os.DirFS("web"), siteOpts))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -621,5 +637,91 @@ func TestHomeCountRespectsTheFilter(t *testing.T) {
 	body, _ := io.ReadAll(home.Body)
 	if strings.Contains(string(body), "Showing") {
 		t.Fatalf("home counted an unpublished post:\n%s", body)
+	}
+}
+
+// Both ways a request can miss now wear the site.
+//
+// They are two entirely different paths — a handler returning
+// tako.NotFound(), and the site handler finding no file — and that is
+// exactly why this is a SiteConfig field. Nothing a handler RETURNS
+// could have answered the second one: nothing ran.
+func TestBoth404PathsWearTheSite(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+
+	for name, path := range map[string]string{
+		"a handler's tako.NotFound()": "/p/never-existed",
+		"a static miss":               "/no/such/page",
+	} {
+		res, err := c.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("%s: %s answered %d, want 404", name, path, res.StatusCode)
+		}
+		if !strings.Contains(string(body), "Back to the journal") {
+			t.Errorf("%s: %s answered plain text, not the site's 404:\n%s", name, path, body)
+		}
+		// It must be the LAYOUT, not the bare template — the whole
+		// point is that a 404 looks like the site.
+		if !strings.Contains(string(body), "<html") {
+			t.Errorf("%s: 404 body is not a document:\n%s", name, body)
+		}
+		if ct := res.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("%s: content-type = %q", name, ct)
+		}
+	}
+}
+
+// An htmx request gets the rendered document like everyone else. One
+// behaviour, no mode switch: a 404 is a 404, and a partial that says
+// "not found" swapped into a page is a worse answer than a page.
+func TestNotFoundIsTheSameUnderHTMX(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+
+	req, err := http.NewRequest("GET", srv.URL+"/p/never-existed", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("HX-Request", "true")
+	res, err := c.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusNotFound {
+		t.Errorf("htmx 404 answered %d", res.StatusCode)
+	}
+	if !strings.Contains(string(body), "Back to the journal") {
+		t.Errorf("htmx 404 is not the site's page:\n%s", body)
+	}
+}
+
+// A 500 keeps its plain text. Rendering the template engine to report
+// that something in this process is broken is the worst moment to
+// depend on it — and a 500 that fails to render is a 500 twice.
+func TestServerErrorsStayPlain(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	res, err := c.Get(srv.URL + "/boom")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("/boom answered %d, want 500", res.StatusCode)
+	}
+	if strings.Contains(string(body), "Back to the journal") {
+		t.Error("a 500 rendered the 404 page")
+	}
+	if strings.Contains(string(body), "<html") {
+		t.Error("a 500 went through the template engine — the one moment not to depend on it")
 	}
 }

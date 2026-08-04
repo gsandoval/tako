@@ -517,6 +517,9 @@ func siteOptionsLiteral(site *analyzer.Resource) string {
 	if site.TrustedHTML {
 		parts = append(parts, "TrustedHTML: true")
 	}
+	if site.NotFound != "" {
+		parts = append(parts, fmt.Sprintf("NotFound: %q", site.NotFound))
+	}
 	return strings.Join(parts, ", ")
 }
 

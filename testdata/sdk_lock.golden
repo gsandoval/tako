@@ -178,7 +178,7 @@ type SecretHandle struct{}
 type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
 type ServiceHandle struct{}
 type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
-type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool}
+type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool; NotFound string}
 type SiteHandle struct{}
 type Target interface{alertTarget() metricRef}
 type TestApp struct{}
