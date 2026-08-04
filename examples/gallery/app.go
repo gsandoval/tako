@@ -93,14 +93,15 @@ var (
 	// Substitute a real address to watch this deliver — validate/alerts.md
 	// walks it. Cloud Monitoring needs no verification step for an email
 	// channel created through the API.
-	oncall = tako.Email("ops@example.com")
+	oncall = tako.AlertEmail("ops@example.com")
 
 	// Anything at all giving up on thumbnails is worth knowing.
-	Stuck = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)
+	Stuck = tako.Alert(tako.QueueBacklogged(thumbs, 1,
+		tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
 
 	// The window is short here so the gate can watch it fire; a real
 	// daily job would leave it unset and get twice its schedule.
-	Silent = tako.Alert(tako.CronMissed(Cleanup, tako.For(5*time.Minute)), oncall)
+	Silent = tako.Alert(tako.CronMissed(Cleanup, tako.Window{For: 5 * time.Minute}), oncall)
 )
 
 // A tako.Blob field makes the request multipart: img streams from the

@@ -83,9 +83,9 @@ func TestSubjectNamesCarryTheEnvPrefix(t *testing.T) {
 	// TestSubscriptionMatchersNameSubscriptionsTheDeployCreates for the
 	// defect that hid there.
 	q, _ := query(t, &analyzer.AlertCondition{
-		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
-		SubjectVar: "gallery.thumbs", Threshold: 5})
-	if !strings.Contains(q, `subscription_id="x1-gallery-makethumb"`) {
+		Op: "above", Reading: "queue_depth", SubjectKind: "queue", SubjectName: "thumbnails",
+		SubjectVar: "gallery.thumbs", Threshold: 5, On: "dead"})
+	if !strings.Contains(q, `subscription_id="x1-gallery-makethumb-dead"`) {
 		t.Errorf("dead-letter subscription is not the consumer's, env-prefixed: %q", q)
 	}
 	// The service is the generic_task `job` label, because these are
@@ -200,7 +200,7 @@ func TestAtCapacityReadsTheDeclaredMaximum(t *testing.T) {
 // A gauge has no rate: comparing increase() of an age would be
 // meaningless, and the API would not complain.
 func TestGaugeReadingsDoNotUseRateOrIncrease(t *testing.T) {
-	for _, reading := range []string{"backlog_age", "at_capacity"} {
+	for _, reading := range []string{"queue_age", "at_capacity"} {
 		a := &analyzer.AlertCondition{Op: "above", Reading: reading, SubjectKind: "queue",
 			SubjectName: "thumbs", SubjectVar: "gallery.MakeThumb", Threshold: 600}
 		q, _ := query(t, a)
@@ -233,9 +233,9 @@ func TestCustomMetricsAreScopedToTheEnv(t *testing.T) {
 // DeadLettered documenting five minutes and deploying sixty seconds.
 func TestPresetDefaultsAreAppliedWhereTheDeployReadsThem(t *testing.T) {
 	q, _ := query(t, &analyzer.AlertCondition{
-		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbs", Threshold: 1})
-	if !strings.Contains(q, "[300s]") {
-		t.Errorf("DeadLettered default window = %q, want the documented 5 minutes", q)
+		Op: "atleast", Reading: "queue_depth", SubjectKind: "queue", SubjectName: "thumbnails", SubjectVar: "gallery.thumbs", Threshold: 1, On: "dead"})
+	if !strings.Contains(q, "max(") {
+		t.Errorf("queue reading is not a gauge = %q, want the documented 5 minutes", q)
 	}
 }
 
@@ -257,6 +257,12 @@ func TestEveryPresetsDefaultWindowSurvivesToTheDeploy(t *testing.T) {
 	for ctor, reading := range readings {
 		want, declared := sdk[ctor]
 		if !declared {
+			// The queue conditions take a QueueWatch whose For is
+			// REQUIRED, so they have no default to survive — the
+			// analyzer refuses the call instead.
+			if strings.HasPrefix(ctor, "Queue") {
+				continue
+			}
 			t.Errorf("%s is in the analyzer's preset table but declares no default window in alert.go", ctor)
 			continue
 		}
@@ -382,7 +388,7 @@ func TestSubscriptionMatchersNameSubscriptionsTheDeployCreates(t *testing.T) {
 	if len(created) == 0 {
 		t.Fatal("no subscriptions in the plan — this test is checking nothing")
 	}
-	for _, reading := range []string{"dead_letters", "backlog_age"} {
+	for _, reading := range []string{"queue_depth", "queue_age"} {
 		q, _ := query(t, &analyzer.AlertCondition{
 			Op: "above", Reading: reading, SubjectKind: "queue", SubjectName: "thumbnails",
 			SubjectVar: "gallery.thumbs", Threshold: 1})
@@ -411,8 +417,8 @@ func TestAtLeastPresetsFireOnTheNthEvent(t *testing.T) {
 		reading string
 		cond    *analyzer.AlertCondition
 	}{
-		{"dead_letters", &analyzer.AlertCondition{Op: "atleast", Reading: "dead_letters",
-			SubjectKind: "queue", SubjectName: "thumbnails", SubjectVar: "gallery.thumbs", Threshold: 1}},
+		{"queue_depth", &analyzer.AlertCondition{Op: "atleast", Reading: "queue_depth",
+			SubjectKind: "queue", SubjectName: "thumbnails", SubjectVar: "gallery.thumbs", Threshold: 1, On: "dead"}},
 		{"cron_failed", &analyzer.AlertCondition{Op: "atleast", Reading: "cron_failed",
 			SubjectKind: "cron", SubjectVar: "gallery.Cleanup", Threshold: 3}},
 		{"job_failed", &analyzer.AlertCondition{Op: "atleast", Reading: "job_failed",

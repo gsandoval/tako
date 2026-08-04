@@ -52,7 +52,7 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		subject = shortNames([]string{a.SubjectVar})[0]
 	}
 	service := serviceOf(g, a.SubjectVar)
-	if a.SubjectKind == "queue" {
+	if a.SubjectKind == "queue" || a.SubjectKind == "subscriber" {
 		// The consumer, not the declaring package's app service.
 		if c := consumerServiceOf(g, a.SubjectName); c != "" {
 			service = c
@@ -85,25 +85,37 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		b.WriteString("The schedule is firing — the handler is answering 5xx. Its own log lines carry `cron=" + subject + "`.\n")
 		d.Links = []docLink{serviceLogsLink(cfg, service), schedulerLink(cfg)}
 
-	case "dead_letters":
-		fmt.Fprintf(&b, "**Queue `%s` dead-lettered at least %s in the last %s.**\n\n",
-			subject, messages(a.Threshold), humanDuration(every))
-		b.WriteString("Those messages exhausted their retries and will not be delivered again — they are on the dead-letter topic, not lost.\n\n")
-		// `tako dlq` takes the async SERVICE, not the queue: dead letters
-		// are held per consumer, so there is one dead topic per service
-		// and none per queue. The first version printed the queue name
-		// and the pasted command answered
-		// `no async service named "thumbnails"`.
-		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s          # peek\n", service, cfg.Project, cfg.Env)
-		fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s --ack    # drain\n", service, cfg.Project, cfg.Env)
-		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
+	case "queue_depth":
+		if a.On == "dead" {
+			fmt.Fprintf(&b, "**At least %s have been waiting in `%s`'s dead-letter queue for %s.**\n\n",
+				messages(a.Threshold), subject, humanDuration(window))
+			b.WriteString("They will not be delivered again on their own — they are on the dead-letter topic, not lost.\n")
+			b.WriteString("Both ways a message dies land here: retries exhausted, and a handler returning `tako.Permanent`.\n\n")
+			fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s            # peek\n", service, cfg.Project, cfg.Env)
+			fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s --replay   # try again\n", service, cfg.Project, cfg.Env)
+			fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s --ack      # give up on them\n", service, cfg.Project, cfg.Env)
+			d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
+			break
+		}
+		fmt.Fprintf(&b, "**At least %s have been waiting in queue `%s` for %s.**\n\n",
+			messages(a.Threshold), subject, humanDuration(window))
+		b.WriteString("The consumer is not keeping up: it is down, too slow, or scaled too tight.\n")
+		b.WriteString("Nothing has given up yet — that would be the same alert on the dead-letter queue.\n")
+		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLink(cfg, service)}
 
-	case "backlog_age":
-		fmt.Fprintf(&b, "**Queue `%s` has an unacknowledged message older than %s.**\n\n",
+	case "queue_age":
+		if a.On == "dead" {
+			fmt.Fprintf(&b, "**A dead letter in `%s` has gone untriaged for %s.**\n\n",
+				subject, humanDuration(time.Duration(a.Threshold)*time.Second))
+			b.WriteString("Something gave up that long ago and nobody has looked at it since.\n\n")
+			fmt.Fprintf(&b, "    tako dlq %s --project %s --env %s            # peek\n", service, cfg.Project, cfg.Env)
+			d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
+			break
+		}
+		fmt.Fprintf(&b, "**The oldest unacknowledged message in queue `%s` is older than %s.**\n\n",
 			subject, humanDuration(time.Duration(a.Threshold)*time.Second))
-		b.WriteString("Work is piling up: the consumer is down, too slow, or scaled too tight.\n")
-		b.WriteString("This fires *before* anything gives up — dead-lettering is the later, louder signal.\n")
-		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLogsLink(cfg, service)}
+		b.WriteString("Work is going stale. This fires *before* anything gives up — dead-lettering is the later, louder signal.\n")
+		d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), serviceLink(cfg, service)}
 
 	case "job_failed":
 		fmt.Fprintf(&b, "**Job `%s` had at least %s finish unsuccessfully in the last %s.**\n\n",
@@ -137,9 +149,22 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		d.Links = []docLink{serviceLink(cfg, service), serviceLogsLink(cfg, service)}
 
 	case "platform":
-		fmt.Fprintf(&b, "**`%s` went %s %g.**\n\n", a.SubjectName, a.Op, a.Threshold)
-		b.WriteString("A platform metric named directly with `tako.Platform` — tako knows nothing about it beyond the comparison you declared.\n")
-		d.Links = []docLink{metricsExplorerLink(cfg)}
+		metricType := a.MetricType
+		if metricType == "" {
+			metricType = a.SubjectName
+		}
+		fmt.Fprintf(&b, "**`%s` went %s %g.**\n\n", metricType, a.Op, a.Threshold)
+		switch a.ScopedTo {
+		case "service_metric":
+			fmt.Fprintf(&b, "One of Google's own metrics, read about service `%s`.\n", cfg.Name(service))
+			d.Links = []docLink{serviceLink(cfg, service), metricsExplorerLink(cfg)}
+		case "queue_metric":
+			fmt.Fprintf(&b, "One of Google's own metrics, read about subscription `%s`.\n", subscriptionOf(cfg, g, a))
+			d.Links = []docLink{subscriptionLink(cfg, subscriptionOf(cfg, g, a)), metricsExplorerLink(cfg)}
+		default:
+			b.WriteString("A Google metric named directly with `tako.PlatformMetric` — tako knows nothing about it beyond the comparison you declared, and owns none of its label matchers.\n")
+			d.Links = []docLink{metricsExplorerLink(cfg)}
+		}
 
 	default: // rate, count, sum, mean, percentile over a declared recording
 		fmt.Fprintf(&b, "**`%s` (%s) went %s %g over %s.**\n\n",

@@ -152,9 +152,14 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			case "Cache", "Secret", "Counter", "Histogram":
 				if r := extractCarrier(strings.ToLower(d.ctor), "tako."+d.ctor, cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
-					if d.ctor == "Secret" {
-						resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "secret"}
-					}
+					// All four register, not just Secret. Counters and
+					// histograms were left out, so a reading on one
+					// resolved to no subject at all and would have
+					// generated custom.googleapis.com/tako/ with an
+					// empty metric name — a query matching nothing.
+					// Nothing asserted the resolved subject, so it went
+					// unseen through the whole of Y1.
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, strings.ToLower(d.ctor)}
 				}
 			case "Site":
 				if r := extractSite(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
@@ -199,7 +204,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					graph.Resources = append(graph.Resources, *r)
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "lock"}
 				}
-			case "Email", "ChatSpace", "Webhook", "PubSub":
+			}
+			// Channels dispatch off channelKinds rather than a case list,
+			// so adding one cannot leave it undispatched. A hand-copied
+			// list here is what made the renamed constructors silently
+			// stop being collected — every alert then reported its
+			// destination as undeclared.
+			if _, isChannel := channelKinds[d.ctor]; isChannel {
 				if r := extractChannel(d.ctor, cfg.Dir, pkg, d.name, d.call, topicVars, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					channelVars[pkg.TypesInfo.Defs[d.name]] = r.Var
@@ -666,8 +677,13 @@ func declsOf(pkg *packages.Package) []varDecl {
 	return decls
 }
 
-// checkQuantiles validates every quantile argument in the package —
-// Percentile's and SlowerThan's — wherever they appear.
+// checkQuantiles validates every quantile argument in the package,
+// wherever it appears: RequestsSlow's third argument, and the argument
+// to a histogram's Percentile method.
+//
+// Percentile is a METHOD now, so it is matched on the selector rather
+// than through sdkConstructor — which only ever resolves a call on the
+// tako package itself and would silently stop checking.
 func checkQuantiles(dir string, pkg *packages.Package, errs *ErrorList) {
 	for _, file := range pkg.Syntax {
 		ast.Inspect(file, func(n ast.Node) bool {
@@ -675,17 +691,22 @@ func checkQuantiles(dir string, pkg *packages.Package, errs *ErrorList) {
 			if !ok {
 				return true
 			}
-			switch sdkConstructor(pkg, call) {
-			case "Percentile":
-				if len(call.Args) == 2 {
-					checkQuantile(dir, pkg, call.Args[1], "Percentile", errs)
-				}
-			case "SlowerThan":
-				if len(call.Args) >= 3 {
-					checkQuantile(dir, pkg, call.Args[2], "SlowerThan", errs)
+			if sdkConstructor(pkg, call) == "RequestsSlow" && len(call.Args) >= 3 {
+				checkQuantile(dir, pkg, call.Args[2], "RequestsSlow", errs)
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Percentile" && len(call.Args) == 1 {
+				if sig, ok := pkg.TypesInfo.Uses[sel.Sel].(*types.Func); ok && isSDKMethod(sig) {
+					checkQuantile(dir, pkg, call.Args[0], "Percentile", errs)
 				}
 			}
 			return true
 		})
 	}
+}
+
+// isSDKMethod reports whether a method belongs to the tako package, so a
+// user's own Percentile(0.5) is never mistaken for a reading.
+func isSDKMethod(fn *types.Func) bool {
+	return fn.Pkg() != nil && fn.Pkg().Path() == sdkPath
 }

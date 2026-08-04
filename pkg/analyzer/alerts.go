@@ -23,10 +23,9 @@ import (
 // type. The values are Google's, verified against the notification
 // channel descriptors.
 var channelKinds = map[string]string{
-	"Email":     "email",
-	"ChatSpace": "google_chat",
-	"Webhook":   "webhook_tokenauth",
-	"PubSub":    "pubsub",
+	"AlertEmail":   "email",
+	"AlertWebhook": "webhook_tokenauth",
+	"AlertTopic":   "pubsub",
 }
 
 // extractChannel validates one alert destination. The declaring VARIABLE
@@ -47,12 +46,12 @@ func extractChannel(ctor, dir string, pkg *packages.Package, name *ast.Ident, ca
 	// A Pub/Sub channel names a declared topic, not a string: the topic
 	// has to exist for the deploy to grant the notification service
 	// agent publisher on it.
-	if ctor == "PubSub" {
+	if ctor == "AlertTopic" {
 		topic, ok := resolveTopicVar(pkg, call.Args[0], topicVars)
 		if !ok {
 			*errs = append(*errs, &Error{
 				Pos:  relPos(dir, pkg.Fset, call.Args[0].Pos()),
-				Msg:  "tako.PubSub must name a topic declared as a package-level var in this module",
+				Msg:  "tako.AlertTopic must name a topic declared as a package-level var in this module",
 				Rule: "channel-binding",
 			})
 			return nil
@@ -114,7 +113,7 @@ func extractAlert(dir string, pkg *packages.Package, name *ast.Ident, call *ast.
 
 	cond, ok := call.Args[0].(*ast.CallExpr)
 	if !ok {
-		fail(call.Args[0], "tako.Alert takes a condition — tako.Above, tako.Below, tako.Absent, or a preset like tako.DeadLettered", "alert-condition")
+		fail(call.Args[0], "tako.Alert takes a condition — tako.WhenAbove, tako.WhenBelow, tako.WhenAbsent, or a preset like tako.QueueBacklogged", "alert-condition")
 		return nil
 	}
 	condCtor := sdkConstructor(pkg, cond)
@@ -138,7 +137,7 @@ func extractAlert(dir string, pkg *packages.Package, name *ast.Ident, call *ast.
 	for _, arg := range call.Args[1:] {
 		ch, ok := resolveChannelVar(pkg, arg, channelVars)
 		if !ok {
-			fail(arg, "tako.Alert destinations must be channels declared as package-level vars in this module (tako.Email, tako.ChatSpace, tako.Webhook, tako.PubSub)", "channel-binding")
+			fail(arg, "tako.Alert destinations must be channels declared as package-level vars in this module (tako.AlertEmail, tako.AlertWebhook, tako.AlertTopic)", "channel-binding")
 			continue
 		}
 		channels = append(channels, ch)
@@ -231,22 +230,38 @@ var presetReadings = map[string]struct {
 	quantArg int  // index of a quantile argument, -1 for none
 	valueArg int
 	op       string
+	// queue marks the two conditions whose last argument is a
+	// QueueWatch rather than a Window: they carry a source as well as a
+	// window, and their For is required rather than defaulted.
+	queue bool
 }{
-	"DeadLettered":  {reading: "dead_letters", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
-	"Backlogged":    {reading: "backlog_age", unit: time.Second, hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
-	"CronFailed":    {reading: "cron_failed", subject: "cron", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
-	"CronMissed":    {reading: "cron_missed", subject: "cron", quantArg: -1, op: "absent"},
-	"JobFailed":     {reading: "job_failed", subject: "job", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
-	"Erroring":      {reading: "error_rate", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
-	"SlowerThan":    {reading: "latency", unit: time.Millisecond, hasValue: true, valueArg: 1, quantArg: 2, op: "above"},
-	"AtCapacity":    {reading: "at_capacity", quantArg: -1, op: "above"},
-	"SingletonDown": {reading: "singleton_down", subject: "singleton", quantArg: -1, op: "below"},
+	"QueueBacklogged":   {reading: "queue_depth", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast", queue: true},
+	"QueueStalled":      {reading: "queue_age", unit: time.Second, hasValue: true, valueArg: 1, quantArg: -1, op: "above", queue: true},
+	"CronFailed":        {reading: "cron_failed", subject: "cron", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
+	"CronMissed":        {reading: "cron_missed", subject: "cron", quantArg: -1, op: "absent"},
+	"JobFailed":         {reading: "job_failed", subject: "job", hasValue: true, valueArg: 1, quantArg: -1, op: "atleast"},
+	"RequestsErroring":  {reading: "error_rate", hasValue: true, valueArg: 1, quantArg: -1, op: "above"},
+	"RequestsSlow":      {reading: "latency", unit: time.Millisecond, hasValue: true, valueArg: 1, quantArg: 2, op: "above"},
+	"ServiceAtCapacity": {reading: "at_capacity", quantArg: -1, op: "above"},
+	"SingletonDown":     {reading: "singleton_down", subject: "singleton", quantArg: -1, op: "below"},
 }
 
-// readingOf maps a raw metric constructor to its reading.
-var readingOf = map[string]string{
+// readingMethods are the reading methods on a Counter or Histogram
+// handle. Readings moved off the tako namespace and onto the handle
+// they read (spec rule 6), so the analyzer resolves a METHOD call here,
+// not a constructor.
+var readingMethods = map[string]string{
 	"Rate": "rate", "Count": "count", "Sum": "sum",
-	"Mean": "mean", "Percentile": "percentile", "Platform": "platform",
+	"Mean": "mean", "Percentile": "percentile",
+}
+
+// scopedMetrics are the constructors that read a Google metric about a
+// tako object. The object supplies the resource matcher, which is the
+// half a user could not write correctly by hand.
+var scopedMetrics = map[string]string{
+	"ServiceMetric":  "service_metric",
+	"QueueMetric":    "queue_metric",
+	"PlatformMetric": "platform",
 }
 
 // conditionSpec reads a condition call into its logical parameters.
@@ -274,7 +289,6 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 		if p.quantArg >= 0 && len(cond.Args) > p.quantArg {
 			spec.Quantile = constFloat(pkg, cond.Args[p.quantArg])
 		}
-		// Presets take a trailing optional Window.
 		first := p.valueArg + 1
 		if p.quantArg >= 0 {
 			first = p.quantArg + 1
@@ -285,17 +299,21 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 		if len(cond.Args) > first {
 			windowArgs = cond.Args[first:]
 		}
+		if p.queue {
+			readQueueWatch(dir, pkg, ctor, windowArgs, spec, errs)
+			return spec
+		}
 		readWindow(dir, pkg, windowArgs, spec, errs)
 		return spec
 	}
 
-	// Raw: Above(m, threshold, window) / Below(...) / Absent(m, window).
+	// Raw: WhenAbove(m, threshold, window) / WhenBelow / WhenAbsent.
 	switch ctor {
-	case "Above":
+	case "WhenAbove":
 		spec.Op = "above"
-	case "Below":
+	case "WhenBelow":
 		spec.Op = "below"
-	case "Absent":
+	case "WhenAbsent":
 		spec.Op = "absent"
 	default:
 		return nil
@@ -307,42 +325,13 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 	if !ok {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, cond.Args[0].Pos()),
-			Msg:  "a condition's metric must be a tako reading — tako.Rate, tako.Count, tako.Sum, tako.Mean, tako.Percentile or tako.Platform",
+			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.QueueMetric / tako.PlatformMetric",
 			Rule: "alert-condition",
 		})
 		return nil
 	}
-	mCtor := sdkConstructor(pkg, metric)
-	spec.Reading = readingOf[mCtor]
-	if spec.Reading == "" {
-		*errs = append(*errs, &Error{
-			Pos:  relPos(dir, pkg.Fset, cond.Args[0].Pos()),
-			Msg:  fmt.Sprintf("tako.%s is not a reading a condition can be written about", mCtor),
-			Rule: "alert-condition",
-		})
+	if !readMetric(dir, pkg, metric, spec, handlersByVar, resVars, endpointVars, errs) {
 		return nil
-	}
-	if mCtor == "Platform" && len(metric.Args) > 0 {
-		spec.SubjectKind = "platform"
-		if name, err := constString(pkg, metric.Args[0]); err == nil {
-			spec.SubjectName = name
-		} else {
-			*errs = append(*errs, &Error{
-				Pos:  relPos(dir, pkg.Fset, metric.Args[0].Pos()),
-				Msg:  "tako.Platform takes a string constant metric type — it is read at analysis time; find one with `tako metrics <search>`",
-				Rule: "const-name",
-			})
-		}
-		for _, f := range metric.Args[1:] {
-			if m, err := constString(pkg, f); err == nil {
-				spec.Matchers = append(spec.Matchers, m)
-			}
-		}
-	} else if len(metric.Args) > 0 {
-		spec.SubjectKind, spec.SubjectName, spec.SubjectVar = resolveSubject(pkg, metric.Args[0], handlersByVar, resVars, endpointVars)
-		if mCtor == "Percentile" && len(metric.Args) > 1 {
-			spec.Quantile = constFloat(pkg, metric.Args[1])
-		}
 	}
 	rest := cond.Args[1:]
 	if spec.Op != "absent" && len(rest) > 0 {
@@ -351,6 +340,76 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 	}
 	readWindow(dir, pkg, rest, spec, errs)
 	return spec
+}
+
+// readMetric resolves the thing a raw condition is written about: a
+// reading METHOD on a declared handle, or one of the scoped-metric
+// constructors.
+func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *AlertCondition,
+	handlersByVar map[string]*Handler, resVars map[types.Object]resRef,
+	endpointVars map[types.Object]string, errs *ErrorList) bool {
+
+	// uploads.Rate() / thumbMs.Percentile(0.99): the receiver is the
+	// declaration, the method is the reading.
+	if sel, ok := metric.Fun.(*ast.SelectorExpr); ok {
+		if reading, isReading := readingMethods[sel.Sel.Name]; isReading {
+			if kind, name, v := resolveSubject(pkg, sel.X, handlersByVar, resVars, endpointVars); kind == "counter" || kind == "histogram" {
+				spec.Reading, spec.SubjectKind, spec.SubjectName, spec.SubjectVar = reading, kind, name, v
+				if sel.Sel.Name == "Percentile" && len(metric.Args) > 0 {
+					spec.Quantile = constFloat(pkg, metric.Args[0])
+				}
+				return true
+			}
+		}
+	}
+
+	ctor := sdkConstructor(pkg, metric)
+	reading, isScoped := scopedMetrics[ctor]
+	if !isScoped {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, metric.Pos()),
+			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.QueueMetric / tako.PlatformMetric",
+			Rule: "alert-condition",
+		})
+		return false
+	}
+	spec.Reading = "platform"
+	// PlatformMetric has no tako object; the other two scope themselves
+	// to one, which is the whole reason they exist.
+	typeArg := 0
+	if ctor != "PlatformMetric" {
+		if len(metric.Args) == 0 {
+			return false
+		}
+		spec.SubjectKind, spec.SubjectName, spec.SubjectVar = resolveSubject(pkg, metric.Args[0], handlersByVar, resVars, endpointVars)
+		spec.ScopedTo = reading
+		typeArg = 1
+	} else {
+		spec.SubjectKind = "platform"
+	}
+	if len(metric.Args) <= typeArg {
+		return false
+	}
+	name, err := constString(pkg, metric.Args[typeArg])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, metric.Args[typeArg].Pos()),
+			Msg:  fmt.Sprintf("tako.%s takes a string constant metric type — it is read at analysis time; find one with `tako metrics <search>`", ctor),
+			Rule: "const-name",
+		})
+		return false
+	}
+	if ctor == "PlatformMetric" {
+		spec.SubjectName = name
+	} else {
+		spec.MetricType = name
+	}
+	for _, f := range metric.Args[typeArg+1:] {
+		if m, err := constString(pkg, f); err == nil {
+			spec.Matchers = append(spec.Matchers, m)
+		}
+	}
+	return true
 }
 
 // resolveSubject reports what a condition argument names.
@@ -387,15 +446,53 @@ func resolveSubject(pkg *packages.Package, arg ast.Expr, handlersByVar map[strin
 	return "service", "", qualified
 }
 
+// readQueueWatch reads a QueueWatch: which queue, and the REQUIRED
+// sustain window.
+//
+// For is required because a queue crosses any depth for an instant every
+// time a burst arrives — how long it stays there IS the alert. Same
+// reasoning as a Count's period, and the same refusal to guess.
+func readQueueWatch(dir string, pkg *packages.Package, ctor string, args []ast.Expr, spec *AlertCondition, errs *ErrorList) {
+	spec.On = "live"
+	var pos ast.Node
+	if len(args) > 0 {
+		pos = args[0]
+		if fields, ok := configLit(dir, pkg, args[0], "QueueWatch", errs); ok {
+			if e, set := fieldOf(fields, "DeadLetters"); set {
+				if b, ok := constBool(pkg, e); ok && b {
+					spec.On = "dead"
+				}
+			}
+			if e, set := fieldOf(fields, "For"); set {
+				spec.ForSeconds = int(constFloat(pkg, e) / 1e9)
+			}
+		}
+	}
+	if spec.ForSeconds == 0 && pos != nil {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, pos.Pos()),
+			Msg:  fmt.Sprintf("tako.%s needs a sustain window — write tako.QueueWatch{For: …}; a queue crosses any depth for an instant, so how long it stays there IS the alert", ctor),
+			Rule: "window",
+		})
+	}
+	checkWindow(dir, pkg, args, spec, errs)
+}
+
+func constBool(pkg *packages.Package, e ast.Expr) (bool, bool) {
+	tv, ok := pkg.TypesInfo.Types[e]
+	if !ok || tv.Value == nil {
+		return false, false
+	}
+	return constant.BoolVal(tv.Value), true
+}
+
 // readWindow reads the optional trailing tako.Window and validates it
 // against the ceilings measured on the live API.
 func readWindow(dir string, pkg *packages.Package, args []ast.Expr, spec *AlertCondition, errs *ErrorList) {
 	for _, a := range args {
 		call, ok := a.(*ast.CallExpr)
-		if ok && sdkConstructor(pkg, call) == "For" && len(call.Args) == 1 {
-			spec.ForSeconds = int(constFloat(pkg, call.Args[0]) / 1e9)
-			continue
-		}
+		_ = call
+		_ = ok
 		if fields, ok := configLit(dir, pkg, a, "Window", errs); ok {
 			if e, set := fieldOf(fields, "For"); set {
 				spec.ForSeconds = int(constFloat(pkg, e) / 1e9)
@@ -432,7 +529,7 @@ func checkWindow(dir string, pkg *packages.Package, args []ast.Expr, spec *Alert
 	}
 	// Count has no defensible default period: the period IS the count.
 	if spec.Reading == "count" && spec.EverySeconds == 0 {
-		fail("tako.Count needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing", "window")
+		fail("a Count reading needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing", "window")
 	}
 }
 

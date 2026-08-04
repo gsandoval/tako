@@ -305,4 +305,17 @@ type AlertCondition struct {
 	EverySeconds int `json:"every_seconds,omitempty"`
 	// Matchers are extra label matchers for a platform subject.
 	Matchers []string `json:"matchers,omitempty"`
+	// On selects which of a consumer's two queues a queue condition
+	// watches: "live" or "dead". They are the same two gauges on two
+	// subscriptions, so this is the only thing that differs.
+	On string `json:"on,omitempty"`
+	// ScopedTo is set when a Google metric is read about a tako object
+	// ("service_metric", "queue_metric"): tako writes the resource
+	// matcher from the subject rather than making the user spell a
+	// physical, env-prefixed name it cannot know at declaration time.
+	ScopedTo string `json:"scoped_to,omitempty"`
+	// MetricType is Google's metric type for a scoped metric. (An
+	// unscoped PlatformMetric keeps it in SubjectName, which is the
+	// whole subject it has.)
+	MetricType string `json:"metric_type,omitempty"`
 }

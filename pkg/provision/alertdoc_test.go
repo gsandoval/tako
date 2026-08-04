@@ -30,13 +30,13 @@ func TestEveryConditionKindSaysSomethingActionable(t *testing.T) {
 		{"cron_failed", &analyzer.AlertCondition{
 			Op: "above", Reading: "cron_failed", SubjectKind: "cron", SubjectVar: "gallery.Cleanup", Threshold: 3},
 			[]string{"Cron `Cleanup` ran and failed at least", "3 failures", "cron=Cleanup"}},
-		{"dead_letters", &analyzer.AlertCondition{
-			Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
-			SubjectVar: "gallery.thumbs", Threshold: 1},
-			[]string{"exhausted their retries", "at least 1 message", "tako dlq gallery-makethumb", "--ack"}},
-		{"backlog_age", &analyzer.AlertCondition{
-			Op: "above", Reading: "backlog_age", SubjectKind: "queue", SubjectName: "thumbnails",
-			SubjectVar: "gallery.thumbs", Threshold: 600},
+		{"queue_depth_dead", &analyzer.AlertCondition{
+			Op: "atleast", Reading: "queue_depth", SubjectKind: "queue", SubjectName: "thumbnails",
+			SubjectVar: "gallery.thumbs", Threshold: 1, On: "dead", ForSeconds: 600},
+			[]string{"dead-letter queue", "1 message", "tako dlq gallery-makethumb", "--ack", "tako.Permanent"}},
+		{"queue_age_live", &analyzer.AlertCondition{
+			Op: "above", Reading: "queue_age", SubjectKind: "queue", SubjectName: "thumbnails",
+			SubjectVar: "gallery.thumbs", Threshold: 600, ForSeconds: 300},
 			[]string{"older than 10m", "before* anything gives up"}},
 		{"job_failed", &analyzer.AlertCondition{
 			Op: "above", Reading: "job_failed", SubjectKind: "job", SubjectName: "Import", Threshold: 2},
@@ -60,7 +60,7 @@ func TestEveryConditionKindSaysSomethingActionable(t *testing.T) {
 		{"platform", &analyzer.AlertCondition{
 			Op: "above", Reading: "platform", SubjectKind: "platform",
 			SubjectName: "run.googleapis.com/container/cpu/utilizations", Threshold: 0.9},
-			[]string{"run.googleapis.com/container/cpu/utilizations", "tako.Platform"}},
+			[]string{"run.googleapis.com/container/cpu/utilizations", "tako.PlatformMetric"}},
 		{"count", &analyzer.AlertCondition{
 			Op: "below", Reading: "count", SubjectKind: "counter", SubjectName: "uploads",
 			Threshold: 1, EverySeconds: 1800},
@@ -101,8 +101,8 @@ func TestEveryConditionKindSaysSomethingActionable(t *testing.T) {
 // them nowhere, because they will believe what they find there.
 func TestDeadLetterDocsPointAtTheConsumer(t *testing.T) {
 	d := doc(t, &analyzer.AlertCondition{
-		Op: "above", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
-		SubjectVar: "gallery.thumbs", Threshold: 1}, "Stuck")
+		Op: "atleast", Reading: "queue_depth", SubjectKind: "queue", SubjectName: "thumbnails",
+		SubjectVar: "gallery.thumbs", Threshold: 1, On: "dead", ForSeconds: 600}, "Stuck")
 	var logs string
 	for _, l := range d.Links {
 		if l.DisplayName == "Service logs" {
@@ -140,7 +140,7 @@ func TestDurationsReadTheWayTheyWereDeclared(t *testing.T) {
 // the variable renders as "null" in precisely the alert that needs it
 // most. This is the same trap as the "__missing__" in the subject line.
 func TestDocumentationUsesNoRuntimeVariables(t *testing.T) {
-	for _, reading := range []string{"cron_missed", "dead_letters", "error_rate", "latency", "at_capacity"} {
+	for _, reading := range []string{"cron_missed", "queue_depth", "error_rate", "latency", "at_capacity"} {
 		d := doc(t, &analyzer.AlertCondition{
 			Op: "above", Reading: reading, SubjectKind: "queue", SubjectName: "thumbnails",
 			SubjectVar: "gallery.thumbs", Threshold: 1}, "W")
@@ -263,8 +263,8 @@ func TestDlqCommandNamesAnAsyncService(t *testing.T) {
 		t.Fatal("no async services in the fixture — this test is checking nothing")
 	}
 	d := doc(t, &analyzer.AlertCondition{
-		Op: "atleast", Reading: "dead_letters", SubjectKind: "queue", SubjectName: "thumbnails",
-		SubjectVar: "gallery.thumbs", Threshold: 1}, "Stuck")
+		Op: "atleast", Reading: "queue_depth", SubjectKind: "queue", SubjectName: "thumbnails",
+		SubjectVar: "gallery.thumbs", Threshold: 1, On: "dead", ForSeconds: 600}, "Stuck")
 	var named string
 	for _, line := range strings.Split(d.Content, "\n") {
 		if strings.Contains(line, "tako dlq") {

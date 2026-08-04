@@ -23,11 +23,11 @@ import (
 
 // Metric types, verified against projects.metricDescriptors.
 const (
-	metricRequestCount   = "run.googleapis.com/request_count"                 // labels: response_code, response_code_class, route
-	metricRequestLatency = "run.googleapis.com/request_latencies"             // DISTRIBUTION, same labels
-	metricInstanceCount  = "run.googleapis.com/container/instance_count"      // GAUGE, label: state
-	metricJobExecutions  = "run.googleapis.com/job/completed_execution_count" // label: result
-	metricDeadLetters    = "pubsub.googleapis.com/subscription/dead_letter_message_count"
+	metricRequestCount   = "run.googleapis.com/request_count"                              // labels: response_code, response_code_class, route
+	metricRequestLatency = "run.googleapis.com/request_latencies"                          // DISTRIBUTION, same labels
+	metricInstanceCount  = "run.googleapis.com/container/instance_count"                   // GAUGE, label: state
+	metricJobExecutions  = "run.googleapis.com/job/completed_execution_count"              // label: result
+	metricQueueDepth     = "pubsub.googleapis.com/subscription/num_undelivered_messages"   // GAUGE
 	metricOldestUnacked  = "pubsub.googleapis.com/subscription/oldest_unacked_message_age" // GAUGE
 	resourceRun          = "cloud_run_revision"
 	resourceRunJob       = "cloud_run_job"
@@ -50,8 +50,6 @@ const defaultEvery = time.Minute
 // shipping 60 seconds.
 func presetEvery(reading string) time.Duration {
 	switch reading {
-	case "dead_letters":
-		return 5 * time.Minute
 	case "cron_failed", "job_failed":
 		// An hour, because these count FAILURES: "failed 3 times" over
 		// five minutes is a question an hourly cron can never answer yes
@@ -87,13 +85,18 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 	switch a.Reading {
 	case "rate", "count", "sum", "mean", "percentile":
 		return customQuery(cfg, a, every)
-	case "dead_letters":
-		sel := selector(metricDeadLetters, resourceSubscription,
-			fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a)))
-		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
-	case "backlog_age":
-		// A GAUGE: the latest value is the answer, no rate or increase.
-		sel := selector(metricOldestUnacked, resourceSubscription,
+	case "queue_depth", "queue_age":
+		// Both are GAUGES on a subscription — the latest value is the
+		// answer, no rate or increase. The live queue and the
+		// dead-letter queue differ only in WHICH subscription, which is
+		// what made the old dead_letter_message_count reading wrong: it
+		// counted Pub/Sub's own forwards and could not see a message
+		// tako.Permanent had put there, nor a backlog already sitting.
+		metric := metricQueueDepth
+		if a.Reading == "queue_age" {
+			metric = metricOldestUnacked
+		}
+		sel := selector(metric, resourceSubscription,
 			fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a)))
 		return comparison("max("+sel+")", a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_failed":
@@ -132,8 +135,7 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		}
 		return comparison("max("+sel+")", a.Op, threshold), retestAllowed(lookback), nil
 	case "platform":
-		sel := selector(a.SubjectName, platformResource(a.SubjectName), a.Matchers...)
-		return comparison("max("+sel+")", a.Op, a.Threshold), retestAllowed(lookback), nil
+		return comparison("max("+scopedSelector(cfg, g, a)+")", a.Op, a.Threshold), retestAllowed(lookback), nil
 	}
 	return "", false, fmt.Errorf("unknown alert reading %q", a.Reading)
 }
@@ -167,6 +169,27 @@ func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, 
 	return selector(customMetricPrefix+"requests", resourceGenericTask, matchers...)
 }
 
+// scopedSelector builds a Google-metric selector, adding the resource
+// matcher from the tako object the metric is scoped to.
+//
+// That matcher is the half a user cannot write: the physical name is
+// env-prefixed and only exists after a deploy, so a hand-written
+// `service_name="siren"` matches nothing and omitting it matches every
+// service in the project. Both read as healthy.
+func scopedSelector(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) string {
+	switch a.ScopedTo {
+	case "service_metric":
+		return selector(a.MetricType, resourceRun,
+			append([]string{fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar)))}, a.Matchers...)...)
+	case "queue_metric":
+		return selector(a.MetricType, resourceSubscription,
+			append([]string{fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a))}, a.Matchers...)...)
+	}
+	// Unscoped: the user owns every matcher, and said so by choosing
+	// PlatformMetric.
+	return selector(a.SubjectName, platformResource(a.SubjectName), a.Matchers...)
+}
+
 // subscriptionOf is the deployed Pub/Sub subscription that a queue or
 // subscriber consumes through — the `subscription_id` every dead-letter
 // and backlog query filters on.
@@ -192,6 +215,12 @@ func subscriptionOf(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition
 		return cfg.Name(a.SubjectName)
 	}
 	// Same derivation as the push-subscription object in desired.go.
+	// The dead-letter queue is the same service's `-dead` subscription,
+	// which is the one `tako dlq` reads — so the alert and the CLI
+	// cannot disagree about what is in it.
+	if a.On == "dead" {
+		return cfg.Name(svc) + "-dead"
+	}
 	return cfg.Name(svc)
 }
 
@@ -392,10 +421,16 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 		return fmt.Sprintf("%s: cron %s has not run", app, subject)
 	case "cron_failed":
 		return fmt.Sprintf("%s: cron %s is failing", app, subject)
-	case "dead_letters":
-		return fmt.Sprintf("%s: queue %s is dead-lettering", app, subject)
-	case "backlog_age":
+	case "queue_depth":
+		if a.On == "dead" {
+			return fmt.Sprintf("%s: queue %s is dead-lettering", app, subject)
+		}
 		return fmt.Sprintf("%s: queue %s is backing up", app, subject)
+	case "queue_age":
+		if a.On == "dead" {
+			return fmt.Sprintf("%s: dead letters of queue %s are going untriaged", app, subject)
+		}
+		return fmt.Sprintf("%s: queue %s is stalling", app, subject)
 	case "job_failed":
 		return fmt.Sprintf("%s: job %s is failing", app, subject)
 	case "error_rate":

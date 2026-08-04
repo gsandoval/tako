@@ -70,5 +70,5 @@ gallery: 5 services
     entity reindex-runs
   watching
     channel oncall → email ops@example.com
-    alert Stuck — DeadLettered → oncall
+    alert Stuck — QueueBacklogged → oncall
     alert Silent — CronMissed → oncall

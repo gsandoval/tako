@@ -173,14 +173,16 @@
       "name": "Stuck",
       "var": "gallery.Stuck",
       "package": "gallery",
-      "condition": "DeadLettered",
+      "condition": "QueueBacklogged",
       "alert": {
         "op": "atleast",
         "subject_kind": "queue",
         "subject_name": "thumbnails",
         "subject_var": "gallery.thumbs",
-        "reading": "dead_letters",
-        "threshold": 1
+        "reading": "queue_depth",
+        "threshold": 1,
+        "for_seconds": 600,
+        "on": "dead"
       },
       "channels": [
         "gallery.oncall"
@@ -203,7 +205,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:103:2"
+      "pos": "app.go:104:2"
     }
   ],
   "handlers": [

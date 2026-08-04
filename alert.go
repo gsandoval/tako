@@ -19,29 +19,25 @@ type ChannelHandle struct {
 	target string
 }
 
-// Email sends alerts to one address.
+// AlertEmail sends alerts to one address.
 //
-// Some destinations need a human step before they deliver — an address
-// verified, an app installed in a space. tako never performs that step
-// for you; deploy prints what to do and links to the exact console page.
-func Email(address string) *ChannelHandle {
+// The Alert prefix is not decoration: "email" is a general concept and
+// spec rule 6 forbids a primitive from owning one, so a future
+// tako.Email that SENDS mail stays possible.
+func AlertEmail(address string) *ChannelHandle {
 	return &ChannelHandle{kind: "email", target: address}
 }
 
-// ChatSpace sends alerts to a Google Chat space, named by its space id
-// ("spaces/AAAA1234"). The Cloud Monitoring app must be installed in the
-// space before it can deliver; deploy says so and links to it.
-func ChatSpace(space string) *ChannelHandle {
-	return &ChannelHandle{kind: "google_chat", target: space}
-}
-
-// Webhook POSTs the incident to a URL.
-func Webhook(url string) *ChannelHandle {
+// AlertWebhook POSTs the incident to a URL.
+func AlertWebhook(url string) *ChannelHandle {
 	return &ChannelHandle{kind: "webhook_tokenauth", target: url}
 }
 
-// PubSub publishes the incident to a declared topic, so a subscriber can
-// route or escalate it in your own code.
+// AlertTopic publishes the incident to a declared tako.Topic, so a
+// subscriber can route or escalate it in your own code.
+//
+// Named for what it takes. It was tako.PubSub, which pointed at the
+// wrong concept in tako's own API: tako's pub/sub primitive is Topic.
 //
 // The message body is Google's incident JSON, not a tako type: define a
 // struct with the fields you need and declare the topic over it
@@ -53,7 +49,7 @@ func Webhook(url string) *ChannelHandle {
 // your app, so it is unreachable in exactly the outage a page is for.
 // Use it for routing and enrichment, and keep a channel that does not
 // depend on you.
-func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle {
+func AlertTopic[T any](topic *TopicHandle[T]) *ChannelHandle {
 	return &ChannelHandle{kind: "pubsub", target: topic.name}
 }
 
@@ -61,9 +57,9 @@ func PubSub[T any](topic *TopicHandle[T]) *ChannelHandle {
 // declared Counter or Histogram directly: those are raw recordings, and
 // a raw recording does not say which question you are asking of it.
 //
-//	tako.Rate(uploads)   // uploads per second
-//	tako.Count(uploads)  // uploads in the window
-//	tako.P99(thumbMs)    // 99th percentile latency
+//	uploads.Rate()             // uploads per second
+//	uploads.Count()            // uploads in the window
+//	thumbMs.Percentile(0.99)   // 99th percentile latency
 //
 // The interface is sealed — only SDK types implement it — so the
 // analyzer can enumerate every subject an alert could name, and so the
@@ -93,85 +89,80 @@ type metricRef struct {
 	filters []string
 }
 
-// Recording is a declared Counter or Histogram — something values were
-// recorded into. Sealed, like Metric.
+// Readings. Spec rule 6 says no primitive owns a general concept, and
+// its own remedy is methods scoped to an instance — so these are methods
+// on the handle they read rather than tako.Rate / tako.Count / tako.Sum,
+// which claimed five general words at the top of the namespace.
 //
-// Rate and Count take either, because "how fast" and "how many" are the
-// same question whichever recording you ask: a histogram counts its
-// observations. Without this a histogram could only be asked about its
-// SHAPE and never its volume — you could alert that thumbnails got slow
-// but not that none were made, which is the louder failure.
-type Recording interface {
-	recordingRef() metricRef
-}
+// The reading is mandatory, and that is the point. Metrics are written
+// one cumulative series per instance, and an alert that aggregates them
+// the wrong way looks configured while being noise: a rate under one PER
+// SECOND is almost always true. Making the aggregation explicit at the
+// call site is what stops that from being the default.
 
-func (c *CounterHandle) recordingRef() metricRef {
-	return metricRef{kind: "counter", name: c.name}
-}
-
-func (h *HistogramHandle) recordingRef() metricRef {
-	return metricRef{kind: "histogram", name: h.name}
-}
-
-// Rate is a recording's increase per second, summed across instances.
-// For a histogram it is observations per second — throughput.
-func Rate(r Recording) Metric {
-	ref := r.recordingRef()
-	ref.agg = "rate"
-	return derived{ref: ref}
+// Rate is the counter's increase per second, summed across instances.
+func (c *CounterHandle) Rate() Metric {
+	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "rate"}}
 }
 
 // Count is how many were recorded within the window, summed across
-// instances — the reading for "fewer than one upload in half an hour",
-// and for a histogram, "no thumbnails were made at all".
-func Count(r Recording) Metric {
-	ref := r.recordingRef()
-	ref.agg = "count"
-	return derived{ref: ref}
+// instances — the reading for "fewer than one upload in half an hour".
+func (c *CounterHandle) Count() Metric {
+	return derived{ref: metricRef{kind: "counter", name: c.name, agg: "count"}}
 }
 
-// Sum is the total of a histogram's observed values over the window —
-// milliseconds of work done, bytes transferred — as opposed to how many
-// observations there were.
-func Sum(h *HistogramHandle) Metric {
+// Rate is observations per second — throughput.
+//
+// A histogram answers "how fast" and "how many" as well as "how big":
+// without these you could alert that thumbnails got slow but not that
+// none were made, which is the louder failure.
+func (h *HistogramHandle) Rate() Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "rate"}}
+}
+
+// Count is how many observations landed in the window.
+func (h *HistogramHandle) Count() Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "count"}}
+}
+
+// Sum is the total of the observed values over the window —
+// milliseconds of work done, bytes transferred.
+func (h *HistogramHandle) Sum() Metric {
 	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "sum"}}
 }
 
-// Mean is a histogram's average observed value over the window.
+// Mean is the average observed value over the window.
 //
 // It is Sum over Count, and both halves are counter-correct rather than
 // sample averages: averaging the raw cumulative totals would report the
-// mean of running sums, which is not a latency. Verified against a real
-// distribution — 4216ms over 14 observations is 301.1ms, matching what
-// Cloud Monitoring reports as the distribution's own mean.
+// mean of running sums, which is not a latency.
 //
-// Prefer a Percentile for latency. A mean hides the tail that wakes you
-// up; it is here because "the average got worse" is still a real
+// Prefer Percentile for latency. A mean hides the tail that wakes you
+// up; this is here because "the average got worse" is still a real
 // question for throughput-shaped work.
-func Mean(h *HistogramHandle) Metric {
+func (h *HistogramHandle) Mean() Metric {
 	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "mean"}}
+}
+
+// Percentile is the q-quantile across instances, q in (0,1):
+// thumbMs.Percentile(0.99) is the 99th.
+//
+// Any quantile works, which was not true of the first design. Cloud
+// Monitoring's aligner enum offers exactly four (99, 95, 50, 05), and
+// that was taken for a fact about metrics; it is a property of one API.
+// Compiled as PromQL, histogram_quantile(0.87, …) answers 473.17ms on
+// the same data where the aligner path answers nothing at all.
+//
+// A histogram has no default quantile: which one you mean IS the
+// question, so it is written at the call site.
+func (h *HistogramHandle) Percentile(q float64) Metric {
+	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "percentile", q: q}}
 }
 
 // derived is a metric expression tako writes the query for.
 type derived struct{ ref metricRef }
 
 func (d derived) metricSubject() metricRef { return d.ref }
-
-// Percentile is a histogram's q-quantile across instances, q in (0,1):
-// Percentile(thumbMs, 0.99) is the 99th.
-//
-// Any quantile works, which was not true of the first design. Cloud
-// Monitoring's aligner enum offers exactly four (99, 95, 50, 05), and
-// Y1a took that for a fact about metrics; it is a property of one API.
-// Compiled as PromQL, `histogram_quantile(0.87, …)` answers 473.17ms on
-// the same data where the aligner path answers nothing at all — measured,
-// not assumed (task log, 2026-08-02).
-//
-// A histogram has no default quantile: which one you mean IS the
-// question, so it is written at the call site.
-func Percentile(h *HistogramHandle, q float64) Metric {
-	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "percentile", q: q}}
-}
 
 // Target is something a service-level alert can be measured on: the
 // package's app service (tako.Service) or one async handler, which is
@@ -215,20 +206,54 @@ func (h Handler) consumerRef() metricRef {
 	return metricRef{kind: "subscriber", id: h.id}
 }
 
-// Platform names a Google Cloud metric directly, for the cases the
-// presets and derived readings do not cover.
+// Google's own metrics, scoped to a tako object.
 //
-// The name is Google's, so it is a string — pretending otherwise would
-// be a lie — but it must be constant, and tako derives the rest: the
-// PromQL mapping (first "/" becomes ":", other specials become "_") and
-// the monitored-resource matcher that a bare selector is rejected
-// without. Find names with `tako metrics <search>`; there are more than
-// eight thousand in a project, which is why there is no list in the docs.
+// The metric type is Google's, so it is a string — pretending otherwise
+// would be a lie — but WHICH RESOURCE it is about is not something you
+// should have to spell. The first design made you write the label
+// matcher yourself:
 //
-//	tako.Above(tako.Platform("run.googleapis.com/container/network/sent_bytes_count"),
-//	    1<<30, tako.For(10*time.Minute))
-func Platform(metricType string, filters ...string) Metric {
-	return derived{ref: metricRef{kind: "platform", name: metricType, filters: filters}}
+//	tako.Platform("run.googleapis.com/container/memory/utilizations",
+//	    `service_name="x1-siren"`)
+//
+// That name is env-prefixed and only exists after a deploy, so it could
+// not be written correctly at declaration time at all: the bare name
+// matches nothing, and omitting the filter matches every Cloud Run
+// service in the project. Handing tako the object instead lets it write
+// the matcher from the same names the presets already use.
+
+// ServiceMetric reads a Cloud Run metric about one tako service — the
+// app service, one async handler, or anything else a Target names.
+//
+//	tako.WhenAbove(tako.ServiceMetric(Grind,
+//	    "run.googleapis.com/container/memory/utilizations"), 0.9,
+//	    tako.Window{For: 10 * time.Minute})
+func ServiceMetric(t Target, metricType string, filters ...string) Metric {
+	ref := t.alertTarget()
+	ref.kind, ref.agg = "service_metric", "platform"
+	ref.name = metricType
+	ref.filters = filters
+	return derived{ref: ref}
+}
+
+// QueueMetric reads a Pub/Sub subscription metric about one queue or
+// subscriber — the subscription tako created for it.
+func QueueMetric(c Consumer, metricType string, filters ...string) Metric {
+	ref := c.consumerRef()
+	ref.kind, ref.agg = "queue_metric", "platform"
+	ref.name = metricType
+	ref.filters = filters
+	return derived{ref: ref}
+}
+
+// PlatformMetric names a Google metric with no tako object to scope it —
+// a project-wide reading, or a resource tako does not model.
+//
+// The filters are raw PromQL label matchers, and everything they say is
+// yours to get right. Prefer ServiceMetric or QueueMetric whenever the
+// thing you are watching is something tako deployed.
+func PlatformMetric(metricType string, filters ...string) Metric {
+	return derived{ref: metricRef{kind: "platform", name: metricType, agg: "platform", filters: filters}}
 }
 
 // Window is when a condition is measured. The knobs are deliberately
@@ -251,10 +276,6 @@ type Window struct {
 	Every time.Duration
 }
 
-// For is the short spelling of Window{For: d}, for the common case where
-// the reduction period does not matter.
-func For(d time.Duration) Window { return Window{For: d} }
-
 // Condition is a metric compared against a threshold over a window.
 // Threshold and window are both required: an alert with no threshold has
 // nothing to compare, and one with no window fires on a single sample.
@@ -265,25 +286,25 @@ type Condition struct {
 	window    Window
 }
 
-// Above holds while the metric stays over threshold for the window.
-func Above(m Metric, threshold float64, w Window) Condition {
+// WhenAbove holds while the metric stays over threshold for the window.
+func WhenAbove(m Metric, threshold float64, w Window) Condition {
 	return Condition{op: "above", subject: m.metricSubject(), threshold: threshold, window: w}
 }
 
-// Below holds while the metric stays under threshold for the window —
-// the shape for "this stopped happening as often as it should".
-func Below(m Metric, threshold float64, w Window) Condition {
+// WhenBelow holds while the metric stays under threshold for the window
+// — the shape for "this stopped happening as often as it should".
+func WhenBelow(m Metric, threshold float64, w Window) Condition {
 	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: w}
 }
 
-// Absent holds when the metric receives no data at all across the
+// WhenAbsent holds when the metric receives no data at all across the
 // window's lookback. It takes no threshold: absence is the condition.
 //
 // This compiles to a PromQL absent_over_time, not to Cloud Monitoring's
 // conditionAbsent, which caps at 23h30m — shorter than a daily cron's
 // own period, so it could never watch one. A PromQL lookback has no such
 // ceiling: [26h] and [7d] are both accepted.
-func Absent(m Metric, w Window) Condition {
+func WhenAbsent(m Metric, w Window) Condition {
 	return Condition{op: "absent", subject: m.metricSubject(), window: w}
 }
 
@@ -299,8 +320,10 @@ type AlertHandle struct {
 // At least one channel is a PARAMETER rather than a slice or a config
 // field, so an alert nobody receives does not compile:
 //
-//	var Stuck = tako.Alert(tako.Above(tako.DeadLetters(thumbs), 0, 5*time.Minute), Oncall)
-//	var Broken = tako.Alert(tako.Above(tako.ErrorRate(api), 0.05, 5*time.Minute), Oncall, Room)
+//	var Stuck = tako.Alert(tako.QueueBacklogged(work, 1,
+//	    tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
+//	var Broken = tako.Alert(tako.RequestsErroring(Boom, 0.05,
+//	    tako.Window{For: 5 * time.Minute}), oncall, room)
 //
 // Alerts are evaluated in the cloud only. Locally `tako dev` lists them
 // and runs none — an evaluator with different windowing than Cloud
@@ -330,32 +353,70 @@ func windowOr(w []Window, def Window) Window {
 	return def
 }
 
-// DeadLettered fires when at least n messages have given up — exhausted
-// their retries and landed on the dead-letter topic — within the window
-// (default: 5 minutes).
+// QueueWatch configures a queue condition: which of the two queues to
+// watch, and how long the level must hold.
 //
-// It takes a queue or a SUBSCRIBER, because subscribers fan out with
-// independent fates: one giving up says nothing about the others.
-//
-// Pair it with Backlogged. This one only fires AFTER retries are spent,
-// so a consumer that is merely down shows nothing here for a while.
-func DeadLettered(c Consumer, n int, w ...Window) Condition {
-	ref := c.consumerRef()
-	ref.agg = "dead_letters"
-	return Condition{op: "above", subject: ref, threshold: float64(n),
-		window: windowOr(w, Window{Every: 5 * time.Minute})}
+// The dead-letter queue is a FIELD rather than a symbol because it is
+// not a general concept anyone should have to name — and because both
+// queues are read by the same two gauges on the same kind of
+// subscription. There is nothing different about them but which one.
+type QueueWatch struct {
+	// DeadLetters watches the dead-letter queue rather than the live one
+	// — the same queue `tako dlq` reads, so the alert and the CLI agree
+	// about what is in it.
+	//
+	// It catches BOTH ways a message dies: retries exhausted, and a
+	// handler returning tako.Permanent. The count of Pub/Sub's own
+	// dead-letter forwards sees only the first, and the second is the
+	// commoner one.
+	DeadLetters bool
+	// For is how long the level must hold, and it is REQUIRED.
+	//
+	// A queue crosses any depth for an instant every time a burst
+	// arrives, so how long it stays there IS the alert. There is no
+	// default worth guessing, exactly as with a Count's period.
+	For time.Duration
 }
 
-// Backlogged fires when the oldest unacknowledged message has been
-// waiting longer than age (default window: evaluated every minute).
+// QueueBacklogged fires when at least n messages are waiting.
 //
-// This is the "work is piling up" alert, and it is the one that catches
-// a consumer that is down or too slow — before anything has given up.
-func Backlogged(c Consumer, age time.Duration, w ...Window) Condition {
+// On the live queue that means the consumer is not keeping up. On the
+// dead-letter queue it means poison is piling up, and n=1 is the honest
+// threshold — there is no good number of dead letters.
+//
+//	tako.QueueBacklogged(work, 500, tako.QueueWatch{For: 10 * time.Minute})
+//	tako.QueueBacklogged(work, 1, tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute})
+//
+// It takes a queue or a SUBSCRIBER, because subscribers fan out with
+// independent fates: one falling behind says nothing about the others.
+func QueueBacklogged(c Consumer, n int, w QueueWatch) Condition {
 	ref := c.consumerRef()
-	ref.agg = "backlog_age"
+	ref.agg, ref.on = "queue_depth", queueSource(w)
+	return Condition{op: "atleast", subject: ref, threshold: float64(n),
+		window: Window{For: w.For}}
+}
+
+// QueueStalled fires when the oldest waiting message is older than age.
+//
+// On the live queue that is work going stale — a consumer that is down,
+// too slow, or scaled too tight. On the dead-letter queue it is nobody
+// triaging: poison that has sat unread since yesterday.
+//
+//	tako.QueueStalled(work, 15*time.Minute, tako.QueueWatch{For: 5 * time.Minute})
+//	tako.QueueStalled(work, 24*time.Hour, tako.QueueWatch{DeadLetters: true, For: time.Hour})
+func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition {
+	ref := c.consumerRef()
+	ref.agg, ref.on = "queue_age", queueSource(w)
 	return Condition{op: "above", subject: ref, threshold: age.Seconds(),
-		window: windowOr(w, Window{For: 5 * time.Minute})}
+		window: Window{For: w.For}}
+}
+
+// queueSource names which of a consumer's two queues is meant.
+func queueSource(w QueueWatch) string {
+	if w.DeadLetters {
+		return "dead"
+	}
+	return "live"
 }
 
 // CronFailed fires when a cron ran and failed at least times within the
@@ -384,24 +445,29 @@ func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition {
 		threshold: float64(times), window: windowOr(w, Window{Every: time.Hour})}
 }
 
-// Erroring fires when the 5xx share of requests exceeds fraction (0–1)
+// RequestsErroring fires when the 5xx share of requests exceeds fraction (0–1)
 // for the window (default: 5 minutes).
 //
 // The target may be a whole service, one async handler, a single API or
 // Page route, or a Site — request metrics carry a route label, so an
 // endpoint can be watched without alerting on everything beside it.
-func Erroring(t Target, fraction float64, w ...Window) Condition {
+func RequestsErroring(t Target, fraction float64, w ...Window) Condition {
 	ref := t.alertTarget()
 	ref.agg = "error_rate"
 	return Condition{op: "above", subject: ref, threshold: fraction,
 		window: windowOr(w, Window{For: 5 * time.Minute})}
 }
 
-// SlowerThan fires when the given quantile of request latency exceeds d
-// for the window (default: 5 minutes). Same targets as Erroring.
+// RequestsSlow fires when the given quantile of request latency exceeds
+// d for the window (default: 5 minutes). Same targets as
+// RequestsErroring.
 //
-//	tako.SlowerThan(Photos, 2*time.Second, 0.99)
-func SlowerThan(t Target, d time.Duration, quantile float64, w ...Window) Condition {
+// Named for what is MEASURED, not for the target: the target may be a
+// service, a handler, one route or a site, so any primitive-shaped
+// prefix would be a lie for three of the four.
+//
+//	tako.RequestsSlow(Photos, 2*time.Second, 0.99)
+func RequestsSlow(t Target, d time.Duration, quantile float64, w ...Window) Condition {
 	ref := t.alertTarget()
 	ref.agg = "latency"
 	ref.q = quantile
@@ -409,12 +475,12 @@ func SlowerThan(t Target, d time.Duration, quantile float64, w ...Window) Condit
 		window: windowOr(w, Window{For: 5 * time.Minute})}
 }
 
-// AtCapacity fires when a service sits at its maximum instance count —
+// ServiceAtCapacity fires when a service sits at its maximum instance count —
 // scaled out as far as it is allowed and shedding whatever arrives next.
 //
 // It takes no threshold: tako reads MaxInstances from the service's
 // footprint, so the number lives in one place.
-func AtCapacity(t Target, w ...Window) Condition {
+func ServiceAtCapacity(t Target, w ...Window) Condition {
 	ref := t.alertTarget()
 	ref.agg = "at_capacity"
 	return Condition{op: "above", subject: ref,
