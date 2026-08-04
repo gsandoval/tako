@@ -13933,3 +13933,173 @@ The owner's two directions, which are their own tasks:
    read what it compiles to, then write their own version of it.
 
 Proposal for both goes in separately. Neither is in D1/D2's scope.
+
+## FA1–FA4 — DX proposal: stable metric names, and alerts you can fork (2026-08-04) — AWAITING APPROVAL
+
+Owner, after D1/D2: metric names should be stabilized and the generated
+PromQL pinned by unit tests, and a user should be able to start from a
+preset, look at what it compiles to, and write their own finer-grained
+version.
+
+**Both are accepted as the right calls, and the second retires the
+position I argued yesterday.** I claimed that because the label
+spellings had been wrong three times, exposing them would freeze
+mistakes as API. That reads the evidence backwards: three silent
+breakages is an argument for pinning the names, not for keeping them
+private. Nothing was protecting users from those bugs — the presets
+carried them, and the presets are all anyone had.
+
+Four slices. FA1 has no user-facing surface at all; FA2 is CLI only;
+FA3 and FA4 are SDK API and are therefore their own tasks under the
+normative-API rule.
+
+### FA1 — one definition of every metric tako writes, locked
+
+Today the writer (`pkg/runtime/http.go`) and the readers
+(`pkg/provision/alerts.go`) agree about `tako/requests` by hand. Every
+label defect this stage came out of that gap: `route` declared and empty
+on all 88 series, `job` spelled three ways, `subscription_id` naming a
+topic, `response_class="2xx"` where Pub/Sub writes `ack`. Each was
+well-formed and matched nothing.
+
+Proposed, no new user surface:
+
+- **One exported table** in a single package naming each metric tako
+  writes — type, kind (DELTA/GAUGE), value type, and every label with
+  the values it takes. Writer and readers both derive from it, so they
+  cannot disagree by editing.
+- **A lock golden**, `testdata/metrics_lock.golden`, in the shape of the
+  existing `sdk_lock.golden`. Changing a metric name or a label spelling
+  fails a test that says so, which is the check that did not exist.
+- **A writer/reader agreement test**: every label a query matches on must
+  be one the runtime actually writes. This is the test that would have
+  caught all four defects above, and none of them needed a cloud call to
+  find — only something asserting the two halves name the same thing.
+- **The names become documented API** in `docs/reference/alerts.md`, at
+  which point FA3 can let users name them.
+
+This is a prerequisite for FA3 and not merely adjacent: exposing a name
+that is still free to change would hand users the same trap.
+
+### FA2 — `tako alerts`, so a preset can be read before it is forked
+
+"Look at the code" has no seam today. `tako deploy --plan` prints
+`+ create alert policy Slowing` and never the query; the rendered
+queries exist only as `siren_queries.golden.txt`, a test artifact inside
+this repo. A user of tako cannot see what their own alert compiles to.
+
+```
+$ tako alerts
+
+Slowing · GET /slow is slow
+  when   p99 of request_ms over 60s exceeds 2000ms, sustained 5m
+  query  histogram_quantile(0.99, sum(rate(custom_googleapis_com:tako_request_ms_bucket{
+           monitored_resource="generic_task",namespace="shop-prod",job="shop",
+           route="GET /slow"}[60s])) by (le)) > 2000
+  notify ops@example.com
+  preset tako.RequestsSlow(Slow, 2*time.Second, 0.99)
+```
+
+Everything printed is already computed by `alertQuery` and
+`conditionSentence`, both pure functions of the graph and the config —
+no cloud call, works offline, and `--env` picks which environment's
+names to render. The `preset` line is what makes forking possible: it
+says which call produced this, so the user knows what to replace.
+
+`tako alerts --explain <Name>` prints one alert with the compiled query
+broken into its parts. Worth having and cheap; it is the difference
+between reading a query and understanding which piece to change.
+
+### FA3 — the raw vocabulary reaches tako's own metrics
+
+The gap measured yesterday: `PlatformMetric` can NAME
+`custom.googleapis.com/tako/requests`, but the raw Google-metric path
+has exactly one reduction — `max()` — while every preset over it needs
+a rate, an increase, a ratio, an absence or a quantile. And `namespace`
+is `App+"-"+Env`, so no hand-written matcher is correct at declaration
+time. Naming was never the barrier; reduction and scoping were.
+
+Proposed — tako's own metrics become HANDLES carrying the reading
+methods that already exist, rather than a second parallel vocabulary:
+
+```go
+tako.Requests(Boom).Rate()                    // this route's request rate
+tako.Requests(Boom).Status("5xx").Rate()      // just the failures
+tako.RequestMs(Boom).Percentile(0.99)         // what RequestsSlow reads
+tako.Requests(Sweep).Count()                  // a cron's runs, per window
+```
+
+The target supplies `namespace`, `job` and `route` exactly as the
+presets do, so the env-prefixed half stays tako's. `.Status` is the one
+label value users need, and its vocabulary (`2xx`/`4xx`/`5xx`) is
+tako's own classification rather than a Google detail — stable once FA1
+locks it.
+
+`.Rate()`, `.Count()`, `.Percentile(q)` are the SAME methods a declared
+Counter or Histogram carries. No new reading vocabulary, and the
+analyzer's `readingMethods` table already resolves them.
+
+Then every preset is expressible, which is the acceptance test:
+
+```go
+// tako.RequestsSlow(Slow, 2*time.Second, 0.99) written out
+tako.WhenAbove(tako.RequestMs(Slow).Percentile(0.99), 2000, w)
+
+// tako.CronMissed(Sweep) written out
+tako.WhenAbsent(tako.Requests(Sweep), tako.Window{For: 30 * time.Minute})
+```
+
+**One call for the owner.** `RequestsErroring` is a RATIO of two rates,
+and nothing in the vocabulary divides. Recommended: `tako.Ratio(a, b
+Metric) Metric`, a combinator rather than a method, so it reads as what
+it is:
+
+```go
+tako.WhenAbove(tako.Ratio(
+    tako.Requests(Boom).Status("5xx").Rate(),
+    tako.Requests(Boom).Rate()), 0.05, w)
+```
+
+Verbose next to `RequestsErroring(Boom, 0.05, w)` — deliberately. The
+preset stays the way to say the common thing; this is the way to say a
+different thing, and the two now differ by editing rather than by
+giving up.
+
+### FA4 — `WhenAtLeast`, so a fork is not off by one
+
+Counting presets compile `>= n`; the raw vocabulary has only
+`WhenAbove` (`> n`). A user rewriting `QueueBacklogged(work, 50, w)` by
+hand today gets a condition that needs 51 — quietly under-reporting,
+which is the direction nobody notices, and the exact off-by-one the
+`atleast` operator was added to fix. It reappears the moment anyone
+leaves the presets, which is what FA2 and FA3 invite them to do.
+
+`WhenAtLeast(m, n, w)` compiles to `>= n`. One constructor, one arm in
+`comparison`, one analyzer table entry.
+
+### What demands them
+
+`examples/siren` again: it already declares every preset, so it can
+declare the hand-written twin of each one and a test can assert the two
+compile to the SAME PromQL. That test IS the feature — "you can write
+this yourself" is a claim, and a golden where preset and fork agree
+character for character is its proof.
+
+### Cloud errors & permissions
+
+None new. FA1 and FA4 add no calls; FA2 reads no cloud at all; FA3 reads
+metrics the deployer already lists. FA2's one failure mode is being run
+outside a tako module, which every other command already answers.
+
+### Size, and where this goes in the queue
+
+Honestly: FA3 is the largest single SDK addition since alerting itself,
+and FA1 is a refactor touching the runtime and the provisioner. This is
+a stage, not a slice.
+
+**Recommended ordering.** FA1 and FA2 can land now — FA1 adds no
+surface and pays for itself the first time a label is renamed, FA2 is a
+read-only command. FA3 and FA4 should follow FL1–FL4, because those are
+the release gate and this is not. The alternative reading is that FA3 is
+what makes alerting honest and should not wait behind four unrelated
+slices; that is a real argument and the owner's call.
