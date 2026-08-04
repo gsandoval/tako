@@ -143,3 +143,35 @@ func TestRangesRenderInSeconds(t *testing.T) {
 		}
 	}
 }
+
+// A below-comparison must fire when the data is gone.
+//
+// The whole trap in one test: an empty result set satisfies no
+// comparison, so `empty < 0.01` is empty and the alert stays quiet
+// exactly when the metric has stopped. Measured live before this was
+// fixed — thirteen minutes with nothing writing and three alerts silent.
+//
+// `or vector(0)` is PromQL's idiom for treating missing data as zero,
+// and it is verified against Cloud Monitoring on all four cases: a
+// healthy value stays quiet, a low value fires, a vanished series fires,
+// a never-written metric fires.
+func TestBelowTreatsMissingDataAsZero(t *testing.T) {
+	got := comparison("sum(rate(x[60s]))", "below", 0.01)
+	if !strings.Contains(got, "or vector(0)") {
+		t.Errorf("below compiles to %q — without the missing-data fallback it cannot fire on a stopped metric", got)
+	}
+	if !strings.HasPrefix(got, "(") {
+		t.Errorf("the fallback must be inside the comparison, got %q", got)
+	}
+}
+
+// The fallback belongs ONLY on below. Zero is not above anything, so on
+// an above-comparison it would add noise to every query and change no
+// outcome.
+func TestAboveDoesNotCarryTheFallback(t *testing.T) {
+	for _, op := range []string{"above", "atleast"} {
+		if got := comparison("sum(rate(x[60s]))", op, 5); strings.Contains(got, "vector(0)") {
+			t.Errorf("%s carries the missing-data fallback for no reason: %q", op, got)
+		}
+	}
+}

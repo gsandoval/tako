@@ -131,7 +131,20 @@ func absentQuery(sel string, lookback time.Duration) string {
 func comparison(query, op string, threshold float64) string {
 	switch op {
 	case "below":
-		return fmt.Sprintf("%s < %g", query, threshold)
+		// `or vector(0)` is PromQL's idiom for "treat missing data as
+		// zero", and it is what makes a below-comparison mean what it
+		// says. Without it an absent series yields an empty result, and
+		// `empty < threshold` is empty — so the alert goes quiet exactly
+		// when the metric has stopped, which is the worst case rather
+		// than the healthy one.
+		//
+		// Verified against Cloud Monitoring on all four cases: a healthy
+		// value stays quiet, a genuinely low value fires, a vanished
+		// series fires, and a metric that was never written fires.
+		//
+		// Only "below" gets this. On an above-comparison, zero is not
+		// above anything, so the fallback would change nothing.
+		return fmt.Sprintf("(%s or vector(0)) < %g", query, threshold)
 	case "atleast":
 		// The counting presets say "at least n" — DeadLettered(thumbs, 1)
 		// is meant to fire on the FIRST dead letter. Compiled as "> 1" it

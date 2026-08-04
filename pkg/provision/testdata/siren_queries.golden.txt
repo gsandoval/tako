@@ -24,7 +24,7 @@ Grinding
 
 Idle
   siren/x1: hits count is below 1
-  sum(increase(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) < 1
+  (sum(increase(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) or vector(0)) < 1
 
 JobBad
   siren/x1: job rebuild is failing
@@ -32,7 +32,7 @@ JobBad
 
 LoopDown
   siren/x1: singleton Ticker is not running
-  (max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-ticker",state="active"}) < 1) or (absent(max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-ticker",state="active"})))
+  (max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-ticker",state="active"}) or vector(0)) < 1
 
 Maxed
   siren/x1: service x1-siren-grind is at its instance ceiling
@@ -44,7 +44,7 @@ Missed
 
 NoThroughput
   siren/x1: work_ms per second is below 0.001
-  sum(rate(custom_googleapis_com:tako_work_ms_count{monitored_resource="generic_task",namespace="siren-x1"}[60s])) < 0.001
+  (sum(rate(custom_googleapis_com:tako_work_ms_count{monitored_resource="generic_task",namespace="siren-x1"}[60s])) or vector(0)) < 0.001
 
 Overworked
   siren/x1: work_ms total is above 20000
@@ -64,7 +64,7 @@ Pushing
 
 Quiet
   siren/x1: hits per second is below 0.01
-  sum(rate(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) < 0.01
+  (sum(rate(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) or vector(0)) < 0.01
 
 Slowing
   siren/x1: GET /slow is slow

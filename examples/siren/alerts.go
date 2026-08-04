@@ -140,17 +140,15 @@ var (
 	NoThroughput = tako.Alert(
 		tako.WhenBelow(workMs.Rate(), 0.001, tako.Window{For: 5 * time.Minute}), oncall)
 
-	// Nothing is writing this metric AT ALL, which is different from it
-	// reading low — and the difference is not a nicety.
+	// Nothing is writing this metric AT ALL, which is a different
+	// question from it reading low — though no longer a trap.
 	//
-	// `Quiet` above cannot catch a stop. When a metric stops being
-	// written its series disappears, so its query returns nothing, and
-	// `nothing < 0.01` is nothing: the alert goes quiet exactly when the
-	// thing has failed hardest. The walk proved it — thirteen minutes
-	// with no writer at all and `Quiet` never fired, while `Dark` did.
-	//
-	// So the pair is the point. WhenBelow for "slowed down", WhenAbsent
-	// for "stopped", declared together over the same recording.
+	// The walk found `Quiet` above silent through thirteen minutes with
+	// no writer, because a vanished series makes `nothing < 0.01`
+	// nothing. WhenBelow now compiles `or vector(0)`, so it catches a
+	// stop too. WhenAbsent stays for the case that is genuinely
+	// different: when zero is a LEGITIMATE reading and only the series
+	// disappearing is news.
 	Dark = tako.Alert(
 		tako.WhenAbsent(hits.Count(), tako.Window{For: 10 * time.Minute, Every: time.Minute}), oncall)
 )

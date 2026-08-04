@@ -292,18 +292,23 @@ func WhenAbove(m Metric, threshold float64, w Window) Condition {
 }
 
 // WhenBelow holds while the metric stays under threshold for the window
-// — the shape for "this is happening less often than it should".
+// — including when it stops entirely.
 //
-// It does NOT catch "this stopped". A comparison needs something to
-// compare: when a metric stops being written its series disappears, the
-// query returns an empty result, and `empty < threshold` is empty. The
-// alert stays quiet precisely when the thing has failed hardest —
-// measured, not reasoned about.
+// That last part is not free, and getting it wrong is silent. A
+// comparison needs something to compare: when a metric stops being
+// written its series disappears, and `empty < threshold` is empty, so
+// the naive query goes quiet exactly when the thing has failed hardest.
+// tako compiles the PromQL idiom for it — `(… or vector(0)) < t` —
+// which reads a missing series as zero.
 //
-// WhenAbsent is the other half, and the two are complements rather than
-// alternatives: WhenBelow for "slowed down", WhenAbsent for "stopped".
-// Declaring both against one recording is the honest way to cover a
-// metric you care about.
+// So this covers both "slowed down" and "stopped". WhenAbsent is still
+// the sharper tool when zero is a LEGITIMATE value and you only want to
+// hear about the series vanishing.
+//
+// One consequence worth knowing before you declare it: a metric nothing
+// has ever written reads as zero, so a fresh deploy with no traffic will
+// fire once Window.For elapses. That is usually correct — there really
+// is no traffic — but it is why For is the knob that matters here.
 func WhenBelow(m Metric, threshold float64, w Window) Condition {
 	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: w}
 }

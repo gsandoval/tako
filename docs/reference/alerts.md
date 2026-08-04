@@ -236,6 +236,35 @@ series to compare against zero, so the expression yields nothing —
 where `absent_over_time` yields exactly one series. Measured, not
 assumed.
 
+### The same trap, everywhere else
+
+**An empty result set satisfies no comparison.** That one sentence has
+been the diagnosis three times in this feature, and it is worth knowing
+as a rule rather than meeting as a surprise: any condition meaning "less
+than expected" is silent when the metric stops, unless something makes
+the missing case explicit.
+
+`WhenBelow` handles it for you. It compiles
+
+```promql
+(sum(rate(…)) or vector(0)) < 0.01
+```
+
+— `or vector(0)` being PromQL's idiom for reading missing data as zero.
+So below covers both "slowed down" and "stopped". `SingletonDown` is a
+below and gets the same treatment, which matters more than it sounds:
+before this, a deleted service stopped publishing an instance count, so
+the alert fired for a few minutes and then **resolved itself while the
+service was still gone**.
+
+The cost is worth stating: a metric nothing has ever written reads as
+zero, so a fresh deploy with no traffic fires once `Window.For` elapses.
+That is usually correct — there really is no traffic — and `For` is the
+knob for it.
+
+`WhenAbsent` remains the sharper tool when zero is a legitimate reading
+and only the series vanishing is news.
+
 One consequence to know: **an absence has no series, so nothing can be
 read off its labels.** Google's own default subject appends the
 resource that fired and prints `__missing__` there, and any `${…}`

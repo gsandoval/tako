@@ -466,7 +466,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:154:2"
+      "pos": "alerts.go:152:2"
     },
     {
       "kind": "alert",
@@ -488,7 +488,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:172:2"
+      "pos": "alerts.go:170:2"
     },
     {
       "kind": "alert",
@@ -513,7 +513,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:183:2"
+      "pos": "alerts.go:181:2"
     },
     {
       "kind": "alert",
@@ -532,7 +532,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:198:2"
+      "pos": "alerts.go:196:2"
     },
     {
       "kind": "queue",
