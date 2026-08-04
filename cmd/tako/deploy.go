@@ -272,6 +272,17 @@ func runDeploy(args []string) error {
 	// run grants land before subscriptions; and the Pub/Sub agent's
 	// dead-letter grants sit ON the subscriptions, which must exist to
 	// hold a policy.
+	// A Pub/Sub alert channel is delivered by Cloud Monitoring's own
+	// service agent, which does not exist in a fresh project until
+	// something asks for it — and Pub/Sub refuses an IAM binding naming
+	// an agent that does not exist, with a 400, after everything before
+	// it has already been created. Provisioning the identity here is
+	// idempotent and removes the ordering question entirely.
+	if hasPubSubChannel(graph) {
+		if _, err := client.EnsureServiceIdentity(ctx, gcp.MonitoringNotificationAgent); err != nil {
+			return err
+		}
+	}
 	grantsPlan := plan.Filter(provision.KindIamGrants)
 	var preRun, onRuns, onSubs provision.Plan
 	for _, e := range grantsPlan.Entries {
@@ -345,6 +356,17 @@ func runDeploy(args []string) error {
 		// DATA, so the series has to exist before a policy may name it.
 		if err := descriptors.Seed(ctx, graph, cfg.App, cfg.Env, cfg.Region); err != nil {
 			return err
+		}
+		// Seeding covers tako's own metrics. It cannot cover Google's —
+		// so ask which names resolve, and say plainly which alerts
+		// cannot be created yet rather than failing partway through the
+		// apply with Google's own sentence about it.
+		known, err := client.KnownMetricNames(ctx)
+		if err != nil {
+			return err
+		}
+		if bad := gcp.CheckMetricNames(known, provision.AlertMetricNames(cfg, graph)); len(bad) > 0 {
+			return gcp.UnresolvableError(bad)
 		}
 	}
 	if err := provision.Apply(ctx, plan.Filter(provision.KindAlertChannel), desired, applier); err != nil {
@@ -830,4 +852,16 @@ func entityKinds(graph *analyzer.AppGraph) []string {
 		}
 	}
 	return kinds
+}
+
+// hasPubSubChannel reports whether the app declares an alert channel
+// delivered by Cloud Monitoring's notification agent — the one identity
+// a deploy has to provision rather than derive.
+func hasPubSubChannel(g *analyzer.AppGraph) bool {
+	for _, r := range g.Resources {
+		if r.Kind == "channel" && r.ChannelKind == "pubsub" {
+			return true
+		}
+	}
+	return false
 }

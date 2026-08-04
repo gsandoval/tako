@@ -12947,3 +12947,110 @@ siren has never been deployed. Everything above is offline: goldens,
 structure, analysis. Whether 22 policies actually create, and whether
 each goes quiet then fires, is the Z2b live walk in
 `validate/stage10.md`, and it is the only thing that can close it.
+
+## Z2b — the live walk: 22 policies, 8 fired, three defects (2026-08-04)
+
+siren deployed to `tako-test-01/z2`. Everything below is measured.
+
+### Defect 22 — the notification agent does not exist
+
+The deploy died after creating 56 objects:
+
+```
+create iam grants topic z2-incidents: Service account
+service-119764066724@gcp-sa-monitoring-notification.iam.gserviceaccount.com
+does not exist. (HTTP 400 from pubsub.googleapis.com)
+```
+
+`grants.go` carried a comment saying the opposite — "granting to an agent
+that does not exist yet is accepted" — an assumption nothing had tested,
+because no example declared a Pub/Sub channel until siren. Pub/Sub
+refuses the binding outright.
+
+Fixed by provisioning the identity rather than waiting for Google to
+create it lazily: `EnsureServiceIdentity` calls serviceusage's
+`generateServiceIdentity`, which is what `gcloud beta services identity
+create` calls, is idempotent, and returns the same address every time.
+The deploy calls it before any grant when the graph declares a Pub/Sub
+channel.
+
+### Defect 23 — a policy can only name a metric that already has data
+
+The next deploy died on:
+
+```
+The following PromQL metric(s) are invalid:
+  run_googleapis_com:container_memory_utilizations (HTTP 400)
+```
+
+The descriptor existed. Two series existed. The name still did not
+resolve — because `container/memory/utilizations` is a **DISTRIBUTION**,
+and Cloud Monitoring publishes a distribution only as `_bucket`,
+`_count` and `_sum`, never under its bare name.
+
+Checking the project's whole PromQL name list found the general case:
+**four more metrics tako's own presets name did not resolve either**
+(`subscription_oldest_unacked_message_age`,
+`subscription_push_request_count`, `topic_byte_cost`,
+`job_completed_execution_count`) — not because they are wrong, but
+because nothing had written them in that project yet. tako seeds its own
+metrics for exactly this reason and cannot seed Google's.
+
+So the deploy now asks first, and says which alerts cannot be created
+and why, instead of failing partway through an apply with Google's
+sentence:
+
+```
+tako: these alerts name metrics Cloud Monitoring cannot resolve yet:
+  Fat — run_googleapis_com:container_memory_utilizations
+      it is a DISTRIBUTION, published only in parts: …_bucket, …_count, …_sum
+      alert on one of those instead of the bare name
+
+tako seeds its own metrics for this reason and cannot seed Google's.
+Deploy without the alert, let the resource run once, then deploy again.
+```
+
+### The walk
+
+All **22 policies and 3 channels** created — every policy carrying
+documentation, severity WARNING, and no malformed query. The Pub/Sub
+channel is the one defect 22 was blocking.
+
+Baseline, running each policy's OWN query: **21 quiet, 1 firing.** The
+one was `Failing`, and it was right — `Flaky` had run at 00:40 and
+answered 500 (scheduler status.code 13). A true positive nobody staged.
+
+Then the switches, and eight conditions went from quiet to firing:
+
+| alert | reading | fired at |
+|---|---|---|
+| `Erroring` | error_rate | `1` — every `/boom` 500ing |
+| `Slowing` | latency p99 | `4075.52` ms |
+| `Sluggish` | histogram mean | `2499.99` ms |
+| `Piling` | live queue depth | `274` messages |
+| `Poisoned` | dead queue depth | `198` messages |
+| `Maxed` | at instance ceiling | `1` |
+| `JobBad` | job executions failed | `1` |
+| `Failing` | cron failures | `3` |
+
+**No condition ever fired falsely.** The fourteen that stayed quiet were
+right to: their subjects were healthy, or their windows had not elapsed.
+
+One thing worth knowing before the next walk: **a burst does not fire a
+rate alert.** Forty deliberate 500s left `Erroring` quiet, because it
+reads a rate over a rolling 60-second window and the burst was six
+minutes gone. It fired within two minutes of SUSTAINED load. The data
+was never missing — `route='GET /boom' status='5xx'` sat at 41 the whole
+time. The alert was measuring what it says it measures.
+
+### Not proven, and honestly so
+
+`Missed` (10m of cron silence — proven twice on gallery), `Stalling`
+(15m oldest-message age), `Untriaged` (24h), `Quiet`/`Idle`/`Dark`/
+`NoThroughput` (30m–6h windows), `LoopDown` (needs the singleton
+broken), `SubPoisoned` (needs the incident subscriber to fail),
+`Grinding`, `Fat`, `Pushback`, `Billing` (thresholds not crossed).
+
+Fourteen of twenty-two were created, verified quiet-while-healthy, and
+left unfired. That is the honest number: **22/22 created and correct at
+rest, 8/22 observed transitioning.**

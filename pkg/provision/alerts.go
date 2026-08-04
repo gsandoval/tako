@@ -578,3 +578,41 @@ func shortNames(vars []string) []string {
 	}
 	return out
 }
+
+// AlertMetricNames maps each declared alert to the PromQL metric name
+// its query will resolve — what a deploy must check before creating the
+// policy, because Cloud Monitoring validates the name at creation and
+// resolves names from DATA, not descriptors.
+//
+// Extracted from the rendered query rather than re-derived, so a query
+// and its preflight cannot disagree about what will be asked for.
+func AlertMetricNames(cfg Config, g *analyzer.AppGraph) map[string]string {
+	out := map[string]string{}
+	for _, r := range g.Resources {
+		if r.Kind != "alert" || r.Alert == nil {
+			continue
+		}
+		q, _, err := alertQuery(cfg, g, r.Alert)
+		if err != nil {
+			continue
+		}
+		if name := firstMetricName(q); name != "" {
+			out[r.Name] = name
+		}
+	}
+	return out
+}
+
+// firstMetricName pulls the metric name out of a rendered query: the
+// identifier immediately before the label brace.
+func firstMetricName(query string) string {
+	i := strings.Index(query, "{")
+	if i < 0 {
+		return ""
+	}
+	head := query[:i]
+	j := strings.LastIndexFunc(head, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '_' || r == ':')
+	})
+	return head[j+1:]
+}

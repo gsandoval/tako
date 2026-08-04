@@ -480,15 +480,15 @@
         "subject_name": "work",
         "subject_var": "siren.Grind",
         "reading": "platform",
-        "threshold": 0.9,
+        "threshold": 1000000000,
         "for_seconds": 600,
         "scoped_to": "service_metric",
-        "metric_type": "run.googleapis.com/container/memory/utilizations"
+        "metric_type": "run.googleapis.com/container/memory/allocation_time"
       },
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:146:2"
+      "pos": "alerts.go:151:2"
     },
     {
       "kind": "alert",
@@ -513,7 +513,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:151:2"
+      "pos": "alerts.go:156:2"
     },
     {
       "kind": "alert",
@@ -535,7 +535,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:161:2"
+      "pos": "alerts.go:166:2"
     },
     {
       "kind": "queue",

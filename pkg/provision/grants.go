@@ -267,12 +267,13 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// service agent, not by anything tako runs, so that agent needs
 	// publisher on the topic the channel names.
 	//
-	// Google creates this agent LAZILY, on the first Pub/Sub channel in
-	// the project — the same shape as the GCS agent above, which
-	// BucketNotifications already rides out with a bounded retry. The
-	// grant is written here regardless: granting to an agent that does
-	// not exist yet is accepted, and waiting for it would be a deploy
-	// that hangs on Google's provisioning.
+	// Google does not create this agent until something asks for it, and
+	// Pub/Sub REFUSES a binding that names an agent which does not
+	// exist — 400, after everything before it has been created. An
+	// earlier comment here claimed the opposite; nothing had tested it,
+	// because no example declared a Pub/Sub channel until siren. The
+	// deploy now provisions the identity before applying any grant
+	// (cmd/tako/deploy.go, EnsureServiceIdentity).
 	monAgent := "serviceAccount:service-" + cfg.ProjectNumber + "@gcp-sa-monitoring-notification.iam.gserviceaccount.com"
 	for _, r := range g.Resources {
 		if r.Kind == "channel" && r.ChannelKind == "pubsub" && r.Target != "" {

@@ -15,8 +15,8 @@ Failing
   sum(increase(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/cron/Flaky",status="5xx"}[3600s])) >= 1
 
 Fat
-  siren/x1: container/memory/utilizations is above 0.9
-  max(run_googleapis_com:container_memory_utilizations{monitored_resource="cloud_run_revision",service_name="x1-siren-grind"}) > 0.9
+  siren/x1: container/memory/allocation_time is above 1e+09
+  max(run_googleapis_com:container_memory_allocation_time{monitored_resource="cloud_run_revision",service_name="x1-siren-grind"}) > 1e+09
 
 Grinding
   siren/x1: work_ms p99 is above 5000

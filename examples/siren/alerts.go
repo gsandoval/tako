@@ -143,9 +143,14 @@ var (
 // a deploy.
 
 var (
+	// Memory allocation rather than utilization, and the reason is worth
+	// knowing before you pick a metric: utilizations is a DISTRIBUTION,
+	// and Cloud Monitoring publishes a distribution only as _bucket,
+	// _count and _sum — never under its bare name. tako's preflight says
+	// so by name rather than letting the deploy fail on Google's 400.
 	Fat = tako.Alert(
 		tako.WhenAbove(tako.ServiceMetric(Grind,
-			"run.googleapis.com/container/memory/utilizations"), 0.9,
+			"run.googleapis.com/container/memory/allocation_time"), 1e9,
 			tako.Window{For: 10 * time.Minute}), oncall)
 
 	Pushback = tako.Alert(
