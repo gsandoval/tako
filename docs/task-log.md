@@ -13257,3 +13257,67 @@ one new failure mode is naming a metric that is NOT a distribution with
 `ServicePercentile` — the `_bucket` series will not exist, and the
 preflight added in Z2b already catches that by name before anything is
 created. Worth a test that the message reads correctly for that case.
+
+## Z3 — reaching Google's distributions (2026-08-04)
+
+Approved as proposed: two constructors, not the plan's three.
+
+### Shipped
+
+**`ServicePercentile(t, metricType, q)`** — the quantile over a
+DISTRIBUTION metric's buckets. Until this existed there was **no way to
+alert on CPU or memory utilization at all**: both are distributions,
+published only as `_bucket`/`_count`/`_sum`, so naming one the way its
+documentation writes it produces a policy Cloud Monitoring refuses. That
+is what the Z2b walk hit, and closing it is the whole slice.
+
+**`ServiceInstances(t)`** — the gauge, `state="active"` supplied.
+
+**Cut:** `ServiceLatency` (Cloud Run's `request_latencies` carries the
+route label tako measured EMPTY on all 88 series — `RequestsSlow` over
+tako's own metric is strictly better) and `ServiceSaturation` as a name
+(vague about which resource).
+
+### The gate, and what it took to make it honest
+
+Both constructors resolved and returned real values on the first deploy:
+p99 CPU `0.0099` idle, `0.5793` under load, instances `1`→`8`. The
+policies were CREATED, where `ServiceMetric` on the same metric had been
+refused — that alone is the defect closed.
+
+Getting them to FIRE took three corrections, each of which is a fact
+about Cloud Run rather than about tako:
+
+1. **`/slow` burns no CPU.** Four minutes of concurrent sleeping
+   requests left CPU at 1%. A saturation alert needs something that
+   saturates, so siren gained `/burn` — the switch the proposal should
+   have specified.
+2. **The subject is a SERVICE, and a worker is its own.** `Hot` watched
+   `Grind` while `/burn` ran in the API service, and stayed correctly
+   quiet through the whole load.
+3. **Autoscaling prevents saturation.** Retargeted at the API service,
+   ten concurrent CPU-burning requests produced ten instances and a p99
+   of `0.169` — *lower* than before. Per-instance CPU on a freely
+   scaling service stays low no matter how hard it is pushed; a
+   saturation alert there mostly measures how well autoscaling works.
+
+The resolution is the interesting part: `Grind` is capped at one
+instance, so its work concentrates instead of spreading. Watching the
+CAPPED service was right all along; the mistake was step 2's reasoning,
+not its target. With the worker given real CPU work
+(`/flood?burn_ms=…`):
+
+```
+before:  Hot  quiet
+after:   Hot  FIRING 0.2699
+```
+
+`Crowded` fired at `3`, `5`, `8` and `10` instances across the runs.
+
+### Discovered work
+
+`Crowded`'s first version watched `Grind`, which is capped at one
+instance — so `> 0` was the only threshold it could ever cross and it
+fired at baseline. A tautology reads exactly like a working alert.
+Pointing it at the service that actually scales is what made it a
+demonstration.

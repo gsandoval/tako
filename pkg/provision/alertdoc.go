@@ -153,8 +153,20 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 		if metricType == "" {
 			metricType = a.SubjectName
 		}
+		if a.ScopedTo == "service_instances" {
+			metricType = "instances"
+		}
 		fmt.Fprintf(&b, "**`%s` went %s %g.**\n\n", metricType, a.Op, a.Threshold)
 		switch a.ScopedTo {
+		case "service_percentile":
+			fmt.Fprintf(&b, "The p%s of one of Google's own distributions, read about service `%s`.\n",
+				quantileLabel(a.Quantile), cfg.Name(service))
+			b.WriteString("Cloud Monitoring publishes a distribution only in parts, so this is a quantile over its buckets rather than a value.\n")
+			d.Links = []docLink{serviceLink(cfg, service), metricsExplorerLink(cfg)}
+		case "service_instances":
+			fmt.Fprintf(&b, "How many instances of `%s` are running — the cost question, as opposed to the ceiling question `ServiceAtCapacity` asks.\n",
+				cfg.Name(service))
+			d.Links = []docLink{serviceLink(cfg, service), metricsExplorerLink(cfg)}
 		case "service_metric":
 			fmt.Fprintf(&b, "One of Google's own metrics, read about service `%s`.\n", cfg.Name(service))
 			d.Links = []docLink{serviceLink(cfg, service), metricsExplorerLink(cfg)}

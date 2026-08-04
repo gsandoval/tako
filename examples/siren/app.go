@@ -37,6 +37,21 @@ type Task struct {
 	Fail string `json:"fail"`
 	// HoldMs makes the worker slow, which is what lets a backlog build.
 	HoldMs int `json:"hold_ms"`
+	// BurnMs makes the worker slow AND busy. Holding is a sleep and
+	// uses no CPU; saturation needs work.
+	BurnMs int `json:"burn_ms"`
+}
+
+// spin consumes CPU for d, as opposed to waiting for it.
+func spin(d time.Duration) float64 {
+	deadline := time.Now().Add(d)
+	var x float64
+	for time.Now().Before(deadline) {
+		for i := 0; i < 1e6; i++ {
+			x += float64(i) * 1.000001
+		}
+	}
+	return x
 }
 
 // Incident is Google's alert payload, narrowed to the fields worth
@@ -100,10 +115,36 @@ func slow(ctx tako.Ctx, req SlowReq) (string, error) {
 	return "slept", nil
 }
 
+// BurnReq asks for CPU to be consumed, not merely waited on.
+type BurnReq struct {
+	Ms int `query:"ms"`
+}
+
+// Burn spins the CPU — the switch behind ServicePercentile over
+// cpu/utilizations.
+//
+// /slow will not do: it sleeps, and a sleeping request uses no CPU at
+// all. The Z3 gate found that the hard way, driving four minutes of
+// concurrent /slow and watching CPU sit at 1%. A saturation alert needs
+// something that actually saturates.
+var Burn = tako.API("GET /burn", burn)
+
+func burn(ctx tako.Ctx, req BurnReq) (string, error) {
+	hits.Add(ctx, 1)
+	ms := req.Ms
+	if ms == 0 {
+		ms = 1000
+	}
+	x := spin(time.Duration(ms) * time.Millisecond)
+	workMs.Observe(ctx, float64(ms))
+	return fmt.Sprintf("burned %dms (%.0f)", ms, x), nil
+}
+
 // FloodReq asks for n messages, each held for HoldMs.
 type FloodReq struct {
 	N      int `query:"n"`
 	HoldMs int `query:"hold_ms"`
+	BurnMs int `query:"burn_ms"`
 }
 
 // Flood fills the live queue faster than the worker drains it — the
@@ -116,7 +157,7 @@ func flood(ctx tako.Ctx, req FloodReq) (string, error) {
 		n = 100
 	}
 	for i := 0; i < n; i++ {
-		if err := work.Publish(ctx, Task{HoldMs: req.HoldMs}); err != nil {
+		if err := work.Publish(ctx, Task{HoldMs: req.HoldMs, BurnMs: req.BurnMs}); err != nil {
 			return "", err
 		}
 	}
@@ -201,6 +242,9 @@ var Grind = tako.Worker(work, grind, tako.Compute{
 func grind(ctx tako.Ctx, t Task) error {
 	if t.HoldMs > 0 {
 		time.Sleep(time.Duration(t.HoldMs) * time.Millisecond)
+	}
+	if t.BurnMs > 0 {
+		spin(time.Duration(t.BurnMs) * time.Millisecond)
 	}
 	switch t.Fail {
 	case "hard":

@@ -246,6 +246,42 @@ func QueueMetric(c Consumer, metricType string, filters ...string) Metric {
 	return derived{ref: ref}
 }
 
+// ServicePercentile reads a DISTRIBUTION metric about one tako service.
+//
+// Google publishes a distribution only as `_bucket`, `_count` and
+// `_sum` — never under its bare name — so naming one the way its
+// documentation writes it produces a policy Cloud Monitoring refuses.
+// Until this existed there was no way to alert on CPU or memory
+// utilization at all:
+//
+//	tako.WhenAbove(tako.ServicePercentile(Grind,
+//	    "run.googleapis.com/container/cpu/utilizations", 0.99), 0.9,
+//	    tako.Window{For: 10 * time.Minute})
+//
+// The quantile is a parameter rather than a default for the same reason
+// a histogram's Percentile takes one: which quantile you mean IS the
+// question.
+func ServicePercentile(t Target, metricType string, q float64, filters ...string) Metric {
+	ref := t.alertTarget()
+	ref.kind, ref.agg = "service_percentile", "platform"
+	ref.name = metricType
+	ref.q = q
+	ref.filters = filters
+	return derived{ref: ref}
+}
+
+// ServiceInstances is how many instances of a service are running.
+//
+// ServiceAtCapacity answers "am I at the ceiling"; this answers "how
+// many am I paying for", which is a different question and the one that
+// turns into a bill. tako supplies the metric type and the state label,
+// because there is exactly one right answer for both.
+func ServiceInstances(t Target) Metric {
+	ref := t.alertTarget()
+	ref.kind, ref.agg = "service_instances", "platform"
+	return derived{ref: ref}
+}
+
 // PlatformMetric names a Google metric with no tako object to scope it —
 // a project-wide reading, or a resource tako does not model.
 //

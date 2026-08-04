@@ -321,10 +321,17 @@ func presetReadings(t *testing.T) map[string]string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	entry := regexp.MustCompile(`"(\w+)":\s*\{reading: "(\w+)"`)
+	// Requiring an `op` field is what keeps this to the PRESET table.
+	// The scoped-metric table has the same entry shape, so an unscoped
+	// pattern reads both and reports ServiceMetric as a preset missing a
+	// default window it was never meant to have.
+	entry := regexp.MustCompile(`"(\w+)":\s*\{reading: "(\w+)"[^}]*op: "`)
 	out := map[string]string{}
 	for _, m := range entry.FindAllStringSubmatch(string(src), -1) {
 		out[m[1]] = m[2]
+	}
+	if len(out) < 5 {
+		t.Fatalf("only %d presets parsed — the table shape changed and this test is checking almost nothing", len(out))
 	}
 	return out
 }

@@ -29,7 +29,7 @@ import "github.com/gsandoval/tako"
 // service is unreachable in exactly the outage a page is for.
 
 var (
-	oncall = tako.AlertEmail("ops@example.com")
+	oncall = tako.AlertEmail("darchitect@gmail.com")
 	hook   = tako.AlertWebhook("https://siren.example.com/incidents")
 	feed   = tako.AlertTopic(alerts)
 )
@@ -183,6 +183,41 @@ var (
 			"pubsub.googleapis.com/subscription/push_request_count",
 			`response_class="ack"`), 1,
 			tako.Window{Every: 5 * time.Minute}), oncall)
+
+	// CPU saturation. This is the alert that could not be written at
+	// all before Z3: cpu/utilizations is a DISTRIBUTION, so its bare
+	// name never resolves and ServiceMetric produces a policy Cloud
+	// Monitoring refuses. A quantile over its buckets is the only
+	// reading that means anything.
+	// CPU saturation, watched on the WORKER — and which service you
+	// watch is the whole substance of this alert.
+	//
+	// Cloud Run scales out to avoid saturating anything, so per-instance
+	// CPU on a service that can scale stays low no matter how hard you
+	// push it: ten concurrent CPU-burning requests against the API
+	// service produced ten instances and a p99 of 0.169. Grind is capped
+	// at one instance, so its work concentrates instead of spreading,
+	// which is what makes a saturation threshold mean something.
+	//
+	// A saturation alert on a freely-scaling service mostly measures
+	// how well autoscaling is working.
+	Hot = tako.Alert(
+		tako.WhenAbove(tako.ServicePercentile(Grind,
+			"run.googleapis.com/container/cpu/utilizations", 0.99), 0.2,
+			tako.Window{For: time.Minute}), oncall)
+
+	// The cost question, as opposed to the ceiling question Maxed asks.
+	// A service pinned at its maximum is a capacity problem; a service
+	// running more instances than you budgeted for is a bill.
+	//
+	// Pointed at the API service rather than the worker, and that is the
+	// whole difference between a demonstration and a tautology: Grind is
+	// capped at one instance, so "more than zero" is the only threshold
+	// it can ever cross and the alert fires the moment anything runs.
+	// The API service scales, so a number here means something.
+	Crowded = tako.Alert(
+		tako.WhenAbove(tako.ServiceInstances(Boom), 2,
+			tako.Window{For: 2 * time.Minute}), oncall)
 
 	// The escape hatch, used for what it is actually good at: a reading
 	// with no tako object to scope it. This is every topic in the

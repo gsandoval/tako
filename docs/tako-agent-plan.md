@@ -371,6 +371,117 @@ The remaining act is the owner's: `git push origin main`, `git tag
 v0.1.0`, push the tag. Gate Z6: a fresh-project full cycle against the
 PUBLISHED module path, which is the one thing no local run can fake.
 
+## Stage 11 — The consumer's gaps (proposed 2026-08-04) — AWAITING APPROVAL
+
+*The first stage driven by an outside consumer rather than by an example.
+Source: flauta's friction log (sibling repo, `docs/friction.md`, entries
+dated 2026-08-02), kept under its ADR 0008 — an app-side workaround is
+the default, promotion to a tako task is the exception. Four entries:
+two promoted by flauta, one reopened here on evidence flauta did not
+have, one closed with no task.*
+
+*Slice IDs are FL because Z is spent. The standing rules are unchanged —
+one feature, one gate, DX proposal first. **No feature without an example
+demanding it still holds**: each slice below names the example that will
+demand it, and nothing ships on an outside consumer's word alone.*
+
+**FL1 — `tako.RedirectPermanent`.** A Page handler can only redirect
+303 (`pkg/runtime/page.go`, hard-wired), and the SDK's only permanent
+redirect is `SiteConfig.Redirects` — a map literal read at analysis
+time, so it cannot carry data decided per request. The gap is real and
+has no clean workaround: the three flauta found are build-time-only
+308s, an honest-but-temporary 303, or both mechanisms at once. Add a
+`status` to `HTML` (widening the `hooks.HTMLParts` tuple), keep
+`Redirect` at 303, serve 301 from the new constructor, and leave the
+htmx path identical — `HX-Redirect` + 200 either way, because
+permanence means nothing to a client that is not a crawler. Example
+demanding it: journal grows a slug rename that mints a moved-URL
+record and serves 301 from the store — a redirect decided per request
+from entity data, which is the whole of the gap. Gate FL1: rename a
+post, watch the old URL answer 301, and the same route answer
+`HX-Redirect` under htmx.
+
+**FL2 — `SiteConfig{NotFound: "404.html"}`.** Unparks the styled error
+page. Two paths 404 today and both answer in plain text: `pageError`
+for a handler's `tako.NotFound()`, and the site handler for a static
+miss — which is why a handler-side result type cannot close this alone
+and the config field can. Cheaper than it looks:
+`RegisterSiteTemplates` already receives `SiteOptions` and installs
+`renderSite` as package state, so both paths can render the site's own
+layout with no codegen restructuring. A missing or broken template
+falls back to today's plain text — a 404 never becomes a 500. Example:
+journal has both paths already (`read` returns `tako.NotFound()`, its
+site 404s on misses). Three calls for the proposal: whether `NotFound`
+resolves as a template first and falls back to a static file in the
+site dir so generators that already emit `404.html` just work
+(recommended); whether 500s are in scope (recommended: no); and
+whether htmx requests get the rendered document like everyone else
+(recommended: yes — one behavior, no mode switch). Gate FL2: a
+mistyped URL and a missing post both answer 404 wearing the site.
+
+**FL3 — `Query.Count()`.** flauta rated this workaround-fine and it was
+headed for the not-scheduled list; reopened on a fact flauta could not
+see from outside. The gcp backend is a hand-rolled Datastore v1 REST
+client, not the Go library, and `runAggregationQuery` is a sibling
+endpoint of the `runQuery` it already speaks: the same query object we
+build today, wrapped in `{aggregations: [{count: {}}]}`. It is one new
+verb and a response field — server-side, billed per index scan rather
+than per matched entity, and no new dependency. Local counts what it
+already filters. That is small enough to be worth having rather than
+deferring. One call for the proposal: `Count` ignores `Limit`
+(recommended — `Limit` shapes a page, `Count` answers the total, which
+is the question a numbered pager asks). Example: journal's home listing
+renders "page N of M" instead of a bare first-50. Gate FL3: the total
+is right against both backends, including with filters.
+
+**FL4 — `Query.Page(cursor)`.** The one the consumer flagged as
+definitely important, and the one with a sharp edge. `Page(after
+string) (EntityPage[T], error)` joins `All`/`First`/`Iter` as an
+executor, returning items, an opaque cursor, and whether more remain;
+the empty string starts at the beginning. On gcp the cursor is nearly
+in hand already — `Query` reads `endCursor` on every batch and uses it
+internally to drain them, then throws it away at the API boundary.
+The edge is that it cannot always be handed back honestly: the backend
+deliberately falls back to a client-side sort when the order is the
+default id order or cannot push down beside an inequality filter, and
+in that case the server's cursor is not a position in the order the
+caller asked for. Handing it back would silently skip or repeat rows.
+So the rule is uniform across both backends: **`Page` requires an
+explicit `OrderBy`**, and says so in a runtime error rather than
+guessing — never a query that pages locally and lies in cloud. This is
+a backend-interface change (`backends.EntityQuery` gains a start
+cursor; `Query` must return an end cursor), so local implements a
+**keyset** cursor — the last row's `(sort value, id)` resumed as a
+compound predicate — not an offset, because only keyset matches
+Datastore's behavior when rows are written between pages. That
+agreement is the conformance case, written first: insert and delete
+between page 1 and page 2, both backends observe the same thing.
+Example: gallery's `GET /api/photos` takes `?cursor=` and returns the
+next one. Gate FL4: page through gallery on both backends, with a
+write landing mid-walk.
+
+**Closed with no task — the site domain through the config seam.**
+flauta asked for nothing here and it is right: `tako/config-literal`
+refusing a variable is what lets the deploy plan be computed without
+running the app. One duplicated string held by a test is the smaller
+cost. Recorded so the question is not reopened from outside later.
+
+**Sequencing — the open call.** FL2–FL4 are additive and can land as
+v0.1.x after Z6 without hurting anyone. FL1 is the one worth arguing
+about: it is small, and it is the difference between an outside
+project's redirect design being honored or needing to be rewritten
+around a 303 before its own M4. Publishing v0.1.0 without it means the
+first published API is one a real consumer already cannot build on.
+**Recommendation: pull FL1 into Stage 10 ahead of Z6; leave FL2–FL4
+here.** Not yet decided.
+
+**Not promoted.** flauta's log also carries four gaps known from
+planning and not yet hit in code — no full-text query, no image
+processing, no roles in auth, no configurable markdown pipeline. Two
+are standing non-goals (admin primitives; anything that turns Entity
+into "the database"), and all four are unhit. They stay in the
+consumer's log until an example here demands them.
+
 ### Deliberately NOT scheduled
 
 Designed and argued, waiting on a trigger rather than on time:
@@ -378,10 +489,11 @@ Designed and argued, waiting on a trigger rather than on time:
 - **Load balancer + Firebase Hosting** for domains — `docs/domain-options.md`
   carries the four-way comparison, live pricing, and the trigger
   conditions for each. Domain mappings ship today.
-- **Parked, logged, unscheduled:** multi-service dev routing, styled
-  error pages, the migrating `tako rename` (rename is a data migration;
-  detection shipped, the command did not), session cache, email
-  account-creation UI, VPC, per-command `--help`.
+- **Parked, logged, unscheduled:** multi-service dev routing, the
+  migrating `tako rename` (rename is a data migration; detection
+  shipped, the command did not), session cache, email
+  account-creation UI, VPC, per-command `--help`. *(Styled error pages
+  left this list on 2026-08-04 — scheduled as FL2, Stage 11.)*
 - **Console-link rot.** Two link shapes were wrong in Y2 and were found
   by hand. Detecting a future move would need network access and a
   deployed project in CI; it stays a per-walk human check rather than a

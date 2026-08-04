@@ -2,6 +2,10 @@ Billing
   siren/x1: topic/byte_cost is above 1
   max(pubsub_googleapis_com:topic_byte_cost{monitored_resource="pubsub_topic"}) > 1
 
+Crowded
+  siren/x1: service x1-siren is running more than 2 instances
+  max(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren",state="active"}) > 2
+
 Dark
   siren/x1: nothing is recording hits
   absent_over_time(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[600s])
@@ -21,6 +25,10 @@ Fat
 Grinding
   siren/x1: work_ms p99 is above 5000
   histogram_quantile(0.99, sum(rate(custom_googleapis_com:tako_work_ms_bucket{monitored_resource="generic_task",namespace="siren-x1"}[60s])) by (le)) > 5000
+
+Hot
+  siren/x1: p99 of container/cpu/utilizations on x1-siren-grind is above 0.2
+  histogram_quantile(0.99, sum(rate(run_googleapis_com:container_cpu_utilizations_bucket{monitored_resource="cloud_run_revision",service_name="x1-siren-grind"}[60s])) by (le)) > 0.2
 
 Idle
   siren/x1: hits count is below 1

@@ -698,8 +698,11 @@ func checkQuantiles(dir string, pkg *packages.Package, errs *ErrorList) {
 			if !ok {
 				return true
 			}
-			if sdkConstructor(pkg, call) == "RequestsSlow" && len(call.Args) >= 3 {
+			if ctor := sdkConstructor(pkg, call); ctor == "RequestsSlow" && len(call.Args) >= 3 {
 				checkQuantile(dir, pkg, call.Args[2], "RequestsSlow", errs)
+				return true
+			} else if ctor == "ServicePercentile" && len(call.Args) >= 3 {
+				checkQuantile(dir, pkg, call.Args[2], "ServicePercentile", errs)
 				return true
 			}
 			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Percentile" && len(call.Args) == 1 {

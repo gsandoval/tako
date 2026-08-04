@@ -258,10 +258,21 @@ var readingMethods = map[string]string{
 // scopedMetrics are the constructors that read a Google metric about a
 // tako object. The object supplies the resource matcher, which is the
 // half a user could not write correctly by hand.
-var scopedMetrics = map[string]string{
-	"ServiceMetric":  "service_metric",
-	"QueueMetric":    "queue_metric",
-	"PlatformMetric": "platform",
+// The layout is data rather than a switch so a new one cannot be added
+// without saying where its arguments are — the completeness habit that
+// the preset table already has.
+var scopedMetrics = map[string]struct {
+	reading string
+	scoped  bool // takes a tako object as its first argument
+	hasType bool // takes a Google metric type
+	// quantArg is the index of a quantile argument, -1 for none.
+	quantArg int
+}{
+	"ServiceMetric":     {reading: "service_metric", scoped: true, hasType: true, quantArg: -1},
+	"QueueMetric":       {reading: "queue_metric", scoped: true, hasType: true, quantArg: -1},
+	"ServicePercentile": {reading: "service_percentile", scoped: true, hasType: true, quantArg: 2},
+	"ServiceInstances":  {reading: "service_instances", scoped: true, quantArg: -1},
+	"PlatformMetric":    {reading: "platform", hasType: true, quantArg: -1},
 }
 
 // conditionSpec reads a condition call into its logical parameters.
@@ -364,28 +375,31 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 	}
 
 	ctor := sdkConstructor(pkg, metric)
-	reading, isScoped := scopedMetrics[ctor]
+	m, isScoped := scopedMetrics[ctor]
 	if !isScoped {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, metric.Pos()),
-			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.QueueMetric / tako.PlatformMetric",
+			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / tako.PlatformMetric",
 			Rule: "alert-condition",
 		})
 		return false
 	}
 	spec.Reading = "platform"
-	// PlatformMetric has no tako object; the other two scope themselves
-	// to one, which is the whole reason they exist.
 	typeArg := 0
-	if ctor != "PlatformMetric" {
+	if m.scoped {
 		if len(metric.Args) == 0 {
 			return false
 		}
 		spec.SubjectKind, spec.SubjectName, spec.SubjectVar = resolveSubject(pkg, metric.Args[0], handlersByVar, resVars, endpointVars)
-		spec.ScopedTo = reading
+		spec.ScopedTo = m.reading
 		typeArg = 1
 	} else {
 		spec.SubjectKind = "platform"
+	}
+	// ServiceInstances names no metric type: there is exactly one right
+	// answer and tako supplies it.
+	if !m.hasType {
+		return true
 	}
 	if len(metric.Args) <= typeArg {
 		return false
@@ -399,14 +413,21 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 		})
 		return false
 	}
-	if ctor == "PlatformMetric" {
-		spec.SubjectName = name
-	} else {
+	if m.scoped {
 		spec.MetricType = name
+	} else {
+		spec.SubjectName = name
 	}
-	for _, f := range metric.Args[typeArg+1:] {
-		if m, err := constString(pkg, f); err == nil {
-			spec.Matchers = append(spec.Matchers, m)
+	rest := typeArg + 1
+	if m.quantArg >= 0 {
+		if len(metric.Args) > m.quantArg {
+			spec.Quantile = constFloat(pkg, metric.Args[m.quantArg])
+		}
+		rest = m.quantArg + 1
+	}
+	for _, f := range metric.Args[min(rest, len(metric.Args)):] {
+		if mm, err := constString(pkg, f); err == nil {
+			spec.Matchers = append(spec.Matchers, mm)
 		}
 	}
 	return true

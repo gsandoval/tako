@@ -7,6 +7,7 @@
       "handlers": [
         "siren.Boom",
         "siren.Slow",
+        "siren.Burn",
         "siren.Flood",
         "siren.Poison",
         "siren.Emit",
@@ -62,7 +63,7 @@
       "var": "siren.oncall",
       "package": "siren",
       "channel_kind": "email",
-      "target": "ops@example.com",
+      "target": "darchitect@gmail.com",
       "pos": "alerts.go:32:2"
     },
     {
@@ -517,6 +518,50 @@
     },
     {
       "kind": "alert",
+      "name": "Hot",
+      "var": "siren.Hot",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "worker",
+        "subject_name": "work",
+        "subject_var": "siren.Grind",
+        "reading": "platform",
+        "quantile": 0.99,
+        "threshold": 0.2,
+        "for_seconds": 60,
+        "scoped_to": "service_percentile",
+        "metric_type": "run.googleapis.com/container/cpu/utilizations"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:204:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Crowded",
+      "var": "siren.Crowded",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "route",
+        "subject_name": "GET /boom",
+        "subject_var": "siren.Boom",
+        "reading": "platform",
+        "threshold": 2,
+        "for_seconds": 120,
+        "scoped_to": "service_instances"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:218:2"
+    },
+    {
+      "kind": "alert",
       "name": "Billing",
       "var": "siren.Billing",
       "package": "siren",
@@ -532,7 +577,7 @@
       "channels": [
         "siren.oncall"
       ],
-      "pos": "alerts.go:196:2"
+      "pos": "alerts.go:231:2"
     },
     {
       "kind": "queue",
@@ -585,7 +630,7 @@
       "max_attempts": 5,
       "min_backoff_seconds": 10,
       "max_backoff_seconds": 300,
-      "pos": "app.go:244:2"
+      "pos": "app.go:288:2"
     }
   ],
   "handlers": [
@@ -606,7 +651,7 @@
           "type": "float64"
         }
       ],
-      "pos": "app.go:77:5"
+      "pos": "app.go:92:5"
     },
     {
       "kind": "api",
@@ -625,7 +670,26 @@
           "type": "int"
         }
       ],
-      "pos": "app.go:93:5"
+      "pos": "app.go:108:5"
+    },
+    {
+      "kind": "api",
+      "var": "siren.Burn",
+      "package": "siren",
+      "service": "siren",
+      "route": "GET /burn",
+      "req_type": "BurnReq",
+      "req_ref": "siren.BurnReq",
+      "res_ref": "string",
+      "bindings": [
+        {
+          "field": "Ms",
+          "kind": "query",
+          "name": "ms",
+          "type": "int"
+        }
+      ],
+      "pos": "app.go:130:5"
     },
     {
       "kind": "api",
@@ -648,9 +712,15 @@
           "kind": "query",
           "name": "hold_ms",
           "type": "int"
+        },
+        {
+          "field": "BurnMs",
+          "kind": "query",
+          "name": "burn_ms",
+          "type": "int"
         }
       ],
-      "pos": "app.go:111:5"
+      "pos": "app.go:152:5"
     },
     {
       "kind": "api",
@@ -669,7 +739,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:140:5"
+      "pos": "app.go:181:5"
     },
     {
       "kind": "api",
@@ -688,7 +758,7 @@
           "type": "bool"
         }
       ],
-      "pos": "app.go:164:5"
+      "pos": "app.go:205:5"
     },
     {
       "kind": "api",
@@ -700,7 +770,7 @@
       "req_ref": "siren.Incident",
       "res_ref": "string",
       "has_body": true,
-      "pos": "app.go:185:5"
+      "pos": "app.go:226:5"
     },
     {
       "kind": "worker",
@@ -712,7 +782,7 @@
         "max_instances": 1
       },
       "binding": "work",
-      "pos": "app.go:197:5"
+      "pos": "app.go:238:5"
     },
     {
       "kind": "subscribe",
@@ -721,7 +791,7 @@
       "service": "siren-onalert",
       "binding": "incidents",
       "binding_kind": "topic",
-      "pos": "app.go:217:5"
+      "pos": "app.go:261:5"
     },
     {
       "kind": "cron",
@@ -729,7 +799,7 @@
       "package": "siren",
       "service": "siren",
       "schedule": "every 5m",
-      "pos": "app.go:228:5"
+      "pos": "app.go:272:5"
     },
     {
       "kind": "cron",
@@ -737,7 +807,7 @@
       "package": "siren",
       "service": "siren",
       "schedule": "every 10m",
-      "pos": "app.go:236:5"
+      "pos": "app.go:280:5"
     },
     {
       "kind": "job",
@@ -745,7 +815,7 @@
       "package": "siren",
       "service": "siren-rebuilder",
       "binding": "rebuild",
-      "pos": "app.go:245:2"
+      "pos": "app.go:289:2"
     },
     {
       "kind": "singleton",
@@ -753,7 +823,7 @@
       "package": "siren",
       "service": "siren-ticker",
       "binding": "Ticker",
-      "pos": "app.go:272:5"
+      "pos": "app.go:316:5"
     }
   ],
   "edges": [

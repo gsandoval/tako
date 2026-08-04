@@ -199,7 +199,7 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		}
 		return comparison("max("+sel+")", a.Op, threshold), retestAllowed(lookback), nil
 	case "platform":
-		return comparison("max("+scopedSelector(cfg, g, a)+")", a.Op, a.Threshold), retestAllowed(lookback), nil
+		return comparison(platformQuery(cfg, g, a, every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	}
 	return "", false, fmt.Errorf("unknown alert reading %q", a.Reading)
 }
@@ -255,6 +255,24 @@ func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, 
 // env-prefixed and only exists after a deploy, so a hand-written
 // `service_name="siren"` matches nothing and omitting it matches every
 // service in the project. Both read as healthy.
+func platformQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, every time.Duration) string {
+	switch a.ScopedTo {
+	case "service_percentile":
+		// A DISTRIBUTION is published only as _bucket/_count/_sum, so
+		// the bare name never resolves and a quantile is the only
+		// reading that means anything. This is the shape that made CPU
+		// and memory utilization unreachable until now.
+		return histogramQuery(a.MetricType, resourceRun, "percentile", a.Quantile, every,
+			append([]string{fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar)))}, a.Matchers...)...)
+	case "service_instances":
+		// tako supplies the metric and the state: an instance that is
+		// not active is not one you are paying to serve with.
+		return "max(" + selector(metricInstanceCount, resourceRun,
+			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))), `state="active"`) + ")"
+	}
+	return "max(" + scopedSelector(cfg, g, a) + ")"
+}
+
 func scopedSelector(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) string {
 	switch a.ScopedTo {
 	case "service_metric":
@@ -532,6 +550,18 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 	case "singleton_down":
 		return fmt.Sprintf("%s: singleton %s is not running", app, subject)
 	case "platform":
+		switch a.ScopedTo {
+		case "service_instances":
+			over := "more than"
+			if a.Op == "below" {
+				over = "fewer than"
+			}
+			return fmt.Sprintf("%s: service %s is running %s %g instances",
+				app, cfg.Name(serviceOf(g, a.SubjectVar)), over, a.Threshold)
+		case "service_percentile":
+			return fmt.Sprintf("%s: p%s of %s on %s %s %g", app, trimZeros(a.Quantile*100),
+				shortMetric(a.MetricType), cfg.Name(serviceOf(g, a.SubjectVar)), direction(a.Op), a.Threshold)
+		}
 		metric := a.MetricType
 		if metric == "" {
 			metric = a.SubjectName

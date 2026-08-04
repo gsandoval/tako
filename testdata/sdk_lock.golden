@@ -108,7 +108,9 @@ func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig
 func Secret(name string) *SecretHandle
 func Service(cfg ...ServiceConfig) *ServiceHandle
 func ServiceAtCapacity(t Target, w ...Window) Condition
+func ServiceInstances(t Target) Metric
 func ServiceMetric(t Target, metricType string, filters ...string) Metric
+func ServicePercentile(t Target, metricType string, q float64, filters ...string) Metric
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
 func SingletonDown(loop Handler, w ...Window) Condition
 func Site(dir string, cfg ...SiteConfig) *SiteHandle
