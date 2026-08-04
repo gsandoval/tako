@@ -1,17 +1,17 @@
 gallery: 5 services
   service gallery (package gallery, profile default)
-    POST /api/photos → Upload (app.go:62)
-    POST /api/uploads → StartUpload (app.go:63)
-    GET /api/photos/{id}/download → Download (app.go:64)
-    GET /api/photos/{id}/image → Image (app.go:65)
-    GET /api/photos/{id}/thumb → Thumb (app.go:66)
-    GET /api/photos → List (app.go:67)
-    GET /api/objects → Objects (app.go:68)
-    POST /api/reindex → Reindex (app.go:69)
-    GET /api/reindex/runs → ReindexRuns (app.go:70)
-    cron Cleanup — every 24h (singleflight) (app.go:85)
+    POST /api/photos → Upload (app.go:70)
+    POST /api/uploads → StartUpload (app.go:71)
+    GET /api/photos/{id}/download → Download (app.go:72)
+    GET /api/photos/{id}/image → Image (app.go:73)
+    GET /api/photos/{id}/thumb → Thumb (app.go:74)
+    GET /api/photos → List (app.go:75)
+    GET /api/objects → Objects (app.go:76)
+    POST /api/reindex → Reindex (app.go:77)
+    GET /api/reindex/runs → ReindexRuns (app.go:78)
+    cron Cleanup — every 24h (singleflight) (app.go:93)
     bucket photos
-    entity photos (indexes: Owner, Ready)
+    entity photos (indexes: Owner, Ready, Created)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -21,9 +21,9 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-onuploaded (package gallery, profile default)
-    subscriber OnUploaded ← bucket photos.Uploaded (app.go:74)
+    subscriber OnUploaded ← bucket photos.Uploaded (app.go:82)
     bucket photos
-    entity photos (indexes: Owner, Ready)
+    entity photos (indexes: Owner, Ready, Created)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -33,9 +33,9 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-makethumb (package gallery, profile batch + footprint (memory 4Gi, concurrency 4, max 5))
-    worker MakeThumb ← queue thumbnails (app.go:78)
+    worker MakeThumb ← queue thumbnails (app.go:86)
     bucket photos
-    entity photos (indexes: Owner, Ready)
+    entity photos (indexes: Owner, Ready, Created)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -45,9 +45,9 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-notifyowner (package gallery, profile default)
-    subscriber NotifyOwner ← topic photo-ready (app.go:83)
+    subscriber NotifyOwner ← topic photo-ready (app.go:91)
     bucket photos
-    entity photos (indexes: Owner, Ready)
+    entity photos (indexes: Owner, Ready, Created)
     queue thumbnails
     topic photo-ready
     cache feed
@@ -57,9 +57,9 @@ gallery: 5 services
     lock reindex
     entity reindex-runs
   service gallery-warmfeed (package gallery, profile default)
-    subscriber WarmFeed ← topic photo-ready (app.go:84)
+    subscriber WarmFeed ← topic photo-ready (app.go:92)
     bucket photos
-    entity photos (indexes: Owner, Ready)
+    entity photos (indexes: Owner, Ready, Created)
     queue thumbnails
     topic photo-ready
     cache feed

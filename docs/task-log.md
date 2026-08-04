@@ -14383,3 +14383,71 @@ a count of anything.
 `sdk_lock.golden` gains `func (*EntityQuery[T]).Count() (int64, error)`,
 and `backends.Entity` gains `Count` — a backend-interface change, so
 every implementation had to move together.
+
+## FL4 — `Query.Page(cursor)` (2026-08-04)
+
+The slice with the sharp edge, and it stayed sharp.
+
+### The refusal is the feature
+
+`Page` requires an explicit `OrderBy` AND an explicit `Limit`, refusing
+both rather than guessing. The order requirement is the load-bearing
+one: `gcp` falls back to a client-side sort when it cannot push tako's
+default id order down beside an inequality filter, and the server cursor
+it holds is then a position in the order DATASTORE used rather than the
+one the caller asked for. Handed back, it silently skips or repeats
+rows.
+
+The refusal is identical on both backends and lives in
+`pkg/backends` as `ErrPageNeedsOrder` / `ErrPageNeedsLimit` — shared
+because the WORDING is contract too. Meeting a different message on
+local than in the cloud would be its own bug.
+
+### Two cursors, one meaning
+
+`gcp` hands back Datastore's own cursor — which `Query` has always read
+and thrown away at the API boundary — and does NOT drain batches: one
+call, one page. `local` computes a keyset position, `(sort value, id)`,
+base64-encoded so it is opaque. Opaque on purpose: a cursor that looks
+parseable invites being built by hand for a different query, which gcp
+would refuse and local would silently mis-page.
+
+The id rides in the cursor because the sort value is not unique, and the
+id tiebreak is ALWAYS ascending on both sides — the same `__key__`
+ascending gcp pushes down. Reversing it with the sort direction would
+make a descending page skip rows whenever two share a sort value.
+
+The conformance case is the one the design exists for: between page 1
+and page 2, insert a row before the cursor, insert one after, delete a
+third. A keyset cursor is unmoved by the write before it; an offset
+cursor would shift and serve a row twice.
+
+### What demands it, and what it taught
+
+gallery's `GET /api/photos` takes `?cursor=` and returns the next one.
+
+**The cache had to change shape, and that is a finding worth keeping.**
+The feed was `Cache[[]Photo]`; caching a first page while paging beyond
+it meant the cached page could never say what came after it, because a
+cursor cannot be rebuilt from the rows it points past. It is now
+`Cache[PhotoPage]` — items and cursor cached together. Anyone adding
+paging to a cached list will hit this, so it is in the reference.
+
+Only the first page is cached. Caching beyond it would mean one entry
+per cursor: a key space as large as the feed and a hit rate near zero.
+
+**A test of mine was wrong before the code was.** The HTTP walk asserted
+exact page sizes against a server with no `DrainQueues`, so it raced the
+thumbnail worker and read 24 of 25 — which looked exactly like a dropped
+row. It now walks until the walk settles, with a deadline. Worth
+recording because the failure was indistinguishable from the bug the
+test was written to catch.
+
+### API change
+
+`sdk_lock.golden` gains `EntityPage[T]` and `EntityQuery.Page`.
+`backends.Entity` gains `Page` — a backend-interface change, so both
+implementations moved together, as with FL3.
+
+`Photo` gains an indexed `Created`: a cursor names a position in an
+order, so the field the feed is ordered by has to be indexed.

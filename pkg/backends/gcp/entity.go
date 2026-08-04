@@ -279,6 +279,82 @@ func filteredQuery(kind string, fs []backends.Filter) (map[string]any, error) {
 	return query, nil
 }
 
+// Page returns one page and Datastore's own cursor to resume from.
+//
+// The cursor was already in hand and thrown away: Query reads endCursor
+// on every batch and uses it internally to drain them, then drops it at
+// the API boundary. What this adds is not the cursor but the DISCIPLINE
+// around it.
+//
+// An explicit order is required, and that is not a nicety here. When
+// q.Order is empty, Query sorts client-side — it cannot always push the
+// default id order down beside an inequality filter — and the server's
+// cursor is then a position in the order DATASTORE used, not the one
+// the caller asked for. Handed back, it would silently skip or repeat
+// rows. The refusal is identical on local, so a query cannot page
+// correctly in development and lie in production.
+//
+// Unlike Query, this does not drain batches: one call, one page.
+func (s *EntityStore) Page(ctx context.Context, kind string, q backends.EntityQuery, after string) ([][]byte, string, error) {
+	if q.Order == "" {
+		return nil, "", backends.ErrPageNeedsOrder
+	}
+	if q.Limit <= 0 {
+		return nil, "", backends.ErrPageNeedsLimit
+	}
+	query, err := filteredQuery(kind, q.Filters)
+	if err != nil {
+		return nil, "", err
+	}
+	field, dir := q.Order, "ASCENDING"
+	if field[0] == '-' {
+		field, dir = field[1:], "DESCENDING"
+	}
+	// __key__ ascending is the same tiebreak Query pushes down and the
+	// same one local applies, so a page boundary that falls inside a run
+	// of equal sort values resumes in one agreed order rather than two.
+	query["order"] = []map[string]any{
+		{"property": map[string]any{"name": field}, "direction": dir},
+		{"property": map[string]any{"name": "__key__"}, "direction": "ASCENDING"},
+	}
+	query["limit"] = q.Limit
+	if after != "" {
+		query["startCursor"] = after
+	}
+
+	var out struct {
+		Batch struct {
+			EntityResults []struct {
+				Entity map[string]any `json:"entity"`
+			} `json:"entityResults"`
+			MoreResults string `json:"moreResults"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"batch"`
+	}
+	body := map[string]any{"partitionId": s.partition(), "query": query}
+	if err := s.c.do(ctx, "POST", s.url("runQuery"), body, &out); err != nil {
+		return nil, "", err
+	}
+	docs := make([][]byte, 0, len(out.Batch.EntityResults))
+	for _, er := range out.Batch.EntityResults {
+		doc, err := docOf(er.Entity)
+		if err != nil {
+			return nil, "", err
+		}
+		docs = append(docs, doc)
+	}
+	// A cursor is returned only when there is more to read. Datastore
+	// says so with MORE_RESULTS_AFTER_LIMIT; every other answer —
+	// NO_MORE_RESULTS above all — means this was the last page, and
+	// handing back a cursor then would invite one round trip that can
+	// only come back empty.
+	next := ""
+	if out.Batch.MoreResults == "MORE_RESULTS_AFTER_LIMIT" && len(docs) > 0 {
+		next = out.Batch.EndCursor
+	}
+	return docs, next, nil
+}
+
 // Count answers server-side, through runAggregationQuery — a sibling
 // endpoint of the runQuery this client already speaks, taking the same
 // query object wrapped in an aggregation.

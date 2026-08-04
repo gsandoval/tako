@@ -26,46 +26,46 @@ func main() {
 	// ticker drives them and this route just refuses strangers.
 	mux.Handle("POST /_tako/cron/{cron}", runtime.CronDispatch())
 
-	// POST /api/photos → Upload (app.go:62)
+	// POST /api/photos → Upload (app.go:70)
 	mux.Handle("POST /api/photos", runtime.JSONHandler(gallery.Upload, decodeUpload))
 
-	// POST /api/uploads → StartUpload (app.go:63)
+	// POST /api/uploads → StartUpload (app.go:71)
 	mux.Handle("POST /api/uploads", runtime.JSONHandler(gallery.StartUpload, decodeStartUpload))
 
-	// GET /api/photos/{id}/download → Download (app.go:64)
+	// GET /api/photos/{id}/download → Download (app.go:72)
 	mux.Handle("GET /api/photos/{id}/download", runtime.JSONHandler(gallery.Download, decodeDownload))
 
-	// GET /api/photos/{id}/image → Image (app.go:65)
+	// GET /api/photos/{id}/image → Image (app.go:73)
 	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(gallery.Image, decodeImage))
 
-	// GET /api/photos/{id}/thumb → Thumb (app.go:66)
+	// GET /api/photos/{id}/thumb → Thumb (app.go:74)
 	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb))
 
-	// GET /api/photos → List (app.go:67)
-	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, nil))
+	// GET /api/photos → List (app.go:75)
+	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, decodeList))
 
-	// GET /api/objects → Objects (app.go:68)
+	// GET /api/objects → Objects (app.go:76)
 	mux.Handle("GET /api/objects", runtime.JSONHandler(gallery.Objects, nil))
 
-	// POST /api/reindex → Reindex (app.go:69)
+	// POST /api/reindex → Reindex (app.go:77)
 	mux.Handle("POST /api/reindex", runtime.JSONHandler(gallery.Reindex, nil))
 
-	// GET /api/reindex/runs → ReindexRuns (app.go:70)
+	// GET /api/reindex/runs → ReindexRuns (app.go:78)
 	mux.Handle("GET /api/reindex/runs", runtime.JSONHandler(gallery.ReindexRuns, nil))
 
-	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:74) — local mode runs the subscriber in-process
+	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:82) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("OnUploaded", gallery.OnUploaded)
 
-	// worker MakeThumb ← queue thumbnails (app.go:78) — local mode runs the worker in-process
+	// worker MakeThumb ← queue thumbnails (app.go:86) — local mode runs the worker in-process
 	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
 
-	// subscriber NotifyOwner ← topic photo-ready (app.go:83) — local mode runs the subscriber in-process
+	// subscriber NotifyOwner ← topic photo-ready (app.go:91) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("NotifyOwner", gallery.NotifyOwner)
 
-	// subscriber WarmFeed ← topic photo-ready (app.go:84) — local mode runs the subscriber in-process
+	// subscriber WarmFeed ← topic photo-ready (app.go:92) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("WarmFeed", gallery.WarmFeed)
 
-	// cron Cleanup — every 24h (singleflight) (app.go:85) — runs in this service on its schedule
+	// cron Cleanup — every 24h (singleflight) (app.go:93) — runs in this service on its schedule
 	runtime.RegisterCron("Cleanup", gallery.Cleanup)
 
 	runtime.Serve(mux)
@@ -109,5 +109,12 @@ func decodeImage(r *http.Request) (gallery.ImageReq, error) {
 func decodeThumb(r *http.Request) (gallery.ThumbReq, error) {
 	var req gallery.ThumbReq
 	req.ID = runtime.PathString(r, "id")
+	return req, nil
+}
+
+// decodeList binds GET /api/photos requests to gallery.ListReq.
+func decodeList(r *http.Request) (gallery.ListReq, error) {
+	var req gallery.ListReq
+	req.Cursor = runtime.QueryString(r, "cursor")
 	return req, nil
 }

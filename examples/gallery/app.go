@@ -27,7 +27,11 @@ var (
 	// TTL cache, uploads are counted, thumbnail latency is observed, and
 	// the notifier authenticates with a startup-resolved secret (.env
 	// locally, Secret Manager in the cloud).
-	feed     = tako.Cache[[]Photo]("feed", time.Minute)
+	// The cache holds the first PAGE, cursor included, rather than a
+	// list. A cursor is opaque and cannot be rebuilt from the rows it
+	// points past, so caching the items alone would mean a cached first
+	// page could never say what comes after it.
+	feed     = tako.Cache[PhotoPage]("feed", time.Minute)
 	notifier = tako.Secret("notifier-key")
 	ups      = tako.Counter("uploads")
 	thumbMs  = tako.Histogram("thumb_ms")
@@ -45,6 +49,10 @@ type Photo struct {
 	Owner   string `entity:"index" json:"owner"`
 	Caption string `json:"caption"`
 	Ready   bool   `entity:"index" json:"ready"` // flipped by the worker once the thumb exists
+	// Created orders the feed, and paging is why it has to be indexed:
+	// a cursor names a position IN AN ORDER, so the field the feed is
+	// ordered by is the field the cursor is a position in.
+	Created time.Time `entity:"index" json:"created"`
 }
 
 type ThumbJob struct {
@@ -114,7 +122,7 @@ type UploadReq struct {
 // upload stores the entity, then the blob; the bucket event — not the
 // handler — enqueues the thumbnail work.
 func upload(ctx tako.Ctx, req UploadReq) (Photo, error) {
-	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
+	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption, Created: time.Now()}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return Photo{}, err
 	}
@@ -145,7 +153,7 @@ type UploadTicket struct {
 var uploadLimits = tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20}
 
 func startUpload(ctx tako.Ctx, req StartUploadReq) (UploadTicket, error) {
-	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption}
+	p := Photo{ID: tako.NewID(), Owner: ownerID(ctx), Caption: req.Caption, Created: time.Now()}
 	if err := photoStore.Put(ctx, p); err != nil {
 		return UploadTicket{}, err
 	}
@@ -266,7 +274,7 @@ func warmFeed(ctx tako.Ctx, e PhotoReady) error {
 		owners = append(owners, e.Owner)
 	}
 	for _, owner := range owners {
-		current, err := readyPhotos(ctx, owner)
+		current, err := firstPage(ctx, owner)
 		if err != nil {
 			return err
 		}
@@ -294,14 +302,46 @@ func thumb(ctx tako.Ctx, req ThumbReq) (tako.Blob, error) {
 	return photos.Get(ctx, req.ID+"_thumb")
 }
 
-// list serves the ready feed through the cache: warmFeed keeps it fresh,
-// GetOrFill covers the cold start, the TTL bounds staleness. Signed-in
-// users see their own feed; anonymous readers see everything ready.
-func list(ctx tako.Ctx, _ struct{}) ([]Photo, error) {
+// ListReq carries the cursor from the previous page. Empty starts at
+// the beginning, which is also what a browser sends the first time.
+type ListReq struct {
+	Cursor string `query:"cursor"`
+}
+
+// PhotoPage is one page of the feed and where to resume.
+//
+// Cursor is omitempty on purpose: a client can ask "is there more?" by
+// asking whether the field is there, which is the same question the
+// server answered.
+type PhotoPage struct {
+	Photos []Photo `json:"photos"`
+	Cursor string  `json:"cursor,omitempty"`
+}
+
+const feedPage = 20
+
+// list serves the ready feed one page at a time.
+//
+// The FIRST page still goes through the cache — that is the page
+// everyone loads, warmFeed keeps it fresh, and the TTL bounds staleness.
+// Pages beyond it read the store directly: caching them would mean a
+// cache entry per cursor, which is a key space as large as the feed and
+// a hit rate near zero.
+//
+// Signed-in users see their own feed; anonymous readers see everything
+// ready.
+func list(ctx tako.Ctx, req ListReq) (PhotoPage, error) {
 	owner := ownerID(ctx)
-	return feed.GetOrFill(ctx, feedKey(owner), func(ctx tako.Ctx) ([]Photo, error) {
-		return readyPhotos(ctx, owner)
-	})
+	if req.Cursor == "" {
+		return feed.GetOrFill(ctx, feedKey(owner), func(ctx tako.Ctx) (PhotoPage, error) {
+			return firstPage(ctx, owner)
+		})
+	}
+	page, err := readyPage(ctx, owner, req.Cursor)
+	if err != nil {
+		return PhotoPage{}, err
+	}
+	return PhotoPage{Photos: page.Items, Cursor: page.Cursor}, nil
 }
 
 func feedKey(owner string) string {
@@ -317,6 +357,26 @@ func readyPhotos(ctx tako.Ctx, owner string) ([]Photo, error) {
 		q = q.Where("Owner", "=", owner)
 	}
 	return q.Limit(100).All()
+}
+
+// firstPage is the page the cache holds — items and cursor together.
+func firstPage(ctx tako.Ctx, owner string) (PhotoPage, error) {
+	page, err := readyPage(ctx, owner, "")
+	if err != nil {
+		return PhotoPage{}, err
+	}
+	return PhotoPage{Photos: page.Items, Cursor: page.Cursor}, nil
+}
+
+// readyPage is readyPhotos, one page at a time. OrderBy and Limit are
+// both required by Page and are not defaults tako will guess: a cursor
+// names a position in an order, and there is no position without one.
+func readyPage(ctx tako.Ctx, owner, cursor string) (tako.EntityPage[Photo], error) {
+	q := photoStore.Query(ctx).Where("Ready", "=", true)
+	if owner != "" {
+		q = q.Where("Owner", "=", owner)
+	}
+	return q.OrderBy("-Created").Limit(feedPage).Page(cursor)
 }
 
 // cleanupOrphans deletes never-completed uploads: a ticket was issued
@@ -399,7 +459,7 @@ func rebuild(ctx tako.Ctx) (ReindexRun, error) {
 	}
 	run.Photos = len(all)
 	for owner := range owners {
-		current, err := readyPhotos(ctx, owner)
+		current, err := firstPage(ctx, owner)
 		if err != nil {
 			return run, err
 		}

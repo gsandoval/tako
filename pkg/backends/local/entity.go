@@ -3,6 +3,7 @@ package local
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,6 +193,153 @@ func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQ
 		docs[i] = r.doc
 	}
 	return docs, nil
+}
+
+// pageCursor is local's keyset position: the last row seen, as its sort
+// value and its id.
+//
+// Keyset and not an offset, because only keyset survives writes between
+// pages the way Datastore does — an offset would shift when a row is
+// inserted before the cursor and show one row twice. The id is carried
+// because the sort value is not unique; it is the same tiebreak the
+// scan applies, so a page boundary cannot land in the middle of a group
+// of equal values and lose the rest of it.
+type pageCursor struct {
+	V  any    `json:"v"`
+	ID string `json:"id"`
+}
+
+// encodeCursor makes the position opaque. It is opaque on purpose: a
+// cursor belongs to the query that produced it, and one that looks
+// parseable invites being built by hand for a different query — which
+// gcp's cursors would refuse and local's would silently mis-page.
+func encodeCursor(c pageCursor) (string, error) {
+	raw, err := json.Marshal(c)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(raw), nil
+}
+
+func decodeCursor(s string) (pageCursor, error) {
+	var c pageCursor
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil {
+		return c, fmt.Errorf("tako: page cursor is not readable — pass back the cursor a previous Page returned, unchanged")
+	}
+	if err := json.Unmarshal(raw, &c); err != nil {
+		return c, fmt.Errorf("tako: page cursor is not readable — pass back the cursor a previous Page returned, unchanged")
+	}
+	return c, nil
+}
+
+// Page returns one page and the position to resume from.
+//
+// It sorts the whole matching set and then seeks, which is honest for an
+// in-process store over bbolt and wrong for nothing the local backend is
+// for. What it must get right is the SEMANTICS, because those are what
+// the gcp backend is held to.
+func (s *EntityStore) Page(ctx context.Context, kind string, q backends.EntityQuery, after string) ([][]byte, string, error) {
+	if q.Order == "" {
+		return nil, "", backends.ErrPageNeedsOrder
+	}
+	if q.Limit <= 0 {
+		return nil, "", backends.ErrPageNeedsLimit
+	}
+	var start *pageCursor
+	if after != "" {
+		c, err := decodeCursor(after)
+		if err != nil {
+			return nil, "", err
+		}
+		start = &c
+	}
+
+	orderField, desc := strings.CutPrefix(q.Order, "-")
+	type row struct {
+		id     string
+		doc    []byte
+		fields map[string]any
+	}
+	var rows []row
+	err := s.db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(kind))
+		if b == nil {
+			return nil
+		}
+		return b.ForEach(func(k, v []byte) error {
+			var fields map[string]any
+			if err := json.Unmarshal(v, &fields); err != nil {
+				return fmt.Errorf("stored document %s/%s is not valid JSON: %w", kind, k, err)
+			}
+			for _, f := range q.Filters {
+				if !matches(fields[f.Field], f.Op, normalize(f.Value)) {
+					return nil
+				}
+			}
+			rows = append(rows, row{id: string(k), doc: bytes.Clone(v), fields: fields})
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, "", err
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if c := compare(rows[i].fields[orderField], rows[j].fields[orderField]); c != 0 {
+			if desc {
+				return c > 0
+			}
+			return c < 0
+		}
+		return rows[i].id < rows[j].id
+	})
+
+	// Seek past the cursor by VALUE rather than by index — that is the
+	// whole difference between keyset and offset paging.
+	if start != nil {
+		kept := rows[:0]
+		for _, r := range rows {
+			if afterCursor(r.fields[orderField], r.id, *start, desc) {
+				kept = append(kept, r)
+			}
+		}
+		rows = kept
+	}
+
+	more := len(rows) > q.Limit
+	if more {
+		rows = rows[:q.Limit]
+	}
+	docs := make([][]byte, len(rows))
+	for i, r := range rows {
+		docs[i] = r.doc
+	}
+	next := ""
+	if more && len(rows) > 0 {
+		last := rows[len(rows)-1]
+		if next, err = encodeCursor(pageCursor{V: last.fields[orderField], ID: last.id}); err != nil {
+			return nil, "", err
+		}
+	}
+	return docs, next, nil
+}
+
+// afterCursor reports whether (v, id) sorts strictly after the cursor,
+// in the direction the query asked for. The id tiebreak is ALWAYS
+// ascending, matching the scan's tiebreak and Datastore's __key__ —
+// reversing it with the sort direction would make a descending page
+// skip rows whenever two share a sort value.
+func afterCursor(v any, id string, c pageCursor, desc bool) bool {
+	switch cmp := compare(v, normalize(c.V)); {
+	case cmp == incomparable:
+		return false
+	case cmp == 0:
+		return id > c.ID
+	case desc:
+		return cmp < 0
+	default:
+		return cmp > 0
+	}
 }
 
 // Count walks the same filter the scan uses and counts what survives.

@@ -26,6 +26,7 @@
     func (*EntityQuery[T]).Iter() Iter[T]
     func (*EntityQuery[T]).Limit(n int) *EntityQuery[T]
     func (*EntityQuery[T]).OrderBy(field string) *EntityQuery[T]
+    func (*EntityQuery[T]).Page(cursor string) (EntityPage[T], error)
     func (*EntityQuery[T]).Where(field string, op string, value any) *EntityQuery[T]
     func (*HistogramHandle).Count() Metric
     func (*HistogramHandle).Mean() Metric
@@ -152,6 +153,7 @@ type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, boo
 type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
 type Endpoint[Req any, Res any] struct{}
 type EntityHandle[T any] struct{}
+type EntityPage[T any] struct{Items []T; Cursor string; More bool}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type EventSource[T any] interface{eventSource(T); sourceName() string}

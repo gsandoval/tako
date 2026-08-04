@@ -325,6 +325,126 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 		}
 	})
 
+	// Paging is where the two backends are least alike: gcp hands back
+	// Datastore's own cursor, local computes a keyset position from the
+	// last row. They must still be indistinguishable from outside.
+	t.Run("page walks the whole result in order", func(t *testing.T) {
+		s := seed(t)
+		q := backends.EntityQuery{Order: "hits", Limit: 2}
+		page1, next, err := s.Page(ctx, "links", q, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page1, "b", "a")
+		if next == "" {
+			t.Fatal("no cursor after a full page — there is a third row")
+		}
+		page2, next2, err := s.Page(ctx, "links", q, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page2, "c")
+		if next2 != "" {
+			// A short page is the last page. Returning a cursor here
+			// invites one more round trip that can only be empty.
+			t.Errorf("cursor %q after the last page, want empty", next2)
+		}
+	})
+
+	t.Run("page refuses without an explicit order", func(t *testing.T) {
+		s := seed(t)
+		if _, _, err := s.Page(ctx, "links", backends.EntityQuery{Limit: 2}, ""); err == nil {
+			t.Fatal("paging with no order must be refused — the default id order " +
+				"cannot always push down, and a cursor in a different order than the " +
+				"caller asked for silently skips or repeats rows")
+		}
+	})
+
+	t.Run("page refuses without a page size", func(t *testing.T) {
+		s := seed(t)
+		if _, _, err := s.Page(ctx, "links", backends.EntityQuery{Order: "hits"}, ""); err == nil {
+			t.Fatal("paging with no limit must be refused — a page of everything " +
+				"makes the cursor meaningless")
+		}
+	})
+
+	// The case the cursor design exists for. Between page 1 and page 2,
+	// one row is inserted BEFORE the cursor position and one AFTER, and
+	// another is deleted. A keyset cursor names the last row seen, so
+	// the write before it changes nothing; an OFFSET cursor would shift
+	// and repeat a row. Both backends must observe the same thing.
+	t.Run("page is stable across writes between pages", func(t *testing.T) {
+		s := seed(t) // hits: b=1, a=3, c=7
+		q := backends.EntityQuery{Order: "hits", Limit: 2}
+		page1, next, err := s.Page(ctx, "links", q, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page1, "b", "a") // through hits=3
+
+		// Before the cursor: an offset cursor would now push "a" onto
+		// page 2 and show it twice.
+		if err := s.Put(ctx, "links", "z", doc("z", "memo", 0, "2026-07-01T00:00:00Z")); err != nil {
+			t.Fatal(err)
+		}
+		// After the cursor: genuinely part of what is still to come.
+		if err := s.Put(ctx, "links", "d", doc("d", "memo", 5, "2026-07-05T10:00:00Z")); err != nil {
+			t.Fatal(err)
+		}
+		page2, _, err := s.Page(ctx, "links", q, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page2, "d", "c")
+	})
+
+	t.Run("page handles a delete between pages", func(t *testing.T) {
+		s := seed(t)
+		q := backends.EntityQuery{Order: "hits", Limit: 1}
+		page1, next, err := s.Page(ctx, "links", q, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page1, "b")
+		if err := s.Delete(ctx, "links", "a"); err != nil {
+			t.Fatal(err)
+		}
+		page2, _, err := s.Page(ctx, "links", q, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page2, "c")
+	})
+
+	t.Run("page applies filters and descending order", func(t *testing.T) {
+		s := seed(t)
+		q := backends.EntityQuery{
+			Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "memo"}},
+			Order:   "-hits", Limit: 1,
+		}
+		page1, next, err := s.Page(ctx, "links", q, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page1, "a") // memo's rows are a=3, b=1; descending
+		page2, _, err := s.Page(ctx, "links", q, next)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantIDs(t, page2, "b")
+	})
+
+	t.Run("page over an empty result is empty with no cursor", func(t *testing.T) {
+		s := seed(t)
+		docs, next, err := s.Page(ctx, "links", backends.EntityQuery{
+			Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "nobody"}},
+			Order:   "hits", Limit: 2,
+		}, "")
+		if err != nil || len(docs) != 0 || next != "" {
+			t.Fatalf("docs = %v, next = %q, err = %v", ids(t, docs), next, err)
+		}
+	})
+
 	t.Run("tx commits all writes together", func(t *testing.T) {
 		s := open(t)
 		err := s.Tx(ctx, "links", func(tx backends.EntityTxOps) error {

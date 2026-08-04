@@ -56,6 +56,50 @@ rather than per entity returned, so counting a large match does not read
 it. On `local` it walks the same filter the scan uses. The conformance
 suite holds the two to the same answers, filters included.
 
+### Paging
+
+`Page(cursor)` returns one page and where to resume. The empty string
+starts at the beginning; an empty returned cursor is the last page:
+
+```go
+page, err := photos.Query(ctx).Where("Ready", "=", true).
+	OrderBy("-Created").Limit(20).Page(req.Cursor)
+
+return PhotoPage{Photos: page.Items, Cursor: page.Cursor}, nil
+```
+
+**`OrderBy` and `Limit` are both required**, and `Page` refuses without
+them:
+
+```
+tako: Page needs an explicit OrderBy — a cursor names a position in an order,
+and there is no stable position without one; add OrderBy on whichever field you
+mean to page through
+```
+
+That refusal is the interesting part of the feature. A cursor names a
+position in an order, and the `gcp` backend cannot always push tako's
+default id order down beside an inequality filter — it sorts
+client-side, and the server cursor it holds is then a position in a
+*different* order than you asked for. Handed back, it would silently
+skip or repeat rows. Rather than page correctly on `local` and lie in
+the cloud, both backends refuse the same way.
+
+The cursor is **keyset**, not an offset: it names the last row seen, so
+a row written before that position does not shift the next page and no
+row is served twice. The conformance suite pins that with a
+write-between-pages case — one row inserted before the cursor, one
+after, one deleted — that both backends must observe identically.
+
+The cursor is opaque and belongs to the query that produced it. Changing
+the filters or the order between pages is a different walk, not a
+continuation of this one.
+
+**A cached first page must cache the cursor with it.** A cursor cannot
+be rebuilt from the rows it points past, so caching only the items
+leaves a page that can never say what comes after it — gallery caches
+the whole `PhotoPage`.
+
 `Tx` runs a multi-entity transaction scoped to this store; an error
 rolls back and returns unchanged, so `tako.Errorf` statuses compose —
 shortlink claims a slug atomically:

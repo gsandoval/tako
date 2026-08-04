@@ -7,9 +7,11 @@ package gallery
 // (signed URLs, dead-letter layout) live in http_test.go.
 
 import (
+	"fmt"
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	tako "github.com/gsandoval/tako"
 )
@@ -63,12 +65,12 @@ func TestFeedIsOwnerScopedAndWarm(t *testing.T) {
 	}
 	app.DrainQueues()
 
-	mine, err := List.Call(alice, struct{}{})
-	if err != nil || len(mine) != 1 || mine[0].Caption != "hers" {
+	mine, err := List.Call(alice, ListReq{})
+	if err != nil || len(mine.Photos) != 1 || mine.Photos[0].Caption != "hers" {
 		t.Fatalf("alice's feed = %+v, %v", mine, err)
 	}
-	all, err := List.Call(app.Ctx(), struct{}{})
-	if err != nil || len(all) != 2 {
+	all, err := List.Call(app.Ctx(), ListReq{})
+	if err != nil || len(all.Photos) != 2 {
 		t.Fatalf("anonymous feed = %+v, %v", all, err)
 	}
 }
@@ -117,9 +119,9 @@ func TestThumbPipelineSurvivesChaos(t *testing.T) {
 		raw, _ := io.ReadAll(thumb.Reader)
 		decodePNG(t, raw)
 	}
-	feedNow, err := List.Call(ctx, struct{}{})
-	if err != nil || len(feedNow) != n {
-		t.Fatalf("feed after chaos = %d photos, %v", len(feedNow), err)
+	feedNow, err := List.Call(ctx, ListReq{})
+	if err != nil || len(feedNow.Photos) != n {
+		t.Fatalf("feed after chaos = %d photos, %v", len(feedNow.Photos), err)
 	}
 }
 
@@ -153,5 +155,95 @@ func TestCronCleansNeverCompletedUploads(t *testing.T) {
 	}
 	if ok, _ := photos.Exists(ctx, kept.ID+"_thumb"); !ok {
 		t.Fatal("real thumb after cron")
+	}
+}
+
+// Paging the feed, with a write landing mid-walk.
+//
+// This is the case the cursor design exists for. A keyset cursor names
+// the last row seen, so a photo created DURING the walk — which sorts
+// newest-first, ahead of everything already seen — does not shift the
+// remaining pages and does not make a row appear twice. An offset cursor
+// would do both.
+func TestFeedPagesThroughEverythingWithAWriteMidWalk(t *testing.T) {
+	app := tako.NewTestApp(t)
+	app.SetSecret("notifier-key", "nk_test_123")
+	ctx := app.Ctx()
+
+	const total = feedPage + 5
+	for i := 0; i < total; i++ {
+		if _, err := Upload.Call(ctx, UploadReq{
+			Caption: fmt.Sprintf("photo %02d", i), Img: pngBlob(t)}); err != nil {
+			t.Fatal(err)
+		}
+		// Created is the sort key and time.Now() can repeat inside one
+		// tick; the id tiebreak covers that, but spacing them keeps the
+		// expected ORDER of this test readable.
+		time.Sleep(time.Millisecond)
+	}
+	app.DrainQueues()
+
+	seen := map[string]int{}
+	var pages int
+	cursor := ""
+	for {
+		page, err := List.Call(ctx, ListReq{Cursor: cursor})
+		if err != nil {
+			t.Fatalf("page %d: %v", pages, err)
+		}
+		pages++
+		for _, p := range page.Photos {
+			seen[p.ID]++
+		}
+		if pages == 1 {
+			if len(page.Photos) != feedPage {
+				t.Fatalf("first page = %d photos, want a full page of %d", len(page.Photos), feedPage)
+			}
+			// Mid-walk write: newest, so it sorts BEFORE everything the
+			// first page returned.
+			if _, err := Upload.Call(ctx, UploadReq{Caption: "interloper", Img: pngBlob(t)}); err != nil {
+				t.Fatal(err)
+			}
+			app.DrainQueues()
+		}
+		if page.Cursor == "" {
+			break
+		}
+		cursor = page.Cursor
+		if pages > 10 {
+			t.Fatal("paging did not terminate — an empty cursor is the only stop condition")
+		}
+	}
+
+	for id, n := range seen {
+		if n != 1 {
+			t.Errorf("photo %s appeared %d times across the walk — a keyset cursor must not repeat a row", id, n)
+		}
+	}
+	if len(seen) != total {
+		t.Errorf("walked %d photos over %d pages, want the %d that existed when the walk began",
+			len(seen), pages, total)
+	}
+}
+
+// Page refuses without an order, in the SAME words on both backends.
+// A query that pages correctly in development and silently skips rows in
+// the cloud is the failure this refusal exists to prevent, so it must be
+// impossible to write rather than merely discouraged.
+func TestPagingWithoutAnOrderIsRefused(t *testing.T) {
+	app := tako.NewTestApp(t)
+	_, err := photoStore.Query(app.Ctx()).Where("Ready", "=", true).Limit(5).Page("")
+	if err == nil {
+		t.Fatal("paging with no OrderBy must be refused")
+	}
+	if !strings.Contains(err.Error(), "OrderBy") {
+		t.Errorf("error %q does not name the thing to add", err)
+	}
+	_, err = photoStore.Query(app.Ctx()).OrderBy("-Created").Page("")
+	if err == nil {
+		t.Fatal("paging with no Limit must be refused")
+	}
+	if !strings.Contains(err.Error(), "Limit") {
+		t.Errorf("error %q does not name the thing to add", err)
 	}
 }

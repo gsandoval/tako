@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,9 @@ func serve(t *testing.T) *httptest.Server {
 		return req, nil
 	}))
 	mux.Handle("GET /api/objects", runtime.JSONHandler(Objects, nil))
-	mux.Handle("GET /api/photos", runtime.JSONHandler(List, nil))
+	mux.Handle("GET /api/photos", runtime.JSONHandler(List, func(r *http.Request) (ListReq, error) {
+		return ListReq{Cursor: runtime.QueryString(r, "cursor")}, nil
+	}))
 	mux.Handle("POST /api/uploads", runtime.JSONHandler(StartUpload, func(r *http.Request) (StartUploadReq, error) {
 		var req StartUploadReq
 		if err := runtime.DecodeJSON(r, &req); err != nil {
@@ -548,4 +551,96 @@ func TestSignedUploadRejections(t *testing.T) {
 		}
 	})
 
+}
+
+// The cursor over HTTP, which is the contract a browser actually uses:
+// the server hands back a string, the client sends it back as ?cursor=,
+// and neither side interprets it.
+//
+// The JSON shape matters as much as the walk. `cursor` is omitempty, so
+// its ABSENCE is how a client learns there is no next page — the same
+// question the server answered, asked without a second round trip.
+func TestFeedCursorRoundTripsOverHTTP(t *testing.T) {
+	srv := serve(t)
+	c := srv.Client()
+
+	const total = 25 // more than one page of 20
+	for i := 0; i < total; i++ {
+		body, ct := multipartBody(t, "photo "+strconv.Itoa(i), "p.png", pngBytes(t), "image/png")
+		res, err := c.Post(srv.URL+"/api/photos", ct, body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		time.Sleep(time.Millisecond)
+	}
+
+	get := func(cursor string) (map[string]any, string) {
+		t.Helper()
+		u := srv.URL + "/api/photos"
+		if cursor != "" {
+			u += "?cursor=" + url.QueryEscape(cursor)
+		}
+		res, err := c.Get(u)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		if res.StatusCode != 200 {
+			t.Fatalf("GET %s = %d", u, res.StatusCode)
+		}
+		var out map[string]any
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+			t.Fatal(err)
+		}
+		next, _ := out["cursor"].(string)
+		return out, next
+	}
+
+	// This server has no DrainQueues — the pipeline runs in the
+	// background and a photo is not in the feed until the worker has
+	// flipped Ready. So walk until the walk sees everything, rather than
+	// racing it: the first attempt legitimately sees fewer.
+	var pages []map[string]any
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		pages = pages[:0]
+		seen := 0
+		cursor := ""
+		for {
+			page, next := get(cursor)
+			pages = append(pages, page)
+			list, _ := page["photos"].([]any)
+			seen += len(list)
+			if next == "" {
+				break
+			}
+			cursor = next
+		}
+		if seen == total {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("walked %d photos over %d pages, want %d — the pipeline never settled", seen, len(pages), total)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	if len(pages) != 2 {
+		t.Fatalf("%d pages for %d photos at 20 per page, want 2", len(pages), total)
+	}
+	firstList, _ := pages[0]["photos"].([]any)
+	if len(firstList) != 20 {
+		t.Errorf("first page = %d photos, want a full page of 20", len(firstList))
+	}
+	if _, present := pages[0]["cursor"]; !present {
+		t.Error("a full first page carries no cursor — 25 photos do not fit in 20")
+	}
+	lastList, _ := pages[1]["photos"].([]any)
+	if len(lastList) != 5 {
+		t.Errorf("last page = %d photos, want the remaining 5", len(lastList))
+	}
+	if _, present := pages[1]["cursor"]; present {
+		t.Error("the last page carries a cursor key; it is omitempty so that its ABSENCE is how a client knows it is done")
+	}
 }

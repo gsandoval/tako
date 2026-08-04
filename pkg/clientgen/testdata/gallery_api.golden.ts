@@ -19,6 +19,7 @@ export interface Photo {
   owner: string;
   caption: string;
   ready: boolean;
+  created: string;
 }
 
 /** gallery.UploadTicket */
@@ -31,6 +32,12 @@ export interface UploadTicket {
 /** gallery.DownloadRes */
 export interface DownloadRes {
   url: string;
+}
+
+/** gallery.PhotoPage */
+export interface PhotoPage {
+  photos: Photo[];
+  cursor?: string;
 }
 
 /** tako.ObjectInfo */
@@ -129,8 +136,8 @@ export function createClient(opts: ClientOptions = {}) {
       return call("GET", `/api/photos/${encodeURIComponent(String(id))}/thumb`, null, undefined);
     },
     /** gallery.List — GET /api/photos */
-    async list(): Promise<Photo[]> {
-      return (await call("GET", `/api/photos`, null, undefined)).json();
+    async list(query?: { cursor?: string }): Promise<PhotoPage> {
+      return (await call("GET", `/api/photos`, { cursor: query?.cursor }, undefined)).json();
     },
     /** gallery.Objects — GET /api/objects */
     async objects(): Promise<ObjectInfo[]> {

@@ -254,6 +254,57 @@ func (q *EntityQuery[T]) First() (T, error) {
 	return all[0], nil
 }
 
+// EntityPage is one page of results and where to resume.
+type EntityPage[T any] struct {
+	// Items are this page's entities, in the query's order.
+	Items []T
+	// Cursor resumes after this page. It is EMPTY on the last page, so
+	// `for cursor := ""; ; ` terminates on it rather than on an empty
+	// Items — a page can be short without being last.
+	Cursor string
+	// More reports whether another page exists. It is Cursor != "",
+	// named because `if page.More` reads as the question being asked.
+	More bool
+}
+
+// Page executes the query and returns ONE page, resuming after cursor.
+// The empty string starts at the beginning.
+//
+//	page, err := photos.Query(ctx).OrderBy("-Created").Limit(20).Page(cursor)
+//	for _, p := range page.Items { … }
+//	// page.Cursor is the next ?cursor=, empty when done
+//
+// **OrderBy and Limit are both required**, and Page refuses without
+// them rather than guessing. A cursor names a position in an order, and
+// the cloud backend cannot always push tako's default id order down
+// beside an inequality filter — it sorts client-side instead, and the
+// server cursor it holds is then a position in a DIFFERENT order than
+// you asked for. Handed back, that silently skips or repeats rows. The
+// refusal is identical on both backends, so a query cannot page
+// correctly in development and lie in production.
+//
+// The cursor is opaque and belongs to the query that produced it.
+// Changing the filters or the order between pages is a different walk,
+// not a continuation of this one.
+func (q *EntityQuery[T]) Page(cursor string) (EntityPage[T], error) {
+	var page EntityPage[T]
+	if q.err != nil {
+		return page, q.err
+	}
+	docs, next, err := entityBackend(q.ctx).Page(q.ctx, q.h.name, q.q, cursor)
+	if err != nil {
+		return page, err
+	}
+	page.Items = make([]T, len(docs))
+	for i, doc := range docs {
+		if err := json.Unmarshal(doc, &page.Items[i]); err != nil {
+			return EntityPage[T]{}, err
+		}
+	}
+	page.Cursor, page.More = next, next != ""
+	return page, nil
+}
+
 // Count executes the query and returns how many entities match.
 //
 //	total, err := posts.Query(ctx).Where("Published", "=", true).Count()
