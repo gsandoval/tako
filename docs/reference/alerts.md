@@ -4,9 +4,10 @@ An alert is two declarations: **where it goes** and **when it holds**.
 
 ```go
 var (
-    oncall = tako.Email("ops@example.com")
+    oncall = tako.AlertEmail("ops@example.com")
 
-    Stuck  = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)
+    Stuck  = tako.Alert(tako.QueueBacklogged(thumbs, 1,
+        tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
     Silent = tako.Alert(tako.CronMissed(Cleanup), oncall)
 )
 ```
@@ -22,17 +23,21 @@ when the thing it watches has gone wrong.
 
 | constructor | delivers to | human step first? |
 |---|---|---|
-| `tako.Email(addr)` | one address | none — API-created email channels are pre-verified |
-| `tako.ChatSpace("spaces/AAAA1234")` | a Google Chat space | install the Cloud Monitoring app in the space |
-| `tako.Webhook(url)` | POST of Google's incident JSON | none |
-| `tako.PubSub(topic)` | a declared `tako.Topic` | none |
+| `tako.AlertEmail(addr)` | one address | none — API-created email channels are pre-verified |
+| `tako.AlertWebhook(url)` | POST of Google's incident JSON | none |
+| `tako.AlertTopic(topic)` | a declared `tako.Topic` | none |
+
+`ChatSpace` is not here: it needs a real Google Chat space, so no walk
+can prove it works, and an unverifiable channel is worse than an absent
+one. It returns when something can test it.
 
 `tako.Alert` takes **at least one channel as a parameter**, not a slice
 and not a config field, so an alert nobody receives does not compile.
 Extra channels are variadic:
 
 ```go
-var Broken = tako.Alert(tako.Erroring(Photos, 0.05), oncall, room)
+var Broken = tako.Alert(tako.RequestsErroring(Photos, 0.05,
+    tako.Window{For: 5 * time.Minute}), oncall, room)
 ```
 
 ### Pub/Sub destinations
@@ -56,7 +61,8 @@ type Incident struct {
 }
 
 var incidents = tako.Topic[Incident]("incidents")
-var Escalate  = tako.Alert(tako.Backlogged(thumbs, 10*time.Minute), tako.PubSub(incidents))
+var Escalate  = tako.Alert(tako.QueueStalled(thumbs, 10*time.Minute,
+    tako.QueueWatch{For: 5 * time.Minute}), tako.AlertTopic(incidents))
 ```
 
 Remember what this cannot do: **your subscriber runs in your app**, so it
@@ -70,22 +76,42 @@ like anything else. What it adds is a **name for a failure** rather than
 a name for a metric: it derives the query, the reading and the window
 from what tako already knows about the thing being watched.
 
-| preset | fires when | default window |
+| condition | fires when | window |
 |---|---|---|
-| `DeadLettered(c, n)` | ≥ n messages gave up (retries exhausted) | `Every: 5m` |
-| `Backlogged(c, age)` | the oldest unacked message is older than `age` | `For: 5m` |
-| `CronFailed(cron, times)` | the cron ran and answered 5xx ≥ times | `Every: 1h` |
+| `QueueBacklogged(c, n, w)` | ≥ n messages are waiting | `QueueWatch{For}` — **required** |
+| `QueueStalled(c, age, w)` | the oldest waiting message is older than `age` | `QueueWatch{For}` — **required** |
 | `CronMissed(cron)` | the cron has not run at all | **twice its own schedule** |
+| `CronFailed(cron, times)` | the cron ran and answered 5xx ≥ times | `Every: 1h` |
 | `JobFailed(job, times)` | ≥ times executions finished unsuccessfully | `Every: 1h` |
-| `Erroring(t, fraction)` | the 5xx share exceeds `fraction` (0–1) | `For: 5m` |
-| `SlowerThan(t, d, q)` | the q-quantile of latency exceeds `d` | `For: 5m` |
-| `AtCapacity(t)` | the service sits at its instance ceiling | `For: 10m` |
+| `RequestsErroring(t, fraction)` | the 5xx share exceeds `fraction` (0–1) | `For: 5m` |
+| `RequestsSlow(t, d, q)` | the q-quantile of latency exceeds `d` | `For: 5m` |
+| `ServiceAtCapacity(t)` | the service sits at its instance ceiling | `For: 10m` |
 | `SingletonDown(loop)` | the exactly-one instance is not running | `For: 5m` |
 
-Every one takes an optional trailing `Window` that overrides the
-default. The defaults are defaults, not a ceiling.
+The two queue conditions take a `QueueWatch`, which says **which** queue
+as well as how long:
 
-Three of them are worth reading twice:
+```go
+type QueueWatch struct {
+    DeadLetters bool          // the dead-letter queue, not the live one
+    For         time.Duration // REQUIRED
+}
+```
+
+`DeadLetters` is a field rather than a symbol because the two queues are
+the same two gauges on the same kind of subscription — nothing differs
+but which one. It catches **both** ways a message dies: retries
+exhausted, and a handler returning `tako.Permanent`. Counting Pub/Sub's
+own dead-letter forwards sees only the first, and the second is the
+commoner one.
+
+`For` is required because a queue crosses any depth for an instant every
+time a burst arrives, so how long it stays there *is* the alert.
+
+Everything but the queue pair takes an optional trailing `Window` that
+overrides the default. The defaults are defaults, not a ceiling.
+
+Three are worth reading twice:
 
 - **`CronMissed` needs no interval.** A 6-hourly cron gets a 12-hour
   lookback and a daily one 48 hours, read from the schedule in the
@@ -93,12 +119,11 @@ Three of them are worth reading twice:
   with the first. It catches a schedule that never fired *and* a run
   that never arrived. It does **not** catch a run that arrived and
   failed: that is `CronFailed`.
-- **`DeadLettered` and `Backlogged` are a pair.** The first only fires
-  *after* retries are spent, so a consumer that is merely down shows
-  nothing there for a while; the second is what catches it. Both take a
-  queue *or* a `Subscribe` handler, because subscribers dead-letter
-  independently and one giving up says nothing about the others.
-- **`AtCapacity` takes no threshold.** It reads `MaxInstances` off the
+- **The four queue situations are two constructors and one boolean.**
+  Depth and age, on the live queue or the dead one. Both take a queue
+  *or* a `Subscribe` handler, because subscribers fan out with
+  independent fates and one falling behind says nothing about the others.
+- **`ServiceAtCapacity` takes no threshold.** It reads `MaxInstances` off the
   service's [footprint](footprint.md), so the number lives in one place.
 
 `SingletonDown` is the only check for a primitive whose entire promise is
@@ -112,32 +137,35 @@ recordings need the general form: **a reading, a comparison, and a
 window.**
 
 ```go
-tako.Above(tako.Rate(uploads),  100, tako.For(5*time.Minute))
-tako.Below(tako.Count(uploads), 1,   tako.Window{For: 30*time.Minute, Every: 30*time.Minute})
-tako.Above(tako.Percentile(thumbMs, 0.99), 2000, tako.For(10*time.Minute))
-tako.Absent(tako.Count(uploads), tako.For(26*time.Hour))
+tako.WhenAbove(uploads.Rate(), 100, tako.Window{For: 5 * time.Minute})
+tako.WhenBelow(uploads.Count(), 1, tako.Window{For: 30 * time.Minute, Every: 30 * time.Minute})
+tako.WhenAbove(thumbMs.Percentile(0.99), 2000, tako.Window{For: 10 * time.Minute})
+tako.WhenAbsent(uploads.Count(), tako.Window{For: 26 * time.Hour, Every: time.Hour})
 ```
 
-Readings:
+Readings are **methods on the handle they read**, not top-level
+functions — spec rule 6 says no primitive owns a general concept, and
+its own remedy is instance-scoped methods. `tako.Count` and
+`tako.Counter` sitting one letter apart, meaning unrelated things, was
+the shape being fixed.
 
-| reading | takes | answers |
+| reading | on | answers |
 |---|---|---|
-| `Rate(r)` | counter or histogram | increase per second, summed across instances |
-| `Count(r)` | counter or histogram | how many in the window |
-| `Sum(h)` | histogram | total of the observed values (ms of work, bytes) |
-| `Mean(h)` | histogram | average observed value |
-| `Percentile(h, q)` | histogram | the q-quantile, any q in (0,1) |
-| `Platform(type, filters…)` | a Google metric type | whatever it measures |
+| `.Rate()` | counter, histogram | increase per second, summed across instances |
+| `.Count()` | counter, histogram | how many in the window |
+| `.Sum()` | histogram | total of the observed values (ms of work, bytes) |
+| `.Mean()` | histogram | average observed value |
+| `.Percentile(q)` | histogram | the q-quantile, any q in (0,1) |
 
-`Rate` and `Count` take **either** recording, because "how fast" and
-"how many" are the same question whichever you ask — a histogram counts
-its observations. Without that you could alert that thumbnails got slow
-but not that none were made, which is the louder failure.
+A histogram answers "how fast" and "how many" as well as "how big",
+because it counts its observations. Without that you could alert that
+thumbnails got slow but not that none were made, which is the louder
+failure.
 
 **The reading is mandatory, and that is the point.** Metrics are written
 one cumulative series per instance, and an alert that aggregates them
-the wrong way looks configured while being noise. `Below(Rate(uploads),
-1)` asks for a rate under one *per second* — almost always true. Making
+the wrong way looks configured while being noise. `WhenBelow(uploads.Rate(), 1)`
+asks for a rate under one *per second* — almost always true. Making
 the aggregation explicit at the call site is what stops that from being
 the default.
 
@@ -147,25 +175,31 @@ a fact about metrics. Compiled as PromQL,
 `histogram_quantile(0.87, …)` answers on the same data where the aligner
 path answers nothing.
 
-### Platform metrics
+### Google's own metrics
 
-`tako.Platform` names a Google metric directly, for what the presets do
-not cover. The name is Google's, so it is a string — pretending
-otherwise would be a lie — but it must be constant, and tako derives the
-rest: the PromQL name mapping and the monitored-resource matcher a bare
-selector is rejected without.
+The metric type is Google's, so it is a string. **Which resource it is
+about is not.**
 
 ```go
-tako.Above(tako.Platform("run.googleapis.com/container/network/sent_bytes_count"),
-    1<<30, tako.For(10*time.Minute))
+tako.ServiceMetric(Grind, "run.googleapis.com/container/memory/utilizations")
+tako.QueueMetric(work, "pubsub.googleapis.com/subscription/push_request_count")
+tako.PlatformMetric("pubsub.googleapis.com/topic/byte_cost", `topic_id="prod-incidents"`)
 ```
 
-Optional trailing strings are extra label matchers, verbatim PromQL:
-`tako.Platform("run.googleapis.com/container/cpu/utilizations", `state="active"`)`.
+The first two take a tako object and write the resource matcher from it.
+That is not sugar: the physical name is env-prefixed and only exists
+after a deploy, so writing it by hand at declaration time is impossible.
+A bare `service_name="siren"` matches nothing; omitting it matches every
+Cloud Run service in the project. Both read as healthy.
 
-There is no list of names in these docs on purpose — a project publishes
-upwards of eight thousand descriptors, so any list here would be both
-incomplete and stale.
+`PlatformMetric` is the escape hatch for a project-wide reading or a
+resource tako does not model — and there, every matcher is yours,
+including the one that says which resource.
+
+Optional trailing strings are extra label matchers, verbatim PromQL.
+There is no list of metric names in these docs on purpose: a project
+publishes upwards of eight thousand descriptors, so any list here would
+be both incomplete and stale.
 
 ## Windows
 
@@ -175,8 +209,6 @@ type Window struct {
     Every time.Duration // the period each series is reduced into
 }
 ```
-
-`tako.For(d)` is the short spelling of `Window{For: d}`.
 
 `Every` is the rate window for `Rate`, the counting window for `Count`,
 the bucket a `Percentile` is computed over. Leaving it zero derives
@@ -276,7 +308,8 @@ metric cannot answer a question about one endpoint at all. Tako writes
 [observability.md](observability.md#the-two-metrics-you-never-declare) —
 which is what makes `Erroring(oneEndpoint, …)` mean one endpoint.
 
-`Erroring`, `SlowerThan` and `AtCapacity` take a `Target`: a
+`RequestsErroring`, `RequestsSlow` and `ServiceAtCapacity` take a
+`Target`: a
 `tako.Service`, one async handler, a single `Api`/`Page` route, or a
 `Site`.
 
@@ -309,19 +342,21 @@ first.
 At analysis time, verbatim:
 
 ```
-app.go:15:21: tako.Email takes a string constant — alert destinations are read at analysis time, not run time; got a call expression (tako/const-name)
+app.go:15:26: tako.AlertEmail takes a string constant — alert destinations are read at analysis time, not run time; got a call expression (tako/const-name)
 app.go:28:41: tako.CronMissed watches a cron, but alerts.Work is a worker (tako/alert-subject)
-app.go:31:64: tako.SlowerThan quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
-app.go:32:59: tako.Percentile quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
-app.go:35:52: tako.Alert destinations must be channels declared as package-level vars in this module (tako.Email, tako.ChatSpace, tako.Webhook, tako.PubSub) (tako/channel-binding)
+app.go:31:66: tako.RequestsSlow quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
+app.go:32:57: tako.Percentile quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99 (tako/quantile)
+app.go:35:52: tako.Alert destinations must be channels declared as package-level vars in this module (tako.AlertEmail, tako.AlertWebhook, tako.AlertTopic) (tako/channel-binding)
 app.go:47:55: a Window's Every must be between 1m and 25h — Cloud Monitoring refuses anything else; got 30s (tako/window)
 app.go:48:55: a threshold Window's For cannot exceed 24h — Cloud Monitoring refuses longer; got 172800s (tako/window)
-app.go:49:56: tako.Count needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing (tako/window)
+app.go:49:56: a Count reading needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing (tako/window)
+app.go:56:60: tako.QueueBacklogged needs a sustain window — write tako.QueueWatch{For: …}; a queue crosses any depth for an instant, so how long it stays there IS the alert (tako/window)
 ```
 
 `tako.Alert` with something that is not a condition is a compile error
 before the analyzer sees it — `Condition` is not constructible outside
-the package.
+the package. The same is true of a reading on the wrong handle: only a
+histogram has `.Percentile`.
 
 ## Not yet
 
@@ -331,8 +366,9 @@ the package.
 - **No severity or routing rules.** Every policy is created `WARNING`,
   and every channel on an alert gets every incident — there is no
   escalation ladder and no per-condition severity.
-- **No `tako metrics` command yet**, so finding a `Platform` metric type
-  means the Metrics Explorer or the `metricDescriptors` API.
+- **No `tako metrics` command yet**, so finding a metric type means the
+  Metrics Explorer or the `metricDescriptors` API.
 - **No dashboards.**
-- No `tako.Latency`/`Instances`/`Saturation` shorthands for the common
-  platform metrics — write them as `tako.Platform` for now.
+- No `tako.ServiceLatency`/`ServiceInstances`/`ServiceSaturation`
+  shorthands for the common platform metrics — write them as
+  `tako.ServiceMetric` for now.

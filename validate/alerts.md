@@ -22,9 +22,10 @@ The claim has **two halves, and the second one is the whole gate**:
 `examples/gallery`, which declares the two alerts this walk uses:
 
 ```go
-oncall = tako.Email("<your-address>")
-Stuck  = tako.Alert(tako.DeadLettered(thumbs, 1), oncall)
-Silent = tako.Alert(tako.CronMissed(Cleanup, tako.For(5*time.Minute)), oncall)
+oncall = tako.AlertEmail("<your-address>")
+Stuck  = tako.Alert(tako.QueueBacklogged(thumbs, 1,
+    tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
+Silent = tako.Alert(tako.CronMissed(Cleanup, tako.Window{For: 5 * time.Minute}), oncall)
 ```
 
 `Silent` overrides the default lookback down to 5 minutes so the walk
@@ -279,7 +280,7 @@ Pub/Sub link named the queue, which is a *topic*, so it answered
 **Unable to find the resource you requested**.
 
 That second one was not just a bad link. The alert's own query carried
-the same wrong name in `subscription_id`, so `DeadLettered` matched
+the same wrong name in `subscription_id`, so `QueueBacklogged` matched
 nothing and could never fire — found by opening the link, after the
 policy had been created, read back, and gated.
 
@@ -289,7 +290,7 @@ command from the body and run it** — it must run the job.
 
 ## Known gaps in this walk
 
-- **`DeadLettered` sees retry exhaustion only.** Proven firing in Z2
+- **`QueueBacklogged` sees retry exhaustion only.** Proven firing in Z2
   (quiet → `value=1`), driven by a `text/plain` upload that fails five
   times until Pub/Sub forwards it. It is **blind to `tako.Permanent`**:
   the runtime publishes those to the dead topic itself and ACKs, so

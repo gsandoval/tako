@@ -65,7 +65,7 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/secretmanager.admin` | secret references (C-config) |
 | `roles/cloudscheduler.admin` | crons (C-async) |
 | `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
-| `roles/monitoring.notificationChannelEditor` | `tako.Email`/`ChatSpace`/`Webhook`/`PubSub` channels (Y1) |
+| `roles/monitoring.notificationChannelEditor` | `tako.AlertEmail`/`AlertWebhook`/`AlertTopic` channels (Y1) |
 
 Each C-task's preflight checks only the subset that task touches; the
 full bundle exists so a user can grant once and never think about it

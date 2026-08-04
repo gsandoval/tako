@@ -8,6 +8,7 @@ added when its slice lands agent-side and is signed when you have run it.
 |---|---|---|
 | Z1 | alerting works and the mail is usable | **yes — run it now** |
 | Z2 | a dead letter actually raises an alert | **done agent-side**; folded into Z1's walk |
+| Z2b | the renamed API, and siren firing every condition | **done agent-side**; new walk below |
 | Z3 | `Latency`/`Instances`/`Saturation` | not built |
 | Z4 | `tako metrics <search>` | not built |
 | Z5 | housekeeping (one error text) | not built |
@@ -134,3 +135,45 @@ tako dlq gallery-makethumb --project $PROJECT --env x1     # peek
 Two rows in `docs/validation-log.md` are waiting on this walk: **Y1**
 (2026-08-02) and **Y2** (2026-08-03), both at *pass (agent-side;
 awaiting human verdict)*.
+
+---
+
+## Z2b — the renamed API, and every condition at once
+
+`examples/siren` exists to fail: one endpoint per failure mode. Where
+gallery proves alerting works on a real app, siren proves the whole
+catalogue fires — it declares **22 alerts across all 15 readings and
+three channels**, which is what now demands them.
+
+Read `pkg/provision/testdata/siren_queries.golden.txt` first, as prose.
+It is every generated query beside the sentence its notification will
+carry. Reading it that way is what found six defects no shape check
+had — including a latency query whose range selector sat inside the
+label braces, which Cloud Monitoring answers with a 400. Every latency
+alert had been malformed.
+
+Then deploy siren and work the switches:
+
+```
+PROJECT=<test-project>
+cd examples/siren
+go run ../../cmd/tako deploy --project $PROJECT --env z2 --yes
+URL=$(gcloud run services describe z2-siren --project $PROJECT \
+  --region us-central1 --format 'value(status.url)')
+
+curl -s "$URL/boom?rate=1"                        # RequestsErroring
+curl -s "$URL/slow?ms=3000"                       # RequestsSlow
+curl -s -X POST "$URL/flood?n=500&hold_ms=2000"   # QueueBacklogged, QueueStalled, ServiceAtCapacity
+curl -s -X POST "$URL/poison?kind=hard"           # the tako.Permanent path
+curl -s -X POST "$URL/poison?kind=soft"           # the retry-exhaustion path
+```
+
+**Both poisons matter.** They reach the dead-letter queue by different
+routes, and watching the queue's DEPTH is what sees both — Pub/Sub's own
+dead-letter counter sees only the soft one. If you poison with only one,
+you are testing half the fix.
+
+Then, per condition, the same two questions as always: does its query go
+quiet while the thing is healthy, and fire once it is not.
+
+Substitute your address for `ops@example.com` in `alerts.go` first.
