@@ -232,4 +232,20 @@ var (
 		tako.WhenAbove(tako.PlatformMetric(
 			"pubsub.googleapis.com/topic/byte_cost"), 1,
 			tako.Window{Every: 5 * time.Minute}), oncall)
+
+	// Absence over one of GOOGLE's metrics, which is a different question
+	// from Dark above: Dark asks whether the app is still recording,
+	// this asks whether Cloud Run is still reporting the service at all.
+	// A service that has stopped emitting an instance count is either
+	// gone or not being scraped, and neither shows up as a low reading —
+	// there is no reading.
+	//
+	// It is here because it was silently inverted until it was rendered.
+	// Every Google-metric condition went to the threshold path, so this
+	// compiled to `max(…) > 0` — it fired while the count was being
+	// written and went quiet when it stopped, which is the failure it
+	// exists to catch, reported backwards.
+	Unreported = tako.Alert(
+		tako.WhenAbsent(tako.ServiceInstances(Grind),
+			tako.Window{For: 10 * time.Minute}), oncall)
 )

@@ -492,3 +492,101 @@ func TestAtLeastWordingMatchesTheOperator(t *testing.T) {
 		}
 	}
 }
+
+// WhenAbsent over a Google metric asked one question and compiled to
+// another. The platform case handed every op to comparison(), whose
+// default arm is `> threshold`, and an absent condition carries
+// threshold 0 — so `WhenAbsent(ServiceMetric(svc, …))` became
+// `max(…) > 0`: an alert that fires while the metric is being written
+// and falls silent the moment it stops. Every raw absence over Google's
+// metrics was inverted, and an inverted alert reads as a healthy one.
+func TestAbsenceOverGoogleMetricsIsNotAThresholdComparison(t *testing.T) {
+	cases := map[string]*analyzer.AlertCondition{
+		"service_metric": {Op: "absent", Reading: "platform", ScopedTo: "service_metric",
+			SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600,
+			MetricType: "run.googleapis.com/container/instance_count"},
+		"queue_metric": {Op: "absent", Reading: "platform", ScopedTo: "queue_metric",
+			SubjectKind: "queue", SubjectName: "thumbnails", SubjectVar: "gallery.thumbs", ForSeconds: 600,
+			MetricType: "pubsub.googleapis.com/subscription/num_undelivered_messages"},
+		"service_instances": {Op: "absent", Reading: "platform", ScopedTo: "service_instances",
+			SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600},
+		"service_percentile": {Op: "absent", Reading: "platform", ScopedTo: "service_percentile",
+			SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600, Quantile: 0.99,
+			MetricType: "run.googleapis.com/container/cpu/utilizations"},
+		"unscoped": {Op: "absent", Reading: "platform", SubjectKind: "platform", ForSeconds: 600,
+			SubjectName: "pubsub.googleapis.com/topic/byte_cost"},
+	}
+	for name, a := range cases {
+		q, _ := query(t, a)
+		if !strings.HasPrefix(q, "absent_over_time(") {
+			t.Errorf("%s absence = %q, want absent_over_time — a comparison cannot detect missing data", name, q)
+		}
+		for _, banned := range []string{"> 0", ">= 0", "< 0"} {
+			if strings.Contains(q, banned) {
+				t.Errorf("%s absence compiled to a comparison (%s): %q", name, banned, q)
+			}
+		}
+		// absent_over_time over max() can never fire: max of an empty
+		// vector is empty, so the wrapper would hide the absence.
+		if strings.Contains(q, "max(") {
+			t.Errorf("%s absence reduces before asking: %q", name, q)
+		}
+		if !strings.Contains(q, "[600s]") {
+			t.Errorf("%s absence lost its lookback: %q", name, q)
+		}
+	}
+}
+
+// A distribution has no bare series, so absence must ask about _count —
+// the series that exists whenever anything at all was recorded. Asking
+// under the bare name would return "absent" forever, on a metric being
+// written every second.
+func TestAbsenceOnADistributionAsksAboutCount(t *testing.T) {
+	q, _ := query(t, &analyzer.AlertCondition{Op: "absent", Reading: "platform", ScopedTo: "service_percentile",
+		SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600, Quantile: 0.99,
+		MetricType: "run.googleapis.com/container/cpu/utilizations"})
+	if !strings.Contains(q, "container_cpu_utilizations_count{") {
+		t.Errorf("distribution absence = %q, want the _count decomposition", q)
+	}
+}
+
+// A Google metric has no schedule to derive a lookback from, and a
+// missing one rendered [0s] — which PromQL does not accept as a range.
+func TestAbsenceWithNoWindowFallsBackToTheReductionPeriod(t *testing.T) {
+	q, _ := query(t, &analyzer.AlertCondition{Op: "absent", Reading: "platform", ScopedTo: "service_instances",
+		SubjectKind: "handler", SubjectVar: "gallery.MakeThumb"})
+	if strings.Contains(q, "[0s]") {
+		t.Errorf("absence rendered a zero range: %q", q)
+	}
+	if !strings.Contains(q, "[60s]") {
+		t.Errorf("absence = %q, want the default reduction period as the lookback", q)
+	}
+}
+
+// The notification sentence has to say what stopped. Sharing the
+// threshold sentence gave every absence "is above 0", which describes
+// the query that used to be generated rather than the one asked for.
+func TestAbsenceSentencesSayWhatStopped(t *testing.T) {
+	cases := map[string]*analyzer.AlertCondition{
+		"service x1-gallery-makethumb is reporting no instance count": {
+			Op: "absent", Reading: "platform", ScopedTo: "service_instances",
+			SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600},
+		"container/cpu/utilizations is not being written for x1-gallery-makethumb": {
+			Op: "absent", Reading: "platform", ScopedTo: "service_metric",
+			SubjectKind: "handler", SubjectVar: "gallery.MakeThumb", ForSeconds: 600,
+			MetricType: "run.googleapis.com/container/cpu/utilizations"},
+		"nothing is writing topic/byte_cost": {
+			Op: "absent", Reading: "platform", SubjectKind: "platform", ForSeconds: 600,
+			SubjectName: "pubsub.googleapis.com/topic/byte_cost"},
+	}
+	cfg := Config{Project: "p", Region: "us-central1", App: "gallery", Env: "x1"}
+	for want, a := range cases {
+		got := conditionSentence(cfg, alertGraph(), analyzer.Resource{Name: "Stopped", Alert: a})
+		if !strings.HasSuffix(got, want) {
+			t.Errorf("sentence = %q, want it to end with %q", got, want)
+		}
+		if strings.Contains(got, "above") || strings.Contains(got, "below") {
+			t.Errorf("absence sentence describes a threshold: %q", got)
+		}
+	}
+}

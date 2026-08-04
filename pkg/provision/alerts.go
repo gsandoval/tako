@@ -114,12 +114,26 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 	lookback := every
 	if a.Op == "absent" {
 		lookback = time.Duration(a.ForSeconds) * time.Second
-		if lookback == 0 {
+		if lookback == 0 && a.Reading == "cron_missed" {
 			// CronMissed with no explicit window: twice the schedule, so
 			// a job that merely ran late is not a page. The schedule is
 			// in the graph, which is the whole reason this can be
 			// derived rather than asked for.
+			//
+			// Gated on the reading, because cronPeriod answers 24h for
+			// anything it cannot find a schedule on. Ungated, a raw
+			// absence over a Google metric — which has no schedule and
+			// never will — inherited a 48h lookback derived from a
+			// default that had nothing to do with it. A wrong number
+			// that looks deliberate is worse than the [0s] it replaced,
+			// because [0s] would at least have been refused.
 			lookback = 2 * cronPeriod(g, a.SubjectVar)
+		}
+		if lookback == 0 {
+			// Nothing to derive from. The reduction period is the only
+			// honest fallback, and leaving this zero rendered `[0s]`,
+			// which is not a legal range selector.
+			lookback = every
 		}
 	}
 
@@ -199,6 +213,17 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		}
 		return comparison("max("+sel+")", a.Op, threshold), retestAllowed(lookback), nil
 	case "platform":
+		// Absence is not a threshold, and this is the half where that
+		// lesson had not been applied: every Google-metric reading went
+		// to comparison(), whose default arm is `> threshold`, and an
+		// absent condition carries threshold 0. WhenAbsent over a
+		// ServiceMetric therefore compiled to `max(…) > 0` — an alert
+		// that fires while the metric is being written and goes quiet
+		// the moment it stops, which is the inverse of what was asked
+		// and reads as healthy for exactly as long as it is wrong.
+		if a.Op == "absent" {
+			return platformAbsent(cfg, g, a, lookback), retestAllowed(lookback), nil
+		}
 		return comparison(platformQuery(cfg, g, a, every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	}
 	return "", false, fmt.Errorf("unknown alert reading %q", a.Reading)
@@ -271,6 +296,29 @@ func platformQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition,
 			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))), `state="active"`) + ")"
 	}
 	return "max(" + scopedSelector(cfg, g, a) + ")"
+}
+
+// platformAbsent asks whether a Google metric is being written at all —
+// the same question absent_over_time answers for tako's own metrics, on
+// the constructors that could not ask it.
+//
+// It reduces nothing. absent_over_time takes the raw selector, not
+// max() of it: max() of an empty vector is empty, so wrapping first
+// would make the absence undetectable, which is the failure this fixes.
+func platformAbsent(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, lookback time.Duration) string {
+	switch a.ScopedTo {
+	case "service_percentile":
+		// A DISTRIBUTION has no bare series to be missing, so there is
+		// nothing for absent_over_time to look at under that name. _count
+		// is the one that exists whenever anything at all was recorded —
+		// the same choice customQuery makes for a Histogram.
+		return absentQuery(selector(a.MetricType+"_count", resourceRun,
+			append([]string{fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar)))}, a.Matchers...)...), lookback)
+	case "service_instances":
+		return absentQuery(selector(metricInstanceCount, resourceRun,
+			fmt.Sprintf("service_name=%q", cfg.Name(serviceOf(g, a.SubjectVar))), `state="active"`), lookback)
+	}
+	return absentQuery(scopedSelector(cfg, g, a), lookback)
 }
 
 func scopedSelector(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) string {
@@ -550,6 +598,12 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 	case "singleton_down":
 		return fmt.Sprintf("%s: singleton %s is not running", app, subject)
 	case "platform":
+		// An absent condition has no threshold to read, so the
+		// threshold sentences below would all end in "is above 0" —
+		// the same nonsense the query used to compile to.
+		if a.Op == "absent" {
+			return platformAbsentSentence(cfg, g, a, app)
+		}
 		switch a.ScopedTo {
 		case "service_instances":
 			over := "more than"
@@ -577,6 +631,25 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 		return fmt.Sprintf("%s: %s %s %s %g", app, a.SubjectName, readingPhrase(a), direction(a.Op), a.Threshold)
 	}
 	return fmt.Sprintf("%s: %s", app, r.Name)
+}
+
+// platformAbsentSentence says what has stopped being written, naming the
+// deployed object the alert is scoped to — which is the half a reader
+// needs and cannot infer from the metric type.
+func platformAbsentSentence(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, app string) string {
+	metric := a.MetricType
+	if metric == "" {
+		metric = a.SubjectName
+	}
+	switch a.ScopedTo {
+	case "service_instances":
+		return fmt.Sprintf("%s: service %s is reporting no instance count", app, cfg.Name(serviceOf(g, a.SubjectVar)))
+	case "service_metric", "service_percentile":
+		return fmt.Sprintf("%s: %s is not being written for %s", app, shortMetric(metric), cfg.Name(serviceOf(g, a.SubjectVar)))
+	case "queue_metric":
+		return fmt.Sprintf("%s: %s is not being written for %s", app, shortMetric(metric), subscriptionOf(cfg, g, a))
+	}
+	return fmt.Sprintf("%s: nothing is writing %s", app, shortMetric(metric))
 }
 
 // channelTarget renders a channel's destination as the API wants it.

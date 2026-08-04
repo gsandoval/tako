@@ -580,6 +580,26 @@
       "pos": "alerts.go:231:2"
     },
     {
+      "kind": "alert",
+      "name": "Unreported",
+      "var": "siren.Unreported",
+      "package": "siren",
+      "condition": "WhenAbsent",
+      "alert": {
+        "op": "absent",
+        "subject_kind": "worker",
+        "subject_name": "work",
+        "subject_var": "siren.Grind",
+        "reading": "platform",
+        "for_seconds": 600,
+        "scoped_to": "service_instances"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:248:2"
+    },
+    {
       "kind": "queue",
       "name": "work",
       "var": "siren.work",

@@ -13820,3 +13820,116 @@ Neither exposes a tako metric name.
   label tako already supplies,** producing a contradictory selector.
   Refuse at analysis time, naming the constructor that scopes it.
 - Neither is in Z5's scope and neither is fixed here.
+
+## D1/D2 — the two defects, fixed (2026-08-04)
+
+Approved directly by the owner after the open-question analysis.
+Together they are one commit: both are the same failure shape, both are
+in the raw half of the alert surface, and neither has a gate because
+neither adds surface.
+
+### D1 — absence over Google's metrics compiled to its inverse
+
+`alertQuery`'s `platform` case handed every op to `comparison`, whose
+default arm is `> threshold`; an absent condition carries threshold 0.
+So `WhenAbsent(ServiceMetric(Grind, …))` compiled to `max(…) > 0` —
+firing while the metric was being written and going quiet the moment it
+stopped. Fixed by giving the platform case an absence branch, the same
+one `customQuery` has had since Y1.
+
+Three things fell out of writing it that were not in the defect report:
+
+**absent_over_time must not wrap a reduction.** `max()` of an empty
+vector is empty, so `absent_over_time(max(…))` can never fire. The
+absence branch takes the raw selector — which is why it is a separate
+function rather than a wrapper around `platformQuery`.
+
+**A distribution has no bare series to be missing.** `ServicePercentile`
+absence asks about `_count`, the series that exists whenever anything
+was recorded at all. Asking under the bare name would report "absent"
+forever, on a metric being written every second — the exact trap Z3 was
+built to close, in the one path Z3 did not touch.
+
+**A Google metric has no schedule, and the lookback fallback did not
+know that.** `cronPeriod` answers 24h for any handler it cannot find a
+schedule on, so an ungated `lookback = 2 * cronPeriod(…)` gave every
+platform absence a 48h window derived from a cron default that had
+nothing to do with it. The derivation is now gated on
+`Reading == "cron_missed"`, and everything else falls back to the
+reduction period. **A wrong number that looks deliberate is worse than
+the `[0s]` it replaced, because `[0s]` would have been refused.**
+
+The notification sentence had the same defect: every platform reading
+shared the threshold sentence, so an absence read "… is above 0" —
+a sentence describing the query that used to be generated. Absences now
+say what stopped, naming the deployed object:
+
+```
+siren/x1: service x1-siren-grind is reporting no instance count
+```
+
+### D2 — a matcher on a label tako owns is now refused
+
+`{subscription_id="x1-siren-grind",subscription_id="x1-siren-grind-dead"}`
+is what you got for trying to reach the dead-letter subscription by
+hand: PromQL accepts both matchers and satisfies neither.
+
+Refused rather than merged, and refused rather than overridden. Merging
+is what produced the contradiction. Overriding would have been worse —
+it would accept an env-prefixed physical name hand-written at
+declaration time, which is the trap the scoped constructors exist to
+close.
+
+Which labels each constructor owns is a field on the `scopedMetrics`
+table rather than a switch, so a new constructor cannot be added without
+declaring them — the completeness habit the retry allowlist learned in
+Z5 two commits ago.
+
+The refusal names the thing that does answer the question, because a
+refusal with no alternative just moves the dead end:
+
+```
+app.go:64:4: tako.QueueMetric already matches subscription_id for the consumer you
+named — a second matcher on the same label matches nothing, and the deployed
+subscription is env-prefixed so it cannot be written by hand; for the dead-letter
+subscription use tako.QueueBacklogged or tako.QueueStalled with
+tako.QueueWatch{DeadLetters: true} (tako/scoped-label)
+```
+
+### What demands it
+
+`examples/siren` gains `Unreported` — `WhenAbsent(ServiceInstances(Grind))`
+— so the fixed query is IN the golden rather than only in a unit test.
+That is deliberate: this defect survived a live 22-policy walk and was
+found by rendering the artifact, so the fix belongs in the artifact.
+
+```
+Unreported
+  siren/x1: service x1-siren-grind is reporting no instance count
+  absent_over_time(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-grind",state="active"}[600s])
+```
+
+### Tests
+
+Four new provision tests and three new analyzer golden cases. The
+provision ones assert the properties rather than the string: absence is
+`absent_over_time`, contains no comparison operator, reduces nothing,
+keeps its lookback, and — for distributions — names `_count`. Plus a
+sentence test asserting no absence sentence contains "above" or "below".
+
+`docs/reference/alerts.md` also carried a claim this falsifies: it said
+`PlatformMetric` gives you "every matcher … including the one that says
+which resource". `monitored_resource` is derived and now refused.
+Corrected, with the new rule documented verbatim from the golden.
+
+### Still open, from the same analysis and NOT done here
+
+The owner's two directions, which are their own tasks:
+
+1. **Stabilize the metric names and pin the generated PromQL.** The
+   argument that names have changed three times is an argument for
+   pinning them, not for hiding them.
+2. **Let users write finer-grained alerts by starting from a preset** —
+   read what it compiles to, then write their own version of it.
+
+Proposal for both goes in separately. Neither is in D1/D2's scope.

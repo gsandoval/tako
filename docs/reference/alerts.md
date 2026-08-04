@@ -193,10 +193,28 @@ A bare `service_name="siren"` matches nothing; omitting it matches every
 Cloud Run service in the project. Both read as healthy.
 
 `PlatformMetric` is the escape hatch for a project-wide reading or a
-resource tako does not model — and there, every matcher is yours,
-including the one that says which resource.
+resource tako does not model.
 
-Optional trailing strings are extra label matchers, verbatim PromQL.
+Optional trailing strings are extra label matchers, verbatim PromQL —
+**except on a label tako already writes**, which is refused at analysis
+time (`tako/scoped-label`). `ServiceMetric` and `ServicePercentile` own
+`service_name`, `QueueMetric` owns `subscription_id`, `ServiceInstances`
+owns both plus `state`, and every selector owns `monitored_resource`,
+which is derived from the metric type. PromQL would take a second
+matcher on the same label and satisfy neither, so the query would come
+out well-formed and permanently empty — which reads exactly like a
+healthy system. Reaching the dead-letter subscription is the case people
+try this for; use `QueueWatch{DeadLetters: true}` instead.
+
+`WhenAbsent` works over these too, and asks a genuinely different
+question from a low reading: whether the metric is being written at all.
+
+```go
+tako.WhenAbsent(tako.ServiceInstances(Grind), tako.Window{For: 10 * time.Minute})
+```
+
+A service that has stopped reporting an instance count is either gone or
+not being scraped, and neither shows up as a small number.
 There is no list of metric names in these docs on purpose: a project
 publishes upwards of eight thousand descriptors, so any list here would
 be both incomplete and stale. Search for one instead:
@@ -397,7 +415,15 @@ app.go:47:55: a Window's Every must be between 1m and 25h — Cloud Monitoring r
 app.go:48:55: a threshold Window's For cannot exceed 24h — Cloud Monitoring refuses longer; got 172800s (tako/window)
 app.go:49:56: a Count reading needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing (tako/window)
 app.go:56:60: tako.QueueBacklogged needs a sustain window — write tako.QueueWatch{For: …}; a queue crosses any depth for an instant, so how long it stays there IS the alert (tako/window)
+app.go:64:4: tako.QueueMetric already matches subscription_id for the consumer you named — a second matcher on the same label matches nothing, and the deployed subscription is env-prefixed so it cannot be written by hand; for the dead-letter subscription use tako.QueueBacklogged or tako.QueueStalled with tako.QueueWatch{DeadLetters: true} (tako/scoped-label)
+app.go:68:4: tako.ServiceMetric already matches service_name for the target you named — a second matcher on the same label matches nothing, and the deployed name is env-prefixed so it cannot be written by hand; drop it (tako/scoped-label)
+app.go:72:4: tako.PlatformMetric already matches monitored_resource — it is derived from the metric type, and a second matcher on the same label matches nothing; drop it (tako/scoped-label)
 ```
+
+`tako/scoped-label` is refused rather than merged because PromQL accepts
+both matchers and satisfies neither: `{subscription_id="x",
+subscription_id="x-dead"}` is a well-formed selector that returns no
+series, which is indistinguishable from a healthy queue.
 
 `tako.Alert` with something that is not a condition is a compile error
 before the analyzer sees it — `Condition` is not constructible outside

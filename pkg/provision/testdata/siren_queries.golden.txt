@@ -90,6 +90,10 @@ SubPoisoned
   siren/x1: queue incidents is dead-lettering
   max(pubsub_googleapis_com:subscription_num_undelivered_messages{monitored_resource="pubsub_subscription",subscription_id="x1-siren-onalert-dead"}) >= 1
 
+Unreported
+  siren/x1: service x1-siren-grind is reporting no instance count
+  absent_over_time(run_googleapis_com:container_instance_count{monitored_resource="cloud_run_revision",service_name="x1-siren-grind",state="active"}[600s])
+
 Untriaged
   siren/x1: dead letters of queue work are going untriaged
   max(pubsub_googleapis_com:subscription_oldest_unacked_message_age{monitored_resource="pubsub_subscription",subscription_id="x1-siren-grind-dead"}) > 120

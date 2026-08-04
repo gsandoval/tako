@@ -14,6 +14,7 @@ import (
 	"go/ast"
 	"go/constant"
 	"go/types"
+	"strings"
 	"time"
 
 	"golang.org/x/tools/go/packages"
@@ -267,12 +268,55 @@ var scopedMetrics = map[string]struct {
 	hasType bool // takes a Google metric type
 	// quantArg is the index of a quantile argument, -1 for none.
 	quantArg int
+	// supplies are the labels the deploy writes into the selector
+	// itself. A user matcher on one of them is REFUSED rather than
+	// merged: PromQL takes both, so `{subscription_id="x",
+	// subscription_id="x-dead"}` is a selector that matches nothing and
+	// reads as a healthy queue. Listed per constructor so a new one
+	// cannot be added without saying which labels it owns.
+	supplies []string
 }{
-	"ServiceMetric":     {reading: "service_metric", scoped: true, hasType: true, quantArg: -1},
-	"QueueMetric":       {reading: "queue_metric", scoped: true, hasType: true, quantArg: -1},
-	"ServicePercentile": {reading: "service_percentile", scoped: true, hasType: true, quantArg: 2},
-	"ServiceInstances":  {reading: "service_instances", scoped: true, quantArg: -1},
+	"ServiceMetric":     {reading: "service_metric", scoped: true, hasType: true, quantArg: -1, supplies: []string{"service_name"}},
+	"QueueMetric":       {reading: "queue_metric", scoped: true, hasType: true, quantArg: -1, supplies: []string{"subscription_id"}},
+	"ServicePercentile": {reading: "service_percentile", scoped: true, hasType: true, quantArg: 2, supplies: []string{"service_name"}},
+	"ServiceInstances":  {reading: "service_instances", scoped: true, quantArg: -1, supplies: []string{"service_name", "state"}},
 	"PlatformMetric":    {reading: "platform", hasType: true, quantArg: -1},
+}
+
+// monitoredResource is supplied by every selector tako builds, scoped or
+// not — a custom-metric selector is refused without it, so it is never
+// the user's to write.
+const monitoredResource = "monitored_resource"
+
+// scopedLabelMessage explains why a matcher on a tako-supplied label is
+// refused, and points at the thing that DOES ask the question — a
+// refusal that names no alternative just moves the dead end.
+func scopedLabelMessage(ctor, label string) string {
+	switch label {
+	case monitoredResource:
+		return fmt.Sprintf("tako.%s already matches %s — it is derived from the metric type, and a second matcher on the same label matches nothing; drop it",
+			ctor, label)
+	case "subscription_id":
+		return fmt.Sprintf("tako.%s already matches %s for the consumer you named — a second matcher on the same label matches nothing, and the deployed subscription is env-prefixed so it cannot be written by hand; for the dead-letter subscription use tako.QueueBacklogged or tako.QueueStalled with tako.QueueWatch{DeadLetters: true}",
+			ctor, label)
+	case "state":
+		return fmt.Sprintf("tako.%s already matches %s=\"active\" — an instance that is not active is not one you are paying to serve with, so there is one right answer and tako supplies it",
+			ctor, label)
+	}
+	return fmt.Sprintf("tako.%s already matches %s for the target you named — a second matcher on the same label matches nothing, and the deployed name is env-prefixed so it cannot be written by hand; drop it",
+		ctor, label)
+}
+
+// matcherLabel is the label a raw PromQL matcher constrains:
+// `route="GET /x"` → route. Anything unparseable is left to the deploy,
+// which is where a malformed matcher becomes a 400 with Google's own
+// explanation of the syntax.
+func matcherLabel(m string) string {
+	i := strings.IndexAny(m, "=!~")
+	if i <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(m[:i])
 }
 
 // conditionSpec reads a condition call into its logical parameters.
@@ -426,9 +470,25 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 		rest = m.quantArg + 1
 	}
 	for _, f := range metric.Args[min(rest, len(metric.Args)):] {
-		if mm, err := constString(pkg, f); err == nil {
-			spec.Matchers = append(spec.Matchers, mm)
+		mm, err := constString(pkg, f)
+		if err != nil {
+			continue
 		}
+		if label := matcherLabel(mm); label != "" {
+			owned := label == monitoredResource
+			for _, s := range m.supplies {
+				owned = owned || label == s
+			}
+			if owned {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, f.Pos()),
+					Msg:  scopedLabelMessage(ctor, label),
+					Rule: "scoped-label",
+				})
+				continue
+			}
+		}
+		spec.Matchers = append(spec.Matchers, mm)
 	}
 	return true
 }

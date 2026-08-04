@@ -54,3 +54,20 @@ var hits = tako.Counter("hits")
 // A queue condition with no sustain window: a queue crosses any depth
 // for an instant, so For is required rather than defaulted.
 var NoSustain = tako.Alert(tako.QueueBacklogged(thumbs, 1, tako.QueueWatch{DeadLetters: true}), oncall)
+
+// A matcher on a label tako already writes. PromQL accepts both and
+// matches neither, so the query is well-formed and permanently empty —
+// which reads exactly like a healthy queue.
+var (
+	DoubleSub = tako.Alert(tako.WhenAbove(
+		tako.QueueMetric(thumbs, "pubsub.googleapis.com/subscription/num_undelivered_messages",
+			`subscription_id="x1-alerts-work-dead"`), 1, tako.Window{For: time.Minute}), oncall)
+
+	DoubleService = tako.Alert(tako.WhenAbove(
+		tako.ServiceMetric(Work, "run.googleapis.com/container/memory/utilizations",
+			`service_name="alerts"`), 0.9, tako.Window{For: time.Minute}), oncall)
+
+	DoubleResource = tako.Alert(tako.WhenAbove(
+		tako.PlatformMetric("pubsub.googleapis.com/topic/byte_cost",
+			`monitored_resource="pubsub_topic"`), 1, tako.Window{For: time.Minute}), oncall)
+)
