@@ -14270,3 +14270,55 @@ out, and this is that.
   the lookback and ignores it. Visible in `testdata/twins`, where the
   twin of `CronMissed` carries an `Every` for no reason. The rule should
   exempt absences.
+
+## FL1 — `tako.RedirectPermanent` (2026-08-04)
+
+Approved with FL2–FL4 in one go; ordering left to the suggested
+FL1 → FL3 → FL4 → FL2.
+
+### Shipped
+
+`tako.RedirectPermanent(target)` — 301 on plain requests, and
+deliberately IDENTICAL to `Redirect` under htmx: `HX-Redirect` + 200.
+That last part is the design decision worth stating. Permanence is
+something you say to crawlers and caches about a URL; a client-side
+navigation is neither. A 301 htmx cannot follow would be a regression
+dressed up as correctness.
+
+`HTML` gains an unexported `status`, and `hooks.HTMLParts` widens to
+carry it. Zero means 303, which is why `Redirect` needed no change and a
+bare `HTML{}` is still not a redirect — the default is the old behaviour
+rather than a value someone has to remember to set.
+
+### What demands it
+
+journal grows a rename. A post moved to a new slug leaves a `MovedURL`
+record behind, and `read` serves 301 from it when the requested id is
+gone. This is precisely what `SiteConfig.Redirects` cannot do: that map
+is read at ANALYSIS time, and no analysis knows a slug a user will type
+next week.
+
+The write order in `rename` is the care of it: new post, then the
+forwarding record, then delete the old. A crash anywhere leaves the post
+reachable at one slug or both — never at neither.
+
+`rename` itself answers 303, not 301. The redirect after a write is
+about that write; the permanent one belongs in `read`, where the old
+slug is actually requested. Getting that backwards would have made every
+rename tell crawlers that `/write` had moved.
+
+### Tests
+
+Four, and two of them exist because a 301 and a 303 differ only in a
+number — nothing else in the stack notices if they merge:
+
+- a renamed post answers 301 at its old slug, with the right Location,
+  and the new slug is a real page rather than another redirect;
+- a slug that never existed still 404s (without this, "everything
+  redirects" would pass the test above);
+- both redirect kinds still send `HX-Redirect` + 200 under htmx;
+- the two statuses differ on plain requests.
+
+### API change
+
+`sdk_lock.golden` gains `func RedirectPermanent(target string) (HTML, error)`.

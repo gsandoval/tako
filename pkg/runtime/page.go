@@ -287,17 +287,26 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 			pageError(w, ctx, reqID, err)
 			return
 		}
-		markup, redirect, fragment := hooks.HTMLParts(res)
+		markup, redirect, status, fragment := hooks.HTMLParts(res)
 		if redirect != "" {
 			// Dual-mode: htmx cannot follow a 303 into a swap, so it
 			// gets 200 + HX-Redirect (full-page client navigation);
 			// plain requests keep the POST-redirect-GET 303.
+			//
+			// The htmx arm is deliberately identical for a PERMANENT
+			// redirect. Permanence is a statement to crawlers and
+			// caches about a URL; a client-side navigation is neither,
+			// and a 301 htmx cannot follow would be a regression
+			// dressed as correctness.
 			if ctx.isHTMX {
 				w.Header().Set("HX-Redirect", redirect)
 				w.WriteHeader(http.StatusOK)
 				return
 			}
-			http.Redirect(w, r, redirect, http.StatusSeeOther)
+			if status == 0 {
+				status = http.StatusSeeOther
+			}
+			http.Redirect(w, r, redirect, status)
 			return
 		}
 		h := w.Header()

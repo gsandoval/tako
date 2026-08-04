@@ -111,6 +111,7 @@ func QueueMetric(c Consumer, metricType string, filters ...string) Metric
 func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
 func Redirect(target string) (HTML, error)
+func RedirectPermanent(target string) (HTML, error)
 func RequestMs(t Target) *RequestMsHandle
 func Requests(t Target) *RequestsHandle
 func RequestsErroring(t Target, fraction float64, w ...Window) Condition

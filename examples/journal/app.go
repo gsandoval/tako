@@ -14,6 +14,15 @@ import (
 var (
 	posts = tako.Entity[Post]("posts")
 
+	// moved records a slug a post used to live at. A rename cannot just
+	// overwrite the id: every link anyone ever shared points at the old
+	// one, and a 404 is how a URL dies. This is the store the permanent
+	// redirect is served FROM, which is the whole reason a per-request
+	// redirect had to exist — SiteConfig.Redirects is a map literal read
+	// at analysis time, and no analysis knows a slug a user will type
+	// next week.
+	moved = tako.Entity[MovedURL]("moved_urls")
+
 	// site serves ./web embedded in the service binary; its templates/
 	// subtree backs site.Render and is never served statically.
 	site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
@@ -23,6 +32,13 @@ var (
 	// records in the entity store.
 	auth = tako.Auth(tako.AuthConfig{Google: true})
 )
+
+// MovedURL is one retired slug and where it went. Keyed by the OLD
+// slug, because that is what an incoming request has.
+type MovedURL struct {
+	ID string `entity:"id" json:"id"` // the old slug
+	To string `json:"to"`             // the current one
+}
 
 type Post struct {
 	ID        string    `entity:"id" json:"id"`
@@ -39,6 +55,7 @@ var (
 	Write   = tako.Page("GET /write", writeForm)
 	Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 	Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
+	Rename  = tako.Page("POST /p/{id}/rename", rename, tako.Route{SignIn: true})
 )
 
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
@@ -56,6 +73,12 @@ type ReadReq struct {
 func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
 	p, err := posts.Get(ctx, req.ID)
 	if tako.IsNotFound(err) {
+		// Not here — but it may have been. A slug that moved answers
+		// 301 rather than 404, so shared links and search results
+		// survive a rename instead of rotting.
+		if m, mErr := moved.Get(ctx, req.ID); mErr == nil {
+			return tako.RedirectPermanent("/p/" + m.To)
+		}
 		return tako.HTML{}, tako.NotFound()
 	}
 	if err != nil {
@@ -87,6 +110,51 @@ func save(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {
 		return site.Fragment(ctx, "post-card.html", p)
 	}
 	return tako.Redirect("/p/" + p.ID) // POST-redirect-GET (303)
+}
+
+type RenameReq struct {
+	ID   string `path:"id"`
+	Slug string `form:"slug"`
+}
+
+// rename moves a post to a new slug and leaves a signpost at the old
+// one.
+//
+// The order matters and is the whole care of it: write the new post,
+// then the forwarding record, then delete the old. A crash anywhere
+// leaves the post reachable at one slug or both, never at neither.
+func rename(ctx tako.Ctx, req RenameReq) (tako.HTML, error) {
+	current, err := posts.Get(ctx, req.ID)
+	if tako.IsNotFound(err) {
+		return tako.HTML{}, tako.NotFound()
+	}
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	if current.Owner != ctx.User().ID {
+		return tako.HTML{}, tako.Errorf(403, "only the author can rename")
+	}
+	if req.Slug == "" || req.Slug == req.ID {
+		return tako.HTML{}, tako.Errorf(400, "a rename needs a new slug")
+	}
+	if _, err := posts.Get(ctx, req.Slug); err == nil {
+		return tako.HTML{}, tako.Errorf(409, "that slug is taken")
+	}
+	next := current
+	next.ID = req.Slug
+	if err := posts.Put(ctx, next); err != nil {
+		return tako.HTML{}, err
+	}
+	if err := moved.Put(ctx, MovedURL{ID: req.ID, To: req.Slug}); err != nil {
+		return tako.HTML{}, err
+	}
+	if err := posts.Delete(ctx, req.ID); err != nil {
+		return tako.HTML{}, err
+	}
+	// A plain 303: this response is about the write that just happened,
+	// not a statement that /p/<old> has permanently moved. The 301 for
+	// that lives in read, where the old slug is actually requested.
+	return tako.Redirect("/p/" + next.ID)
 }
 
 type PublishReq struct {

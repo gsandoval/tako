@@ -29,11 +29,11 @@ func init() {
 		return hd.id
 	}
 	hooks.DeclaredSecrets = declaredSecrets
-	hooks.HTMLParts = func(h any) ([]byte, string, bool) {
+	hooks.HTMLParts = func(h any) ([]byte, string, int, bool) {
 		html, ok := h.(HTML)
 		if !ok {
-			return nil, "", false
+			return nil, "", 0, false
 		}
-		return html.markup, html.redirect, html.fragment
+		return html.markup, html.redirect, html.status, html.fragment
 	}
 }

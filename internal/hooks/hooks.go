@@ -123,7 +123,12 @@ var RenderFragment func(ctx context.Context, name string, data any) ([]byte, err
 // HTMLParts opens a tako.HTML for the runtime's page handler — the SDK
 // sets it at init (typed as any to avoid the import cycle). fragment
 // marks layoutless partials (they skip the document-only headers).
-var HTMLParts func(h any) (markup []byte, redirect string, fragment bool)
+//
+// status is the redirect status a plain request should get, and zero
+// means "the default", which is 303. Keeping the default at zero is
+// what lets Redirect stay untouched and a bare HTML{} stay not-a-
+// redirect.
+var HTMLParts func(h any) (markup []byte, redirect string, status int, fragment bool)
 
 // RenderMarkdown renders markdown under the site's declared posture
 // (sanitized unless WithTrustedHTML) — site.Markdown calls through.

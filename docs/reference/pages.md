@@ -49,6 +49,39 @@ if ctx.IsHTMX() {
 return tako.Redirect("/p/" + p.ID) // POST-redirect-GET (303)
 ```
 
+### Redirect vs RedirectPermanent
+
+`tako.Redirect` is 303 See Other — a statement about THIS response,
+which is what a POST-redirect-GET is.
+
+`tako.RedirectPermanent` is 301 Moved Permanently — a statement about
+the URL. Use it when a resource moved, so crawlers update their index
+and shared links survive:
+
+```go
+func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
+	p, err := posts.Get(ctx, req.ID)
+	if tako.IsNotFound(err) {
+		if m, mErr := moved.Get(ctx, req.ID); mErr == nil {
+			return tako.RedirectPermanent("/p/" + m.To)
+		}
+		return tako.HTML{}, tako.NotFound()
+	}
+	...
+}
+```
+
+`SiteConfig.Redirects` covers the same ground for routes known at
+analysis time — and only those. It is a map literal read by the
+analyzer, so a slug your users rename next week cannot be in it. That is
+the gap `RedirectPermanent` fills: the target comes out of the entity
+store, per request.
+
+**htmx is identical for both** — `HX-Redirect` and 200. Permanence is
+something you say to crawlers and caches about a URL; a client-side
+navigation is neither, and a 301 htmx cannot follow would be a
+regression dressed as correctness.
+
 CSRF on unsafe-method page routes is automatic: put `{{ csrf }}`
 inside every form — it expands to a hidden `_csrf` input; htmx can
 send the same token as an `X-CSRF-Token` header (`{{ csrfToken }}`).

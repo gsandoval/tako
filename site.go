@@ -64,10 +64,15 @@ func (s *SiteHandle) Markdown(ctx Ctx, src string) (HTML, error) {
 }
 
 // HTML is the rendered result of a Page handler: markup (a document, or
-// a layoutless fragment), or a redirect produced by tako.Redirect.
+// a layoutless fragment), or a redirect produced by tako.Redirect or
+// tako.RedirectPermanent.
 type HTML struct {
 	markup   []byte
 	redirect string
+	// status is the redirect status for plain requests. Zero means
+	// 303 See Other, so Redirect needs no change and a handler that
+	// returns a bare HTML{} is not accidentally a redirect.
+	status   int
 	fragment bool
 }
 
@@ -77,4 +82,27 @@ type HTML struct {
 // return.
 func Redirect(target string) (HTML, error) {
 	return HTML{redirect: target}, nil
+}
+
+// RedirectPermanent is 301 Moved Permanently: this URL is not coming
+// back, and a crawler should update its index.
+//
+//	return tako.RedirectPermanent("/p/" + moved.To)
+//
+// The difference from Redirect is not cosmetic and not for browsers —
+// both follow either one. It is for crawlers and caches, which treat 301
+// as a fact about the URL and 303 as a fact about one response. Use it
+// when a resource MOVED; use Redirect for the POST-redirect-GET after a
+// write, which is about this request and not about the URL.
+//
+// SiteConfig.Redirects covers the same ground for routes known at
+// analysis time. This is for the ones that are not: a slug the user
+// renamed is a redirect whose target lives in the entity store and can
+// only be decided per request.
+//
+// htmx is unchanged — HX-Redirect and 200, exactly as Redirect —
+// because permanence means nothing to a client that is not a crawler,
+// and a client-side navigation is not a cacheable response about a URL.
+func RedirectPermanent(target string) (HTML, error) {
+	return HTML{redirect: target, status: 301}, nil
 }

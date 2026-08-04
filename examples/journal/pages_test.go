@@ -44,12 +44,21 @@ func servePages(t *testing.T) *httptest.Server {
 	mux.Handle("POST /p/{id}/publish", runtime.PageHandler(Publish, func(r *http.Request) (PublishReq, error) {
 		return PublishReq{ID: runtime.PathString(r, "id")}, nil
 	}, runtime.RequireAuth()))
+	mux.Handle("POST /p/{id}/rename", runtime.PageHandler(Rename, func(r *http.Request) (RenameReq, error) {
+		return RenameReq{ID: runtime.PathString(r, "id"), Slug: runtime.FormString(r, "slug")}, nil
+	}, runtime.RequireAuth()))
 	// Harness-only: a route that ALWAYS redirects, pinning the
 	// dual-mode contract (200 + HX-Redirect under htmx).
 	alwaysRedirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
 		return tako.Redirect("/after")
 	})
 	mux.Handle("POST /redirects", runtime.PageHandler(alwaysRedirect, nil))
+	// The same, permanently. A 301 and a 303 differ only in the status,
+	// which is exactly why nothing would notice if the wiring dropped it.
+	alwaysMoved := tako.Page("POST /moved", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return tako.RedirectPermanent("/elsewhere")
+	})
+	mux.Handle("POST /moved", runtime.PageHandler(alwaysMoved, nil))
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -437,5 +446,113 @@ func TestFragmentEscapesLikePages(t *testing.T) {
 	frag, _ := io.ReadAll(res.Body)
 	if strings.Contains(string(frag), "<script>") {
 		t.Fatal("fragment rendered a script tag raw")
+	}
+}
+
+// A renamed post keeps answering at its old slug — with a 301, so a
+// crawler updates its index and a shared link survives.
+//
+// This is the case SiteConfig.Redirects cannot cover: that map is read
+// at analysis time, and no analysis knows a slug someone will type next
+// week. The target here comes out of the entity store, per request.
+func TestRenamedPostRedirectsPermanentlyFromItsOldSlug(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "ada")
+
+	res0, err := c.PostForm(srv.URL+"/p", url.Values{
+		"title": {"Moving day"}, "body": {"body"}, "_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res0.Body.Close()
+	id := strings.TrimPrefix(res0.Header.Get("Location"), "/p/")
+
+	ren, err := c.PostForm(srv.URL+"/p/"+id+"/rename", url.Values{
+		"slug": {"moving-day"}, "_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ren.Body.Close()
+	if ren.StatusCode != http.StatusSeeOther {
+		t.Fatalf("rename = %d, want 303 — the write itself is a POST-redirect-GET", ren.StatusCode)
+	}
+
+	res, err := c.Get(srv.URL + "/p/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusMovedPermanently {
+		t.Fatalf("old slug answered %d, want 301 — a moved URL that 404s is a dead link", res.StatusCode)
+	}
+	if got := res.Header.Get("Location"); got != "/p/moving-day" {
+		t.Errorf("Location = %q, want /p/moving-day", got)
+	}
+
+	// And the new slug is a real page, not another redirect.
+	res2, err := c.Get(srv.URL + "/p/moving-day")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("new slug answered %d, want 200", res2.StatusCode)
+	}
+}
+
+// A slug that never existed still 404s. Without this, "everything is a
+// redirect" would pass the test above.
+func TestUnknownSlugStill404s(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	res, err := c.Get(srv.URL + "/p/never-existed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("unknown slug answered %d, want 404", res.StatusCode)
+	}
+}
+
+// The htmx arm is IDENTICAL for both redirect kinds: HX-Redirect and
+// 200. Permanence is a statement to crawlers and caches about a URL,
+// and a client-side navigation is neither — a 301 htmx cannot follow
+// would be a regression dressed up as correctness.
+func TestPermanentRedirectIsStillAnHXRedirectUnderHTMX(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "ada")
+
+	for _, path := range []string{"/redirects", "/moved"} {
+		res := htmxPost(t, c, srv.URL+path, url.Values{}, token)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("%s under htmx answered %d, want 200", path, res.StatusCode)
+		}
+		if res.Header.Get("HX-Redirect") == "" {
+			t.Errorf("%s under htmx sent no HX-Redirect", path)
+		}
+	}
+}
+
+// Plain requests get the two statuses apart. They differ only in a
+// number, so nothing else in the stack would notice if they merged.
+func TestRedirectAndRedirectPermanentDifferOnPlainRequests(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "ada")
+
+	want := map[string]int{"/redirects": http.StatusSeeOther, "/moved": http.StatusMovedPermanently}
+	for path, code := range want {
+		res, err := c.PostForm(srv.URL+path, url.Values{"_csrf": {token}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		if res.StatusCode != code {
+			t.Errorf("%s answered %d, want %d", path, res.StatusCode, code)
+		}
 	}
 }

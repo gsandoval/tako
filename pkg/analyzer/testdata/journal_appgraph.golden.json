@@ -9,7 +9,8 @@
         "journal.Read",
         "journal.Write",
         "journal.Save",
-        "journal.Publish"
+        "journal.Publish",
+        "journal.Rename"
       ],
       "profile": "default"
     }
@@ -34,6 +35,14 @@
       "pos": "app.go:15:2"
     },
     {
+      "kind": "entity",
+      "name": "moved_urls",
+      "var": "journal.moved",
+      "package": "journal",
+      "type": "MovedURL",
+      "pos": "app.go:24:2"
+    },
+    {
       "kind": "site",
       "name": "./web",
       "var": "journal.site",
@@ -45,7 +54,7 @@
           "to": "/about"
         }
       ],
-      "pos": "app.go:19:2"
+      "pos": "app.go:28:2"
     },
     {
       "kind": "auth",
@@ -55,7 +64,7 @@
       "providers": [
         "google"
       ],
-      "pos": "app.go:24:2"
+      "pos": "app.go:33:2"
     }
   ],
   "handlers": [
@@ -67,7 +76,7 @@
       "route": "GET /",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:37:2"
+      "pos": "app.go:53:2"
     },
     {
       "kind": "page",
@@ -86,7 +95,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:38:2"
+      "pos": "app.go:54:2"
     },
     {
       "kind": "page",
@@ -96,7 +105,7 @@
       "route": "GET /write",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:39:2"
+      "pos": "app.go:55:2"
     },
     {
       "kind": "page",
@@ -122,7 +131,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:40:2"
+      "pos": "app.go:56:2"
     },
     {
       "kind": "page",
@@ -142,13 +151,46 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:41:2"
+      "pos": "app.go:57:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Rename",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /p/{id}/rename",
+      "requires_auth": true,
+      "req_type": "RenameReq",
+      "req_ref": "journal.RenameReq",
+      "res_ref": "tako.HTML",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "field": "Slug",
+          "kind": "form",
+          "name": "slug",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:58:2"
     }
   ],
   "edges": [
     {
       "from": "journal.Home",
       "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Read",
+      "to": "moved_urls",
       "to_kind": "entity",
       "kind": "resource",
       "verb": "read"
@@ -176,6 +218,27 @@
     },
     {
       "from": "journal.Publish",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.Rename",
+      "to": "moved_urls",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.Rename",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Rename",
       "to": "posts",
       "to_kind": "entity",
       "kind": "resource",
