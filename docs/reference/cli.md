@@ -101,6 +101,12 @@ irreversibility** (from [cli-review-1](../cli-review-1.md)).
 The tier-3 mechanics differ on purpose: unifying destroy's typed name
 with prune's counts-then-word would weaken the stronger ceremony.
 
+`destroy`'s preview also names the one thing it deletes that a redeploy
+cannot bring back: Cloud Tasks blocks reusing a deleted queue's name for
+7 days, so those names are listed ahead of the prompt rather than
+discovered a week later on the redeploy that fails. See
+[queue.md](queue.md#errors-youll-meet).
+
 ## Project, region, env
 
 Every cloud command resolves its target identically, through one

@@ -78,9 +78,35 @@ func (r *TasksQueues) body(o provision.Object) map[string]any {
 	}
 }
 
+// QueueNameReuseDays is how long Cloud Tasks blocks a deleted queue's
+// name. Google's, not tako's, and there is no API to shorten it.
+const QueueNameReuseDays = 7
+
+// nameReuseBlocked reports Google's refusal to recreate a queue whose
+// name was released too recently.
+//
+// The match is on the shortest fragment of the message rather than the
+// whole of it: the only transcript of this failure is the T3 walk's
+// paraphrase (2026-08-01), so a longer match would risk not firing at
+// all. A miss falls through to the generic message, which is what
+// shipped before — never to a wrong answer.
+func nameReuseBlocked(err error) bool {
+	ae, ok := asAPIError(err)
+	return ok && strings.Contains(strings.ToLower(ae.Message), "existed too recently")
+}
+
 func (r *TasksQueues) Create(ctx context.Context, o provision.Object) error {
 	url := r.C.url(tasksHost, "/v2/%s/queues", r.parent())
 	if err := r.C.do(ctx, http.MethodPost, url, r.body(o), nil); err != nil {
+		// Google says only that the name existed too recently. It does
+		// not say how long the wait is, when the clock started, or that
+		// another environment sidesteps it — and tako knows two of the
+		// three. No countdown is offered because the error carries no
+		// delete timestamp, and a guessed one would be worse than none.
+		if nameReuseBlocked(err) {
+			return fmt.Errorf("cannot recreate the tasks queue %q — Cloud Tasks blocks reusing a deleted queue's name for %d days after the delete, and this name is still inside that window. tako cannot work around it: either wait, or deploy under another environment, whose queues get fresh names — tako deploy --env <name>",
+				o.Name, QueueNameReuseDays)
+		}
 		return Classify(err, r.C.Project, "create the tasks queue", "roles/cloudtasks.admin")
 	}
 	return nil

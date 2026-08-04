@@ -192,6 +192,29 @@ things to the same message.
 - `delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink (tako/delivery)`
 - `delivery RateLimit is a queue setting — a topic fans out to subscribers with independent fates, so there is no single consumer to pace; cap the queue each subscriber feeds instead (tako/delivery)`
 
+At deploy time, after a destroy:
+
+```
+cannot recreate the tasks queue "u1-mailer-tako" — Cloud Tasks blocks reusing a
+deleted queue's name for 7 days after the delete, and this name is still inside
+that window. tako cannot work around it: either wait, or deploy under another
+environment, whose queues get fresh names — tako deploy --env <name>
+```
+
+This is the one part of a teardown that does not converge: everything
+else `tako destroy` deletes comes back on the next deploy, and a
+rate-limited queue's NAME does not, for a week. It is Google's block and
+there is no API to shorten it.
+
+Because the error above arrives too late to act on, `tako destroy` says
+so in its preview, ahead of the confirmation prompt:
+
+```
+  NAME REUSE — Cloud Tasks blocks recreating these queue names for 7 days:
+    u1-mailer-tako
+    redeploying this app sooner needs a different --env
+```
+
 ## Not yet
 
 - **Tasks-routed queues have no dead letter.** Cloud Tasks retries

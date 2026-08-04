@@ -14103,3 +14103,72 @@ read-only command. FA3 and FA4 should follow FL1–FL4, because those are
 the release gate and this is not. The alternative reading is that FA3 is
 what makes alerting honest and should not wait behind four unrelated
 slices; that is a real argument and the owner's call.
+
+## Z5 — the Cloud Tasks name-reuse wait, shipped (2026-08-04)
+
+Text approved as proposed; the destroy warning approved as recommended.
+Z5 is now closed.
+
+### Shipped
+
+**The deploy error**, when a recreate is blocked:
+
+```
+cannot recreate the tasks queue "u1-mailer-tako" — Cloud Tasks blocks reusing a
+deleted queue's name for 7 days after the delete, and this name is still inside
+that window. tako cannot work around it: either wait, or deploy under another
+environment, whose queues get fresh names — tako deploy --env <name>
+```
+
+**The destroy preview**, ahead of the confirmation prompt, printed only
+when a tasks queue is actually going:
+
+```
+  NAME REUSE — Cloud Tasks blocks recreating these queue names for 7 days:
+    u1-mailer-tako
+    redeploying this app sooner needs a different --env
+```
+
+The warning earns its place by being the exception to the rule the rest
+of the preview follows. Everything else `tako destroy` deletes converges
+— a service comes back, a subscription comes back, the next deploy
+re-derives it. A Cloud Tasks queue's NAME does not, for a week, and
+that is Google's block with no API to shorten it. So this is the only
+line in the preview describing something a redeploy cannot undo, which
+is exactly why it belongs before the prompt rather than in the error a
+week later.
+
+`QueueNameReuseDays` is one constant read by both the CLI and the
+provisioner, so the two cannot come apart on the number — the same
+failure mode as a doc quoting a behaviour it does not share.
+
+### Tests
+
+Four, and two of them are about what must NOT happen:
+
+- the message carries the queue name, the wait, "tako cannot work around
+  it", and the `--env` remedy;
+- it promises no countdown — asserted by banning "days left",
+  "remaining" and "until", because the API carries no delete timestamp
+  and an invented one is worse than none;
+- a 403 on the same call still reports as a permission problem with its
+  role remediation, so the new arm cannot swallow a different failure
+  and send someone away to wait out a week for nothing;
+- the destroy warning is silent with no tasks queue observed. A standing
+  caveat in a preview trains people to skip the block it lives in.
+
+### On the matcher, honestly
+
+It fires on the lowercased fragment `existed too recently`. The only
+transcript of this failure is the T3 walk's paraphrase, so a fuller
+match risked never firing. If Google's wording has drifted, the arm is
+silently skipped and the user gets the old generic message — a miss,
+never a wrong answer. This is checkable the next time a destroy and a
+redeploy happen inside the same week, and worth checking then.
+
+### Docs
+
+`docs/reference/queue.md` gains both texts under "Errors you'll meet",
+verbatim from the tests. `docs/reference/cli.md`'s confirmation-ladder
+section points at it — that section is about friction scaling with
+irreversibility, and this is the least reversible thing a destroy does.

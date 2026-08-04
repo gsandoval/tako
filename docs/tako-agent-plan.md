@@ -360,11 +360,15 @@ list — and why, without this, `Platform` is only usable by someone who
 already knows the name. Gate Z4: find a metric neither of us knew,
 from the CLI alone.
 
-**Z5 — Housekeeping (no gate, one commit).** Nothing user-facing except
-one error text, which needs its wording approved like any other:
-Cloud Tasks' 7-day name-reuse block currently surfaces Google's raw
-message and should name the wait and suggest `--env`; `analyzer.go` and
-`edges.go` are not gofmt-clean; this plan's stage table is now current.
+**Z5 — Housekeeping. DONE 2026-08-04.** Nothing user-facing except one
+error text, whose wording was approved before shipping: Cloud Tasks'
+7-day name-reuse block now names the wait and suggests `--env`, and
+`tako destroy` warns about it in its preview — the error alone arrives
+after the clock has started. The gofmt item and the stage table were
+already current and closed by verification. One item was not on the
+list: the custom-method retry guard had been failing since Z2b, which
+is why `:generateServiceIdentity` is now classified as an idempotent
+mutation.
 
 **Z6 — Publish. REMOVED from Stage 10 (owner, 2026-08-04).** Blocked on
 the `flautas` friction logs: the first real application built on tako is

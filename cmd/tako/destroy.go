@@ -134,6 +134,9 @@ func runDestroy(args []string) error {
 			}
 		}
 	}
+	if warning := nameReuseWarning(observed); warning != "" {
+		fmt.Print(warning)
+	}
 	// --plan stops here, having observed everything and deleted nothing.
 	// Destroy always BUILT this preview; until now the only way to see it
 	// was to start the one irreversible command and type the wrong name
@@ -219,6 +222,37 @@ func runDestroy(args []string) error {
 	}
 	fmt.Printf("  ✗ framework bucket %s-tako\n✓ destroyed\n", t.project)
 	return nil
+}
+
+// nameReuseWarning is the one consequence of a destroy that cannot be
+// undone by running deploy again.
+//
+// Everything else here converges: a deleted service comes back, a
+// deleted subscription comes back. A Cloud Tasks queue does not, for a
+// week — Google blocks the name, and there is no API to shorten it. The
+// error that says so arrives at the only moment it is useless, on the
+// redeploy, with the clock already running. Said HERE it is still ahead
+// of the confirmation prompt, which is the last point where knowing it
+// can change what the user does.
+//
+// Printed only when a tasks queue is actually going: an app with no
+// rate-limited queues should not read a warning about queues.
+func nameReuseWarning(observed []provision.Observed) string {
+	var names []string
+	for _, o := range observed {
+		if o.Kind == provision.KindTasksQueue {
+			names = append(names, o.Name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	out := fmt.Sprintf("  NAME REUSE — Cloud Tasks blocks recreating these queue names for %d days:\n", gcp.QueueNameReuseDays)
+	for _, n := range names {
+		out += fmt.Sprintf("    %s\n", n)
+	}
+	out += "    redeploying this app sooner needs a different --env\n"
+	return out
 }
 
 func countKind(observed []provision.Observed, kind provision.Kind) int {

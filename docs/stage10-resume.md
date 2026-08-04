@@ -4,7 +4,7 @@ Written 2026-08-04 before a context clear. Everything here is verified
 state, not recollection; where something is unverified it says so.
 
 **Status: Z1–Z4 are done agent-side and await the owner's verdicts.
-Z5 is two-thirds done (§2). Z6 is removed. Z7 is proposed, unapproved.
+Z5 is DONE (§2). D1/D2 are fixed; FA1–FA4 are proposed, unapproved. Z6 is removed. Z7 is proposed, unapproved.
 FL1–FL4 (§4) are proposed, unapproved, and are the work Z6 now waits
 on. §5's open question is ANSWERED (see §5).**
 
@@ -75,13 +75,11 @@ From the plan. Three items, one commit, no human gate — **except** the
 error text, whose wording needs approval like any other user-facing
 string.
 
-1. **Cloud Tasks' 7-day name-reuse block.** Redeploying after a destroy
-   fails with Google's raw `a queue with this name existed too recently`.
-   tako should name the wait and suggest `--env`. **STILL OPEN — the
-   proposal is written (task log, 2026-08-04) and awaits wording
-   approval.** It carries one call for the owner: whether `tako destroy`
-   should also warn before the delete, which is the only moment the fact
-   can still change a decision.
+1. **Cloud Tasks' 7-day name-reuse block — DONE.** The deploy names the
+   wait and suggests `--env`, and `tako destroy` warns in its preview
+   ahead of the confirmation prompt (both approved 2026-08-04). The
+   error alone arrives after the clock has started, which is why the
+   warning was the more important half.
 2. **gofmt — DONE (by verification).** `gofmt -l .` prints nothing;
    `analyzer.go` and `edges.go` were formatted at some point after the
    item was logged.
