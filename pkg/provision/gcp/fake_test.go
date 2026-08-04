@@ -355,6 +355,43 @@ func TestReadOnlyPostsAreRetried(t *testing.T) {
 	}
 }
 
+// A mutation Google defines as idempotent is retried too, and this is
+// the whole reason that third list exists. :generateServiceIdentity is
+// the case: it creates a service agent, so it is not a read, but it
+// answers with the existing agent when there is one — and it shipped in
+// Z2b unclassified, which meant a 429 from serviceusage (an API that
+// rate-limits reads aggressively) would have killed a deploy on a call
+// that was safe to send again.
+func TestIdempotentMutationsAreRetried(t *testing.T) {
+	old := retryBackoff
+	retryBackoff = []time.Duration{time.Millisecond}
+	t.Cleanup(func() { retryBackoff = old })
+
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			w.WriteHeader(429)
+			_, _ = w.Write([]byte(`{"error":{"message":"Quota exceeded"}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"response":{"email":"service-1@gcp-sa-monitoring-notification.iam.gserviceaccount.com"}}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := &Client{HC: srv.Client(), Project: "p", Region: "us-central1", Base: srv.URL}
+
+	email, err := c.EnsureServiceIdentity(context.Background(), MonitoringNotificationAgent)
+	if err != nil {
+		t.Fatalf("a 429 on an idempotent mutation must be retried: %v", err)
+	}
+	if calls != 2 {
+		t.Errorf("%d call(s), want 2 — the service-agent call was not retried", calls)
+	}
+	if !strings.Contains(email, "gcp-sa-monitoring-notification") {
+		t.Errorf("email = %q — the retry must still return the agent address", email)
+	}
+}
+
 // The allowlist is a list, not a pattern: a colon-suffixed POST that
 // MUTATES must still fail fast, or a retried :commit writes twice.
 func TestMutatingCustomMethodsAreNotRetried(t *testing.T) {
@@ -435,8 +472,9 @@ func TestRetryResendsTheBody(t *testing.T) {
 	}
 }
 
-// Every colon-suffixed POST in the tree must be CLASSIFIED — either as
-// a read that may be retried or as a mutation that may not. The
+// Every colon-suffixed POST in the tree must be CLASSIFIED — as a read
+// that may be retried, a mutation that may not, or a mutation that
+// Google defines as idempotent and so may. The
 // allowlist was first written by eyeballing a few call sites and missed
 // two reads (logging's entries:list, datastore's :lookup); the second
 // one surfaced as a 429 that killed `tako logs` mid-investigation, the
@@ -447,6 +485,9 @@ func TestRetryResendsTheBody(t *testing.T) {
 func TestEveryCustomMethodPostIsClassified(t *testing.T) {
 	classified := map[string]bool{}
 	for _, v := range readOnlyVerbs {
+		classified[v] = true
+	}
+	for _, v := range idempotentMutatingVerbs {
 		classified[v] = true
 	}
 	for _, v := range mutatingVerbs {
@@ -490,7 +531,7 @@ func TestEveryCustomMethodPostIsClassified(t *testing.T) {
 	}
 	for v, where := range seen {
 		if !classified[v] {
-			t.Errorf("custom method %q (%s) is neither in readOnlyVerbs nor mutatingVerbs — "+
+			t.Errorf("custom method %q (%s) is in none of readOnlyVerbs, idempotentMutatingVerbs, mutatingVerbs — "+
 				"decide whether re-sending it is safe; an unclassified POST silently gets no retry", v, where)
 		}
 	}

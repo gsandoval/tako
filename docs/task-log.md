@@ -13502,3 +13502,157 @@ deciding that framework-internal metrics are deliberately unreachable —
 their names and labels are tako's implementation detail, and exposing
 them makes them API. That second position is defensible and should not
 be dismissed for tidiness.
+
+## Z5 — housekeeping, and one item that was not on the list (2026-08-04)
+
+The plan gives Z5 three items. Two of them were already done and needed
+verifying rather than doing; a fourth was found by running the suite,
+which the resume brief recorded as green and which was not.
+
+### The suite was red at HEAD
+
+`go test ./...` fails at `8dc9de4` on
+`pkg/provision/gcp.TestEveryCustomMethodPostIsClassified`:
+
+```
+--- FAIL: TestEveryCustomMethodPostIsClassified (0.00s)
+    fake_test.go:493: custom method ":generateServiceIdentity" (identity.go) is neither in
+    readOnlyVerbs nor mutatingVerbs — decide whether re-sending it is safe; an unclassified
+    POST silently gets no retry
+```
+
+Not a flake and not a docs-commit casualty: `identity.go` arrived in
+`fc2e889` (Z2b), so the tree has been red for three commits and the two
+commits after it recorded a green suite it did not have. **Worth
+noticing on its own** — the guard worked exactly as designed (it exists
+so a new custom method cannot ship without a retry decision) and was
+then not run before committing.
+
+The verdict it was asking for: `:generateServiceIdentity` **is** safe to
+re-send. It is a mutation — it provisions a Google service agent — but
+it answers with the existing agent when there is one, which is why the
+deploy calls it unconditionally rather than checking first. So neither
+list fit: filing it under `readOnlyVerbs` would make a list documented
+as "verbs known to be reads" untrue, and filing it under `mutatingVerbs`
+would deny a retry that is safe, on a serviceusage call in the deploy's
+critical path — serviceusage being precisely the sort of API that
+answers 429.
+
+Fixed by naming the third category rather than bending one of the two:
+`idempotentMutatingVerbs`, consulted by `idempotent()` alongside the
+reads, with the argument for each member recorded at the member. The
+completeness test now classifies against all three. A behaviour test
+(`TestIdempotentMutationsAreRetried`) drives the real
+`EnsureServiceIdentity` through a 429 and asserts two calls and the
+agent address surviving the retry — so the decision is pinned by what
+the code does, not only by list membership.
+
+### gofmt — already clean
+
+`gofmt -l .` prints nothing. `analyzer.go` and `edges.go` were
+formatted at some point after the item was logged (2026-08-01); the
+item is closed by verification, not by an edit.
+
+### The stage table — already current
+
+`docs/tako-agent-plan.md` §"Stages 5–9 (closed…)" carries the five-row
+table. Brought current in Z2b as the resume brief says; verified, not
+redone.
+
+### Discovered work (unscheduled)
+
+- Nothing new. The retry classification above was discovered work from
+  Z2b and is closed here rather than logged forward.
+
+## Z5 — DX proposal: the Cloud Tasks name-reuse wait (2026-08-04) — AWAITING APPROVAL
+
+The last Z5 item is a user-facing error text, so it stops here for
+wording approval like any other.
+
+### The failure
+
+Cloud Tasks blocks reusing a deleted queue's name for 7 days. Any
+destroy-then-redeploy inside that window cannot converge: the deploy
+dies creating a queue whose name it just released. Hit during the T3
+walk (2026-08-01) and worked around with `--env u1` throughout.
+
+Today `tasks.go` `Create` hands the failure to `Classify`, which has no
+arm for it, so the user gets the fall-through:
+
+```
+create the tasks queue: <Google's message> (HTTP 400 from cloudtasks.googleapis.com)
+```
+
+Google's message says the queue existed too recently. It does not say
+how long the wait is, does not say when the clock started, and does not
+say that another environment sidesteps it — all three of which tako
+knows and the user does not.
+
+**One honesty note about the matcher.** The T3 log paraphrases Google's
+text rather than quoting it (`a queue with this name existed too
+recently`), and no verbatim transcript survives. The match is therefore
+on the shortest fragment both the paraphrase and Google's documented
+wording share, lowercased: `existed too recently`. If the live text has
+drifted, the arm silently does not fire and the user gets today's
+message — a miss, never a wrong answer.
+
+### Proposed text
+
+```
+cannot recreate the tasks queue "u1-mailer-tako" — Cloud Tasks blocks reusing a
+deleted queue's name for 7 days after the delete, and this name is still inside
+that window. tako cannot work around it: either wait, or deploy under another
+environment, whose queues get fresh names — tako deploy --env <name>
+```
+
+Deliberate choices in that wording:
+
+- **"cannot recreate"**, not "cannot create". The user is redeploying
+  something that existed; saying "create" invites them to look for a
+  name collision with something live.
+- **No countdown.** Google's error carries no delete timestamp, so tako
+  cannot say "4 days left" without inventing it. It names the length of
+  the wait and where the clock starts, which is everything it actually
+  knows.
+- **"tako cannot work around it"** pre-empts the next question. There is
+  no force flag to look for; the block is Google's and there is no API
+  to shorten it.
+- **`--env <name>` and not a specific name.** The suggestion is a
+  different environment, not a blessed scratch one.
+
+### The call worth making, and my recommendation
+
+**Should `tako destroy` warn before the delete, not just the redeploy
+after it?** Recommended: **yes**. The error above arrives at the only
+moment the information is useless — the queue is already gone and the
+7 days already running. Destroy's preview already prints every object
+and a `DATA — deleted with the app, gone forever` block, and the
+confirmation prompt is still ahead of the user, so one line in that
+preview is where the fact can still change a decision:
+
+```
+  NAME REUSE — Cloud Tasks blocks recreating these queue names for 7 days:
+    u1-mailer-tako
+```
+
+Printed only when the observed set contains a tasks queue. If that is
+out of scope for a housekeeping slice, say so and only the error text
+ships — but the error alone closes the item as written while leaving the
+avoidable version of the problem in place.
+
+### Tests
+
+- `TestClassifyTaxonomy`-style case pinning the new message on a 400
+  carrying the fragment, asserting the three load-bearing parts:
+  `cannot recreate the tasks queue`, `7 days`, `--env`.
+- A negative case: an unrelated 400 from cloudtasks still falls through
+  to today's message, so the arm cannot swallow other failures.
+- If the destroy warning is approved, a preview test asserting the line
+  appears with a tasks queue observed and is absent without one.
+
+### Cloud errors & permissions
+
+No new permissions and no new call — this reads a failure the deploy
+already receives. No preflight is possible: name reuse is only knowable
+by attempting the create, since Google exposes no "is this name
+available" endpoint and no listing of recently-deleted names.

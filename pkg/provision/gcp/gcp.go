@@ -128,6 +128,25 @@ var readOnlyVerbs = []string{
 	":list",                // logging entries:list, and AIP's list verb generally
 }
 
+// idempotentMutatingVerbs are the colon-suffixed POSTs that DO change
+// something and are still safe to re-send, because Google defines them
+// as returning the existing object rather than making a second one.
+//
+// They are a separate list rather than an entry in readOnlyVerbs
+// because "changes nothing" and "safe to retry" are different claims,
+// and only the second is what idempotent() asks. Filing an idempotent
+// mutation as a read would make the read list a lie, and filing it as a
+// mutation would deny a retry that is safe — so the argument for each
+// member is recorded here, one at a time.
+var idempotentMutatingVerbs = []string{
+	// Provisions a Google service agent and returns the existing one if
+	// it is already there (identity.go), which is why the deploy calls
+	// it unconditionally instead of checking first. serviceusage is
+	// exactly the kind of API that answers 429, and this call sits in
+	// the deploy's critical path.
+	":generateServiceIdentity",
+}
+
 // mutatingVerbs are the colon-suffixed POSTs that must NOT be retried,
 // listed so the completeness test can tell "classified as mutating"
 // apart from "nobody has looked at it yet". A retried :commit writes
@@ -145,7 +164,8 @@ var mutatingVerbs = []string{
 // DELETE are by definition; PUT is how the Pub/Sub APIs express "make
 // this exist with this shape", which is also safe to repeat. A POST is
 // not — a retried create can make two of something — UNLESS its URL
-// names one of Google's read-only custom methods above.
+// names one of the custom methods above that reads, or mutates
+// idempotently.
 //
 // That exception is not a nicety. The 2026-08-02 X2 release walk died
 // in preflight on `429 Quota exceeded for quota metric 'Read requests'`
@@ -161,6 +181,11 @@ func idempotent(method, url string) bool {
 		return false
 	}
 	for _, verb := range readOnlyVerbs {
+		if strings.HasSuffix(url, verb) {
+			return true
+		}
+	}
+	for _, verb := range idempotentMutatingVerbs {
 		if strings.HasSuffix(url, verb) {
 			return true
 		}
