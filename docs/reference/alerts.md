@@ -140,6 +140,7 @@ window.**
 tako.WhenAbove(uploads.Rate(), 100, tako.Window{For: 5 * time.Minute})
 tako.WhenBelow(uploads.Count(), 1, tako.Window{For: 30 * time.Minute, Every: 30 * time.Minute})
 tako.WhenAbove(thumbMs.Percentile(0.99), 2000, tako.Window{For: 10 * time.Minute})
+tako.WhenAtLeast(deadLetters.Count(), 1, tako.Window{Every: 5 * time.Minute})
 tako.WhenAbsent(uploads.Count(), tako.Window{For: 26 * time.Hour, Every: time.Hour})
 ```
 
@@ -205,6 +206,56 @@ They carry a `route` label that is **never populated** for an ordinary
 service — measured across 88 series, empty on every one — so alerting
 per endpoint is impossible from platform metrics alone. That is why tako
 writes its own.
+
+### Reading tako's own request metrics
+
+The same reading methods a declared Counter or Histogram carries, on the
+metrics every service records for you:
+
+```go
+tako.WhenAbove(tako.Requests(Boom).Rate(), 100, w)
+tako.WhenAbove(tako.Requests(Boom).Status("5xx").Fraction(), 0.05, w)
+tako.WhenAtLeast(tako.Requests(Boom).Status("5xx").Count(), 1, w)
+tako.WhenAbove(tako.RequestMs(Slow).Percentile(0.5), 1000, w)
+tako.WhenAbsent(tako.Requests(Sweep).Count(), w)
+```
+
+| on | readings |
+|---|---|
+| `tako.Requests(t)` | `.Rate()`, `.Count()`, `.Fraction()` — and `.Status(class)` to narrow |
+| `tako.RequestMs(t)` | `.Rate()`, `.Count()`, `.Sum()`, `.Mean()`, `.Percentile(q)` |
+
+The target supplies the scoping — `namespace`, `job`, and the route when
+you name one endpoint or one cron. That is the half you could not write:
+`namespace` is `<app>-<env>` and does not exist until a deploy picks an
+environment.
+
+`Status` takes a CLASS. `Status("503")` is refused
+(`tako/status-class`), because tako records `5xx` and a query for `503`
+would deploy clean and match nothing.
+
+`Fraction` is this slice over ALL requests to the same target — the
+denominator is the same selector without the `Status` narrowing. It
+needs a `Status` to mean anything, and the analyzer says so.
+
+**Every preset is now expressible.** That is checked, not claimed:
+`pkg/provision/testdata/twins` declares each preset beside its
+hand-written twin, and a test asserts the two compile to identical
+PromQL. So `tako alerts` showing you `from tako.RequestsSlow` is an
+invitation you can actually take:
+
+```go
+tako.RequestsSlow(Boom, 2*time.Second, 0.99, w)              // the preset
+tako.WhenAbove(tako.RequestMs(Boom).Percentile(0.99), 2000, w) // the same query
+```
+
+Which means the interesting version is the one the preset cannot say —
+a p50 instead of a p99, a 4xx share instead of 5xx, a count instead of a
+ratio.
+
+Use `WhenAtLeast` for counts of discrete events. The counting presets
+compile `>= n`, and `WhenAbove` compiles `> n`: a fork of
+`QueueBacklogged(work, 50, w)` written with `WhenAbove` needs 51.
 
 ### Google's own metrics
 

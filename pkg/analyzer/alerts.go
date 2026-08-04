@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsandoval/tako/internal/metrics"
+
 	"golang.org/x/tools/go/packages"
 )
 
@@ -368,6 +370,8 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 		spec.Op = "above"
 	case "WhenBelow":
 		spec.Op = "below"
+	case "WhenAtLeast":
+		spec.Op = "atleast"
 	case "WhenAbsent":
 		spec.Op = "absent"
 	default:
@@ -418,12 +422,19 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 		}
 	}
 
+	// tako.Requests(Boom).Status("5xx").Rate(): a reading method whose
+	// receiver is a CHAIN back to a framework-metric constructor rather
+	// than a declared handle.
+	if readFrameworkMetric(dir, pkg, metric, spec, handlersByVar, resVars, endpointVars, errs) {
+		return spec.Framework != ""
+	}
+
 	ctor := sdkConstructor(pkg, metric)
 	m, isScoped := scopedMetrics[ctor]
 	if !isScoped {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, metric.Pos()),
-			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / tako.PlatformMetric",
+			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)), on tako.Requests / tako.RequestMs, or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / tako.PlatformMetric",
 			Rule: "alert-condition",
 		})
 		return false
@@ -491,6 +502,129 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 		spec.Matchers = append(spec.Matchers, mm)
 	}
 	return true
+}
+
+// frameworkReadings are the reading methods each request handle carries.
+// Data rather than a switch, so a method cannot be added to the SDK
+// without saying which metric it reads and whether it is legal there —
+// RequestMs has no Fraction and Requests has no Percentile, and both
+// facts belong in one place.
+var frameworkReadings = map[string]map[string]string{
+	"Requests": {
+		"Rate": "rate", "Count": "count", "Fraction": "fraction",
+	},
+	"RequestMs": {
+		"Rate": "rate", "Count": "count", "Sum": "sum",
+		"Mean": "mean", "Percentile": "percentile",
+	},
+}
+
+// frameworkMetricNames maps the SDK constructor to the metric it reads.
+var frameworkMetricNames = map[string]string{
+	"Requests":  metrics.RequestsName,
+	"RequestMs": metrics.RequestMsName,
+}
+
+// readFrameworkMetric resolves tako.Requests(x)[.Status(c)].Reading().
+//
+// It reports whether the expression WAS one of these — not whether it
+// was valid — so a malformed chain produces an error here rather than
+// falling through to "that is not a tako reading", which would name the
+// wrong problem.
+func readFrameworkMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *AlertCondition,
+	handlersByVar map[string]*Handler, resVars map[types.Object]resRef,
+	endpointVars map[types.Object]string, errs *ErrorList) bool {
+
+	sel, ok := metric.Fun.(*ast.SelectorExpr)
+	if !ok {
+		return false
+	}
+	method := sel.Sel.Name
+	// Unwind the chain to its constructor, collecting the narrowing on
+	// the way down.
+	status := ""
+	cur, _ := sel.X.(*ast.CallExpr)
+	var ctor string
+	for cur != nil {
+		c := sdkConstructor(pkg, cur)
+		if _, isFramework := frameworkMetricNames[c]; isFramework {
+			ctor = c
+			break
+		}
+		if c == "" {
+			// A method on something else entirely.
+			inner, isCall := cur.Fun.(*ast.SelectorExpr)
+			if !isCall {
+				return false
+			}
+			if inner.Sel.Name != "Status" {
+				return false
+			}
+			if len(cur.Args) > 0 {
+				if v, err := constString(pkg, cur.Args[0]); err == nil {
+					status = v
+				}
+			}
+			cur, _ = inner.X.(*ast.CallExpr)
+			continue
+		}
+		return false
+	}
+	if ctor == "" {
+		return false
+	}
+
+	// A method the handle does not have cannot reach here: RequestsHandle
+	// and RequestMsHandle are distinct types, so the compiler refuses
+	// Requests(x).Percentile(…) and RequestMs(x).Fraction() before the
+	// analyzer loads the package. The table maps names to readings; it
+	// does not need to police them.
+	reading, isReading := frameworkReadings[ctor][method]
+	if !isReading {
+		return false
+	}
+	if len(cur.Args) == 0 {
+		return true
+	}
+	spec.SubjectKind, spec.SubjectName, spec.SubjectVar = resolveSubject(pkg, cur.Args[0], handlersByVar, resVars, endpointVars)
+	spec.Reading = reading
+	spec.Framework = frameworkMetricNames[ctor]
+	spec.Status = status
+	if method == "Percentile" && len(metric.Args) > 0 {
+		spec.Quantile = constFloat(pkg, metric.Args[0])
+	}
+	if status != "" && !validStatusClass(status) {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, metric.Pos()),
+			Msg: fmt.Sprintf("tako records a status CLASS, not a code — Status(%q) matches nothing; use one of %s",
+				status, orList(metrics.StatusClasses)),
+			Rule: "status-class",
+		})
+	}
+	if reading == "fraction" && status == "" {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, sel.Sel.Pos()),
+			Msg:  "tako.Requests(…).Fraction() with no Status is every request over every request, which is always 1 — narrow it, e.g. Requests(x).Status(\"5xx\").Fraction()",
+			Rule: "alert-condition",
+		})
+	}
+	return true
+}
+
+func validStatusClass(s string) bool {
+	for _, v := range metrics.StatusClasses {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+func orList(vs []string) string {
+	if len(vs) < 2 {
+		return strings.Join(vs, "")
+	}
+	return strings.Join(vs[:len(vs)-1], ", ") + " or " + vs[len(vs)-1]
 }
 
 // resolveSubject reports what a condition argument names.

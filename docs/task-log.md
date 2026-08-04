@@ -14172,3 +14172,101 @@ redeploy happen inside the same week, and worth checking then.
 verbatim from the tests. `docs/reference/cli.md`'s confirmation-ladder
 section points at it — that section is about friction scaling with
 irreversibility, and this is the least reversible thing a destroy does.
+
+## FA1–FA4 — built (2026-08-04)
+
+Approved by the owner, who also directed FA before FL. Landed as three
+commits: FA1, FA2, then FA3+FA4 together (FA4 is one constructor and the
+twin test needs it, so splitting them would have shipped a test that
+could not pass).
+
+### FA1 — the metric contract, and what it found on the way in
+
+`internal/metrics` is now the single definition. Verified by mutation
+rather than assumed: spelling `job` as `job_name` and `5xx` as `500`
+both fail the agreement test. It reads the RENDERED golden rather than
+the code that builds it, because the golden is what Cloud Monitoring
+evaluates.
+
+One drift found immediately: the descriptor documented `status` as
+"2xx, 3xx, 4xx, 5xx" while the runtime has always been able to emit
+`1xx`. Harmless, and exactly the kind of thing that is invisible until
+something depends on it.
+
+Honest about reach: it covers tako's own metrics only. A wrong label on
+a Google metric — which `response_class="2xx"` was — is still only
+catchable live.
+
+### FA2 — `tako alerts`
+
+`AlertCondition` gains `Ctor`, so the command can say which call
+produced a query. Derived in the analyzer rather than reconstructed
+downstream from the reading: a second reading→constructor table would be
+free to drift from the first, which is the failure FA1 was about.
+
+`DescribeAlerts` is one renderer used by both the command and the siren
+golden, so the artifact this repo reads and the output a user reads
+cannot disagree.
+
+### FA3 — one deviation from the approved proposal, and why
+
+**The proposal said `tako.Ratio(a, b Metric) Metric`. What shipped is
+`Requests(t).Status(c).Fraction()`.** Flagging it rather than burying
+it: this is a smaller surface than was approved.
+
+The reasons, in order of weight:
+
+1. **No example demands the general form.** The standing rule is no
+   feature without an example demanding it, and nothing in the five
+   examples divides two unrelated metrics. `Fraction` is demanded by
+   siren's `Rejecting`; a general `Ratio` would have shipped on an
+   argument rather than a need.
+2. **It delivers strictly more than the preset.** `RequestsErroring` is
+   hard-wired to 5xx. `Status("4xx").Fraction()` is a question no preset
+   can ask, which is the whole point of the slice.
+3. **The general form needs a nested graph node.** `Ratio(x, y)` means
+   `AlertCondition` carries two child conditions, and every consumer —
+   query, sentence, preflight, `tako alerts` — grows a recursive case.
+   That is a real cost for a shape nothing has asked for.
+
+`Ratio` remains available later if a second example needs a ratio of
+genuinely different metrics. Say so if you want it now instead.
+
+### What the twin test found
+
+`testdata/twins` declares each preset beside its hand-written
+replacement and asserts identical PromQL. It caught a real gap on the
+first run: `Requests(cron)` did not scope to the cron's synthetic route,
+so the twin of `CronMissed` read the whole service — a query that looks
+almost right and answers a different question. Fixed by deriving the
+cron route the same way the presets do.
+
+Six presets now restate character for character: RequestsErroring,
+RequestsSlow, CronMissed, CronFailed, ServiceAtCapacity, QueueBacklogged.
+
+A preset with no twin is REPORTED by that test rather than silently
+skipped, so coverage cannot erode without someone seeing it.
+
+### A defect fixed in passing
+
+`trimZeros` trimmed significant zeros: a p50 rendered as **"p5"** and a
+p90 as "p9". It has done that to every `ServicePercentile` sentence
+since Z3 — a page naming the wrong quantile at 3am. Found because
+siren's new `Sagging` is a p50; a p99 has no trailing zero to lose,
+which is why nothing caught it before.
+
+### API change
+
+`testdata/sdk_lock.golden` gains 14 lines: `Requests`, `RequestMs`,
+their handles and readings, and `WhenAtLeast`. This IS the API task, so
+the lock was updated deliberately — the test asks for it to be called
+out, and this is that.
+
+### Discovered work (unscheduled)
+
+- **A `Count` reading with `Op == absent` is made to state an `Every`
+  it never uses.** `WhenAbsent(x.Count(), Window{For: …})` is refused
+  until a counting period is added, and the absent path uses `For` as
+  the lookback and ignores it. Visible in `testdata/twins`, where the
+  twin of `CronMissed` carries an `Every` for no reason. The rule should
+  exempt absences.

@@ -625,6 +625,75 @@
       "pos": "alerts.go:248:2"
     },
     {
+      "kind": "alert",
+      "name": "Rejecting",
+      "var": "siren.Rejecting",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "route",
+        "subject_name": "GET /boom",
+        "subject_var": "siren.Boom",
+        "reading": "fraction",
+        "threshold": 0.25,
+        "for_seconds": 120,
+        "framework": "requests",
+        "status": "4xx",
+        "ctor": "WhenAbove"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:273:2"
+    },
+    {
+      "kind": "alert",
+      "name": "Sagging",
+      "var": "siren.Sagging",
+      "package": "siren",
+      "condition": "WhenAbove",
+      "alert": {
+        "op": "above",
+        "subject_kind": "route",
+        "subject_name": "GET /slow",
+        "subject_var": "siren.Slow",
+        "reading": "percentile",
+        "quantile": 0.5,
+        "threshold": 1000,
+        "for_seconds": 120,
+        "framework": "request_ms",
+        "ctor": "WhenAbove"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:280:2"
+    },
+    {
+      "kind": "alert",
+      "name": "AnyFailure",
+      "var": "siren.AnyFailure",
+      "package": "siren",
+      "condition": "WhenAtLeast",
+      "alert": {
+        "op": "atleast",
+        "subject_kind": "route",
+        "subject_name": "GET /boom",
+        "subject_var": "siren.Boom",
+        "reading": "count",
+        "threshold": 1,
+        "every_seconds": 300,
+        "framework": "requests",
+        "status": "5xx",
+        "ctor": "WhenAtLeast"
+      },
+      "channels": [
+        "siren.oncall"
+      ],
+      "pos": "alerts.go:291:2"
+    },
+    {
       "kind": "queue",
       "name": "work",
       "var": "siren.work",

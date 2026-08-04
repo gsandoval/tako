@@ -249,3 +249,46 @@ var (
 		tako.WhenAbsent(tako.ServiceInstances(Grind),
 			tako.Window{For: 10 * time.Minute}), oncall)
 )
+
+// ── the raw readings of tako's own request metrics ──────────────────
+//
+// These are here because the presets CANNOT say them, which is the only
+// reason anything ships. Each one is a step off a preset in a direction
+// the preset does not turn:
+//
+//   - RequestsErroring is hard-wired to 5xx. Clients sending malformed
+//     requests is a different incident with a different owner, and no
+//     preset asks about it.
+//   - RequestsSlow takes a quantile but always compares milliseconds at
+//     that quantile. "The median got slow" is a saturation signal where
+//     a p99 is a tail signal, and both are real.
+//   - Nothing counts requests. RequestsErroring is a ratio, so a service
+//     serving ten errors out of ten requests and one out of one look
+//     identical to it.
+
+var (
+	// A client-error spike on the endpoint that takes input. 4xx is not
+	// a service failure, which is exactly why no preset covers it — and
+	// why it pages a different person.
+	Rejecting = tako.Alert(
+		tako.WhenAbove(tako.Requests(Boom).Status("4xx").Fraction(), 0.25,
+			tako.Window{For: 2 * time.Minute}), oncall)
+
+	// The median, not the tail. RequestsSlow(Slow, …, 0.99) is already
+	// declared above; when the p50 moves too, the whole service is
+	// saturated rather than a few requests being unlucky.
+	Sagging = tako.Alert(
+		tako.WhenAbove(tako.RequestMs(Slow).Percentile(0.5), 1000,
+			tako.Window{For: 2 * time.Minute}), oncall)
+
+	// One 5xx is one too many, counted rather than rationed. Erroring
+	// above watches the same endpoint as a FRACTION, so ten errors out
+	// of ten requests and one out of one look identical to it; this
+	// fires on the first.
+	//
+	// WhenAtLeast rather than WhenAbove: "at least one" means one, and
+	// WhenAbove(…, 1) would quietly need two.
+	AnyFailure = tako.Alert(
+		tako.WhenAtLeast(tako.Requests(Boom).Status("5xx").Count(), 1,
+			tako.Window{Every: 5 * time.Minute}), oncall)
+)

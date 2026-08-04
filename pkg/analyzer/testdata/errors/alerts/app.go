@@ -71,3 +71,19 @@ var (
 		tako.PlatformMetric("pubsub.googleapis.com/topic/byte_cost",
 			`monitored_resource="pubsub_topic"`), 1, tako.Window{For: time.Minute}), oncall)
 )
+
+// The request readers: a status CLASS, not a code, and a Fraction that
+// narrows to something. Both are queries that would deploy clean and
+// match nothing.
+//
+// A reading a handle does not have — RequestMs(x).Fraction() — needs no
+// rule here: the handles are distinct types, so the compiler refuses it
+// before the analyzer runs. That is the better guard, and it is why
+// there is no "no such reading" message to test.
+var (
+	BadStatus = tako.Alert(tako.WhenAbove(
+		tako.Requests(Photos).Status("503").Rate(), 1, tako.Window{For: time.Minute}), oncall)
+
+	WholeFraction = tako.Alert(tako.WhenAbove(
+		tako.Requests(Photos).Fraction(), 0.5, tako.Window{For: time.Minute}), oncall)
+)

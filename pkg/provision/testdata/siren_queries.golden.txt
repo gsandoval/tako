@@ -1,3 +1,7 @@
+AnyFailure
+  siren/x1: 5xx requests on GET /boom reached 1
+  sum(increase(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /boom",status="5xx"}[300s])) >= 1
+
 Billing
   siren/x1: topic/byte_cost is above 1
   max(pubsub_googleapis_com:topic_byte_cost{monitored_resource="pubsub_topic"}) > 1
@@ -73,6 +77,14 @@ Pushing
 Quiet
   siren/x1: hits per second is below 0.01
   (sum(rate(custom_googleapis_com:tako_hits{monitored_resource="generic_task",namespace="siren-x1"}[60s])) or vector(0)) < 0.01
+
+Rejecting
+  siren/x1: 4xx share of GET /boom is above 0.25
+  sum(rate(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /boom",status="4xx"}[60s])) / sum(rate(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /boom"}[60s])) > 0.25
+
+Sagging
+  siren/x1: GET /slow p50 is above 1000ms
+  histogram_quantile(0.5, sum(rate(custom_googleapis_com:tako_request_ms_bucket{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="GET /slow"}[60s])) by (le)) > 1000
 
 Slowing
   siren/x1: GET /slow is slow

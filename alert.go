@@ -159,6 +159,122 @@ func (h *HistogramHandle) Percentile(q float64) Metric {
 	return derived{ref: metricRef{kind: "histogram", name: h.name, agg: "percentile", q: q}}
 }
 
+// ── tako's own request metrics, as readings ─────────────────────────
+//
+// Every service records requests and request_ms without being asked, and
+// until now only the presets could reach them: RequestsErroring and
+// RequestsSlow read them, and nothing in the raw vocabulary could. That
+// made the presets a ceiling rather than a starting point — the moment a
+// question was one step off a preset, there was nowhere to go.
+//
+// The gap was never NAMING. PlatformMetric could already spell
+// custom.googleapis.com/tako/requests. It was reduction and scoping:
+// the raw Google-metric path offers exactly one reduction, max(), where
+// these need a rate, an increase or a quantile — and the `namespace`
+// label is <app>-<env>, a value that does not exist until a deploy picks
+// an environment, so no hand-written matcher could be right.
+//
+// So these take a tako object and carry the SAME reading methods a
+// declared Counter or Histogram carries. No second vocabulary: what you
+// know about uploads.Rate() is what you know about Requests(Boom).Rate().
+
+// RequestsHandle reads the request COUNTER for one target.
+type RequestsHandle struct {
+	subject metricRef
+	status  string
+}
+
+// RequestMsHandle reads the request-latency HISTOGRAM for one target.
+type RequestMsHandle struct {
+	subject metricRef
+}
+
+// Requests counts what a service, handler, endpoint or site served.
+//
+//	tako.WhenAbove(tako.Requests(Boom).Rate(), 100, w)
+//	tako.WhenAbsent(tako.Requests(Sweep).Count(), w)  // it has not run
+//
+// The reading is named even for an absence, exactly as it is for a
+// declared Counter: WhenAbsent(uploads.Count(), w) reads the same way.
+// Absence ignores the reduction — it asks whether the series exists at
+// all — but one grammar for every condition beats an exception.
+//
+// The target supplies the env-prefixed scoping — namespace and job, and
+// the route when the target is one endpoint — which is the half that
+// cannot be written by hand at declaration time.
+func Requests(t Target) *RequestsHandle {
+	return &RequestsHandle{subject: t.alertTarget()}
+}
+
+// Status narrows to one response class: "2xx", "3xx", "4xx", "5xx".
+//
+// The class, not the code. tako records a class because three digits
+// would be three times the series for a distinction almost no alert
+// draws, so `Status("503")` matches nothing — the analyzer refuses it
+// rather than letting it deploy quiet.
+func (r *RequestsHandle) Status(class string) *RequestsHandle {
+	out := *r
+	out.status = class
+	return &out
+}
+
+// Rate is requests per second, summed across instances.
+func (r *RequestsHandle) Rate() Metric { return r.reading("rate") }
+
+// Count is how many requests landed in the window.
+func (r *RequestsHandle) Count() Metric { return r.reading("count") }
+
+// Fraction is this slice of requests as a share of ALL requests to the
+// same target — what RequestsErroring computes, with the class as yours
+// to choose.
+//
+//	tako.WhenAbove(tako.Requests(Boom).Status("5xx").Fraction(), 0.05, w)
+//
+// The denominator is the same selector without the Status narrowing,
+// which is what makes this a share rather than two unrelated numbers
+// divided. It is meaningless without a Status, and the analyzer says so.
+func (r *RequestsHandle) Fraction() Metric { return r.reading("fraction") }
+
+func (r *RequestsHandle) reading(agg string) Metric {
+	ref := r.subject
+	ref.kind, ref.agg, ref.name = "requests", agg, r.status
+	return derived{ref: ref}
+}
+
+// RequestMs times the same requests, in milliseconds.
+//
+//	tako.WhenAbove(tako.RequestMs(Slow).Percentile(0.99), 2000, w)
+//
+// No Status: tako does not split the latency distribution by response
+// class, because a p99 per class answers a question nobody asks and
+// multiplies the series by five.
+func RequestMs(t Target) *RequestMsHandle {
+	return &RequestMsHandle{subject: t.alertTarget()}
+}
+
+// Rate is requests per second, read off the distribution's count.
+func (r *RequestMsHandle) Rate() Metric { return r.reading("rate", 0) }
+
+// Count is how many requests were timed in the window.
+func (r *RequestMsHandle) Count() Metric { return r.reading("count", 0) }
+
+// Sum is total milliseconds spent serving, over the window.
+func (r *RequestMsHandle) Sum() Metric { return r.reading("sum", 0) }
+
+// Mean is the average request in milliseconds. Prefer Percentile: a mean
+// hides the tail that wakes you up.
+func (r *RequestMsHandle) Mean() Metric { return r.reading("mean", 0) }
+
+// Percentile is the q-quantile in milliseconds, q in (0,1) — what
+// RequestsSlow reads, with the quantile and threshold yours.
+func (r *RequestMsHandle) Percentile(q float64) Metric { return r.reading("percentile", q) }
+
+func (r *RequestMsHandle) reading(agg string, q float64) Metric {
+	ref := r.subject
+	ref.kind, ref.agg, ref.q = "request_ms", agg, q
+	return derived{ref: ref}
+}
+
 // derived is a metric expression tako writes the query for.
 type derived struct{ ref metricRef }
 
@@ -347,6 +463,22 @@ func WhenAbove(m Metric, threshold float64, w Window) Condition {
 // is no traffic — but it is why For is the knob that matters here.
 func WhenBelow(m Metric, threshold float64, w Window) Condition {
 	return Condition{op: "below", subject: m.metricSubject(), threshold: threshold, window: w}
+}
+
+// WhenAtLeast holds while the metric is at or above n over the window.
+//
+// It exists because the counting presets compile ">= n" and WhenAbove
+// compiles "> n". Rewriting QueueBacklogged(work, 50, w) by hand with
+// WhenAbove produces a condition that needs 51 — under-reporting, which
+// is the direction nobody notices, and the exact off-by-one the atleast
+// operator was introduced to fix. A vocabulary you are invited to fork
+// into has to be able to say what the thing you forked said.
+//
+// Use it for counts of discrete events ("at least one dead letter", "at
+// least 3 failures"); WhenAbove is right for rates and ratios, where
+// "exceeds" is what you mean.
+func WhenAtLeast(m Metric, n float64, w Window) Condition {
+	return Condition{op: "atleast", subject: m.metricSubject(), threshold: n, window: w}
 }
 
 // WhenAbsent holds when the metric receives no data at all across the

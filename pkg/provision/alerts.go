@@ -73,7 +73,15 @@ func readingPhrase(a *analyzer.AlertCondition) string {
 }
 
 func trimZeros(f float64) string {
-	return strings.TrimSuffix(strings.TrimRight(fmt.Sprintf("%g", f), "0"), ".")
+	out := fmt.Sprintf("%g", f)
+	// Only trim INSIDE a decimal fraction. Trimming unconditionally ate
+	// significant zeros: a p50 rendered "p5" and a p90 "p9", on every
+	// ServicePercentile since Z3 — a sentence that names the wrong
+	// quantile in the page someone reads at 3am.
+	if !strings.Contains(out, ".") {
+		return out
+	}
+	return strings.TrimSuffix(strings.TrimRight(out, "0"), ".")
 }
 
 // shortMetric drops the domain from a Google metric type so a subject
@@ -141,6 +149,13 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		}
 	}
 
+	// tako's own request metrics, read raw. Same readings as a declared
+	// Counter or Histogram, different scoping: these carry namespace,
+	// job and route, which is what a hand-written matcher could not.
+	if a.Framework != "" {
+		return frameworkQuery(cfg, g, a, every, lookback)
+	}
+
 	switch a.Reading {
 	case "rate", "count", "sum", "mean", "percentile":
 		return customQuery(cfg, a, every)
@@ -174,7 +189,11 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 			fmt.Sprintf("job_name=%q", cfg.Name(runnerServiceOf(g, a.SubjectName))), `result="failed"`)
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "error_rate":
-		all := takoRequests(cfg, g, a, routeMatcher(a)...)
+		base := routeMatcher(a)
+		if a.SubjectKind == "cron" {
+			base = []string{cronRouteMatcher(g, a)}
+		}
+		all := takoRequests(cfg, g, a, base...)
 		bad := takoRequests(cfg, g, a, append(routeMatcher(a), serverErrors)...)
 		q := fmt.Sprintf("sum(rate(%s[%s])) / sum(rate(%s[%s]))", bad, promDuration(every), all, promDuration(every))
 		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
@@ -231,6 +250,67 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		return comparison(platformQuery(cfg, g, a, every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	}
 	return "", false, fmt.Errorf("unknown alert reading %q", a.Reading)
+}
+
+// frameworkQuery reads tako's own requests / request_ms for one target.
+//
+// It shares takoRequests' matchers with the presets rather than
+// rebuilding them, so a raw reading and the preset it was forked from
+// cannot scope differently — the whole promise of "read what it
+// compiles to, then write your own" is that the two agree.
+func frameworkQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition,
+	every, lookback time.Duration) (string, bool, error) {
+
+	extra := routeMatcher(a)
+	if a.SubjectKind == "cron" {
+		// A cron is served by a synthetic route, and naming the cron is
+		// how a user asks about THAT route rather than everything the
+		// service serves. The presets derive it the same way, which is
+		// what lets CronMissed be restated by hand — without this the
+		// twin read the whole service and looked almost right.
+		//
+		// Other async handlers need no equivalent: a worker, job or
+		// singleton is alone in its own service (the partition rule), so
+		// service-scoped and handler-scoped are already the same set.
+		extra = []string{cronRouteMatcher(g, a)}
+	}
+	if a.Status != "" {
+		extra = append(extra, fmt.Sprintf("%s=%q", metrics.LabelStatus, a.Status))
+	}
+	if a.Framework == metrics.RequestMsName {
+		labels := append([]string{
+			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
+			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+			fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
+		}, extra...)
+		if a.Op == "absent" {
+			// A distribution has no bare series: _count is the one that
+			// exists whenever anything was recorded.
+			return absentQuery(promName(metrics.RequestMs.Type())+"_count{"+strings.Join(labels, ",")+"}", lookback),
+				retestAllowed(lookback), nil
+		}
+		q := histogramQuery(metrics.RequestMs.Type(), resourceGenericTask, a.Reading, a.Quantile, every, labels[1:]...)
+		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
+	}
+
+	sel := takoRequests(cfg, g, a, extra...)
+	if a.Op == "absent" {
+		return absentQuery(sel, lookback), retestAllowed(lookback), nil
+	}
+	if a.Reading == "fraction" {
+		// The denominator is the SAME selector without the status
+		// narrowing — that is what makes this a share of requests rather
+		// than two unrelated numbers divided.
+		base := routeMatcher(a)
+		if a.SubjectKind == "cron" {
+			base = []string{cronRouteMatcher(g, a)}
+		}
+		all := takoRequests(cfg, g, a, base...)
+		q := fmt.Sprintf("sum(rate(%s[%s])) / sum(rate(%s[%s]))",
+			sel, promDuration(every), all, promDuration(every))
+		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
+	}
+	return comparison(counterQuery(sel, a.Reading, every), a.Op, a.Threshold), retestAllowed(lookback), nil
 }
 
 // customQuery reads one of the app's own Counters or Histograms.
@@ -587,6 +667,9 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 		subject = shortNames([]string{a.SubjectVar})[0]
 	}
 	app := cfg.App + "/" + cfg.Env
+	if a.Framework != "" {
+		return frameworkSentence(cfg, g, a, app)
+	}
 	switch a.Reading {
 	case "cron_missed":
 		return fmt.Sprintf("%s: cron %s has not run", app, subject)
@@ -646,6 +729,37 @@ func conditionSentence(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) st
 		return fmt.Sprintf("%s: %s %s %s %g", app, a.SubjectName, readingPhrase(a), direction(a.Op), a.Threshold)
 	}
 	return fmt.Sprintf("%s: %s", app, r.Name)
+}
+
+// frameworkSentence describes a raw reading of tako's own request
+// metrics. It names the same thing the preset would — a hand-written
+// fork should not page someone with a worse sentence than the preset it
+// replaced.
+func frameworkSentence(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, app string) string {
+	subject := a.SubjectName
+	if a.SubjectKind != "route" || subject == "" {
+		subject = "service " + cfg.Name(serviceOf(g, a.SubjectVar))
+	}
+	if a.Op == "absent" {
+		return fmt.Sprintf("%s: %s has served no requests", app, subject)
+	}
+	what := "requests"
+	if a.Status != "" {
+		what = a.Status + " requests"
+	}
+	switch a.Reading {
+	case "fraction":
+		// Always has a Status — the analyzer refuses a Fraction without
+		// one — so the class can lead the sentence.
+		return fmt.Sprintf("%s: %s share of %s %s %g", app, a.Status, subject, direction(a.Op), a.Threshold)
+	case "percentile":
+		return fmt.Sprintf("%s: %s p%s %s %gms", app, subject, trimZeros(a.Quantile*100), direction(a.Op), a.Threshold)
+	case "rate":
+		return fmt.Sprintf("%s: %s per second on %s %s %g", app, what, subject, direction(a.Op), a.Threshold)
+	case "count":
+		return fmt.Sprintf("%s: %s on %s %s %g", app, what, subject, direction(a.Op), a.Threshold)
+	}
+	return fmt.Sprintf("%s: %s %s on %s %s %g", app, a.Reading, what, subject, direction(a.Op), a.Threshold)
 }
 
 // platformAbsentSentence says what has stopped being written, naming the

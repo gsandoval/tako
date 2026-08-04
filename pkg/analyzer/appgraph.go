@@ -318,6 +318,12 @@ type AlertCondition struct {
 	// unscoped PlatformMetric keeps it in SubjectName, which is the
 	// whole subject it has.)
 	MetricType string `json:"metric_type,omitempty"`
+	// Framework names one of tako's OWN metrics when the condition reads
+	// it directly — "requests" or "request_ms" — as opposed to a metric
+	// the user declared. The names are internal/metrics'.
+	Framework string `json:"framework,omitempty"`
+	// Status narrows a requests reading to one response class.
+	Status string `json:"status,omitempty"`
 	// Ctor is the SDK constructor this condition was written with —
 	// "RequestsSlow", "WhenAbove". Recorded so `tako alerts` can say
 	// which call produced a query, which is what makes a preset

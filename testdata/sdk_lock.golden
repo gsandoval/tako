@@ -39,6 +39,15 @@
     func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
     func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
     func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
+    func (*RequestMsHandle).Count() Metric
+    func (*RequestMsHandle).Mean() Metric
+    func (*RequestMsHandle).Percentile(q float64) Metric
+    func (*RequestMsHandle).Rate() Metric
+    func (*RequestMsHandle).Sum() Metric
+    func (*RequestsHandle).Count() Metric
+    func (*RequestsHandle).Fraction() Metric
+    func (*RequestsHandle).Rate() Metric
+    func (*RequestsHandle).Status(class string) *RequestsHandle
     func (*SecretHandle).Value() string
     func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
@@ -102,6 +111,8 @@ func QueueMetric(c Consumer, metricType string, filters ...string) Metric
 func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition
 func Queue[T any](name string, cfg ...Delivery) *QueueHandle[T]
 func Redirect(target string) (HTML, error)
+func RequestMs(t Target) *RequestMsHandle
+func Requests(t Target) *RequestsHandle
 func RequestsErroring(t Target, fraction float64, w ...Window) Condition
 func RequestsSlow(t Target, d time.Duration, quantile float64, w ...Window) Condition
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
@@ -118,6 +129,7 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compu
 func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
 func WhenAbove(m Metric, threshold float64, w Window) Condition
 func WhenAbsent(m Metric, w Window) Condition
+func WhenAtLeast(m Metric, n float64, w Window) Condition
 func WhenBelow(m Metric, threshold float64, w Window) Condition
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 type AlertHandle struct{}
@@ -154,6 +166,8 @@ type Profile int
 type PutPolicy struct{MaxSize int64; ContentType string}
 type QueueHandle[T any] struct{}
 type QueueWatch struct{DeadLetters bool; For time.Duration}
+type RequestMsHandle struct{}
+type RequestsHandle struct{}
 type Route struct{SignIn bool; Private bool}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
