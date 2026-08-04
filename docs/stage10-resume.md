@@ -4,15 +4,21 @@ Written 2026-08-04 before a context clear. Everything here is verified
 state, not recollection; where something is unverified it says so.
 
 **Status: Z1–Z4 are done agent-side and await the owner's verdicts.
-Z5 is unstarted. Z6 is removed. Z7 is proposed, unapproved. FL1–FL4
-(§4) are proposed, unapproved, and are the work Z6 now waits on.**
+Z5 is two-thirds done (§2). Z6 is removed. Z7 is proposed, unapproved.
+FL1–FL4 (§4) are proposed, unapproved, and are the work Z6 now waits
+on. §5's open question is ANSWERED (see §5).**
 
 Verify that claim before trusting it:
 
 ```
-go test ./...                    # green as of 69be83e
-git log --oneline -1             # 69be83e
+go test ./...                    # green as of a7daf1a
+git log --oneline -1             # a7daf1a
 ```
+
+*Corrected 2026-08-04: this brief claimed the suite was green at
+`69be83e`. It was not — `TestEveryCustomMethodPostIsClassified` had been
+failing since `fc2e889` (Z2b). Fixed in Z5; the lesson is that "green as
+of <sha>" in a handoff is a claim to re-run, not to inherit.*
 
 `git status` should show only `logaster-2013-06.jpg`, which is
 deliberately never staged.
@@ -63,7 +69,7 @@ signature, which no amount of agent work produces.
 
 ---
 
-## 2. Z5 — housekeeping, the next thing to build
+## 2. Z5 — housekeeping (mostly done, 2026-08-04)
 
 From the plan. Three items, one commit, no human gate — **except** the
 error text, whose wording needs approval like any other user-facing
@@ -71,15 +77,21 @@ string.
 
 1. **Cloud Tasks' 7-day name-reuse block.** Redeploying after a destroy
    fails with Google's raw `a queue with this name existed too recently`.
-   tako should name the wait and suggest `--env`. Discovered during the
-   T3 walk (2026-08-01, task log) and never scheduled. **Write the
-   proposed text into the task log and stop for approval before
-   shipping it** — error texts are product UX and golden-tested.
-2. **`pkg/analyzer/analyzer.go` and `edges.go` are not gofmt-clean.**
-   Pre-existing, unrelated to any feature. `gofmt -l .` shows them and
-   nothing else.
-3. **The plan's stage table** — already brought current in Z2b; verify
-   rather than redo.
+   tako should name the wait and suggest `--env`. **STILL OPEN — the
+   proposal is written (task log, 2026-08-04) and awaits wording
+   approval.** It carries one call for the owner: whether `tako destroy`
+   should also warn before the delete, which is the only moment the fact
+   can still change a decision.
+2. **gofmt — DONE (by verification).** `gofmt -l .` prints nothing;
+   `analyzer.go` and `edges.go` were formatted at some point after the
+   item was logged.
+3. **The plan's stage table — DONE (by verification).** Current, as Z2b
+   left it.
+4. **Not on the list: the suite was red.** `:generateServiceIdentity`
+   shipped in Z2b unclassified, so the custom-method retry guard had
+   been failing for three commits. Classified as a third category —
+   `idempotentMutatingVerbs`, a mutation Google defines as idempotent —
+   and pinned by a behaviour test. Fixed in `0c87c48`.
 
 ---
 
@@ -234,10 +246,40 @@ the flauta agent appears to hold read-only access here.
 
 ---
 
-## 5. THE OPEN QUESTION (owner, to answer after the resume)
+## 5. THE OPEN QUESTION — ANSWERED 2026-08-04
 
 > Can every alert built in Z1–Z4 be written using plain tako alert
 > constructs?
+
+**No.** Full evidence in `docs/task-log.md` under "Stage 10 — the open
+question answered, by rendering both halves". Headline, because the rest
+of this section was written before the measurement and got it wrong:
+
+- **The "cannot name them" claim below is FALSE.** `PlatformMetric` can
+  name `custom.googleapis.com/tako/requests`, and `platformResource`
+  already resolves it to `generic_task`.
+- **The real barriers are two others.** `namespace` is `App+"-"+Env`, so
+  no matcher over tako's own metrics can be written correctly at
+  declaration time; and the raw Google-metric path has exactly one
+  reduction, `max()`, while every preset over `requests` needs a rate,
+  an increase, a ratio, an absence or a quantile. **The gap is
+  reduction, not naming** — which means adding a naming constructor
+  would not close it.
+- **Two defects fell out of rendering both halves**, both in shipped
+  surface, both logged as discovered work and unfixed: `WhenAbsent` over
+  any Google-metric constructor compiles to `> 0` (its inverse), and a
+  user matcher on a label tako already supplies is concatenated rather
+  than overridden, giving a contradictory selector.
+- **Verdict on the follow-up:** the presets are load-bearing for the
+  nine conditions measured on tako's own metrics, and the "presets are
+  deliberately the only door to framework-internal metrics" position is
+  the strongest one — those names have already been changed three times
+  this stage. If anything is added, it should be the two things about
+  GOOGLE's metrics: a `DeadLetters(c)` selector for `QueueMetric`, and
+  an `atleast`-shaped comparison.
+
+*Everything below this line is the pre-measurement analysis, kept for
+the record. Where it disagrees with the above, the above wins.*
 
 That is: are the presets sugar over the raw vocabulary, or do they reach
 things the raw vocabulary cannot express? If the latter, the raw
