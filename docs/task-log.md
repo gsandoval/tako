@@ -13473,3 +13473,32 @@ so the page cannot silently lose a symbol.
 **The link check earns its place**: `reference/alerts.md` gained links
 to `observability.md` and `footprint.md` during Y2, and nothing verifies
 those resolve today.
+
+## Stage 10 — open question recorded for after the context clear (2026-08-04)
+
+Owner's question, to be answered on resume:
+
+> Can every alert built in Z1–Z4 be written using plain tako alert
+> constructs?
+
+Not answered here — recorded with the evidence already in hand so the
+answer starts from measurement. `docs/stage10-resume.md` §4 carries it.
+
+The one finding that likely decides it, grepped rather than reasoned:
+**no raw constructor can name tako's own per-endpoint metrics.**
+`custom.googleapis.com/tako/requests` and `.../request_ms` are written
+by every deployed service and read by four presets, but `ServiceMetric`
+reads Google's metrics and the reading methods read *declared* Counters
+and Histograms. `requests` is neither, so `CronMissed`, `CronFailed`,
+`RequestsErroring` and `RequestsSlow` have no raw equivalent.
+
+Two more gaps look likely and are unconfirmed: the dead-letter variants
+of the queue conditions (`QueueMetric` targets only the live
+subscription) and `JobFailed` (nothing scopes to a `cloud_run_job`).
+
+The follow-up matters more than the answer. If presets reach things the
+raw vocabulary cannot, the choice is between adding constructors and
+deciding that framework-internal metrics are deliberately unreachable —
+their names and labels are tako's implementation detail, and exposing
+them makes them API. That second position is defensible and should not
+be dismissed for tidiness.
