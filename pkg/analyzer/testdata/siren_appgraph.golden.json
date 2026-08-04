@@ -63,7 +63,7 @@
       "var": "siren.oncall",
       "package": "siren",
       "channel_kind": "email",
-      "target": "darchitect@gmail.com",
+      "target": "ops@example.com",
       "pos": "alerts.go:32:2"
     },
     {

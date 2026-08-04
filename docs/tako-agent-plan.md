@@ -347,7 +347,7 @@ born under the scheme rather than renamed a week later. Full proposal in
 `task-log.md`. Gate Z2b: the renamed surface, and siren firing every
 condition live.
 
-**Z3 — `tako.ServiceLatency` / `ServiceInstances` / `ServiceSaturation`.** The derived
+**Z3 — `tako.ServicePercentile` / `ServiceInstances`. DONE 2026-08-04.** The derived
 platform-metric constructors, approved in the Y2a proposal and never
 built. Today the same questions need a raw `tako.Platform` with a
 Google metric type spelled by hand. Gate Z3: one of each on gallery,
