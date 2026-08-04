@@ -3,6 +3,7 @@ package provision
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gsandoval/tako/internal/metrics"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -587,6 +589,94 @@ func TestAbsenceSentencesSayWhatStopped(t *testing.T) {
 		}
 		if strings.Contains(got, "above") || strings.Contains(got, "below") {
 			t.Errorf("absence sentence describes a threshold: %q", got)
+		}
+	}
+}
+
+// Every label a generated query matches on must be one the runtime
+// actually writes.
+//
+// This is the check whose absence produced every label defect in Stage
+// 10: a `route` declared in a descriptor and empty on all 88 series, a
+// `job` spelled three ways, a `subscription_id` naming a topic,
+// `response_class="2xx"` where Pub/Sub writes `ack`. In each case the
+// code compiled, the deploy succeeded, and the query matched nothing —
+// which reads exactly like a healthy system.
+//
+// It reads the RENDERED golden rather than the code that builds it,
+// because the golden is what Cloud Monitoring evaluates. Nine defects
+// this stage came out of reading that file; this asserts one property of
+// it on every run.
+//
+// Honest about its reach: it can only check tako's OWN metrics, since
+// those are the ones internal/metrics describes. A wrong label on a
+// Google metric — which is what response_class="2xx" was — is still
+// only catchable live.
+func TestGeneratedQueriesOnlyMatchLabelsTheRuntimeWrites(t *testing.T) {
+	golden, err := os.ReadFile(filepath.Join("testdata", "siren_queries.golden.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// promName maps "custom.googleapis.com/tako/requests" to
+	// "custom_googleapis_com:tako_requests"; find those selectors and
+	// read the labels out of the braces.
+	sel := regexp.MustCompile(`(custom_googleapis_com:tako_[a-z_]+)\{([^}]*)\}`)
+	label := regexp.MustCompile(`([a-zA-Z_]+)\s*=`)
+
+	declared := map[string]map[string]bool{}
+	for _, m := range metrics.Framework {
+		declared[promName(m.Type())] = m.LabelSet()
+		// A DISTRIBUTION is only ever published decomposed.
+		for _, suffix := range []string{"_bucket", "_count", "_sum"} {
+			declared[promName(m.Type())+suffix] = m.LabelSet()
+		}
+	}
+
+	checked := 0
+	for _, m := range sel.FindAllStringSubmatch(string(golden), -1) {
+		name, body := m[1], m[2]
+		allowed, isFramework := declared[name]
+		if !isFramework {
+			// A user's own Counter or Histogram: same prefix, and its
+			// labels are the resource ones plus revision.
+			continue
+		}
+		checked++
+		for _, l := range label.FindAllStringSubmatch(body, -1) {
+			if !allowed[l[1]] {
+				t.Errorf("query on %s matches label %q, which the runtime does not write.\n"+
+					"  A label a writer does not produce makes the query match nothing, and an\n"+
+					"  alert that matches nothing is quiet for the wrong reason.\n  in: %s{%s}",
+					name, l[1], name, body)
+			}
+		}
+	}
+	if checked == 0 {
+		t.Fatal("no query over tako's own metrics found in the golden — the scan broke, " +
+			"which would make this test vacuous")
+	}
+	t.Logf("checked %d selectors over tako's own metrics", checked)
+}
+
+// The status values a query asks for must be values the runtime can
+// produce. `status="500"` and `status="error"` both look right, parse
+// fine, and match nothing.
+func TestGeneratedQueriesUseDeclaredStatusClasses(t *testing.T) {
+	golden, err := os.ReadFile(filepath.Join("testdata", "siren_queries.golden.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	declared := map[string]bool{}
+	for _, v := range metrics.StatusClasses {
+		declared[v] = true
+	}
+	found := regexp.MustCompile(`\bstatus="([^"]*)"`).FindAllStringSubmatch(string(golden), -1)
+	if len(found) == 0 {
+		t.Fatal("no status matcher in the golden — the scan broke")
+	}
+	for _, m := range found {
+		if !declared[m[1]] {
+			t.Errorf("query matches status=%q, which is not one of %v", m[1], metrics.StatusClasses)
 		}
 	}
 }

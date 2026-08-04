@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsandoval/tako/internal/metrics"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -32,8 +33,11 @@ const (
 	resourceRun          = "cloud_run_revision"
 	resourceRunJob       = "cloud_run_job"
 	resourceSubscription = "pubsub_subscription"
-	resourceGenericTask  = "generic_task"
-	customMetricPrefix   = "custom.googleapis.com/tako/"
+	// tako's own resource and prefix come from internal/metrics — the
+	// same values the runtime writes with. Two copies of one contract is
+	// how a reader and a writer come apart.
+	resourceGenericTask = metrics.Resource
+	customMetricPrefix  = metrics.Prefix
 )
 
 // defaultEvery is the reduction period for readings whose units do not
@@ -155,10 +159,10 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 			fmt.Sprintf("subscription_id=%q", subscriptionOf(cfg, g, a)))
 		return comparison("max("+sel+")", a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_failed":
-		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)), `status="5xx"`)
+		sel := takoRequests(cfg, g, a, cronRouteMatcher(g, a), serverErrors)
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "cron_missed":
-		sel := takoRequests(cfg, g, a, fmt.Sprintf("route=%q", cronRoute(g, a.SubjectVar)))
+		sel := takoRequests(cfg, g, a, cronRouteMatcher(g, a))
 		return absentQuery(sel, lookback), retestAllowed(lookback), nil
 	case "job_failed":
 		// A Cloud Run job is named for the RUNNER SERVICE that executes
@@ -171,15 +175,15 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		return comparison(counterQuery(sel, "count", every), a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "error_rate":
 		all := takoRequests(cfg, g, a, routeMatcher(a)...)
-		bad := takoRequests(cfg, g, a, append(routeMatcher(a), `status="5xx"`)...)
+		bad := takoRequests(cfg, g, a, append(routeMatcher(a), serverErrors)...)
 		q := fmt.Sprintf("sum(rate(%s[%s])) / sum(rate(%s[%s]))", bad, promDuration(every), all, promDuration(every))
 		return comparison(q, a.Op, a.Threshold), retestAllowed(lookback), nil
 	case "latency":
-		base := promName(customMetricPrefix + "request_ms")
+		base := promName(metrics.RequestMs.Type())
 		labels := append([]string{
 			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
-			fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
-			fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
+			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+			fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
 		}, routeMatcher(a)...)
 		// The range selector goes AFTER the closing brace. Built by
 		// appending it to the label list, it landed inside them —
@@ -234,7 +238,7 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 	metric := customMetricPrefix + a.SubjectName
 	// namespace keeps prod and a preview env from sharing an alert, the
 	// same way it keeps them from sharing a series.
-	ns := fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env)
+	ns := fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env)
 	// Absence is not a threshold: WhenAbsent asks whether the series
 	// exists at all, and comparing a count to a number can never answer
 	// that — an empty result set compares to nothing and yields nothing.
@@ -267,10 +271,10 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 // endpoint or one cron, and this one can.
 func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, extra ...string) string {
 	matchers := append([]string{
-		fmt.Sprintf("namespace=%q", cfg.App+"-"+cfg.Env),
-		fmt.Sprintf("job=%q", metricJob(serviceOf(g, a.SubjectVar))),
+		fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+		fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
 	}, extra...)
-	return selector(customMetricPrefix+"requests", resourceGenericTask, matchers...)
+	return selector(metrics.Requests.Type(), resourceGenericTask, matchers...)
 }
 
 // scopedSelector builds a Google-metric selector, adding the resource
@@ -387,6 +391,17 @@ func subscriptionOf(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition
 // must agree, and TestJobLabelMatchesWhatTheServiceWrites checks it.
 func metricJob(service string) string { return service }
 
+// serverErrors is the status matcher every "is it failing" condition
+// uses. The value is a CLASS, not a code — metrics.StatusClasses is the
+// closed set the runtime writes, so a matcher spelled any other way
+// matches nothing.
+var serverErrors = fmt.Sprintf("%s=%q", metrics.LabelStatus, "5xx")
+
+// cronRouteMatcher narrows to one cron's synthetic route.
+func cronRouteMatcher(g *analyzer.AppGraph, a *analyzer.AlertCondition) string {
+	return fmt.Sprintf("%s=%q", metrics.LabelRoute, cronRoute(g, a.SubjectVar))
+}
+
 // routeMatcher narrows to ONE endpoint when the subject is a route.
 //
 // The value is the declared pattern verbatim — "GET /api/photos" — and
@@ -395,7 +410,7 @@ func metricJob(service string) string { return service }
 // matcher that never matches.
 func routeMatcher(a *analyzer.AlertCondition) []string {
 	if a.SubjectKind == "route" && a.SubjectName != "" {
-		return []string{fmt.Sprintf("route=%q", a.SubjectName)}
+		return []string{fmt.Sprintf("%s=%q", metrics.LabelRoute, a.SubjectName)}
 	}
 	return nil
 }

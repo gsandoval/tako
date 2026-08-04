@@ -175,6 +175,37 @@ a fact about metrics. Compiled as PromQL,
 `histogram_quantile(0.87, …)` answers on the same data where the aligner
 path answers nothing.
 
+### The metrics tako writes for you
+
+Every service records two without being asked, and their names and
+labels are **API** — pinned by `internal/metrics/testdata/lock.golden.txt`,
+so a rename is a breaking change that announces itself rather than a
+query that quietly stops matching.
+
+| metric | kind | labels |
+|---|---|---|
+| `custom.googleapis.com/tako/requests` | CUMULATIVE INT64 | `route`, `status`, `revision` |
+| `custom.googleapis.com/tako/request_ms` | CUMULATIVE DISTRIBUTION | `route`, `revision` |
+
+`route` is the declared PATTERN with its method — `GET /api/photos/{id}`,
+never the concrete path, which would mint one series per photo. A request
+no pattern matched records `<unmatched>`. `status` is a CLASS and the set
+is closed: `1xx`, `2xx`, `3xx`, `4xx`, `5xx` — a query asking for `500`
+or `error` is well-formed and matches nothing.
+
+They are written against the `generic_task` monitored resource (Cloud
+Run's own is not writable for user-defined metrics), scoped by
+`namespace` = `<app>-<env>` and `job` = the tako service name. That
+`namespace` is why a matcher over these cannot be written correctly at
+declaration time — the value does not exist until a deploy picks an env
+— and why the readers below take a tako object instead of a string.
+
+Cloud Run publishes `request_count` and `request_latencies` of its own.
+They carry a `route` label that is **never populated** for an ordinary
+service — measured across 88 series, empty on every one — so alerting
+per endpoint is impossible from platform metrics alone. That is why tako
+writes its own.
+
 ### Google's own metrics
 
 The metric type is Google's, so it is a string. **Which resource it is

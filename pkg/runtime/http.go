@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tako "github.com/gsandoval/tako"
+	"github.com/gsandoval/tako/internal/metrics"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
 )
@@ -206,10 +207,12 @@ func logRequests(next http.Handler) http.Handler {
 
 // RequestsMetric and LatencyMetric are the per-endpoint metrics every
 // tako service records without being asked. Their names are part of the
-// deploy contract: the provisioner writes alert queries against them.
+// deploy contract: the provisioner writes alert queries against them,
+// so both come from internal/metrics rather than being spelled here —
+// a writer and a reader that agree by hand eventually do not.
 const (
-	RequestsMetric = "requests"
-	LatencyMetric  = "request_ms"
+	RequestsMetric = metrics.RequestsName
+	LatencyMetric  = metrics.RequestMsName
 )
 
 // requestMetrics is the sink, wired by boot. Nil in tests that do not
@@ -238,12 +241,15 @@ func recordRequest(r *http.Request, rl *routeLabel, status int, took time.Durati
 	if route == "" {
 		// No pattern matched: a 404. Bucketing those under one label
 		// keeps an unmatched-path flood from minting a series each.
-		route = "<unmatched>"
+		route = metrics.UnmatchedRoute
 	}
-	labels := map[string]string{"route": route, "status": statusClass(status)}
+	labels := map[string]string{
+		metrics.LabelRoute:  route,
+		metrics.LabelStatus: metrics.StatusClass(status),
+	}
 	requestMetrics.Add(r.Context(), RequestsMetric, labels, 1)
 	requestMetrics.Observe(r.Context(), LatencyMetric,
-		map[string]string{"route": route}, float64(took.Milliseconds()))
+		map[string]string{metrics.LabelRoute: route}, float64(took.Milliseconds()))
 }
 
 // routeLabel is the mutable route name for the request in flight. It is
@@ -269,19 +275,7 @@ func RefineRoute(r *http.Request, name string) {
 
 // statusClass buckets a status into 2xx/3xx/4xx/5xx: five values at
 // most, so the label cannot grow without bound.
-func statusClass(status int) string {
-	switch {
-	case status >= 500:
-		return "5xx"
-	case status >= 400:
-		return "4xx"
-	case status >= 300:
-		return "3xx"
-	case status >= 200:
-		return "2xx"
-	}
-	return "1xx"
-}
+func statusClass(status int) string { return metrics.StatusClass(status) }
 
 type statusWriter struct {
 	http.ResponseWriter

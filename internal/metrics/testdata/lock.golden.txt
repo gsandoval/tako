@@ -1,0 +1,15 @@
+prefix   custom.googleapis.com/tako/
+resource generic_task
+resource labels namespace, job, task_id, location
+
+custom.googleapis.com/tako/request_ms
+  CUMULATIVE DISTRIBUTION
+  label revision
+  label route
+
+custom.googleapis.com/tako/requests
+  CUMULATIVE INT64
+  label revision
+  label route
+  label status = 1xx | 2xx | 3xx | 4xx | 5xx
+

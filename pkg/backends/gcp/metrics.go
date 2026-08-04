@@ -11,6 +11,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gsandoval/tako/internal/metrics"
 )
 
 // MetricsStore exports tako.Counter and tako.Histogram to Cloud
@@ -273,17 +275,17 @@ func (m *MetricsStore) drain() []map[string]any {
 func (m *MetricsStore) point(k seriesKey, valueType string, now time.Time, value map[string]any) map[string]any {
 	return map[string]any{
 		"metric": map[string]any{
-			"type":   "custom.googleapis.com/tako/" + k.name,
+			"type":   metrics.Prefix + k.name,
 			"labels": metricLabels(k.labels, m.who.Revision),
 		},
 		"resource": map[string]any{
-			"type": "generic_task",
+			"type": metrics.Resource,
 			"labels": map[string]string{
-				"project_id": m.c.Opts.Project,
-				"location":   m.who.Location,
-				"namespace":  m.who.Namespace,
-				"job":        m.who.Job,
-				"task_id":    m.who.TaskID,
+				"project_id":              m.c.Opts.Project,
+				metrics.ResourceLocation:  m.who.Location,
+				metrics.ResourceNamespace: m.who.Namespace,
+				metrics.ResourceJob:       m.who.Job,
+				metrics.ResourceTaskID:    m.who.TaskID,
 			},
 		},
 		"metricKind": "CUMULATIVE",
@@ -402,7 +404,7 @@ func decodeLabels(enc string) map[string]string {
 // metricLabels merges a series' own labels with the revision that rides
 // along on every tako metric.
 func metricLabels(enc, revision string) map[string]string {
-	out := map[string]string{"revision": revision}
+	out := map[string]string{metrics.LabelRevision: revision}
 	for k, v := range decodeLabels(enc) {
 		out[k] = v
 	}

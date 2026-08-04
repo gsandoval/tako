@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/gsandoval/tako/internal/metrics"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -54,38 +56,36 @@ type descriptorLabel struct {
 // Declared lists every descriptor an app needs: the two tako records
 // itself, plus one per declared Counter and Histogram.
 func Declared(g *analyzer.AppGraph) []metricDescriptor {
-	out := []metricDescriptor{
-		{
-			Type: "custom.googleapis.com/tako/requests", MetricKind: "CUMULATIVE", ValueType: "INT64",
-			Description: "Requests served, by route and status class (tako).",
-			Labels: []descriptorLabel{
-				{Key: "route", Description: "The declared route pattern."},
-				{Key: "status", Description: "Status class: 2xx, 3xx, 4xx, 5xx."},
-				{Key: "revision", Description: "The Cloud Run revision."},
-			},
-		},
-		{
-			Type: "custom.googleapis.com/tako/request_ms", MetricKind: "CUMULATIVE", ValueType: "DISTRIBUTION",
-			Description: "Request latency in milliseconds, by route (tako).",
-			Labels: []descriptorLabel{
-				{Key: "route", Description: "The declared route pattern."},
-				{Key: "revision", Description: "The Cloud Run revision."},
-			},
-		},
+	// Derived from internal/metrics rather than restated. The descriptor
+	// and the query used to be two hand-maintained copies of one schema,
+	// which is how "status: 2xx, 3xx, 4xx, 5xx" came to omit the 1xx the
+	// runtime can actually write.
+	var out []metricDescriptor
+	for _, m := range metrics.Framework {
+		d := metricDescriptor{Type: m.Type(), MetricKind: m.Kind, ValueType: m.ValueType,
+			Description: m.Description}
+		for _, l := range m.Labels {
+			desc := l.Description
+			if len(l.Values) > 0 {
+				desc += " One of: " + strings.Join(l.Values, ", ") + "."
+			}
+			d.Labels = append(d.Labels, descriptorLabel{Key: l.Key, Description: desc})
+		}
+		out = append(out, d)
 	}
 	for _, r := range g.Resources {
 		switch r.Kind {
 		case "counter":
 			out = append(out, metricDescriptor{
-				Type: "custom.googleapis.com/tako/" + r.Name, MetricKind: "CUMULATIVE", ValueType: "INT64",
+				Type: metrics.Prefix + r.Name, MetricKind: "CUMULATIVE", ValueType: "INT64",
 				Description: "tako.Counter " + r.Name,
-				Labels:      []descriptorLabel{{Key: "revision"}},
+				Labels:      []descriptorLabel{{Key: metrics.LabelRevision}},
 			})
 		case "histogram":
 			out = append(out, metricDescriptor{
-				Type: "custom.googleapis.com/tako/" + r.Name, MetricKind: "CUMULATIVE", ValueType: "DISTRIBUTION",
+				Type: metrics.Prefix + r.Name, MetricKind: "CUMULATIVE", ValueType: "DISTRIBUTION",
 				Description: "tako.Histogram " + r.Name,
-				Labels:      []descriptorLabel{{Key: "revision"}},
+				Labels:      []descriptorLabel{{Key: metrics.LabelRevision}},
 			})
 		}
 	}
@@ -138,9 +138,12 @@ func (m *MetricDescriptors) Seed(ctx context.Context, g *analyzer.AppGraph, app,
 		}
 		series = append(series, map[string]any{
 			"metric": map[string]any{"type": d.Type, "labels": labels},
-			"resource": map[string]any{"type": "generic_task", "labels": map[string]string{
-				"project_id": m.C.Project, "location": region,
-				"namespace": app + "-" + env, "job": seedJob, "task_id": "deploy",
+			"resource": map[string]any{"type": metrics.Resource, "labels": map[string]string{
+				"project_id":              m.C.Project,
+				metrics.ResourceLocation:  region,
+				metrics.ResourceNamespace: app + "-" + env,
+				metrics.ResourceJob:       seedJob,
+				metrics.ResourceTaskID:    "deploy",
 			}},
 			"metricKind": "CUMULATIVE", "valueType": d.ValueType,
 			"points": []map[string]any{{
