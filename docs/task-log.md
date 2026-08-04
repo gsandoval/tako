@@ -13177,3 +13177,83 @@ close.
 `Quiet`, `Idle`, `NoThroughput` — and now known to be **unobservable as
 written**, not merely unstaged. That is a better answer than the one
 this walk started with.
+
+## Z3 — DX proposal: reaching Google's distributions (2026-08-04) — AWAITING APPROVAL
+
+The plan says Z3 is `ServiceLatency` / `ServiceInstances` /
+`ServiceSaturation` — the Y2a constructors, renamed. Checking the
+metrics they would wrap changes two of the three.
+
+### What is actually missing
+
+Measured, not recalled:
+
+| metric | kind | value |
+|---|---|---|
+| `container/cpu/utilizations` | DELTA | **DISTRIBUTION** |
+| `container/memory/utilizations` | DELTA | **DISTRIBUTION** |
+| `container/instance_count` | GAUGE | INT64 (label: `state`) |
+| `request_latencies` | DELTA | DISTRIBUTION (label: `route`) |
+
+A distribution is never published under its bare name — only `_bucket`,
+`_count` and `_sum`. So **there is no way to alert on CPU or memory
+utilization in tako today**. Written the obvious way:
+
+```go
+tako.WhenAbove(tako.ServiceMetric(Grind,
+    "run.googleapis.com/container/cpu/utilizations"), 0.9, w)
+```
+
+the deploy refuses it, which is exactly what the Z2b walk hit and what
+the preflight now explains. That gap is the whole of Z3.
+
+### Proposed
+
+**`ServicePercentile(t Target, metricType string, q float64) Metric`** —
+one constructor for any DISTRIBUTION metric about a tako service, which
+compiles to what a distribution actually requires:
+
+```promql
+histogram_quantile(0.99, sum(rate(run_googleapis_com:container_cpu_utilizations_bucket{
+  monitored_resource="cloud_run_revision",service_name="z2-siren-grind"}[60s])) by (le))
+```
+
+The quantile is a parameter and not a default, for the same reason
+`Percentile` on a histogram takes one: which quantile you mean IS the
+question.
+
+**`ServiceInstances(t Target) Metric`** — the gauge, `state="active"`
+already applied. `ServiceAtCapacity` answers "am I at the ceiling";
+this answers "how many am I paying for", which is a different question
+and the one that turns into a bill.
+
+### Cut, and why
+
+**`ServiceLatency` should not ship.** It would read Cloud Run's
+`request_latencies` — whose `route` label tako measured empty on all 88
+series, which is why tako writes its own `request_ms` in the first
+place. `RequestsSlow` already exposes that, per route, and is strictly
+better. Shipping `ServiceLatency` would add a second, worse way to ask
+one question.
+
+**`ServiceSaturation` should not ship under that name.** "Saturation" is
+a general concept (rule 6) and vague about which resource — CPU and
+memory saturate differently and are alerted on differently.
+`ServicePercentile(svc, "…/cpu/utilizations", 0.99)` says which.
+
+So Z3 ships **two** constructors, not three, and one of them is more
+general than what it replaces.
+
+### What demands them
+
+siren gains two alerts, and they are the point rather than decoration:
+CPU saturation under `/flood`, and instance count as a cost signal. Both
+are conditions the current surface cannot express at all.
+
+### Cloud errors & permissions
+
+No new permissions: both read metrics the deployer already lists. The
+one new failure mode is naming a metric that is NOT a distribution with
+`ServicePercentile` — the `_bucket` series will not exist, and the
+preflight added in Z2b already catches that by name before anything is
+created. Worth a test that the message reads correctly for that case.
