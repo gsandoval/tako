@@ -40,7 +40,7 @@ async function buy(p: Product) {
     await refreshOrders();
   } catch (e) {
     if (e instanceof ApiError && e.status === 401) {
-      location.assign("/api/_session/signin?next=/");
+      location.assign("/_tako/signin?next=/");
       return;
     }
     status(e instanceof ApiError ? e.message : String(e));
@@ -76,7 +76,7 @@ async function renderSession() {
       }
     };
     signout.onclick = async () => {
-      await fetch("/api/_session", { method: "DELETE", credentials: "same-origin" });
+      await fetch("/_tako/api/session", { method: "DELETE", credentials: "same-origin" });
       location.reload();
     };
   }
