@@ -51,6 +51,7 @@
     func (*RequestsHandle).Rate() Metric
     func (*RequestsHandle).Status(class string) *RequestsHandle
     func (*SecretHandle).Value() string
+    func (*ServiceHandle).Domain() string
     func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
     func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)

@@ -15474,3 +15474,273 @@ the paths updated across `reference/auth.md`, `bucket.md`, `cron.md`,
 `queue.md`, `topic.md`, `testing.md`, `observability.md`,
 `client-ts.md`, `guide/04-journal.md`, `guide/cloud.md`, eleven
 `validate/*.md` scripts, and two lines of the tech spec.
+
+## FL6 — DX proposal: the shadow warning (2026-08-05) — AWAITING APPROVAL
+
+Promoting the friction log's "workaround-fine, warning worth asking for"
+entry at the owner's direction. flauta declared
+`GET /{section}/{slug}` and `/assets/site.css` stopped being served —
+no error, no warning, an honest 404 for a stylesheet. It was caught by
+`TestDocumentAndAssetHeaders`, written for another purpose; without that
+test the site deploys unstyled.
+
+### Why a heuristic is the wrong shape
+
+The obvious version is "warn when a Page pattern has the same segment
+count as files the site serves" — depth arithmetic, the way the friction
+log described it. That is guesswork, and it is guesswork about a
+question `ServeMux` already answers exactly.
+
+So the check **asks the mux**. Build the real thing — every declared
+route pattern, plus `"/"` for the site handler, exactly as codegen
+mounts them — then walk the site directory and, for each file, ask the
+mux which pattern claims its URL. A file whose `GET` lands on anything
+other than `"/"` is shadowed, by definition, with the same resolver that
+will serve production traffic. No false positives, no depth rule to get
+wrong, and it stays correct when Go's precedence rules change.
+
+### The message
+
+Positional, because the fix is at the declaration:
+
+```
+app.go:31:2: ⚠ GET /{section}/{slug} shadows 2 files the site serves — /assets/site.css and /assets/app.js reach articleRead instead, and answer 404; move them deeper than the route's 2 segments (/assets/css/site.css) or narrow the pattern (tako/site-shadow)
+```
+
+Three files named at most, then `and N more`. It names the handler
+because the 404 comes from there, and it names the depth because moving
+the file is the fix that costs nothing.
+
+### Warning, never an error
+
+Shadowing is legitimate — an app that serves no files at that depth is
+doing nothing wrong, and flauta's own `/media/{key}` (M3) will shadow a
+depth-2 URL space it deliberately owns. Nothing fails the build. It
+prints and the exit code is unchanged.
+
+### Where it runs
+
+`tako dev` on every analyze pass (this is a local-feedback problem;
+flauta hit it in development) and `tako deploy` beside `warnCallEdges`
+and friends. Both call it **after** the site build has run — an unbuilt
+`Out` directory has no files to enumerate, and a check that ran before
+the generator would report nothing and mean nothing.
+
+Placement: `analyzer.ShadowedSiteFiles(graph) []Shadow` — the pattern
+knowledge is the analyzer's, the printing is the caller's, which is how
+the deploy warnings are already split. No root-package symbol; no
+change to the `tako` surface.
+
+### Tests
+
+Golden analyzer cases, message text asserted exactly per the standing
+rule: a two-segment wildcard over a depth-2 asset (warns, names it), the
+same route over depth-3 assets only (silent), a route shadowing more
+than three files (`and N more`), a site with no files (silent), an app
+with no Site at all (silent). Plus the case flauta shipped as its
+workaround — assets moved to depth 3 — which must stay quiet.
+
+---
+
+## FL7 — DX proposal: reading the declared domain (2026-08-05) — AWAITING APPROVAL
+
+The friction log's last open entry, filed as "no candidate feature worth
+asking for" and re-opened at the owner's direction — correctly, because
+the entry conceded more than it had to. It argued that analysis-time
+configuration is load-bearing and that a duplicated string held by a
+test is the smaller price. The first half is true and is not in
+question. The second half assumes the app cannot *read* what it
+declared, and nothing requires that.
+
+```go
+var web = tako.Service(tako.ServiceConfig{Domain: "1dos3porti.com"})
+
+func canonical(path string) string { return "https://" + web.Domain() + path }
+```
+
+The literal stays a literal — the analyzer reads the source, the deploy
+plan is still computed without running the app, `tako/config-literal`
+still refuses a variable. Nothing about the constraint moves. The
+handle simply stops hiding the value it was given, and flauta's
+duplicated string plus the test that guards it both go away.
+
+### Against the six rules
+
+Rule 3 governs *operations* — anything that can do I/O takes `Ctx` and
+returns an error. A record read is not one, and the surface already
+says so: `CounterHandle.Count() Metric`, `HistogramHandle.Mean()`,
+`RequestsHandle.Rate()` are all ctx-less, error-less reads of a
+declaration. `Domain()` joins that family. Rule 1 is untouched —
+`Service` remains a side-effect-free record, and reading a field of it
+cannot depend on initialization order.
+
+The doc comment on `ServiceHandle` currently reads "It carries no
+methods: the declaration IS the value, read at analysis time." That
+sentence needs rewriting to say what stays true: the declaration is the
+value, read at analysis time **and readable by the app that declared
+it**.
+
+### Undeclared domains
+
+`Domain()` returns `""` when no `Domain` was declared, and the doc
+comment says so in the same breath. The alternative — resolving to the
+run.app URL or to `localhost:8080` so absolute URLs "just work"
+everywhere — is rejected: it would make the return value differ by
+environment, which is exactly wrong for the things flauta wants it for
+(canonical tags, RSS `<link>`, sitemap entries, share URLs all name the
+public domain regardless of where the code is running). One declared
+string, the same everywhere, or the empty string. **Open question for
+the owner** — this is the one judgment in FL7 worth disagreeing with.
+
+### Tests
+
+`compile_check_test.go` for the shape, an SDK-lock regeneration (its own
+review, per the standing rule), a unit test for the undeclared case, and
+`docs/reference/domains.md` gains a "Reading it back" section.
+
+---
+
+## Discovered work (2026-08-05) — not done, per the stay-in-scope rule
+
+**1. FL5 left `examples/shop`'s browser code on the old URLs.** The move
+to `/_tako/` updated the Go side — `examples/shop/api_test.go:36` posts
+to `/_tako/api/session` — but `examples/shop/web/src/app.ts` is
+hand-written (only `web/src/api.ts` is generated) and still calls
+`/api/_session/signin?next=/` (line 43) and `DELETE /api/_session`
+(line 79), with the built `web/dist/app.js` carrying both. Sign-in
+links and sign-out now hit nothing. `go test ./examples/shop/...`
+passes: no Go test exercises the browser flow, and shop's session walk
+is a `validate/shop.md` step done by hand. Examples are the acceptance
+suite, so this is a shipped regression in it.
+
+**2. `docs/reference/domains.md:10` names a symbol that no longer
+exists.** "`WithDomain(fqdn)` goes on `tako.Service`" — `WithDomain`
+was replaced by `ServiceConfig{Domain}` in X2, and every code sample on
+the page below that line already uses the new form. Z7b's
+api-surface check did not catch it because the prose writes the name
+bare, without the `tako.` prefix the check keys on. Worth noting that
+the check has that blind spot generally, not just here.
+
+## FL6 — the shadow warning, shipped (2026-08-05)
+
+Approved as proposed ("A warning on shadows is good"). Built as
+described: no depth heuristic, the real `ServeMux` asked instead.
+
+### What landed
+
+`analyzer.ShadowedSiteFiles(moduleDir, graph) []Shadow`
+(`pkg/analyzer/shadow.go`) builds the router codegen builds — every
+declared pattern for the service, plus `"/"` for its site — and asks it
+which pattern claims each file under the served directory. A file whose
+`GET` lands anywhere but `"/"` is shadowed. `Shadow.Warning()` renders
+the line, so `tako dev` and `tako deploy` cannot drift into two
+descriptions of one problem.
+
+Callers: `pkg/devserver` (every cycle, after `build.Sites`, before
+codegen) and `cmd/tako/deploy.go`'s `warnSiteShadows` beside
+`warnCallEdges`/`warnFootprints`/`warnDomains`. Both run after the site
+build, since an unbuilt `Build` output has no files to shadow.
+
+Asking the mux paid for itself immediately in cases a depth rule would
+have got wrong: `POST /{a}/{b}` does not shadow a GET stylesheet,
+`GET /` does not swallow the site (codegen's `{$}` anchoring), and
+patterns that cannot coexist are declined rather than reported over
+(that is a startup panic with its own message).
+
+### It found a real one
+
+`examples/journal` has flauta's exact shape — `GET /{year}/{slug}` at
+`app.go:73` over a site with `/assets/…` at depth 2 — and has been
+serving its own stylesheet as a 404:
+
+```
+  app.go:73:2: ⚠ GET /{year}/{slug} shadows 3 files the site serves — /about/index.html, /assets/htmx.min.e209dda5.js, /assets/site.9f86d081.css reach Perma instead of the site, and answer 404; move them deeper than the route's 2 segments, or narrow the pattern (tako/site-shadow)
+```
+
+Confirmed live, not inferred: `curl localhost:8080/assets/site.9f86d081.css`
+→ **404**, `curl localhost:8080/` → 200. `TestFingerprintedAssetIsImmutable`
+(`site_test.go:39`) passes throughout, because `siteHandler()` mounts the
+site **alone** — no declared routes, so nothing to shadow. That is the
+blind spot the friction log described, sitting in tako's own acceptance
+suite. Logged under Discovered work below rather than fixed here.
+
+### Validation
+
+`validate/site-shadow.md`, written and run.
+
+- **Step 1** (fires on a real app), live transcript above: warning
+  between `analyzing` and `generating`, position real, claim true, dev
+  server starts and serves — a warning, not a rule.
+- **Step 2** (quiet when the files clear the route): moving
+  `site.9f86d081.css` to `/assets/css/` drops it from the line, which
+  goes from 3 files to 2. This is flauta's own workaround, and it has
+  to be silent or the warning trains people to ignore it.
+- **Step 3** (deploy): **not run** — `deploy --plan` stops at
+  `tako: no project set` before analysis. Belongs to a release-cycle
+  walk with credentials, like FL5's cloud half. The wiring is three
+  lines calling the same function step 1 covers.
+- **Step 4**: 11 automated cases pass, message text asserted exactly.
+
+### Docs
+
+`reference/errors.md` gains warnings as a fourth kind of message that
+is not an analysis error, with the full text and the reason it is worth
+reading. `reference/site.md`'s "Use" section — where a reader learns
+that declared routes beat the site — now says what that costs and how
+to clear it.
+
+---
+
+## FL7 — reading the declared domain, shipped (2026-08-05)
+
+Approved, including the judgment the proposal flagged: `Domain()`
+returns `""` when undeclared, and never substitutes a run.app URL or a
+localhost ("I'm ok with the domain() function returning empty string").
+
+`func (s *ServiceHandle) Domain() string` — one symbol, the SDK lock
+regenerated deliberately for it (`go test . -update`, `go test ./docs
+-update`; the diff is exactly `+ func (*ServiceHandle).Domain() string`).
+The lock test caught the change before the regeneration, which is what
+it is for.
+
+Analysis-time configuration is unchanged in every respect: the analyzer
+still reads the literal, `tako/config-literal` still refuses a
+variable, the plan is still computed without running the app. Only the
+read-back direction is new.
+
+`reference/domains.md` gains "Reading it back", stating both the use
+(canonical tags, RSS, sitemap, share links) and the deliberate refusal
+to vary by environment.
+
+**flauta's side**, when a flauta session next runs (tako never patches
+flauta): the config seam's `domain` can now come from the
+`ServiceConfig` literal, and the M6 test asserting the two agree has
+nothing left to guard.
+
+---
+
+## Discovered work (2026-08-05, second pass) — not done
+
+**3. `examples/journal` serves its stylesheet as a 404.** Found by FL6
+on its first run; proven with curl through the full mux, transcript
+above. The fix is flauta's: move `web/assets/*` to
+`web/assets/css/`, `web/assets/js/`, update the two `<link>`/`<script>`
+hrefs in `templates/layout.html`, and the warning goes quiet — except
+for `/about/index.html`, which is a genuine two-segment page the route
+legitimately shadows and which `TestStaticPageServesWithRevalidationHeaders`
+also tests through the site alone. Worth doing as its own task, with
+the journal test harness moved onto the full mux so the suite would
+catch the next one.
+
+**4. `reference/service.md`'s option table names three retired
+symbols.** `| WithDomain | WithProfile | WithFootprint |` (lines 68–71)
+are all X2 casualties, the same rot as `domains.md:10` — fixed there
+and in `site.md` (two places) as part of FL7, since those sentences sat
+in the sections being edited. The table needs its own pass: the
+replacement spellings differ per constructor (`ServiceConfig` vs
+`Compute`), which is a doc task, not a sed.
+
+**5. Z7b's api-surface check misses bare symbol names.** It keys on
+`tako.X`, so prose naming `WithDomain` without the prefix escapes it —
+which is how all four of the above survived. Widening it to catch
+`WithFoo`-shaped identifiers in prose would have caught every one.

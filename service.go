@@ -16,6 +16,36 @@ package tako
 // every setting that describes the whole service rather than one route.
 func Service(cfg ...ServiceConfig) *ServiceHandle { return &ServiceHandle{cfg: cfg} }
 
-// ServiceHandle is the app service's declaration. It carries no methods:
-// the declaration IS the value, read at analysis time.
+// ServiceHandle is the app service's declaration: the declaration IS
+// the value, read at analysis time — and readable by the app that
+// wrote it.
 type ServiceHandle struct{ cfg []ServiceConfig }
+
+// Domain reports the custom domain this service declared, or "" if it
+// declared none.
+//
+// The domain is analysis-time configuration and stays that way: the
+// analyzer reads it from the source literal, a variable is still
+// refused (tako/config-literal), and the deploy plan is still computed
+// without running the app. What this adds is the other direction —
+// the app can read back what it declared, instead of repeating the
+// string wherever it builds an absolute URL (canonical tags, RSS
+// links, sitemap entries, share URLs).
+//
+//	var web = tako.Service(tako.ServiceConfig{Domain: "example.com"})
+//
+//	func canonical(path string) string { return "https://" + web.Domain() + path }
+//
+// The value is the declared one in every environment — it does not
+// become localhost under tako dev or the run.app URL when deployed
+// without a mapping. That is deliberate: the things absolute URLs are
+// for name the public address of the site wherever the code happens to
+// be running.
+func (s *ServiceHandle) Domain() string {
+	for _, c := range s.cfg {
+		if c.Domain != "" {
+			return c.Domain
+		}
+	}
+	return ""
+}

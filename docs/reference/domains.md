@@ -7,8 +7,8 @@ can all declare it.
 
 ## Declare
 
-`WithDomain(fqdn)` goes on [`tako.Service`](service.md), the package's
-app-service declaration. Both of these are complete:
+`ServiceConfig{Domain: fqdn}` goes on [`tako.Service`](service.md), the
+package's app-service declaration. Both of these are complete:
 
 ```go
 // A site's service.
@@ -33,6 +33,31 @@ than any other — that is exactly why `tako.Service` exists.
 
 Declaring it also NAMES the service `<package>-<var>`: `api` in package
 `shortlink` gives `shortlink-api`. See [service.md](service.md).
+
+## Reading it back
+
+The declaration is analysis-time configuration, and it stays that way:
+the analyzer reads the domain from the source literal, a variable is
+still refused ([`tako/config-literal`](errors.md)), and the deploy plan
+is still computed without running your app. But the app can read back
+what it declared:
+
+```go
+var web = tako.Service(tako.ServiceConfig{Domain: "example.com"})
+
+func canonical(path string) string { return "https://" + web.Domain() + path }
+```
+
+Absolute URLs are the reason — canonical tags, RSS `<link>` elements,
+sitemap entries, share links. Without this the domain gets written
+twice, once where tako reads it and once where your code builds a URL,
+and the two drift silently.
+
+`Domain()` returns `""` when no domain was declared. It does **not**
+fall back to the run.app URL, and it does not become `localhost` under
+`tako dev`: the value is the declared one in every environment, because
+the things absolute URLs are for name the public address of the site
+regardless of where the code is running.
 
 ## Which service, exactly
 
