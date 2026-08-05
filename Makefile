@@ -21,7 +21,11 @@ build: ## build ./tako in the repo root (gitignored, not installed)
 install: ## install the tako binary (into the dir `make where` prints)
 	go install ./cmd/tako
 	@echo "installed $(GOBIN)/tako"
+	@# make runs recipes in a non-login /bin/sh, which never reads a
+	@# .zprofile or .bash_profile — so a PATH set there looks missing from
+	@# here. Ask the login shell before claiming it is.
 	@command -v tako >/dev/null 2>&1 || \
+		"$${SHELL:-/bin/sh}" -lc 'command -v tako' >/dev/null 2>&1 || \
 		echo "note: $(GOBIN) is not on your PATH — add it to run 'tako' by name"
 
 uninstall: ## remove the installed binary
