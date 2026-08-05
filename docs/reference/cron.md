@@ -142,7 +142,6 @@ app.AdvanceCron(Cleanup) // collapses into the held run
 
 ## Not yet
 
-- Schedules run in UTC (`Etc/UTC`); no per-cron timezone knob.
 - No retryConfig surface — a failed attempt waits for the next tick;
   idempotency is the handler's job (singleflight guards overlap, not
   replay).

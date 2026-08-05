@@ -152,6 +152,13 @@ in your logs.
 
 ## Not yet
 
-Error pages render as plain text — styled error pages are a later
-slice. Rendering is Go templates only: static generator output plus
-Go SSR is the v0 model, no Node runtime services.
+A **404** can wear the site's design —
+`tako.SiteConfig{NotFound: "404.html"}` renders it for both a mistyped
+URL and a handler's `tako.NotFound()`, and [site.md](site.md) has the
+whole story. Every other status still renders as plain text: there is
+no way for a handler to return markup under a 403 or a 402, because
+`tako.HTML` carries no status. The 404 was the one worth a field; the
+rest are waiting for a second app to need them.
+
+Rendering is Go templates only: static generator output plus Go SSR is
+the v0 model, no Node runtime services.

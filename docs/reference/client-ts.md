@@ -111,8 +111,8 @@ Generation failures are analyzer-style diagnostics with `file:line`:
 
 ## Not yet
 
-- TypeScript only: `tako gen client generates TypeScript today — run:
-  tako gen client ts`.
+- TypeScript only: `tako gen client` generates TypeScript today — run
+  it as `tako gen client ts`.
 - `int64` rides as `number` — values past 2^53 lose precision.
 - Excluded endpoints get a reason, not an alternative client: private
   endpoints are for [service calls](calls.md), uploads for the
