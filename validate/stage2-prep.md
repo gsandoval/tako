@@ -17,9 +17,9 @@ generated worker service itself and speak its push contract:
 ```
 cat .tako/gen/shortlink-countclick/main.go     # readable: register + push endpoint
 PORT=8091 go run ./.tako/gen/shortlink-countclick &
-curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8091/_tako/push -d '{"id":"c1","slug":"<existing-slug>"}'   # 204 ack
-curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8091/_tako/push -d '{"id":"c2","slug":"missing"}'          # 500 retry
-curl -s -X POST localhost:8091/_tako/push -d 'not json' -w " %{http_code}\n"                                          # 400 permanent
+curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8091/_tako/api/push -d '{"id":"c1","slug":"<existing-slug>"}'   # 204 ack
+curl -s -o /dev/null -w "%{http_code}\n" -X POST localhost:8091/_tako/api/push -d '{"id":"c2","slug":"missing"}'          # 500 retry
+curl -s -X POST localhost:8091/_tako/api/push -d 'not json' -w " %{http_code}\n"                                          # 400 permanent
 kill %1
 ```
 

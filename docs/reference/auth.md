@@ -7,11 +7,11 @@ auth = tako.Auth(tako.AuthConfig{Google: true})   // journal: Google sign-in
 auth = tako.Auth(tako.AuthConfig{Password: true})    // shop: email/password
 ```
 
-One declaration injects the session surface: `POST /api/_session`
-(exchange a sign-in for a session), `DELETE /api/_session` (sign out),
-`GET /api/_session/signin` (the framework-owned sign-in page — your
+One declaration injects the session surface: `POST /_tako/api/session`
+(exchange a sign-in for a session), `DELETE /_tako/api/session` (sign out),
+`GET /_tako/signin` (the framework-owned sign-in page — your
 app just links here), and the form-friendly `POST
-/api/_session/signout`.
+/_tako/api/session/signout`.
 
 Sessions are **revocable entity records**: the cookie carries only an
 opaque random id; the record holds the identity and the session-bound
@@ -51,7 +51,7 @@ See [calls.md](calls.md).
 the **dev bar**: sign in as test users `alice` / `bob`. The bar
 reflects the session instead of listing every control — signed out it
 offers "sign in as alice/bob"; signed in as alice it shows "switch to
-bob" and "sign out". `/api/_session/signin` serves a dev page listing
+bob" and "sign out". `/_tako/signin` serves a dev page listing
 the same users. Dev sessions are real session records in the local
 entity store, so sign-out and revocation behave exactly as in the
 cloud.
@@ -63,7 +63,7 @@ automated — initialization, enabling the email provider when declared,
 registering sign-in domains per deploy — and the deploy injects
 `TAKO_AUTH_APIKEY` / `TAKO_AUTH_DOMAIN` (the browser client config)
 into every service; the sign-in page uses them to run the browser flow
-and POST the resulting ID token to `/api/_session`.
+and POST the resulting ID token to `/_tako/api/session`.
 
 The one genuinely manual step — only with `tako.AuthConfig{Google: true}` — from
 [the cloud guide](../guide/cloud.md):
@@ -87,7 +87,7 @@ Shop's [api_test.go](../../examples/shop/api_test.go) signs in the way
 the dev bar does — post `dev_user` with a cookie jar:
 
 ```go
-res, err := c.PostForm(srv.URL+"/api/_session", url.Values{"dev_user": {name}})
+res, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{"dev_user": {name}})
 ```
 
 then asserts the 401 text on anonymous writes, owner scoping, and that
@@ -100,7 +100,7 @@ identity directly.
 - `401 {"error": "sign in to continue"}` — WithAuth's gate, exact text
   pinned by tests.
 - `400 POST {"idToken": …} (the Identity Platform sign-in result)` —
-  `/api/_session` got a body without an ID token.
+  `/_tako/api/session` got a body without an ID token.
 - `401 the ID token did not verify: token is for a different project`
   (also: `token expired`, `bad signature`, `unknown signing key`).
 - `500 sign-in is not configured — tako deploy injects the auth client

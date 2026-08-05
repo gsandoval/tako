@@ -16,12 +16,14 @@ import (
 func main() {
 	runtime.Boot() // wire backends: local under .tako/data, gcp from Phase E
 
-	mux := http.NewServeMux()
+	// A worker declares no routes of its own, so this mux holds only
+	// tako's reserved endpoints and is served directly.
+	takoMux := http.NewServeMux()
 
 	// worker CountClick ← queue clicks (app.go:54)
 	runtime.RegisterWorker("CountClick", shortlink.CountClick)
 	// Cloud deliveries arrive as pushes: 204 acks, 500 retries, 400 = permanent.
-	mux.Handle("POST /_tako/push", runtime.PushHandler("CountClick", shortlink.CountClick))
+	takoMux.Handle("POST /_tako/api/push", runtime.PushHandler("CountClick", shortlink.CountClick))
 
-	runtime.Serve(mux)
+	runtime.Serve(takoMux)
 }

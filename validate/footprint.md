@@ -135,7 +135,7 @@ scheduler job <env>-gallery-cron-cleanup
 ```
 
 The cron is not a service at all: it is a Cloud Scheduler job that
-POSTs `/_tako/cron/cleanup` on the app service. So two crons are two
+POSTs `/_tako/api/cron/cleanup` on the app service. So two crons are two
 routes on one machine, and asking for `cpu 4` and `cpu 2` is asking
 that machine to be two sizes. Which is why the error's other remedy —
 "split the packages" — is not a euphemism: in tako a service IS a

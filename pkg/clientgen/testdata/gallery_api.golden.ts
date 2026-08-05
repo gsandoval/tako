@@ -151,5 +151,9 @@ export function createClient(opts: ClientOptions = {}) {
     async reindexRuns(): Promise<ReindexRun[]> {
       return (await call("GET", `/api/reindex/runs`, null, undefined)).json();
     },
+    /** gallery.Permalink — GET /{owner}/{album}/{photo}/{size} */
+    async permalink(owner: string, album: string, photo: string, size: string): Promise<Photo> {
+      return (await call("GET", `/${encodeURIComponent(String(owner))}/${encodeURIComponent(String(album))}/${encodeURIComponent(String(photo))}/${encodeURIComponent(String(size))}`, null, undefined)).json();
+    },
   };
 }

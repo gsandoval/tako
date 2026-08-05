@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -53,6 +54,28 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		return nil
 	}
 	method, params := parseRoute(route)
+
+	// /_tako/ is the framework's, and the generated service answers it
+	// before this app's router is consulted. A route declared inside it
+	// is not overridden — it is never reached at all, and a handler that
+	// silently never runs is the worst way to learn this.
+	{
+		path := route
+		if i := strings.IndexByte(path, ' '); i >= 0 {
+			path = path[i+1:]
+		}
+		if routes.IsReserved(path) {
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+				Msg: fmt.Sprintf("route %q is inside %s, which tako reserves for the endpoints it injects "+
+					"(session, sign-in, cron, signed URLs, push) — the framework answers that namespace "+
+					"before this app's routes, so %s would never run; choose a path outside it",
+					route, routes.Prefix, name.Name),
+				Rule: "reserved-prefix",
+			})
+			return nil
+		}
+	}
 
 	// tako.Route carries the two settings that belong to ONE route.
 	// Service-wide settings are not fields on it, so a route that tries

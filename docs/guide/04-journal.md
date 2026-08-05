@@ -51,7 +51,7 @@ not escapes. Trusting raw HTML is an explicit, graph-visible opt-out
 
 ## Auth and sessions
 
-`tako.Auth(tako.AuthConfig{Google: true})` is one declaration: `/api/_session*`
+`tako.Auth(tako.AuthConfig{Google: true})` is one declaration: `/_tako/api/session*`
 routes mount, a framework sign-in page appears, `WithAuth` gates
 routes with a 401, `ctx.User()` is guaranteed past it, and ownership
 stays YOUR rule (`403 only the author can publish`). Sessions are

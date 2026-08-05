@@ -13,11 +13,11 @@ import (
 // happy path needs Google-signed tokens and runs in the T2 gate.
 func TestCronDispatchRefusesStrangers(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.Handle("POST /_tako/cron/{cron}", CronDispatch())
+	mux.Handle("POST /_tako/api/cron/{cron}", CronDispatch())
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 
-	res, err := http.Post(srv.URL+"/_tako/cron/Cleanup", "", nil)
+	res, err := http.Post(srv.URL+"/_tako/api/cron/Cleanup", "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestCronDispatchRefusesStrangers(t *testing.T) {
 		t.Fatalf("no token = %d, want 401", res.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/_tako/cron/Cleanup", nil)
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/_tako/api/cron/Cleanup", nil)
 	req.Header.Set("Authorization", "Bearer not-a-jwt")
 	res2, err := http.DefaultClient.Do(req)
 	if err != nil {

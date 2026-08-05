@@ -10,7 +10,8 @@
         "journal.Write",
         "journal.Save",
         "journal.Publish",
-        "journal.Rename"
+        "journal.Rename",
+        "journal.Perma"
       ],
       "profile": "default"
     }
@@ -179,6 +180,31 @@
         }
       ],
       "pos": "app.go:66:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Perma",
+      "package": "journal",
+      "service": "journal",
+      "route": "GET /{year}/{slug}",
+      "req_type": "PermaReq",
+      "req_ref": "journal.PermaReq",
+      "res_ref": "tako.HTML",
+      "bindings": [
+        {
+          "field": "Year",
+          "kind": "path",
+          "name": "year",
+          "type": "string"
+        },
+        {
+          "field": "Slug",
+          "kind": "path",
+          "name": "slug",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:73:2"
     }
   ],
   "edges": [
@@ -244,6 +270,20 @@
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"
+    },
+    {
+      "from": "journal.Perma",
+      "to": "moved_urls",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Perma",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
     }
   ]
 }

@@ -14,10 +14,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
-// URLSigner mints local signed URLs: <base>/_tako/signed/<claims>.<mac>.
+// URLSigner mints local signed URLs: <base>/_tako/api/signed/<claims>.<mac>.
 // The HMAC secret persists at <dir>/signing.key so URLs survive tako
 // dev reloads and restarts.
 type URLSigner struct {
@@ -83,10 +84,10 @@ func (s *URLSigner) sign(c signedClaims) (string, error) {
 		return "", err
 	}
 	body := base64.RawURLEncoding.EncodeToString(raw)
-	return s.base + "/_tako/signed/" + body + "." + s.mac(body), nil
+	return s.base + routes.Signed + body + "." + s.mac(body), nil
 }
 
-// verify authenticates a token (the path segment after /_tako/signed/)
+// verify authenticates a token (the path segment after /_tako/api/signed/)
 // and returns its claims. Signature errors and expiry are distinct: the
 // endpoint maps them to distinct texts.
 func (s *URLSigner) verify(token string) (signedClaims, error) {

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/metrics"
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -552,7 +553,7 @@ func cronRoute(g *analyzer.AppGraph, v string) string {
 	for _, h := range g.Handlers {
 		if h.Var == v && h.Kind == "cron" {
 			if dot := strings.LastIndexByte(h.Var, '.'); dot >= 0 {
-				return "/_tako/cron/" + h.Var[dot+1:]
+				return routes.CronRoute(h.Var[dot+1:])
 			}
 		}
 	}

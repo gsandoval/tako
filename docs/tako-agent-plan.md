@@ -437,12 +437,51 @@ Gate FL (agent-side): every example suite green against `local`,
 conformance included, with the write-between-pages case pinning FL4.
 Live gates for FL1/FL4 remain part of the batched human walk.
 
+**FL5 — the `/_tako/` namespace. DONE 2026-08-05.** Framework routes
+moved under a reserved prefix with rooms — `api/` for everything a
+program talks to, `z/` reserved for diagnostics, the namespace root for
+tako's own pages (`signin`) — and onto a mux of their own, answered
+before the app's router. `internal/routes` is the one definition of the
+six places that used to spell these paths by hand; `runtime.Reserved` is
+the dispatch; `tako/reserved-prefix` refuses a route declared inside the
+namespace.
+
+It closed a startup panic, not a bad response: `tako.Auth` beside a
+two-segment wildcard page, or a `tako.Bucket` beside a deeper one, made
+Go's `ServeMux` refuse to build the router. The scope grew from the
+friction log's one entry to the class once `/_tako/signed/` turned out
+to be a second instance already in the tree. Depth alone does not fix
+it — measured, the path move rescues journal and leaves gallery
+panicking, because a deeper mount only moves the colliding arity — which
+is why the fix is two muxes.
+
+Gate FL5 (agent-side): `validate/reserved-namespace.md` run end to end,
+transcripts in `task-log.md`; journal boots with auth + `GET
+/{year}/{slug}`, gallery with a bucket + `GET
+/{owner}/{album}/{photo}/{size}`; `PUT /_tako/api/session` still answers
+405 from the handler; a route inside the namespace fails analysis. Cloud
+half unvalidated by design — three deployed targets move (Scheduler uri,
+push endpoint, Tasks target) and belong to the next release-cycle walk.
+
+Also in the log and **not promoted**: a `NotFoundData` provider so a
+config-driven shell can render on the 404 (today `writeNotFoundPage`
+passes nil, `pkg/runtime/page.go:397`, so a shell built from config
+renders its bands empty) and an analyzer warning when a wildcard Page
+route shadows site files at depth 2 (cost flauta a silently unserved
+stylesheet). Both are flagged "workaround-fine, worth asking for" by
+flauta and neither blocks. The rest of the log — 403 pages, the dev bar
+on htmx fragments, one root template per site, the domain through the
+config seam — is settled workaround-fine on both sides.
+
 **Z7 — `tako docs`. DONE 2026-08-04**, after FL. Details in the Stage 10
 entry above; gate (agent-side) is `validate/docs.md`, including the step
 that matters most — a binary built into `/tmp`, run from `/tmp`, serving
 every page.
 
-**Z6 — Publish. Now unblocked by FL1–FL4**, and still the owner's:
+**Z6 — Publish. Unblocked: FL1–FL5 are all in.** FL5 landing before the
+tag matters more than the others did — it moved six public URLs, and
+after a v0.1.0 those paths are API that someone's sign-in code is
+written against. Z6 itself is still the owner's:
 `git remote` (none is configured), `git push`, `git tag v0.1.0`, plus a
 fresh-project cycle against the published module path. The verdicts also
 need to travel back to `flautas/docs/friction.md` under its ADR 0008 —

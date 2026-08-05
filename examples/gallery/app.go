@@ -76,6 +76,15 @@ var (
 	Objects     = tako.API("GET /api/objects", objects)
 	Reindex     = tako.API("POST /api/reindex", reindex)
 	ReindexRuns = tako.API("GET /api/reindex/runs", listRuns)
+	// The shareable photo URL, at a size — and the route this app cannot
+	// boot without FL5. A bucket makes tako inject /_tako/api/signed/, a
+	// method-less subtree; four wildcard segments overlap it (the mount
+	// matches /_tako/api/signed/<token>, which is four too) and neither
+	// pattern is more specific on both path and method. On one shared mux
+	// Go refuses to order them and panics at registration. A deeper mount
+	// only moves the arity that collides; its own mux removes the
+	// collision at every arity.
+	Permalink = tako.API("GET /{owner}/{album}/{photo}/{size}", permalink)
 
 	// The pipeline is event-driven end to end:
 	// upload → bucket event → queue → worker → topic → 2 subscribers.
@@ -172,6 +181,27 @@ type DownloadRes struct {
 func download(ctx tako.Ctx, req DownloadReq) (DownloadRes, error) {
 	url, err := photos.SignedGet(ctx, req.ID, 15*time.Minute)
 	return DownloadRes{URL: url}, err
+}
+
+// PermalinkReq binds the four segments of a shareable photo URL. The
+// album is decoration in this example — photos are keyed by id — but it
+// is part of the URL a person pastes, so it binds rather than vanishing.
+type PermalinkReq struct {
+	Owner string `path:"owner"`
+	Album string `path:"album"`
+	Photo string `path:"photo"`
+	Size  string `path:"size"`
+}
+
+func permalink(ctx tako.Ctx, req PermalinkReq) (Photo, error) {
+	p, err := photoStore.Get(ctx, req.Photo)
+	if err != nil {
+		return Photo{}, err
+	}
+	if p.Owner != req.Owner {
+		return Photo{}, tako.NotFound()
+	}
+	return p, nil
 }
 
 // ownerID is the signed-in user's ID, or "" — WithAuth enforcement

@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/internal/schedule"
 	"github.com/gsandoval/tako/pkg/analyzer"
 	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
@@ -277,7 +278,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					continue
 				}
 				env["TAKO_TASKS_"+strings.ToUpper(strings.ReplaceAll(e.To, "-", "_"))] = fmt.Sprintf(
-					"projects/%s/locations/%s/queues/%s|%s/_tako/push|%s",
+					"projects/%s/locations/%s/queues/%s|%s"+routes.Push+"|%s",
 					cfg.Project, cfg.Region, cfg.Name(e.To)+"-tako", cfg.RunURL(worker), cfg.SAEmail(worker))
 			}
 		}
@@ -387,7 +388,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			Name: schedulerJobName(cfg, h.Service, short),
 			Spec: map[string]any{
 				"schedule":       sched.UnixCron(),
-				"uri":            cfg.RunURL(h.Service) + "/_tako/cron/" + short,
+				"uri":            cfg.RunURL(h.Service) + routes.CronRoute(short),
 				"serviceAccount": cfg.SAEmail(h.Service),
 				"audience":       cfg.RunURL(h.Service),
 				"timeZone":       tz,
@@ -523,7 +524,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Name: cfg.Name(h.Service),
 				Spec: map[string]any{
 					"topic":          sourceTopic(cfg, h),
-					"endpoint":       url + "/_tako/push",
+					"endpoint":       url + routes.Push,
 					"serviceAccount": cfg.SAEmail(h.Service),
 					"audience":       url,
 					"retry":          map[string]any{"minimumBackoff": fmt.Sprintf("%ds", minB), "maximumBackoff": fmt.Sprintf("%ds", maxB)},

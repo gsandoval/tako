@@ -9,6 +9,7 @@ flowchart LR
     h_gallery_Objects["GET /api/objects → Objects"]
     h_gallery_Reindex["POST /api/reindex → Reindex"]
     h_gallery_ReindexRuns["GET /api/reindex/runs → ReindexRuns"]
+    h_gallery_Permalink["GET /{owner}/{album}/{photo}/{size} → Permalink"]
     h_gallery_Cleanup["cron Cleanup — every 24h"]
   end
   subgraph svc_gallery_onuploaded["service gallery-onuploaded"]

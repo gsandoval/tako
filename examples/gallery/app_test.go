@@ -83,7 +83,7 @@ func TestDownloadReturnsSignedURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := Download.Call(ctx, DownloadReq{ID: p.ID})
-	if err != nil || !strings.Contains(res.URL, "/_tako/signed/") {
+	if err != nil || !strings.Contains(res.URL, "/_tako/api/signed/") {
 		t.Fatalf("download = %+v, %v", res, err)
 	}
 }

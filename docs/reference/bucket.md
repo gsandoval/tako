@@ -61,7 +61,7 @@ filters out its `_thumb` outputs, the standing idiom.
 ## Local
 
 `tako dev` stores objects on disk under the data dir. Signed URLs
-point back at the service's own `/_tako/signed/` endpoint, enforcing
+point back at the service's own `/_tako/api/signed/` endpoint, enforcing
 the same constraints with the same error texts as the cloud path.
 Uploads fire `Uploaded` through the in-process dispatcher, so the
 whole pipeline — event, queue, worker, fan-out — narrates on the dev

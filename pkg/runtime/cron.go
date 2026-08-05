@@ -20,12 +20,13 @@ import (
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/internal/schedule"
 )
 
 // cronInert, set by BootGCP, keeps crons from ticking in-process in
 // the cloud (per-instance tickers under autoscaling are not a
-// schedule); Cloud Scheduler drives them through /_tako/cron instead.
+// schedule); Cloud Scheduler drives them through /_tako/api/cron instead.
 var cronInert bool
 
 // cronHandlers maps cron name → invoke, for the scheduler dispatch
@@ -60,7 +61,7 @@ func RegisterCron(name string, h tako.Handler) {
 	cronHandlers.Store(name, fn)
 	if cronInert {
 		// In the cloud the trigger is Cloud Scheduler → POST
-		// /_tako/cron/<name> (T2); a per-instance ticker would fire
+		// /_tako/api/cron/<name> (T2); a per-instance ticker would fire
 		// once per live instance and never when scaled to zero.
 		slog.Default().Info("cron driven by Cloud Scheduler", "cron", name, "schedule", schedStr)
 		return
@@ -88,7 +89,7 @@ func RegisterCron(name string, h tako.Handler) {
 	}()
 }
 
-// CronDispatch serves POST /_tako/cron/{cron}: Cloud Scheduler's
+// CronDispatch serves POST /_tako/api/cron/{cron}: Cloud Scheduler's
 // trigger. The route may sit on a public service, so the request
 // authenticates itself: a Google-signed OIDC token whose audience is
 // this service (TAKO_CRON_AUDIENCE) and whose identity is the
@@ -101,7 +102,7 @@ func CronDispatch() http.Handler {
 		// request's own pattern cannot identify which one ran. Name it,
 		// or all crons share a metric series and CronMissed cannot tell
 		// a dead cron from a healthy one beside it.
-		RefineRoute(r, "/_tako/cron/"+name)
+		RefineRoute(r, routes.CronRoute(name))
 		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 		if !ok {
 			http.Error(w, "cron triggers carry an OIDC bearer token", http.StatusUnauthorized)

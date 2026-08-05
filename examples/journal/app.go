@@ -35,7 +35,7 @@ var (
 		NotFound: "404.html",
 	})
 
-	// auth injects /api/_session (Identity Platform's Google flow in the
+	// auth injects /_tako/api/session (Identity Platform's Google flow in the
 	// cloud; the dev bar's test users locally). Sessions are revocable
 	// records in the entity store.
 	auth = tako.Auth(tako.AuthConfig{Google: true})
@@ -64,6 +64,13 @@ var (
 	Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 	Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 	Rename  = tako.Page("POST /p/{id}/rename", rename, tako.Route{SignIn: true})
+	// The permalink a blog actually wants, and the route that used to be
+	// unshippable: a two-segment wildcard GET beside tako.Auth is the
+	// pair Go's ServeMux cannot order, so declaring both panicked the
+	// service at startup until tako's endpoints moved to a mux of their
+	// own (FL5). /p/{id} stays — a literal first segment is more
+	// specific, so the short URL and the permalink coexist.
+	Perma = tako.Page("GET /{year}/{slug}", perma)
 )
 
 // HomeView is the home page's data: one page of posts, and how many
@@ -117,6 +124,18 @@ func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
 		return tako.HTML{}, err
 	}
 	return site.Render(ctx, "post.html", p)
+}
+
+// PermaReq binds the permalink's two segments. The year is not used to
+// find the post — the slug is the id — but it is part of the URL a
+// reader shares, so it is bound rather than ignored.
+type PermaReq struct {
+	Year string `path:"year"`
+	Slug string `path:"slug"`
+}
+
+func perma(ctx tako.Ctx, req PermaReq) (tako.HTML, error) {
+	return read(ctx, ReadReq{ID: req.Slug})
 }
 
 func writeForm(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {

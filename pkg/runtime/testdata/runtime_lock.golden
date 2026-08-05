@@ -38,6 +38,7 @@ func RegisterWorker(name string, h github.com/gsandoval/tako.Handler)
 func RemoteJSON[Req, Res any](ctx github.com/gsandoval/tako.Ctx, service string, base string, method string, path string, req Req) (Res, error)
 func RenderMarkdown(src string, trusted bool) ([]byte, error)
 func RequireAuth() HandlerOption
+func Reserved(framework net/http.Handler, app net/http.Handler) net/http.Handler
 func RunJobMain(name string, h github.com/gsandoval/tako.Handler)
 func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
 func Serve(h net/http.Handler)

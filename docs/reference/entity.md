@@ -186,7 +186,8 @@ service, or tako.NewTestApp`.
 ## Not yet
 
 - Query ops stop at `=`, `<`, `<=`, `>`, `>=` — no `!=`, `IN`, or
-  full-text; no cursors (`All`/`First`/`Iter` materialize — bound with `Limit`).
+  full-text. `All`/`First`/`Iter` materialize, so bound them with
+  `Limit`; to walk a large match, page it with [`Page`](#paging).
 - Ids are strings, never auto-generated — mint with `tako.NewID()`.
 - Transactions are per-store; cross-resource sections are
   [tako.Lock](lock.md)'s job.

@@ -58,7 +58,7 @@ const order = await api.placeOrder({ productId: p.id, qty: 1 });
 ```ts
 } catch (e) {
   if (e instanceof ApiError && e.status === 401) {
-    location.assign("/api/_session/signin?next=/");
+    location.assign("/_tako/signin?next=/");
     return;
   }
 ```

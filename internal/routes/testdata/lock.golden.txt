@@ -1,0 +1,12 @@
+# tako's reserved URL surface. Every line is a contract:
+# deployed Scheduler jobs, push subscriptions, alert queries and
+# user sign-in code are all written against these strings.
+prefix	/_tako/
+room	/_tako/api/
+room	/_tako/z/
+Session	/_tako/api/session
+SignOut	POST /_tako/api/session/signout
+Push	POST /_tako/api/push
+Signed	/_tako/api/signed/
+Cron	POST /_tako/api/cron/{cron}
+SignIn	GET /_tako/signin

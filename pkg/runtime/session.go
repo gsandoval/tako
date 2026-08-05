@@ -23,6 +23,7 @@ import (
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/routes"
 )
 
 // Sessions are Datastore-backed records (W5 amendment): the cookie
@@ -122,7 +123,7 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string, expires
 	})
 }
 
-// SessionHandler serves /api/_session — injected when the app declares
+// SessionHandler serves /_tako/api/session — injected when the app declares
 // tako.Auth. POST exchanges a Firebase (Identity Platform) ID token for
 // a session; on the local backend it also accepts the dev bar's
 // dev_user form (no GCP anywhere near tako dev). DELETE signs out by
@@ -364,7 +365,7 @@ func (b *barWriter) flush() {
 	rec := loadSession(b.req)
 	who := "anonymous"
 	var controls strings.Builder
-	controls.WriteString(`<form method="post" action="/api/_session" style="display:inline-flex;gap:6px;margin:0">`)
+	controls.WriteString(`<form method="post" action="` + routes.Session + `" style="display:inline-flex;gap:6px;margin:0">`)
 	for _, u := range []string{"alice", "bob"} {
 		switch {
 		case rec == nil:
@@ -376,7 +377,7 @@ func (b *barWriter) flush() {
 	controls.WriteString(`</form>`)
 	if rec != nil {
 		who = "signed in as " + rec.Name
-		controls.WriteString(`<form method="post" action="/api/_session/signout" style="margin:0"><button>sign out</button></form>`)
+		controls.WriteString(`<form method="post" action="` + routes.SignOut + `" style="margin:0"><button>sign out</button></form>`)
 	}
 	bar := `<div style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#eee;font:13px sans-serif;padding:6px 12px;display:flex;gap:12px;align-items:center;z-index:9999">` +
 		`<span>tako dev · ` + who + `</span>` +
@@ -409,12 +410,12 @@ func SignOutHandler() http.Handler {
 	})
 }
 
-// SignInPage serves GET /api/_session/signin — the framework-owned
+// SignInPage serves GET /_tako/signin — the framework-owned
 // sign-in UI ("auth is one declaration": the app links here, tako owns
 // the flow). Locally it lists dev users (no GCP anywhere near tako
 // dev); in the cloud it runs Identity Platform's browser flow with the
 // client config the deploy injected, POSTs the resulting ID token to
-// /api/_session, and returns to ?next= (default /).
+// /_tako/api/session, and returns to ?next= (default /).
 func SignInPage(providers ...string) http.Handler {
 	prov := map[string]bool{}
 	for _, p := range providers {
@@ -454,7 +455,7 @@ const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · ta
 <body style="font:16px sans-serif;max-width:32rem;margin:4rem auto">
 <h1>Sign in (dev)</h1>
 <p>Local sessions are dev-minted — no GCP involved. Pick a user:</p>
-<form method="post" action="/api/_session"><input type="hidden" name="next" value="%s">
+<form method="post" action="` + routes.Session + `"><input type="hidden" name="next" value="%s">
 <button name="dev_user" value="alice">alice</button>
 <button name="dev_user" value="bob">bob</button>
 </form></body>`
@@ -475,7 +476,7 @@ firebase.initializeApp({apiKey: %q, authDomain: %q, projectId: %q});
 const next = %q;
 async function establish(cred) {
   const idToken = await cred.user.getIdToken();
-  const res = await fetch("/api/_session", {method: "POST",
+  const res = await fetch("` + routes.Session + `", {method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({idToken})});
   if (!res.ok) throw new Error("session exchange failed: " + await res.text());

@@ -170,7 +170,7 @@ go run ../../cmd/tako logs gallery --project $PROJECT --env logging
 ## 8b. Expected noise: the post-deploy 403 window
 
 Within the first couple of minutes you will likely see 403s on
-`/_tako/push` for the subscriber services, with *"The IAM principal
+`/_tako/api/push` for the subscriber services, with *"The IAM principal
 lacks {run.routes.invoke} permission"*. **That is IAM propagation, not a
 defect** — the grant is applied before the subscription is created, but
 Cloud Run's front door takes a moment to see it, and Pub/Sub retries.

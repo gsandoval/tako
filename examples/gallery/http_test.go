@@ -64,8 +64,20 @@ func serve(t *testing.T) *httptest.Server {
 		req.ID = runtime.PathString(r, "id")
 		return req, nil
 	}))
-	mux.Handle("/_tako/signed/", runtime.SignedURLHandler())
-	srv := httptest.NewServer(mux)
+	mux.Handle("GET /{owner}/{album}/{photo}/{size}", runtime.JSONHandler(Permalink, func(r *http.Request) (PermalinkReq, error) {
+		return PermalinkReq{
+			Owner: runtime.PathString(r, "owner"),
+			Album: runtime.PathString(r, "album"),
+			Photo: runtime.PathString(r, "photo"),
+			Size:  runtime.PathString(r, "size"),
+		}, nil
+	}))
+	// Two muxes, as codegen emits them. The signed-URL mount and the
+	// permalink above cannot share one: a method-less subtree beside a
+	// four-segment wildcard is the pair Go refuses to order.
+	takoMux := http.NewServeMux()
+	takoMux.Handle("/_tako/api/signed/", runtime.SignedURLHandler())
+	srv := httptest.NewServer(runtime.Reserved(takoMux, mux))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -394,7 +406,7 @@ func TestSignedUploadPipeline(t *testing.T) {
 		t.Fatal(err)
 	}
 	res.Body.Close()
-	if ticket.Photo.Caption != "cat" || !strings.Contains(ticket.UploadURL, "/_tako/signed/") {
+	if ticket.Photo.Caption != "cat" || !strings.Contains(ticket.UploadURL, "/_tako/api/signed/") {
 		t.Fatalf("ticket = %+v", ticket)
 	}
 
@@ -642,5 +654,72 @@ func TestFeedCursorRoundTripsOverHTTP(t *testing.T) {
 	}
 	if _, present := pages[1]["cursor"]; present {
 		t.Error("the last page carries a cursor key; it is omitempty so that its ABSENCE is how a client knows it is done")
+	}
+}
+
+// The second FL5 instance, and the one a method-scoped fix would have
+// missed: this app declares a bucket, so tako injects the signed-URL
+// endpoint, and it declares a four-segment wildcard for shareable photo
+// URLs. On one mux those cannot both be registered.
+func TestABucketAndAWildcardRouteCanBeMountedTogether(t *testing.T) {
+	shared := func() (panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		mux := http.NewServeMux()
+		mux.Handle("GET /{owner}/{album}/{photo}/{size}", http.NotFoundHandler())
+		mux.Handle("/_tako/api/signed/", http.NotFoundHandler())
+		return false
+	}()
+	if !shared {
+		t.Fatal("one shared mux accepted the signed-URL mount beside a four-segment wildcard — " +
+			"the hazard this example exists to pin is gone")
+	}
+
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("gallery cannot boot: %v", r)
+		}
+	}()
+	takoMux := http.NewServeMux()
+	takoMux.Handle("/_tako/api/signed/", http.NotFoundHandler())
+	takoMux.Handle("POST /_tako/api/cron/{cron}", http.NotFoundHandler())
+	app := http.NewServeMux()
+	app.Handle("GET /{owner}/{album}/{photo}/{size}", http.NotFoundHandler())
+	app.Handle("GET /api/photos", http.NotFoundHandler())
+	runtime.Reserved(takoMux, app)
+}
+
+// The permalink resolves a photo, and refuses one that is not the
+// owner's — so the route is real rather than a shape declared to prove
+// a point.
+func TestThePermalinkResolvesAPhotoForItsOwner(t *testing.T) {
+	srv := serve(t)
+	ctx := runtime.NewCtx(t.Context())
+	if err := photoStore.Put(ctx, Photo{ID: "p1", Owner: "alice", Caption: "a cat", Ready: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := http.Get(srv.URL + "/alice/holidays/p1/large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("permalink → %d, want 200", res.StatusCode)
+	}
+	var got Photo
+	if err := json.NewDecoder(res.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got.ID != "p1" || got.Caption != "a cat" {
+		t.Fatalf("permalink returned %+v, want photo p1", got)
+	}
+
+	res2, err := http.Get(srv.URL + "/bob/holidays/p1/large")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("another owner's permalink → %d, want 404", res2.StatusCode)
 	}
 }

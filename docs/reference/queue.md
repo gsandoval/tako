@@ -107,7 +107,7 @@ laptop instead of in production, and the seed reproduces the run.
 
 Each queue becomes a Pub/Sub topic; the worker becomes its own Cloud
 Run service (the partition rule: each async handler is alone in its
-own) fed by an OIDC push subscription to `/_tako/push` — private, so
+own) fed by an OIDC push subscription to `/_tako/api/push` — private, so
 curl gets 403 at Google's front door. Failure semantics match local,
 as the deploy summary states: *"redelivery: 5 attempts with backoff,
 then dead-letter"* (exponential, 10s–300s). `tako.Permanent`

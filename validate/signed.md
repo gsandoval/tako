@@ -21,7 +21,7 @@ PORT=8090 go run ../../cmd/tako dev
 
 **Observe:** `5 services, 7 endpoints, 1 worker, 3 subscribers`, and in
 the generated `.tako/gen/gallery/main.go` the explicit mount:
-`mux.Handle("/_tako/signed/", runtime.SignedURLHandler())` — no hidden
+`mux.Handle("/_tako/api/signed/", runtime.SignedURLHandler())` — no hidden
 routes.
 
 ## 2. Ticket → direct PUT → the spine takes over
@@ -30,7 +30,7 @@ routes.
 curl -s -X POST localhost:8090/api/uploads -d '{"caption":"cat"}'
 ```
 
-**Observe:** `{"photo":{...,"ready":false},"uploadURL":"http://localhost:8090/_tako/signed/<token>"}`.
+**Observe:** `{"photo":{...,"ready":false},"uploadURL":"http://localhost:8090/_tako/api/signed/<token>"}`.
 Then PUT the bytes straight to storage (use YOUR url):
 
 ```
@@ -79,7 +79,7 @@ shaped response — `{"url": "..."}` — so pull the field with `jq -r .url`:
 ```
 ID=$(curl -s localhost:8090/api/photos | jq -r '.[0].id')
 DL=$(curl -s localhost:8090/api/photos/$ID/download | jq -r .url)
-echo "$DL"                # http://localhost:8090/_tako/signed/<token>
+echo "$DL"                # http://localhost:8090/_tako/api/signed/<token>
 curl -si "$DL" | head -4  # 200, bytes stream, correct Content-Type + Length
 curl -s -X PUT "$DL"      # → 405 {"error":"signed download URLs accept GET only"}
 ```

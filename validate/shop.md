@@ -85,7 +85,7 @@ PORT=8090 go run ../../cmd/tako dev     # then open http://localhost:8090
   `_session` cookie a sign-in sets — a jar is the easy way):
 
   ```
-  curl -s -c /tmp/dev.jar -o /dev/null -d dev_user=alice localhost:8090/api/_session
+  curl -s -c /tmp/dev.jar -o /dev/null -d dev_user=alice localhost:8090/_tako/api/session
   curl -s -b /tmp/dev.jar -X POST localhost:8090/api/settle -H 'Content-Type: application/json' -d '{"day":"dev"}'
   ```
 
@@ -158,7 +158,7 @@ IDTOKEN=$(python3 -c 'import json; print(json.load(open("/tmp/idp.json"))["idTok
 
 # 3. Exchange the ID token for a tako session — the Set-Cookie lands
 #    in the jar, and every following curl sends it with -b:
-curl -s -c /tmp/shop.jar -o /dev/null -X POST $B/api/_session   -H 'Content-Type: application/json' -d "{\"idToken\":\"$IDTOKEN\"}"
+curl -s -c /tmp/shop.jar -o /dev/null -X POST $B/_tako/api/session   -H 'Content-Type: application/json' -d "{\"idToken\":\"$IDTOKEN\"}"
 curl -s -b /tmp/shop.jar $B/api/me     # → {"signedIn":true,...} proves it
 ```
 

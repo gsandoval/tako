@@ -31,8 +31,8 @@ gcloud scheduler jobs describe gallery-cron-cleanup \
 ```
 
 → schedule `0 0 * * *` (the 24h mapping), UTC, POST to
-`…/_tako/cron/Cleanup`, oidcToken as gallery-sa. The route trusts
-nobody: `curl -X POST <gallery-url>/_tako/cron/Cleanup` → 401;
+`…/_tako/api/cron/Cleanup`, oidcToken as gallery-sa. The route trusts
+nobody: `curl -X POST <gallery-url>/_tako/api/cron/Cleanup` → 401;
 with a bad bearer → 403.
 
 ## 3. Force a run (operator path)

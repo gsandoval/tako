@@ -22,7 +22,7 @@ func TestWithDelayNeedsRoute(t *testing.T) {
 
 // TestTasksRouteParses pins the env route format the deploy injects.
 func TestTasksRouteParses(t *testing.T) {
-	t.Setenv("TAKO_TASKS_Q", "projects/p/locations/r/queues/q-tako|https://w.example/_tako/push|w-sa@p.iam.gserviceaccount.com")
+	t.Setenv("TAKO_TASKS_Q", "projects/p/locations/r/queues/q-tako|https://w.example/_tako/api/push|w-sa@p.iam.gserviceaccount.com")
 	s := NewQueueStore(&Client{Opts: Options{Project: "p", Env: "prod"}})
 	// The enqueue itself would hit the network; a malformed route must
 	// fail BEFORE that with its own text.

@@ -117,12 +117,12 @@ func TestRecordingWithNoSinkIsSafe(t *testing.T) {
 // cannot see by itself.
 func TestWildcardDispatchersNameWhatTheyRan(t *testing.T) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /_tako/cron/{cron}", func(w http.ResponseWriter, r *http.Request) {
-		RefineRoute(r, "/_tako/cron/"+r.PathValue("cron"))
+	mux.HandleFunc("POST /_tako/api/cron/{cron}", func(w http.ResponseWriter, r *http.Request) {
+		RefineRoute(r, "/_tako/api/cron/"+r.PathValue("cron"))
 	})
 	for _, name := range []string{"Cleanup", "Sweep"} {
-		m := serveThrough(t, mux, http.MethodPost, "/_tako/cron/"+name)
-		if got := m.counters[0].labels["route"]; got != "/_tako/cron/"+name {
+		m := serveThrough(t, mux, http.MethodPost, "/_tako/api/cron/"+name)
+		if got := m.counters[0].labels["route"]; got != "/_tako/api/cron/"+name {
 			t.Fatalf("cron %s recorded as %q — every cron would share one series", name, got)
 		}
 	}

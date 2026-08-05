@@ -20,7 +20,7 @@ Erroring
 
 Failing
   siren/x1: cron Flaky is failing
-  sum(increase(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/cron/Flaky",status="5xx"}[300s])) >= 1
+  sum(increase(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/api/cron/Flaky",status="5xx"}[300s])) >= 1
 
 Fat
   siren/x1: container/memory/allocation_time is above 1
@@ -52,7 +52,7 @@ Maxed
 
 Missed
   siren/x1: cron Sweep has not run
-  absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/cron/Sweep"}[480s])
+  absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="siren-x1",job="siren",route="/_tako/api/cron/Sweep"}[480s])
 
 NoThroughput
   siren/x1: work_ms per second is below 0.001

@@ -33,9 +33,9 @@ func TestEverySelectorCarriesMonitoredResource(t *testing.T) {
 	if !strings.Contains(s, `monitored_resource="generic_task"`) {
 		t.Fatalf("selector = %q, missing the matcher the API demands", s)
 	}
-	withLabels := selector("run.googleapis.com/request_count", "cloud_run_revision", `route="/_tako/cron/Cleanup"`)
+	withLabels := selector("run.googleapis.com/request_count", "cloud_run_revision", `route="/_tako/api/cron/Cleanup"`)
 	if !strings.Contains(withLabels, `monitored_resource="cloud_run_revision"`) ||
-		!strings.Contains(withLabels, `route="/_tako/cron/Cleanup"`) {
+		!strings.Contains(withLabels, `route="/_tako/api/cron/Cleanup"`) {
 		t.Fatalf("selector = %q", withLabels)
 	}
 }
@@ -101,7 +101,7 @@ func TestCounterReadingsAreResetSafe(t *testing.T) {
 // is accepted by the API, and never fires — measured: 0 series against a
 // route with no data, where absent_over_time returned 1.
 func TestAbsenceUsesAbsentOverTimeNotIncreaseEqualsZero(t *testing.T) {
-	sel := selector("run.googleapis.com/request_count", "cloud_run_revision", `route="/_tako/cron/Cleanup"`)
+	sel := selector("run.googleapis.com/request_count", "cloud_run_revision", `route="/_tako/api/cron/Cleanup"`)
 	q := absentQuery(sel, 26*time.Hour)
 	if !strings.HasPrefix(q, "absent_over_time(") {
 		t.Fatalf("absence query = %q", q)

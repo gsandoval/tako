@@ -95,7 +95,7 @@ app.AdvanceCron(Cleanup)   // the cron itself, not a name
 
 **You pass the cron, not a string.** The declaring variable is the
 cron's identity — it is what tako deploys it as, and what Cloud
-Scheduler addresses at `/_tako/cron/Cleanup` — so naming it any other
+Scheduler addresses at `/_tako/api/cron/Cleanup` — so naming it any other
 way would be naming something else. It also means the compiler checks
 it: a typo or a renamed var is a build error, never a test that
 silently runs nothing. This is the same way every other declaration is

@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -216,7 +217,9 @@ import (
 func main() {
 	runtime.Boot() // wire backends: local under .tako/data, gcp from Phase E
 
-	mux := http.NewServeMux()
+	// A worker declares no routes of its own, so this mux holds only
+	// tako's reserved endpoints and is served directly.
+	takoMux := http.NewServeMux()
 
 `, svc.Name, alias, svc.Package)
 
@@ -231,11 +234,11 @@ func main() {
 		fmt.Fprintf(&b, "\t// %s\n", analyzer.HandlerLine(h))
 		fmt.Fprintf(&b, "\truntime.%s(%q, %s.%s)\n", register, analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
 		fmt.Fprintf(&b, "\t// Cloud deliveries arrive as pushes: 204 acks, 500 retries, 400 = permanent.\n")
-		fmt.Fprintf(&b, "\tmux.Handle(\"POST /_tako/push\", runtime.PushHandler(%q, %s.%s))\n\n",
-			analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
+		fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.PushHandler(%q, %s.%s))\n\n",
+			routes.PatternPush, analyzer.ShortVar(h), alias, analyzer.ShortVar(h))
 	}
 
-	b.WriteString("\truntime.Serve(mux)\n}\n")
+	b.WriteString("\truntime.Serve(takoMux)\n}\n")
 	src, err := format.Source([]byte(b.String()))
 	if err != nil {
 		return nil, fmt.Errorf("generated main for service %s does not format: %w", svc.Name, err)
@@ -323,28 +326,36 @@ import (
 			fmt.Fprintf(&b, "\truntime.SetQueueRate(%q, %d)\n\n", r.Name, r.RateLimit)
 		}
 	}
-	b.WriteString("\tmux := http.NewServeMux()\n\n")
-	if hasAuth(g) {
-		b.WriteString("\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")
-		b.WriteString("\tmux.Handle(\"/api/_session\", runtime.SessionHandler())\n")
-		b.WriteString("\tmux.Handle(\"POST /api/_session/signout\", runtime.SignOutHandler())\n")
-		fmt.Fprintf(&b, "\tmux.Handle(\"GET /api/_session/signin\", runtime.SignInPage(%s))\n\n", providerArgs(g))
+	if reserved := hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc); reserved {
+		b.WriteString("\t// tako's own endpoints, on a mux of their own. They are answered\n")
+		b.WriteString("\t// before the app's router below is consulted, so nothing under\n")
+		b.WriteString("\t// /_tako/ can be shadowed by a route this app declares — and no\n")
+		b.WriteString("\t// framework pattern can collide with a wildcard page, which on one\n")
+		b.WriteString("\t// shared mux is a panic at startup rather than a bad response.\n")
+		b.WriteString("\ttakoMux := http.NewServeMux()\n")
+		if hasAuth(g) {
+			b.WriteString("\n\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SessionHandler())\n", routes.PatternSession)
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignOutHandler())\n", routes.PatternSignOut)
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignInPage(%s))\n", routes.PatternSignIn, providerArgs(g))
+		}
+		if hasBucket(g, svc) {
+			b.WriteString("\n\t// Signed upload/download URLs land here (SignedPut/SignedGet).\n")
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignedURLHandler())\n", routes.PatternSigned)
+		}
+		if hasCron(g, svc) {
+			b.WriteString("\n\t// Cloud Scheduler triggers crons here (T2); the request proves\n\t// itself with a Google-signed OIDC token — locally the in-process\n\t// ticker drives them and this route just refuses strangers.\n")
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.CronDispatch())\n", routes.PatternCron)
+		}
+		b.WriteString("\n")
 	}
+	b.WriteString("\tmux := http.NewServeMux()\n\n")
 	if site != nil {
 		fmt.Fprintf(&b, "\t// site %s: declared routes win (more specific patterns); the site\n\t// serves everything else with §2.11's headers. Its templates/ back\n\t// site.Render and are never served statically.\n", site.Name)
 		b.WriteString("\tsiteRoot, err := fs.Sub(siteFS, \"site\")\n\tif err != nil {\n\t\tpanic(err)\n\t}\n")
 		fmt.Fprintf(&b, "\truntime.RegisterSiteTemplates(siteRoot, runtime.SiteOptions{%s})\n", siteOptionsLiteral(site))
 		fmt.Fprintf(&b, "\tmux.Handle(\"/\", runtime.SiteHandler(siteRoot, runtime.SiteOptions{%s}))\n\n", siteOptionsLiteral(site))
 	}
-	if hasBucket(g, svc) {
-		b.WriteString("\t// Signed upload/download URLs land here (SignedPut/SignedGet).\n")
-		b.WriteString("\tmux.Handle(\"/_tako/signed/\", runtime.SignedURLHandler())\n\n")
-	}
-	if hasCron(g, svc) {
-		b.WriteString("\t// Cloud Scheduler triggers crons here (T2); the request proves\n\t// itself with a Google-signed OIDC token — locally the in-process\n\t// ticker drives them and this route just refuses strangers.\n")
-		b.WriteString("\tmux.Handle(\"POST /_tako/cron/{cron}\", runtime.CronDispatch())\n\n")
-	}
-
 	var decoders []analyzer.Handler
 	for _, h := range g.Handlers {
 		// Routes only: async handlers register below, crons have no route.
@@ -395,10 +406,14 @@ import (
 		}
 	}
 
+	served := "mux"
+	if hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc) {
+		served = "runtime.Reserved(takoMux, mux)"
+	}
 	if hasAuth(g) {
-		b.WriteString("\truntime.Serve(runtime.WithDevBar(mux)) // the dev bar injects locally only\n}\n")
+		fmt.Fprintf(&b, "\truntime.Serve(runtime.WithDevBar(%s)) // the dev bar injects locally only\n}\n", served)
 	} else {
-		b.WriteString("\truntime.Serve(mux)\n}\n")
+		fmt.Fprintf(&b, "\truntime.Serve(%s)\n}\n", served)
 	}
 
 	for _, h := range decoders {

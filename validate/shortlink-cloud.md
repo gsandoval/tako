@@ -48,7 +48,7 @@ curl $URL/api/links/gh                  # hits incremented — real Pub/Sub push
 
 **Judge:** hits counts exactly one per resolve (idempotency ledger over
 at-least-once delivery). The worker URL must reject a plain
-`curl -X POST <worker-url>/_tako/push` (403: IAM, not app code).
+`curl -X POST <worker-url>/_tako/api/push` (403: IAM, not app code).
 Caveat: right after first deploy, IAM propagation can 403 entity ops
 for a minute or two — the error text says it's a deploy bug (it is not,
 in this one window); settle before judging.

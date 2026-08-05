@@ -162,8 +162,8 @@ mint one per id. An unmatched path records as `<unmatched>`, so a
 scanner probing random URLs cannot turn into a metrics bill. `status` is
 the class (`2xx`…`5xx`), never the raw code.
 
-Crons and jobs are in here too, under `/_tako/cron/<Name>` — the mux
-pattern alone is `POST /_tako/cron/{cron}`, which would merge every cron
+Crons and jobs are in here too, under `/_tako/api/cron/<Name>` — the mux
+pattern alone is `POST /_tako/api/cron/{cron}`, which would merge every cron
 in a service into one series, so the dispatcher names what it actually
 ran.
 

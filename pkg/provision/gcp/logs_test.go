@@ -17,7 +17,7 @@ func TestRequestLineRendersCloudRunsOwnEntry(t *testing.T) {
 		t.Errorf("requestLine = %q", got)
 	}
 	// No latency is not a reason to print a broken suffix.
-	if got := requestLine("POST", "/_tako/push", 403, "0s"); got != "POST /_tako/push → 403" {
+	if got := requestLine("POST", "/_tako/api/push", 403, "0s"); got != "POST /_tako/api/push → 403" {
 		t.Errorf("requestLine = %q", got)
 	}
 	if got := requestLine("GET", "/x", 200, ""); got != "GET /x → 200" {

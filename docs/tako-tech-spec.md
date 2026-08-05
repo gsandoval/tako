@@ -218,7 +218,7 @@ tako.Permanent(err)      // async handlers: don't retry, dead-letter
 tako.Errorf(409, "...")  // api handlers: explicit status
 ```
 
-Auth is one declaration (`tako.Auth(...)`) plus the `tako.Route{SignIn: true}` handler option. The framework injects a `/api/_session` endpoint that exchanges a Firebase ID token for an HttpOnly session cookie, so browser fetches and SSR pages share one validation path in the shim.
+Auth is one declaration (`tako.Auth(...)`) plus the `tako.Route{SignIn: true}` handler option. The framework injects a `/_tako/api/session` endpoint that exchanges a Firebase ID token for an HttpOnly session cookie, so browser fetches and SSR pages share one validation path in the shim.
 
 ### 2.10 Testing
 
@@ -589,7 +589,7 @@ Per service, a generated `main` package under `.tako/gen/<service>/` — readabl
 - Static param decoding per endpoint (path/query/JSON/multipart) — no reflection at request time.
 - Push-endpoint plumbing for workers/subscribers: verify the Pub/Sub OIDC push token (audience = service URL), decode envelope → typed payload, map return values: `nil` → 204 ack; `Permanent` → 204 + log (no retry); error → 500 → redelivery with backoff → dead-letter after N attempts.
 - Resource wiring at startup from env (`TAKO_RES_PHOTOS=gallery-photos-4f2k`, `TAKO_BACKEND=gcp|local`); handles are injected into the user's package-level vars via an SDK boot hook. The same boot hook wires each `Endpoint`'s transport: direct invocation for local/dev/tests and co-located packages, HTTP+OIDC stub for remote services — there is no call-site rewriting anywhere in codegen.
-- Injected `/api/_session` endpoint when `Auth` is declared.
+- Injected `/_tako/api/session` endpoint when `Auth` is declared.
 
 ### 4.3 Runtime shim
 

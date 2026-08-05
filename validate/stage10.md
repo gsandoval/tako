@@ -61,7 +61,7 @@ follows is only what to look at hardest, and why each item is there.
    must answer `QUIET (data present)`. A gate that skipped this recorded
    a pass on an alert that was firing permanently.
 2. **§5, the series labels.** Not the count — the labels. There must be
-   a series with `route='/_tako/cron/Cleanup'` and a `job` matching what
+   a series with `route='/_tako/api/cron/Cleanup'` and a `job` matching what
    the query filters. A run that checked the descriptor's *schema*
    instead found 88 series all carrying `route=''`.
 3. **§7b, the links.** Open every one. Two of four shapes were wrong,

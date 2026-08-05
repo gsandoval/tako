@@ -36,10 +36,10 @@ convergence, not cleanup you remember to do.
 
 A fresh deploy can log a short burst of 403s on the endpoints tako
 calls with an OIDC token — the push endpoints Pub/Sub delivers to, and
-the `/_tako/cron/*` route Cloud Scheduler triggers — looking like this:
+the `/_tako/api/cron/*` route Cloud Scheduler triggers — looking like this:
 
 ```
-POST /_tako/push → 403
+POST /_tako/api/push → 403
 The request was not authenticated. … The IAM principal lacks {run.routes.invoke} permission.
 ```
 

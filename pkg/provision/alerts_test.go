@@ -55,7 +55,7 @@ func TestCronMissedDoublesTheScheduleItReads(t *testing.T) {
 	if retest {
 		t.Error("a 48h lookback must forbid a retest window — the API refuses it")
 	}
-	if !strings.Contains(daily, `route="/_tako/cron/Cleanup"`) {
+	if !strings.Contains(daily, `route="/_tako/api/cron/Cleanup"`) {
 		t.Errorf("cron route not derived from the variable: %q", daily)
 	}
 	// The cron's dispatcher refines this label per cron; the mux pattern

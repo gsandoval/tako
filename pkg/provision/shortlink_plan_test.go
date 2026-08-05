@@ -132,7 +132,7 @@ func TestShortlinkGrantContents(t *testing.T) {
 		}
 	}
 	if subSpec["topic"] != "clicks" ||
-		subSpec["endpoint"] != "https://shortlink-countclick-123456.us-central1.run.app/_tako/push" ||
+		subSpec["endpoint"] != "https://shortlink-countclick-123456.us-central1.run.app/_tako/api/push" ||
 		subSpec["serviceAccount"] != workerSA[15:] {
 		t.Errorf("push subscription spec = %v", subSpec)
 	}

@@ -39,7 +39,7 @@ func TestPushHandlerContract(t *testing.T) {
 	h := PushHandler("PushWorker", PushWorker)
 	post := func(body string) int {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("POST", "/_tako/push", strings.NewReader(body)))
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/_tako/api/push", strings.NewReader(body)))
 		return rec.Code
 	}
 
@@ -70,7 +70,7 @@ func TestPushHandlerPermanentDeadLetters(t *testing.T) {
 	h := PushHandler("PushWorker", PushWorker)
 	post := func(body string) int {
 		rec := httptest.NewRecorder()
-		h.ServeHTTP(rec, httptest.NewRequest("POST", "/_tako/push", strings.NewReader(body)))
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/_tako/api/push", strings.NewReader(body)))
 		return rec.Code
 	}
 

@@ -33,7 +33,7 @@ func serveAPI(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/api/_session", runtime.SessionHandler())
+	mux.Handle("/_tako/api/session", runtime.SessionHandler())
 	mux.Handle("GET /api/products", runtime.JSONHandler(ListProducts, nil))
 	mux.Handle("GET /api/products/{id}", runtime.JSONHandler(GetProduct, func(r *http.Request) (GetProductReq, error) {
 		return GetProductReq{ID: runtime.PathString(r, "id")}, nil
@@ -75,7 +75,7 @@ func signIn(t *testing.T, srv *httptest.Server, name string) *http.Client {
 	c := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
 		return http.ErrUseLastResponse
 	}}
-	res, err := c.PostForm(srv.URL+"/api/_session", url.Values{"dev_user": {name}})
+	res, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{"dev_user": {name}})
 	if err != nil {
 		t.Fatal(err)
 	}

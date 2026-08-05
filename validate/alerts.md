@@ -128,7 +128,7 @@ minutes. Then confirm the service answered rather than trusting the
 scheduler's own view:
 
 ```
-gcloud logging read 'resource.labels.service_name="x1-gallery" httpRequest.requestUrl:"/_tako/cron/Cleanup"' \
+gcloud logging read 'resource.labels.service_name="x1-gallery" httpRequest.requestUrl:"/_tako/api/cron/Cleanup"' \
   --project $PROJECT --limit 3 --freshness=20m --format='value(timestamp,httpRequest.status)'
 ```
 
@@ -152,7 +152,7 @@ Ask the query the policy is actually storing (paste it from §2's output,
 do not retype it):
 
 ```
-Q='absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="gallery-x1",job="gallery",route="/_tako/cron/Cleanup"}[300s])'
+Q='absent_over_time(custom_googleapis_com:tako_requests{monitored_resource="generic_task",namespace="gallery-x1",job="gallery",route="/_tako/api/cron/Cleanup"}[300s])'
 
 ask() {
   curl -s -H "Authorization: Bearer $(gcloud auth print-access-token)" \
@@ -191,7 +191,7 @@ for t in json.load(sys.stdin).get('timeSeries',[]):
 
 Require, explicitly:
 
-- a series with **`route='/_tako/cron/Cleanup'`** — a populated route
+- a series with **`route='/_tako/api/cron/Cleanup'`** — a populated route
   label, the thing Cloud Run's own metric never has;
 - its **`job`** equal to the value the query filters on;
 - more than one route present once the app has served requests, which

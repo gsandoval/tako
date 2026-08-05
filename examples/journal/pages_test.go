@@ -33,10 +33,16 @@ func servePages(t *testing.T) *httptest.Server {
 	// handler's static miss — read it from the wired options.
 	siteOpts := runtime.SiteOptions{NotFound: "404.html"}
 	runtime.RegisterSiteTemplates(os.DirFS("web"), siteOpts)
+	// Two muxes, exactly as codegen emits them: tako's reserved
+	// endpoints answer before the app's router is consulted. On one
+	// shared mux the session mount and Perma's wildcard below cannot
+	// both be registered — Go refuses to order them and panics — which
+	// is the whole of FL5.
+	takoMux := http.NewServeMux()
+	takoMux.Handle("/_tako/api/session", runtime.SessionHandler())
+	takoMux.Handle("GET /_tako/signin", runtime.SignInPage("google"))
+	takoMux.Handle("POST /_tako/api/session/signout", runtime.SignOutHandler())
 	mux := http.NewServeMux()
-	mux.Handle("/api/_session", runtime.SessionHandler())
-	mux.Handle("GET /api/_session/signin", runtime.SignInPage("google"))
-	mux.Handle("POST /api/_session/signout", runtime.SignOutHandler())
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
 	mux.Handle("GET /p/{id}", runtime.PageHandler(Read, func(r *http.Request) (ReadReq, error) {
 		return ReadReq{ID: runtime.PathString(r, "id")}, nil
@@ -75,8 +81,11 @@ func servePages(t *testing.T) *httptest.Server {
 	// The site takes everything the declared routes did not, exactly as
 	// the generated main mounts it — which is what makes a mistyped URL
 	// a SITE 404 rather than the mux's bare one.
+	mux.Handle("GET /{year}/{slug}", runtime.PageHandler(Perma, func(r *http.Request) (PermaReq, error) {
+		return PermaReq{Year: runtime.PathString(r, "year"), Slug: runtime.PathString(r, "slug")}, nil
+	}))
 	mux.Handle("/", runtime.SiteHandler(os.DirFS("web"), siteOpts))
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(runtime.Reserved(takoMux, mux))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -104,7 +113,7 @@ var tokenRe = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 // returns the SESSION-bound CSRF token from /write.
 func signIn(t *testing.T, c *http.Client, base, name string) string {
 	t.Helper()
-	res, err := c.PostForm(base+"/api/_session", url.Values{"dev_user": {name}})
+	res, err := c.PostForm(base+"/_tako/api/session", url.Values{"dev_user": {name}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -229,7 +238,7 @@ func TestOwnershipAndRevocation(t *testing.T) {
 	}
 
 	// Revocation is REAL: sign out (deletes the record), the old cookie dies.
-	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/_session", nil)
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/_tako/api/session", nil)
 	res3, err := alice.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -306,7 +315,7 @@ func TestTrustedHTMLOptOut(t *testing.T) {
 func TestSignInPageDevFlow(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	res, err := c.Get(srv.URL + "/api/_session/signin?next=/write")
+	res, err := c.Get(srv.URL + "/_tako/signin?next=/write")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,7 +325,7 @@ func TestSignInPageDevFlow(t *testing.T) {
 		t.Fatalf("dev sign-in page = %d %q", res.StatusCode, page)
 	}
 	// The dev form lands on next after minting the session.
-	res2, err := c.PostForm(srv.URL+"/api/_session", url.Values{"dev_user": {"alice"}, "next": {"/write"}})
+	res2, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{"dev_user": {"alice"}, "next": {"/write"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,5 +732,123 @@ func TestServerErrorsStayPlain(t *testing.T) {
 	}
 	if strings.Contains(string(body), "<html") {
 		t.Error("a 500 went through the template engine — the one moment not to depend on it")
+	}
+}
+
+// The FL5 regression, and the reason this example declares a
+// two-segment wildcard page at all.
+//
+// tako.Auth injects a session endpoint and this app declares
+// GET /{year}/{slug}. Before FL5 that pair could not be registered on
+// one mux: the endpoint was /api/_session, two segments like the page
+// and method-less where the page was GET, so neither was more specific
+// on both axes and Go panicked at registration — the service died
+// before serving a request. Nothing at request level can catch that;
+// this asserts the shape.
+func TestAuthAndAWildcardPageCanBeMountedTogether(t *testing.T) {
+	// The pre-FL5 mount, kept as the record of what was fixed. If this
+	// ever stops panicking, Go's conflict rule changed and the reasoning
+	// in internal/routes needs rereading.
+	historical := func() (panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		mux := http.NewServeMux()
+		mux.Handle("GET /{year}/{slug}", http.NotFoundHandler())
+		mux.Handle("/api/_session", http.NotFoundHandler())
+		return false
+	}()
+	if !historical {
+		t.Error("the pre-FL5 pair no longer panics — Go's ServeMux conflict rule has changed")
+	}
+
+	// Depth alone would have rescued THIS app and not the next one:
+	// /_tako/api/session is three segments, so it clears a two-segment
+	// wildcard by being more specific on path. Against a three-segment
+	// page — gallery's GET /{user}/{album}/{photo} — the same mount
+	// conflicts again. That is why the fix is a separate mux and not a
+	// deeper path.
+	deeper := func() (panicked bool) {
+		defer func() { panicked = recover() != nil }()
+		mux := http.NewServeMux()
+		mux.Handle("GET /{a}/{b}/{c}", http.NotFoundHandler())
+		mux.Handle("/_tako/api/session", http.NotFoundHandler())
+		return false
+	}()
+	if !deeper {
+		t.Error("a three-segment wildcard no longer conflicts with the session mount — " +
+			"if that is so, the two-mux rationale needs rereading")
+	}
+
+	// What journal actually runs: tako's endpoints on their own mux,
+	// every declared route on the app's, registered together.
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("journal cannot boot: %v", r)
+		}
+	}()
+	takoMux := http.NewServeMux()
+	takoMux.Handle("/_tako/api/session", http.NotFoundHandler())
+	takoMux.Handle("GET /_tako/signin", http.NotFoundHandler())
+	app := http.NewServeMux()
+	app.Handle("GET /{year}/{slug}", http.NotFoundHandler())
+	app.Handle("GET /p/{id}", http.NotFoundHandler())
+	app.Handle("/", http.NotFoundHandler())
+	runtime.Reserved(takoMux, app)
+}
+
+// The permalink serves the post, and the short URL still does too.
+func TestThePermalinkAndTheShortURLBothResolve(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "alice")
+
+	res, err := c.PostForm(srv.URL+"/p", url.Values{
+		"title": {"Una nota"}, "body": {"cuerpo"}, "_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	id := strings.TrimPrefix(res.Header.Get("Location"), "/p/")
+	if id == "" {
+		t.Fatalf("save = %d, no post id in %q", res.StatusCode, res.Header.Get("Location"))
+	}
+
+	for _, path := range []string{"/p/" + id, "/2026/" + id} {
+		res, err := c.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, _ := io.ReadAll(res.Body)
+		res.Body.Close()
+		if res.StatusCode != http.StatusOK || !strings.Contains(string(body), "Una nota") {
+			t.Errorf("GET %s → %d, body missing the title", path, res.StatusCode)
+		}
+	}
+}
+
+// The namespace is tako's on the app's own server, not just in a unit
+// test: the session endpoint answers, and a path the app never declared
+// under /_tako/ is a 404 rather than the site's page.
+func TestTheReservedNamespaceAnswersOnTheRealServer(t *testing.T) {
+	srv := servePages(t)
+	res, err := http.Get(srv.URL + "/_tako/signin?next=/write")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("GET /_tako/signin → %d, want 200", res.StatusCode)
+	}
+
+	res2, err := http.Get(srv.URL + "/_tako/z/whatever")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res2.Body)
+	res2.Body.Close()
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("GET /_tako/z/whatever → %d, want 404", res2.StatusCode)
+	}
+	if strings.Contains(string(body), "<!doctype html>") {
+		t.Error("the reserved namespace answered with the site's 404 page — it should be tako's own")
 	}
 }

@@ -8,10 +8,11 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
-// SignedURLEndpoint serves /_tako/signed/<token>: the local stand-in for
+// SignedURLEndpoint serves /_tako/api/signed/<token>: the local stand-in for
 // direct-to-storage transfers. It is the enforcer of a signed URL's
 // constraints — size cap, content type, expiry — with each rejection a
 // distinct, exact text (they are product UX). In the cloud, GCS plays
@@ -29,7 +30,7 @@ func SignedURLEndpoint(signer *URLSigner, store *BucketStore) http.Handler {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		token := strings.TrimPrefix(r.URL.Path, "/_tako/signed/")
+		token := routes.SignedToken(r.URL.Path)
 		claims, err := signer.verify(token)
 		if err != nil {
 			signedError(w, http.StatusForbidden, err.Error())

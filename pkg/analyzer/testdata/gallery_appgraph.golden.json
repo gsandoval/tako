@@ -14,6 +14,7 @@
         "gallery.Objects",
         "gallery.Reindex",
         "gallery.ReindexRuns",
+        "gallery.Permalink",
         "gallery.Cleanup"
       ],
       "profile": "default"
@@ -173,7 +174,7 @@
       "package": "gallery",
       "channel_kind": "email",
       "target": "ops@example.com",
-      "pos": "app.go:104:2"
+      "pos": "app.go:113:2"
     },
     {
       "kind": "alert",
@@ -195,7 +196,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:107:2"
+      "pos": "app.go:116:2"
     },
     {
       "kind": "alert",
@@ -214,7 +215,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:112:2"
+      "pos": "app.go:121:2"
     }
   ],
   "handlers": [
@@ -364,13 +365,50 @@
       "pos": "app.go:78:2"
     },
     {
+      "kind": "api",
+      "var": "gallery.Permalink",
+      "package": "gallery",
+      "service": "gallery",
+      "route": "GET /{owner}/{album}/{photo}/{size}",
+      "req_type": "PermalinkReq",
+      "req_ref": "gallery.PermalinkReq",
+      "res_ref": "gallery.Photo",
+      "bindings": [
+        {
+          "field": "Owner",
+          "kind": "path",
+          "name": "owner",
+          "type": "string"
+        },
+        {
+          "field": "Album",
+          "kind": "path",
+          "name": "album",
+          "type": "string"
+        },
+        {
+          "field": "Photo",
+          "kind": "path",
+          "name": "photo",
+          "type": "string"
+        },
+        {
+          "field": "Size",
+          "kind": "path",
+          "name": "size",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:87:2"
+    },
+    {
       "kind": "subscribe",
       "var": "gallery.OnUploaded",
       "package": "gallery",
       "service": "gallery-onuploaded",
       "binding": "photos.Uploaded",
       "binding_kind": "bucket",
-      "pos": "app.go:82:2"
+      "pos": "app.go:91:2"
     },
     {
       "kind": "worker",
@@ -384,7 +422,7 @@
         "max_instances": 5
       },
       "binding": "thumbnails",
-      "pos": "app.go:86:2"
+      "pos": "app.go:95:2"
     },
     {
       "kind": "subscribe",
@@ -393,7 +431,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:91:2"
+      "pos": "app.go:100:2"
     },
     {
       "kind": "subscribe",
@@ -402,7 +440,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:92:2"
+      "pos": "app.go:101:2"
     },
     {
       "kind": "cron",
@@ -411,7 +449,7 @@
       "service": "gallery",
       "schedule": "every 24h",
       "singleflight": true,
-      "pos": "app.go:93:2"
+      "pos": "app.go:102:2"
     }
   ],
   "edges": [
@@ -516,6 +554,13 @@
     {
       "from": "gallery.ReindexRuns",
       "to": "reindex-runs",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "gallery.Permalink",
+      "to": "photos",
       "to_kind": "entity",
       "kind": "resource",
       "verb": "read"

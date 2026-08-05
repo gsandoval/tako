@@ -82,6 +82,36 @@ curl 'localhost:8080/greet/ada?loud=true'
 curl -X POST localhost:8080/echo -d '{"message":"hi"}'
 ```
 
+### `/_tako/` is not yours
+
+One path prefix is reserved: **`/_tako/`**, where tako mounts the
+endpoints it injects on your behalf.
+
+| path | appears when |
+|---|---|
+| `POST` / `DELETE /_tako/api/session` | the app declares `tako.Auth` |
+| `POST /_tako/api/session/signout` | ” (the form-post counterpart to DELETE) |
+| `GET /_tako/signin` | ” (the framework's own sign-in page) |
+| `POST /_tako/api/push` | a worker or subscriber receives deliveries |
+| `GET`/`PUT /_tako/api/signed/{token}` | the app declares a `tako.Bucket` |
+| `POST /_tako/api/cron/{cron}` | the app declares a `tako.Cron` |
+| `/_tako/z/…` | reserved for diagnostics; nothing serves it yet |
+
+The generated service answers that namespace **before** your router is
+consulted, so nothing under it can be shadowed or reordered by a route
+you declare — static files in a `tako.Site` directory included. Declare
+one anyway and analysis refuses it (`tako/reserved-prefix`), because a
+handler that silently never runs is the worst way to learn this.
+
+The separation is not decoration. Go's `ServeMux` refuses to register
+two patterns where neither is more specific on both path and method, and
+a framework mount beside one of your wildcard routes is exactly that
+pair — `/_tako/api/signed/` against `GET /{user}/{album}/{photo}/{size}`,
+or the old `/api/_session` against `GET /{section}/{slug}`. Sharing one
+mux made those apps panic at startup, before a line of your code ran.
+Two muxes make it unrepresentable: patterns that never meet cannot fail
+to be ordered.
+
 ## Cloud
 
 Package = service: your API routes deploy as one Cloud Run service
@@ -122,6 +152,7 @@ GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has n
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
 tako.Route must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "cfg" (tako/config-literal)
+route "GET /_tako/sneaky" is inside /_tako/, which tako reserves for the endpoints it injects (session, sign-in, cron, signed URLs, push) — the framework answers that namespace before this app's routes, so Sneaky would never run; choose a path outside it (tako/reserved-prefix)
 ```
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,

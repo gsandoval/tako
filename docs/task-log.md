@@ -14852,3 +14852,625 @@ rubric puts real transcripts and verbatim error texts on every page.
 ### API change
 
 None.
+
+## FL5 — DX proposal: the session surface, mounted method-scoped (2026-08-04) — AWAITING APPROVAL
+
+Source: flauta's friction log, entry `2026-08-04 — the session route has
+no method, and the mux refuses it beside a wildcard page`. The first gap
+from that log that **stopped** a task (its M2-01) rather than shaping
+one, and the only one it promoted since FL1–FL4 landed.
+
+### The failure, reproduced here
+
+Not taken on the consumer's word. journal already declares `tako.Auth`;
+giving it the permalink shape a blog actually wants —
+`GET /{year}/{slug}` — is enough:
+
+```go
+var (
+	Home    = tako.Page("GET /", home)
+	Read    = tako.Page("GET /p/{id}", read)
+	...
+	Perma   = tako.Page("GET /{year}/{slug}", perma)   // the whole repro
+)
+```
+
+```
+$ tako dev
+tako dev · journal
+
+  analyzing   1 service, 7 endpoints, 1 site
+  generating  .tako/gen/journal/main.go
+  starting    http://localhost:8080
+
+  GET / → Home (app.go:61)
+  GET /p/{id} → Read (app.go:62)
+  GET /write → Write (app.go:63)
+  POST /p → Save 🔒 (app.go:64)
+  POST /p/{id}/publish → Publish 🔒 (app.go:65)
+  POST /p/{id}/rename → Rename 🔒 (app.go:66)
+  GET /{year}/{slug} → Perma (app.go:67)
+  entity posts (indexes: Published, Created)
+  entity moved_urls
+  site ./web
+  auth (google)
+
+panic: pattern "GET /{year}/{slug}" (registered at …/.tako/gen/journal/main.go:65)
+conflicts with pattern "/api/_session" (registered at …/.tako/gen/journal/main.go:32):
+	GET /{year}/{slug} matches fewer methods than /api/_session, but has a more
+	general path pattern
+
+goroutine 1 [running]:
+net/http.(*ServeMux).register(...)
+	/opt/homebrew/…/net/http/server.go:2882
+main.main()
+	…/.tako/gen/journal/main.go:65 +0x5b4
+```
+
+Read that transcript as a user would. tako prints a clean, confident
+route table — every declared endpoint, the site, the auth — and then
+panics into a stack trace through **generated code the user did not
+write**, naming a route (`/api/_session`) that appears nowhere in their
+source. Nothing in the app's own code ran. There is no tako error text
+here at all; the framework's last word is `starting`, and the runtime's
+is a stdlib panic.
+
+### The cause, and how small it is
+
+Codegen mounts the session exchange without a method
+(`pkg/codegen/codegen.go:329`), while both of its siblings are
+method-scoped:
+
+```go
+mux.Handle("/api/_session", runtime.SessionHandler())              // no method
+mux.Handle("POST /api/_session/signout", runtime.SignOutHandler())
+mux.Handle("GET /api/_session/signin", runtime.SignInPage("google"))
+```
+
+Go's `ServeMux` orders patterns by specificity and refuses a pair where
+neither wins on both axes: `/api/_session` is more specific on path,
+`GET /{year}/{slug}` is more specific on method. It cannot order them,
+so it panics **at registration** — a startup crash, not a request-time
+404, and not a warning.
+
+`SessionHandler` already switches on exactly two methods internally
+(`pkg/runtime/session.go`: POST at :133, DELETE at :172, everything else
+falling to a 405 default). So the method-less mount claims all nine
+methods to serve two.
+
+### The change
+
+```go
+mux.Handle("POST /api/_session", runtime.SessionHandler())
+mux.Handle("DELETE /api/_session", runtime.SessionHandler())
+```
+
+Verified against stdlib `ServeMux`: registered this way, `/api/_session`
+coexists with `GET /{year}/{slug}` **and** the site handler at `/`, and
+requests route as they did — `POST` reaches the session handler, the
+wildcard page still gets its own URLs. One line becomes two in the
+generator's output; no SDK symbol changes, no analyzer rule, no
+conformance case. `pkg/codegen/testdata` goldens move by two lines.
+
+### The one call for the owner
+
+**What answers an unlisted method.** Today `PUT /api/_session` gets
+`SessionHandler`'s own `405 method not allowed`. Mounted method-scoped,
+it no longer matches either pattern and falls through to the site
+handler at `/`. Two halves, both checked separately: the fallthrough
+itself against stdlib `ServeMux`, and journal's site handler answering a
+miss — `curl -i /no-such-file.css` → `404` + `text/html`, the styled
+page FL2 shipped, not plain text. Today the same request gets
+`405 Method Not Allowed`, plain text, from `SessionHandler`'s default.
+
+- **Recommended: accept the fallthrough.** `/api/_session` is an
+  internal endpoint tako injects; it is not in the guide, not in the
+  reference, and nothing tells a user to type it. A 404 for a method
+  that endpoint never served is not a worse answer than a 405, and it
+  costs one pattern instead of three.
+- The alternative, if the 405 is worth keeping: also register
+  `GET /api/_session`. It does not conflict with the wildcard page
+  (same method, more specific path), so it is available — it is just
+  three mounts and a special case to explain.
+
+### What this is NOT
+
+- Not a change to auth, sessions, cookies, or the sign-in flow. The
+  handler's body is untouched; only the pattern it is registered under
+  moves.
+- Not a fix for route conflicts in general. An app can still declare two
+  of its own patterns that `ServeMux` refuses to order, and it will
+  still learn about it as a panic. Turning *that* into an analyzer error
+  is a real slice and is not this one — noted below.
+- Not the wildcard-shadows-site-files warning from the same friction log
+  (a different entry, flagged workaround-fine there, unscheduled here).
+
+### The example demanding it
+
+**journal**, which is where the transcript above came from. It already
+declares `tako.Auth`; FL5 gives it `Perma` permanently, so the
+combination that cannot boot today is in the acceptance suite. The
+regression is a startup test — the generated service is built and run —
+so this cannot come back quietly. `GET /p/{id}` stays; a permalink and a
+short id-URL coexisting is the realistic shape, and the two do not
+conflict.
+
+### Gate FL5 (agent-side, no cloud)
+
+1. journal boots with auth and the wildcard both declared, and the
+   route table above is followed by `starting`, not a panic.
+2. Sign in and sign out through the dev bar still work — the POST and
+   the DELETE paths both exercised.
+3. `GET /2026/some-post` reaches `Perma`; `POST /api/_session` reaches
+   the session handler.
+4. The codegen golden shows two patterns where it showed one.
+5. Full example suite plus conformance green against `local`.
+
+### Discovered work (unscheduled)
+
+- **Route conflicts should be an analyzer error, not a panic.** The
+  analyzer knows every declared pattern and every pattern codegen will
+  inject. `ServeMux`'s ordering rule is documented and mechanical, so
+  the conflict is decidable at analysis time and could read
+  `app.go:67:12: route "GET /{year}/{slug}" conflicts with the injected
+  session route (tako/ROUTE-CONFLICT)` instead of a stack trace through
+  generated code. FL5 removes today's only *framework-caused* instance;
+  it does not remove the class.
+- **`tako dev` prints its route table before the service is proven to
+  start.** The confident listing above was already on screen when the
+  process died. Printing it after a successful bind, or marking it
+  provisional until then, would stop the output from vouching for a
+  service that never ran.
+
+### API change
+
+None. `docs/reference/auth.md` gains a sentence naming the two methods
+`/api/_session` answers, since that becomes observable.
+
+## FL5 — revised DX proposal: `/_tako/`, a namespace with rooms (2026-08-05) — AWAITING APPROVAL
+
+Supersedes the method-scoping proposal above, at the owner's direction.
+That draft fixed the panic flauta hit; this one fixes the class it
+belongs to, and the difference was worth the redraft.
+
+### What changed the shape
+
+The first draft treated `/api/_session` as an endpoint mounted wrong.
+It is really an endpoint in the wrong *namespace*: codegen already
+injects three routes under `/_tako/` — `POST /_tako/push`,
+`/_tako/signed/`, `POST /_tako/cron/{cron}` — and the session surface
+is the only injected route that sits outside it. The convention exists;
+one route never joined it.
+
+**A prefix alone does not create precedence.** `ServeMux` resolves
+conflicts structurally — which pattern is more specific on path and on
+method — and has no notion of a reserved word. Measured:
+
+| framework pattern | vs `GET /{a}/{b}` | vs `GET /{a}/{b}/{c}` |
+|---|---|---|
+| `/api/_session` (today) | **panic** | ok |
+| `/_tako/session` (prefix only) | **panic** | ok |
+| `/_/api/session` (deeper prefix) | ok | **panic** |
+| `POST` + `DELETE /_tako/session` | ok | ok |
+
+A deeper prefix does not remove the collision, it relocates it to a
+different arity. Any fixed-depth path loses to a wildcard of matching
+depth.
+
+**And the bug is already in the tree twice.** `/_tako/signed/` is
+mounted method-less and panics against any app declaring a three-or-more
+segment wildcard GET route — a gallery with `GET /{user}/{album}/{photo}`
+and a bucket cannot boot, exactly as journal with auth cannot. `push`
+and `cron` escape only because they happen to be `POST`-scoped, which is
+luck, not design. FL5 as first written would have fixed one instance and
+left the other.
+
+### The change: two muxes, one dispatch
+
+Framework routes leave the app's mux entirely.
+
+```go
+takoMux := http.NewServeMux()   // everything tako injects
+appMux  := http.NewServeMux()   // everything the user declared, plus the site at "/"
+
+top := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/_tako/") {
+		takoMux.ServeHTTP(w, r)
+		return
+	}
+	appMux.ServeHTTP(w, r)
+})
+```
+
+No two patterns share a mux, so a conflict is not merely avoided — it is
+**unrepresentable**, at every arity and every method, for every endpoint
+tako injects later. This is what "the framework's routes take precedence"
+actually requires; specificity rules cannot express it.
+
+It also dissolves the first draft's one open question. With a mux of its
+own, the session route stays method-less and `SessionHandler`'s own
+`405 method not allowed` survives — no fallthrough to the site's 404, no
+choice to make.
+
+### The rooms
+
+`/_tako/` alone would be a junk drawer. Sub-namespaces, so every future
+endpoint has an obvious home and the surface stays readable:
+
+```
+/_tako/api/…       machine-facing: JSON, tokens, form posts, OIDC triggers
+/_tako/z/…         human-facing diagnostics (reserved, empty in v0.1.0)
+/_tako/<page>      the framework's own pages — signin today, few ever
+```
+
+Three rooms and a doorstep. `api` is everything a program talks to;
+`z` is everything a person reads about a running service; a bare name
+under `/_tako/` is a page the framework itself serves, and there is
+exactly one of those.
+
+Mapped onto what exists today, with the moves marked:
+
+| route | methods | from |
+|---|---|---|
+| `/_tako/api/session` | POST, DELETE | **moved** from `/api/_session` |
+| `/_tako/api/session/signout` | POST | **moved** from `/api/_session/signout` |
+| `/_tako/api/push` | POST | **moved** from `/_tako/push` |
+| `/_tako/api/signed/{token}` | GET, PUT, OPTIONS | **moved** from `/_tako/signed/` |
+| `/_tako/api/cron/{cron}` | POST | **moved** from `/_tako/cron/{cron}` |
+| `/_tako/signin` | GET | **moved** from `/api/_session/signin` |
+| `/_tako/z/…` | — | reserved, serves 404 |
+
+Verified end to end — 6 framework routes and 5 app routes including
+`GET /{a}/{b}`, `GET /{a}/{b}/{c}`, `GET /{a}/{b}/{c}/{d}`, a user's own
+`POST /api/orders`, and a site at `/`:
+
+```
+registered: 6 framework routes, 5 app routes, every wildcard arity — no conflict
+
+POST    /_tako/api/session           -> 200 session
+DELETE  /_tako/api/session           -> 200 session
+PUT     /_tako/api/session           -> 405 method not allowed
+POST    /_tako/api/session/signout   -> 200 signout
+POST    /_tako/api/push              -> 200 push
+PUT     /_tako/api/signed/tok123     -> 200 signed
+POST    /_tako/api/cron/nightly      -> 200 cron cron=nightly
+GET     /_tako/signin                -> 200 signin
+GET     /_tako/z/                    -> 404 404 page not found
+GET     /_tako                       -> 404 404 page not found
+GET     /opinion/nota                -> 200 page2 a=opinion b=nota c=
+GET     /2026/01/nota                -> 200 page3 a=2026 b=01 c=nota
+GET     /a/b/c/d                     -> 200 page4 a=a b=b c=c
+POST    /api/orders                  -> 200 user-api
+GET     /foo/../_tako/signin         -> 307 → /_tako/signin
+```
+
+The last two lines are the reserved namespace holding its edges. A bare
+`/_tako` with no trailing slash is answered by tako's mux, not leaked to
+the app's; and a path that only *becomes* `/_tako/…` after cleaning is
+redirected to the clean form, which re-enters through the prefix check
+rather than sliding past it.
+
+### Decisions taken (owner, 2026-08-05)
+
+Both open calls answered, and one name shortened.
+
+1. **`cron` moves inside `api`** — `/_tako/api/cron/{cron}`. The draft
+   argued that leaving it beside `api` was a judgment nobody could
+   restate as a rule, given that `push` is equally OIDC-only and
+   machine-only. Taken: the rule wins over the judgment.
+2. **`zpages` becomes `z`** — `/_tako/z/`. Same room, shorter name, and
+   `zpages` was a borrowed word (App Engine's) that would have needed
+   explaining in the reference.
+3. **`signin` stays at `/_tako/signin`**, and the shape is now a stated
+   rule rather than a one-off: **plain pages live at the root of the
+   namespace.** Rooms are for families of endpoints; a page is a page.
+4. **The framework always wins under `/_tako/`**, unconditionally and by
+   design — "the user should never want an endpoint whose first segment
+   is `_tako`". This is what the two-mux dispatch encodes, and it is a
+   claim on the **whole URL space** under the prefix, static files in a
+   site directory included, not only on declared `Page`/`API` routes.
+   Note the two properties are independent: the panic is a
+   *registration-time* conflict that separate muxes remove on their own,
+   while precedence is the *request-time* rule this decision settles.
+   With it, the analyzer rule below is no longer load-bearing for
+   correctness — it exists so a `GET /_tako/…` typed by mistake is a
+   build error rather than a handler that silently never runs.
+
+**Not a security boundary, and the proposal will not claim it is.** The
+rooms are organizational. Authentication stays per-endpoint: the session
+exchange is public by necessity (the ID token *is* the credential),
+signed URLs authenticate by the token in the path, push and cron verify
+OIDC. The one room that will carry a policy is `z` — diagnostics must
+never be public in cloud — and stating that once, in advance, is most of
+why it is worth reserving before it has contents. The owner's position,
+recorded: `z` is off in the common case and will require auth if and
+when it has contents, so nothing ships unguarded by reserving the name.
+
+### Why reserve `z` while it is empty
+
+Because reserving it later is this same breaking change again. A
+namespace that only becomes reserved when something needs it has never
+been reserved. It serves 404 in v0.1.0 and appears in exactly two
+places: the analyzer's reserved-prefix rule, and one sentence in the
+reference saying it is tako's.
+
+### Mounting: is there a sub-mux, and why this is not one
+
+Asked directly, and worth recording because the obvious answer is
+wrong. `http.ServeMux` **is** an `http.Handler`, so mounting one inside
+another looks like the idiomatic move:
+
+```go
+appMux.Handle("/_tako/", takoMux)   // ← this panics
+```
+
+It does not work here, and it fails for the *same reason as the bug
+being fixed*. Registration goes through the parent mux's conflict check
+first, and `/_tako/` is a subtree pattern with no method, so against a
+wildcard page route neither is more specific on both axes:
+
+```
+pattern "/_tako/" conflicts with pattern "GET /{a}/{b}":
+/_tako/ and GET /{a}/{b} both match some paths, like "/_tako/b".
+But neither is more specific than the other.
+```
+
+Measured: `/_tako/` panics beside `GET /{a}/{b}` and beside
+`GET /{a}/{b}/{c}`; `/_tako/{rest...}` panics too. There is no pattern
+spelling that mounts a sub-router on the app's mux and survives, because
+a mounted sub-router is just another pattern to the parent, and Go's
+mux has no mount primitive and no fallthrough — a matched pattern is
+the end of routing.
+
+So the dispatch has to happen **before** either mux sees the request,
+which is the whole design. In generated code that is one readable line
+via a runtime helper, keeping `.tako/gen/` legible (settled decision 3):
+
+```go
+// framework routes are answered before the app's router is consulted;
+// nothing under /_tako/ can be declared, shadowed or reordered by the app.
+runtime.Serve(runtime.WithDevBar(runtime.Reserved(takoMux, mux)))
+```
+
+`Reserved(framework, app)` is ~6 lines in `pkg/runtime`, holds the
+prefix constant, and is where the `/_tako`-without-slash case is
+handled. It is also the seam a test can assert directly, rather than
+asserting through a generated `main`.
+
+### The analyzer rule, which is now a courtesy rather than a fix
+
+A user route under the prefix becomes silently unreachable — verified,
+a declared `GET /_tako/sneaky` gets tako's 404 and never sees its
+handler. Per decision 4 that is correct behaviour, not a bug; what is
+wrong is the silence. The same complaint flauta made about a wildcard
+route shadowing its stylesheet applies here — the rule is one sentence,
+the gap is that nothing tells you. The pattern is a string literal, so
+it is decidable at analysis time:
+
+```
+app.go:41:12: route "GET /_tako/sneaky" is inside /_tako/, which the framework
+reserves for the endpoints it injects (session, cron, signed URLs, push);
+choose a path outside it (tako/RESERVED-PREFIX)
+```
+
+### The cost, stated
+
+83 references to `/api/_session` across the runtime's dev bar and
+sign-in page, `docs/guide/04-journal.md`, `reference/auth.md`,
+`reference/client-ts.md`, and journal's and shop's HTML. Mechanical, but
+public: after a v0.1.0 tag those paths are API, and Z6 has not published
+yet. This is the cheapest hour this move will ever have.
+
+### The examples demanding it
+
+- **journal** — declares `tako.Auth`, gains `GET /{year}/{slug}`. The
+  combination cannot boot today (transcript in the proposal above).
+- **gallery** — declares a bucket with signed URLs; a
+  `GET /{user}/{album}/{photo}` route is the second instance, and the one
+  the first draft would have missed.
+
+### Gate FL5 (agent-side, no cloud)
+
+1. journal boots with auth and a two-segment wildcard page; gallery boots
+   with signed URLs and a three-segment one. Both are startup tests.
+2. Sign in and sign out through the dev bar; a signed upload PUT and a
+   signed download GET both round-trip.
+3. `PUT /_tako/api/session` still answers 405 from the handler, not 404
+   from the site.
+4. A user route under `/_tako/` fails analysis with the text above
+   (golden, file:line asserted).
+5. Full example suite plus conformance green against `local`.
+
+### API change
+
+No exported SDK symbol changes. The injected URL surface changes, which
+is user-observable and gets a table in `docs/reference/auth.md` plus a
+note in `client-ts.md`.
+
+## FL5 — the `/_tako/` namespace, shipped (2026-08-05)
+
+Approved as the revised proposal above, with decisions 1–4 folded in.
+Framework routes now live under a reserved prefix, on a mux of their
+own, answered before the app's router is consulted.
+
+### What shipped
+
+**`internal/routes`** — the one definition of every URL tako mounts.
+This is an addition to the approved proposal, which put the prefix
+constant in `runtime.Reserved`. It moved because the paths are agreed on
+by parts of the system that never call each other: codegen writes the
+mount, the local signer builds URLs pointing at one, the provisioner
+targets three of them from Cloud Scheduler / Cloud Tasks / a Pub/Sub
+push subscription, alert queries match one as a `route` label, and the
+analyzer refuses to let a user declare any. Six spellings that used to
+agree by hand — the identical argument `internal/metrics` was created
+for in FA1, and `testdata/lock.golden.txt` plays the same role: a rename
+here is a failing test rather than a Scheduler POST quietly becoming a
+404.
+
+**`runtime.Reserved(framework, app)`** — the dispatch. Nine lines, and
+the only new exported symbol (`runtime_lock.golden` +1).
+
+**The mounts**, all moved:
+
+| now | was |
+|---|---|
+| `/_tako/api/session` | `/api/_session` |
+| `POST /_tako/api/session/signout` | `POST /api/_session/signout` |
+| `GET /_tako/signin` | `GET /api/_session/signin` |
+| `POST /_tako/api/push` | `POST /_tako/push` |
+| `/_tako/api/signed/` | `/_tako/signed/` |
+| `POST /_tako/api/cron/{cron}` | `POST /_tako/cron/{cron}` |
+| `/_tako/z/…` | — (reserved, 404s) |
+
+**`tako/reserved-prefix`** — analysis refuses a route inside the
+namespace, with a fixture covering four shapes (namespace root, a bare
+page, the `api` room, the `z` room) and one lookalike, `/_takoish/page`,
+that must NOT trip it.
+
+### The finding that changed an example
+
+The proposal named gallery's demand as `GET /{user}/{album}/{photo}`,
+three segments. Building it showed that is not a demand at all, and the
+reason is worth keeping: **moving a mount deeper moves the arity that
+collides with it, one segment at a time.** Measured against one shared
+mux, with the real route sets:
+
+```
+journal's real routes + tako's NEW auth mounts   → ok
+journal's real routes + tako's OLD auth mounts   → PANIC
+gallery's real routes + tako's NEW bucket mounts → PANIC
+```
+
+So the path move **alone** would have rescued journal — `/_tako/api/session`
+is three segments where `/api/_session` was two, and journal's wildcard
+page is two. It does nothing for gallery, whose `/_tako/api/signed/`
+subtree matches four-segment paths and therefore still collides with a
+four-segment wildcard. gallery's permalink shipped as
+`GET /{owner}/{album}/{photo}/{size}` — a sized image URL, which is what
+a gallery wants anyway — so that the example genuinely cannot boot
+without `Reserved` rather than merely commemorating a bug.
+
+Stated plainly, because it is the whole argument for the design that was
+chosen: **journal is the historical reproduction; gallery is the live
+demand; the two-mux separation is what makes the class of failure
+unrepresentable at every arity, which no path is deep enough to do.**
+
+### Tests
+
+- `pkg/runtime/reserved_test.go` — parameterized over every mount in
+  `routes.All`: which ones panic on a shared mux beside wildcards at
+  four arities (Session and Signed do; the method-scoped three do not),
+  that `Reserved` registers all of them beside all of those, that each
+  side routes to its owner, that a user route under the prefix is
+  unreachable, that an unlisted method still gets the handler's own 405,
+  and that `/foo/../_tako/signin` redirects into the namespace instead
+  of sliding past the check.
+- `internal/routes/routes_test.go` — the URL lock, plus: every mount is
+  inside the prefix it claims, the mounts coexist on one mux, and
+  `IsReserved` refuses lookalikes.
+- `examples/journal` — the pre-FL5 pair still panics (kept as the record
+  of what was fixed), a three-segment wildcard still conflicts with the
+  new session mount (kept because it is why depth is not the fix), and
+  journal's real shape registers clean. Plus: the permalink and the
+  short URL both resolve, and the namespace answers on the real server
+  with tako's 404 rather than the site's.
+- `examples/gallery` — the same in the arity that still bites, and the
+  permalink resolving a photo for its owner and 404ing for another's.
+- `pkg/analyzer/testdata/errors/reservedprefix/` — the rule's golden.
+
+### Validation
+
+`validate/reserved-namespace.md`, executed end to end. §1, the whole
+point — the combination that used to panic:
+
+```
+tako dev · journal
+
+  analyzing   1 service, 7 endpoints, 1 site
+  generating  .tako/gen/journal/main.go
+  starting    http://localhost:8080
+
+  GET / → Home (app.go:61)
+  …
+  GET /{year}/{slug} → Perma (app.go:73)
+  entity posts (indexes: Published, Created)
+  site ./web
+  auth (google)
+
+ready in 947ms — watching (backends: local, in-process)
+```
+
+§3, live against that server:
+
+```
+HTTP/1.1 303 See Other          ← POST /_tako/api/session (dev_user=alice)
+Location: /
+Set-Cookie: _session=654bc718…; Path=/; HttpOnly; SameSite=Lax
+signin       200
+PUT session  405     ← the handler's own refusal, not the site's 404
+z/x          404     ← tako's mux, not journal's 404.html
+bare _tako   404
+signout      204
+app root     200
+app /write   200
+permalink    404     ← /2026/nope reaches Perma, which finds no post
+```
+
+§5, the analyzer rule through the CLI rather than through a golden:
+
+```
+tako: app.go:239:24: route "GET /_tako/sneaky" is inside /_tako/, which tako
+reserves for the endpoints it injects (session, sign-in, cron, signed URLs,
+push) — the framework answers that namespace before this app's routes, so
+Sneaky would never run; choose a path outside it (tako/reserved-prefix)
+exit status 1
+```
+
+§7: `go test ./...` green, and all seven example suites green.
+
+**What was NOT validated: the cloud half.** The move changes three
+deployed targets — the Scheduler job `uri`, the push subscription
+`endpoint`, the Cloud Tasks queue target — and the `route` label alert
+queries match. Plan-level assertions are unit-tested
+(`shortlink_plan_test.go`, `alerts_test.go`, `promql_test.go`,
+`siren_queries.golden.txt`), but no deploy has run against these paths.
+It belongs to the next `release-cycle` walk, and is stated here rather
+than implied covered.
+
+### Deviations from the approved proposal
+
+1. **`internal/routes` exists**, where the proposal put the constant in
+   `pkg/runtime`. Reason above; the proposal's `Reserved` signature and
+   composition line are otherwise exactly as approved.
+2. **gallery's permalink is four segments, not three** — the proposal's
+   three would not have demanded the fix. Reason above.
+3. Examples use path literals rather than the constants, because
+   `internal/` is not importable from an example module. This is the
+   better outcome: an example showing the real URL is documentation.
+
+### Discovered work (unscheduled)
+
+- **Route conflicts should be an analyzer error, not a panic.** FL5
+  removed the framework's instances; an app can still declare two of its
+  own patterns Go refuses to order and learn about it as a stack trace
+  through generated code. Decidable at analysis time — the patterns are
+  string literals and the ordering rule is documented.
+- **`tako dev` prints its route table before the service is proven to
+  bind.** During the pre-fix reproduction the full, confident listing was
+  on screen when the process died. Printing it after a successful bind
+  would stop the output vouching for a service that never ran.
+- **`/_tako/z/` is reserved and empty.** Whatever lands there needs an
+  auth story before it serves anything; the owner's position is recorded
+  in the proposal.
+
+### API change
+
+No root-package symbol changed (`sdk_lock.golden` unmoved).
+`pkg/runtime` gained `Reserved` (+1 in `runtime_lock.golden`). The
+injected URL surface changed, which is user-observable: documented as a
+table in `docs/reference/api.md` under "`/_tako/` is not yours", with
+the paths updated across `reference/auth.md`, `bucket.md`, `cron.md`,
+`queue.md`, `topic.md`, `testing.md`, `observability.md`,
+`client-ts.md`, `guide/04-journal.md`, `guide/cloud.md`, eleven
+`validate/*.md` scripts, and two lines of the tech spec.

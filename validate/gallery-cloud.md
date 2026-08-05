@@ -87,7 +87,7 @@ exactly-once effect via the idempotent pipeline (thumb Put + Ready
 flip are idempotent).
 
 **Push endpoint is IAM-gated:** `curl -X POST <gallery-makethumb
-URL>/_tako/push` → 403 (Cloud Run IAM, not app code).
+URL>/_tako/api/push` → 403 (Cloud Run IAM, not app code).
 
 ## 4. Idempotence and drain
 

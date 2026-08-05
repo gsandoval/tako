@@ -5,7 +5,7 @@ pass's two riskiest changes reach real infrastructure together:
 
 - **X1** renamed the cron's identity. The deployed name comes from the
   declaring VARIABLE now, so Cloud Scheduler must target
-  `/_tako/cron/Cleanup` on a job named `<service>-cron-cleanup`, and the
+  `/_tako/api/cron/Cleanup` on a job named `<service>-cron-cleanup`, and the
   handler must actually run when it fires.
 - **P2** rewrote every URL in `pkg/provision/gcp` and
   `pkg/backends/gcp` through `Client.url`. 130 call sites moved. The
@@ -52,11 +52,11 @@ gcloud scheduler jobs list --project $PROJECT --location us-central1 \
 ```
 
 **Observe** — the job name ends `-cron-cleanup` and the URI ends
-`/_tako/cron/Cleanup`, from `var Cleanup = tako.Cron("every 24h",
+`/_tako/api/cron/Cleanup`, from `var Cleanup = tako.Cron("every 24h",
 cleanupOrphans, …)`:
 
 ```
-…/jobs/x1-gallery-cron-cleanup    https://x1-gallery-….run.app/_tako/cron/Cleanup    0 0 * * *
+…/jobs/x1-gallery-cron-cleanup    https://x1-gallery-….run.app/_tako/api/cron/Cleanup    0 0 * * *
 ```
 
 **The failure this is looking for:** `cleanupOrphans` anywhere in either
@@ -74,7 +74,7 @@ sleep 15
 go run ../../cmd/tako logs gallery --project $PROJECT --env x1 --since 5m
 ```
 
-**Observe:** a `POST /_tako/cron/Cleanup → 200` request line. A 404
+**Observe:** a `POST /_tako/api/cron/Cleanup → 200` request line. A 404
 means the Scheduler job and the service disagree about the cron's name —
 the exact bug X1 existed to make impossible.
 

@@ -84,7 +84,7 @@ with its own narration — the feature working, never an error:
 
 Every cron provisions a **Cloud Scheduler job**
 (`+ create scheduler job <svc>-cron-<name>`) firing
-`POST /_tako/cron/<name>` on the service with an OIDC token minted as
+`POST /_tako/api/cron/<name>` on the service with an OIDC token minted as
 the service's own SA. The route trusts nobody: it verifies the
 Google-signed token's audience (this service) and identity (that SA) —
 injected at deploy as `TAKO_CRON_AUDIENCE`/`TAKO_CRON_INVOKER` — so
@@ -105,7 +105,7 @@ the jobs with everything else.
 > [the cloud story](../guide/cloud.md#the-first-two-minutes-after-a-deploy).
 
 **The cron's identity is its variable.** `var Cleanup = tako.Cron(...)`
-deploys as the Scheduler job for `/_tako/cron/Cleanup`, leases as
+deploys as the Scheduler job for `/_tako/api/cron/Cleanup`, leases as
 `cron-Cleanup` under `WithSingleflight`, and is fired in a test as
 `app.AdvanceCron(Cleanup)` — one name, from one place. Renaming the
 variable renames the cron; renaming its function does not.
