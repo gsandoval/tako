@@ -15744,3 +15744,135 @@ replacement spellings differ per constructor (`ServiceConfig` vs
 `tako.X`, so prose naming `WithDomain` without the prefix escapes it —
 which is how all four of the above survived. Widening it to catch
 `WithFoo`-shaped identifiers in prose would have caught every one.
+
+## Review pass — docs, API surface, live cloud (2026-08-05)
+
+Owner-requested full review after FL5b–FL7. Three tracks; two complete,
+one blocked at a permission boundary.
+
+### Track 1 — documentation
+
+The existing checks were all green and stayed green: every `tako.X` the
+docs name exists (533 mentions), every link resolves, every exported
+symbol has a reference page, the api page matches the lock. What they
+cannot see is a sentence that is wrong about a symbol that exists —
+Z7b said so in its own entry, and that is exactly where every finding
+landed.
+
+**Self-contradictions, fixed** (commit `9a8b1a7`):
+
+1. `cron.md` denied a per-cron timezone knob 100 lines below the
+   section documenting `CronConfig.Timezone`, complete with an
+   `America/Mexico_City` example and its own `tako/timezone` error.
+2. `pages.md` still said styled error pages were a later slice. FL2
+   shipped `SiteConfig{NotFound}` and site.md was rewritten the same
+   day; pages.md was not. The truth is narrower than either page had
+   it, and is now stated: the 404 wears the site's design, every other
+   status is plain text because `tako.HTML` carries no status.
+3. `client-ts.md`'s backtick opened before `tako gen client` and closed
+   after `tako gen client ts`, rendering a sentence as a code span that
+   swallowed its own prose.
+
+**The WithX vocabulary, settled** (commit `f1dc5ab`). Z7b logged the
+question and declined to answer it: 84 mentions across 22 spellings of
+an option namespace X2 deleted, none of them anything a user could
+write. Settled toward the config-struct names at the owner's direction,
+which is also what tako's analyzer already says when it refuses one
+(`Cloud Run enforces Route.Private at the service level`).
+
+Two of the 84 were not vocabulary but **shipped output**:
+
+- `preflight.go` told users to "drop tako.WithDomain" — never a symbol,
+  and `domains.md` already documented the corrected sentence. The doc
+  had been fixed; the code had not. This is the same class as FL5b: a
+  rename that updated the docs and left the emitting code behind.
+- a Cloud Tasks routing error blamed "a WithDelay publish site"; the
+  method is `PublishAfter`.
+
+And two were **error texts tako no longer emits at all** — X2 deleted
+the `invalid-option` rule (`pkg/analyzer/config.go` says so) and both
+`singleton.md` and `job.md` kept documenting its message, in the
+"Errors you'll meet" sections the reference rubric says carry verbatim
+texts. Replaced with the `config-literal` messages actually emitted.
+`cache.md`'s "any option but `WithTTL`" went too: `tako.Cache` has no
+options, the TTL is a required parameter.
+
+`TestTheDocsDoNotNameRetiredWithOptions` now guards the vocabulary.
+The existing symbol check could not: its pattern requires the `tako.`
+qualifier and these were bare, which is precisely how they survived.
+
+**Attempted and rejected:** a scanner that extracts quoted error texts
+from the docs and greps the code for them. It reported 76 misses, most
+of them false — messages built with `fmt.Sprintf("tako.%s name must
+be…")` never appear literally in source. Not shipped; a real version
+needs the analyzer's message construction, not a regex over prose.
+
+### Track 2 — API quality
+
+The surface holds up against the six rules. Rule 3's shape ("Ctx first,
+returns error") is deviated from in three deliberate, coherent
+families, all of which read as records rather than operations:
+accessors (`CounterHandle.Count`, `SecretHandle.Value`, and now
+`ServiceHandle.Domain`), fire-and-forget metrics (`Add`, `Observe`),
+and `EntityTx`'s methods, where the ctx is the transaction.
+
+Two observations, neither urgent, both logged rather than acted on:
+
+- **`ServiceInstances(t) Metric` returns a reading directly** while its
+  neighbours `Requests(t)` and `RequestMs(t)` return handles you take a
+  reading from. Defensible — instances is a gauge with one reading —
+  but it is the one platform metric shaped differently from the rest.
+- **`tako.HTML` still cannot carry a status for markup**, which is the
+  403 gap the friction log has open. Worth restating precisely because
+  the plumbing is already there: `HTML.status` exists (`site.go:75`),
+  `HTMLParts` already returns it (`page.go:291`), and the markup arm
+  simply never calls `WriteHeader`. FL1 built the transport when it
+  added `RedirectPermanent` and nothing else picked it up.
+
+### Track 3 — live cloud
+
+**hello, full cycle on tako-test-01: PASS.**
+
+```
+✓ hello → https://hello-cgbk74ip3q-uc.a.run.app
+  (22s)
+```
+
+Against `validate/deploy.md`: preflight green; the plan created a
+service account, a run service and one grant and nothing else; the real
+deploy reached a live URL in **22s** against a ~2 min target; all three
+endpoints answered exactly as `tako dev` does (`/hello`, `/greet/memo`,
+`POST /echo`); a second deploy was `0 creates, 0 updates, 6 skips` and
+`✓ no changes (8s)`; `tako logs --since 30m` showed all three request
+lines with timings; `tako destroy` demanded the typed app name and
+refused an empty one, then removed everything. Verified in the console
+after: no run services, no tako service accounts, no artifact repo, no
+framework bucket. The stateless-reconcile claim holds end to end.
+
+The security summary printed the converted vocabulary
+(`⚠ 1 mutating route(s) without Route{SignIn: true}: POST /echo`),
+which is the docs change reaching real output.
+
+**gallery release-cycle walk: BLOCKED, not failed.** Step 1 needs
+`gcloud secrets create x1-notifier-key`, and creating a secret was
+refused by this session's permission classifier. What the attempt did
+validate is the step the script leads with — preflight honesty:
+
+```
+tako: preflight found 1 gap(s):
+  secret x1-notifier-key does not exist in tako-test-01 — create it: printf '<value>' | gcloud secrets create x1-notifier-key --data-file=- --project tako-test-01
+```
+
+It stopped **before building anything**, named the exact secret, and
+gave the exact command — the "Cloud errors & permissions" rule made
+good. Everything past it is unrun: the X1 cron-identity check, the P2
+URL-construction paths, the five-service deploy, and destroy over a
+real resource graph.
+
+### Discovered work
+
+**6. `tako logs` prints each request twice** — once tagged `INFO` and
+once untagged, with different durations (`GET /hello → 200 (3.2ms)` /
+`(0.6ms)`). Almost certainly Cloud Run's request log alongside tako's
+own middleware line, in which case the fix is a filter, not a bug in
+either. Seen on every request of the hello walk. Not investigated.
