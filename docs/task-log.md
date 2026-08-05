@@ -15876,3 +15876,114 @@ once untagged, with different durations (`GET /hello → 200 (3.2ms)` /
 `(0.6ms)`). Almost certainly Cloud Run's request log alongside tako's
 own middleware line, in which case the fix is a filter, not a bug in
 either. Seen on every request of the hello walk. Not investigated.
+
+## Release-cycle walk, gallery on tako-test-01 (2026-08-05) — one FAILURE
+
+Ran in full after the owner created the secret the earlier attempt was
+blocked on. `validate/release-cycle.md`, all five sections.
+
+| § | What | Verdict |
+|---|---|---|
+| 1 | Five services deploy | **pass** — 51 creates, 0 orphans, 5m58s (3m14s of it the Datastore index) |
+| 2 | X1: cron carries its variable's name | **pass** |
+| 3 | The cron actually runs under that name | **pass**, first fire |
+| 4 | P2: paths that only run against the real API | **FAIL** on the live request; convergence half passes |
+| 5 | Destroy leaves nothing | **pass** |
+
+§2 and §3, the two the walk exists for:
+
+```
+x1-gallery-cron-cleanup  https://x1-gallery-….run.app/_tako/api/cron/Cleanup  0 0 * * *
+14:11:45 x1-gallery INFO POST /_tako/api/cron/Cleanup → 200 (514.5ms)
+14:11:46 x1-gallery INFO cron ok
+```
+
+No `cleanupOrphans` in either column, and the route resolved on the
+first fire with no invoker-propagation window. §4's other half
+converged exactly — `0 creates, 0 updates, 59 skips, 0 orphans` — so
+P2's observation paths and creation paths agree about every URL. §5
+destroyed cleanly and nothing `x1-`prefixed survived in Run, Scheduler,
+Pub/Sub or IAM.
+
+### The failure: derived composite indexes miss a conditional query
+
+`GET /api/photos` on the deployed service answers **500**.
+
+```
+err=HTTP 400 from /v1/projects/tako-test-01:runQuery: no matching index found.
+recommended index is:
+- kind: photos
+  properties:
+  - name: ready
+  - name: created
+    direction: desc
+```
+
+The analyzer derived, for `photos`:
+
+```
+composites: [[owner, ready], [owner, ready, -created]]
+```
+
+Neither serves the shape Datastore is asking for. The cause is one
+function building its query **conditionally**
+(`examples/gallery/app.go:384`):
+
+```go
+q := photoStore.Query(ctx).Where("Ready", "=", true)
+if owner != "" {
+    q = q.Where("Owner", "=", owner)
+}
+return q.Limit(100).All()
+```
+
+Two runtime shapes — `ready` alone, and `ready`+`owner` — and the
+analyzer, which groups every `Where` in a function into one shape, emits
+indexes for the wider one only. The anonymous caller takes the narrower
+path, and there is no index for it. An unauthenticated `GET
+/api/photos` is exactly that caller, which is why the walk's own
+one-line smoke test is what found it.
+
+**It contradicts a stated invariant.** `pkg/analyzer/appgraph.go:124`:
+
+> Grouping per function can over-index a function running two separate
+> queries; it never under-indexes a shape (the aggregate-per-entity
+> scheme this replaced did — shop, R0).
+
+It under-indexes here. The claim holds for a function running two
+*complete* queries; it does not hold for one query assembled across a
+branch, and nothing distinguished the two cases.
+
+**Why every other tier was green.** The local backend is bbolt and
+needs no indexes, so the conformance suite — the contract between
+`local` and `gcp` — cannot express this, and gallery's own tests pass
+locally. Index derivation is the one part of the entity story where
+"conformance is law" has no purchase, because the thing being derived
+does not exist on one side. Only real Datastore rejects the query, and
+only for the branch an anonymous request happens to take.
+
+**Not fixed here.** The fix is an analyzer change with a real design
+question behind it — emit one index per reachable filter subset (correct
+but combinatorial: n conditional filters is 2ⁿ indexes, and Datastore
+caps at 200 per project), or refuse to derive from a branch-assembled
+query and say so at analysis time. That is its own task with its own
+DX proposal, per the standing rules. Logged as discovered work.
+
+### Discovered work
+
+**7. Conditional queries under-index (above).** Release-blocking by the
+walk's own verdict rule (§4 failing blocks a release). Needs a DX
+decision between the two shapes above before any code moves.
+
+**8. `tako logs` does not surface the error behind a 500.** The walk's
+diagnosis needed `gcloud logging read`: `tako logs` showed
+`ERROR GET /api/photos → 500 (80.6ms)` and nothing else, while the
+`err=…` payload with Datastore's exact remediation sat one query away.
+pages.md promises "an opaque 500 with the request id, real error only
+in your logs" — the error IS in the logs, and tako's own reader is the
+thing that hides it. The request id is in the payload too (`req=759268`),
+so the correlation the design intends is right there.
+
+**9. `tako logs` prints each request twice** — once `INFO` with tako's
+duration, once untagged with Cloud Run's. Cosmetic beside #8, same
+reader.
