@@ -15987,3 +15987,223 @@ so the correlation the design intends is right there.
 **9. `tako logs` prints each request twice** — once `INFO` with tako's
 duration, once untagged with Cloud Run's. Cosmetic beside #8, same
 reader.
+
+## RC1 — DX proposal: index derivation follows the branches (2026-08-05) — AWAITING APPROVAL
+
+Discovered work #7, promoted. The gallery walk's one-line smoke test
+(`curl $URL/api/photos` → 500) traced to composites derived from a
+query assembled across an `if`.
+
+### The user code does not change — that is the point
+
+```go
+func readyPhotos(ctx tako.Ctx, owner string) ([]Photo, error) {
+	q := photoStore.Query(ctx).Where("Ready", "=", true)
+	if owner != "" {
+		q = q.Where("Owner", "=", owner)
+	}
+	return q.Limit(100).All()
+}
+```
+
+This is ordinary Go, it is what `examples/gallery` has shipped since
+R0, and nothing about it should have to move. What moves is what tako
+derives from it. Today `scanQueries` runs a flat `ast.Inspect` over the
+function body and folds every `Where` into **one** chain per (entity,
+function) — a filter inside an `if` is recorded exactly like one on the
+straight-line path. Two runtime shapes, one derived shape, and the
+narrower one goes unindexed.
+
+### Why this is tractable at all
+
+Two rules the analyzer already enforces bound the problem to a finite,
+small space:
+
+- `Where`'s field must be a **string constant** (`tako/const-query-field`)
+  — there is no dynamic field name to reason about.
+- The field must be tagged **`entity:"index"`** (`tako/unindexed-query`)
+  — the universe of filterable fields per entity is declared.
+
+So this needs no SSA and no dataflow lattice. It needs the AST walk to
+notice which block it is standing in.
+
+### The rule
+
+A `Where`/`OrderBy` on the function's **unconditional path** is
+MANDATORY. One inside the body of an `if`, `switch`, `select`, `for`
+or `range` is OPTIONAL. The shapes a function produces are
+`mandatory ∪ S` for every subset `S` of the optional filters; each
+shape derives a composite exactly as today (struct order, then
+OrderBys, dedup, skip shapes under two distinct properties).
+
+gallery then derives what Datastore asked for, plus what it already
+had:
+
+```
++ create  datastore index photos (ready, -created)
++ create  datastore index photos (owner, ready, -created)
+```
+
+The first line is the fix. The second is today's only line.
+
+**Deliberate over-indexing.** `if/else` arms adding different filters
+are treated as independently optional, so the combination that can
+never occur together is still derived. Over-indexing is the safe
+direction and SSA-grade exclusivity is not worth the weight — but it
+is a cost, and the "Not yet" section should say so.
+
+### Answering the plan question directly
+
+The owner asked to show the derived indexes at plan time. **They are
+already shown** — `KindDatastoreIndex` is fourth in `reconcileOrder`
+and `gallery_plan_test.go:91` pins the rendering. What the plan cannot
+tell you is which query each index serves, which is exactly what a
+reviewer needed to notice one was missing. Proposed:
+
+```
+  plan
+    + create  datastore index photos (ready, -created)          ← app.go:385 readyPhotos
+    + create  datastore index photos (owner, ready, -created)   ← app.go:385 readyPhotos
+```
+
+The position is the query that needs it. An index with no arrow is one
+nothing asks for any more — the orphan case, visible for free.
+
+### The cap, and the refusal
+
+Over-indexing is not free: Datastore allows **200 composite indexes per
+project** and each takes minutes to build (measured: 3m14s for one, over
+half that deploy's wall clock). `k` optional filters in one function
+yield `2^k` shapes. Real code sits at k=1–3; nothing should silently
+generate 256 indexes.
+
+So past a threshold tako refuses at analysis time rather than deriving:
+
+```
+app.go:385:7: readyPhotos assembles one query from 6 conditional filters — that is 64 composite indexes for a single function, and Datastore allows 200 in a project; split it into separate queries whose filters are unconditional (tako/query-shapes)
+```
+
+Proposed threshold **k > 4** (16 shapes). Generous for real code,
+loud for the pathological. This turns today's silent production 500
+into a build error, which is the posture every other analyzer rule
+takes.
+
+### Tests
+
+Golden analyzer cases (input package + expected AppGraph JSON), per the
+standing rule, with error text and position asserted exactly:
+
+1. unconditional filters — today's output, unchanged (regression guard)
+2. one optional filter — gallery's shape, two composites
+3. `if/else` adding different filters — the unreachable combination is
+   derived, pinned as deliberate
+4. optional filter plus `OrderBy` — both tuples carry the order
+5. filter inside a `for` body — optional
+6. k over the threshold — the refusal above
+7. a shape whose tuple another shape already covers — deduped
+
+Plus the one that matters most: **an invariant test asserting every
+enumerated shape is served by some derived tuple.** That is the check
+whose absence let this ship, it is pure static analysis, and it needs
+no cloud and no emulator — which is the only way this class can be
+covered, since the local backend is bbolt and has no notion of an
+index. `validate/release-cycle.md` §4 stays the live backstop.
+
+### Non-goals, stated
+
+- **SSA path sensitivity.** See above.
+- **Cross-function query assembly.** `chains` are per-function, so a
+  helper that takes a `*EntityQuery` and adds filters forms its own
+  chain and misses the caller's. That hole predates this task and is
+  not closed by it; the invariant test cannot see it either. Worth its
+  own entry rather than a silent widening of scope here.
+- **Changing `entity:"index"`.** The field-level tag stays exactly as
+  it is; only tuple derivation moves.
+
+---
+
+## RC2 — DX proposal: `tako logs` shows the error, not the label (2026-08-05) — AWAITING APPROVAL
+
+Discovered work #8 and #9, folded together — one reader, one pass.
+
+Diagnosing RC1 needed `gcloud logging read`. That is the finding:
+tako's own log reader had the answer and printed a label instead.
+
+### The confirmed defect
+
+`pkg/provision/gcp/logs.go:77`:
+
+```go
+if msg, ok := e.JSONPayload["message"].(string); ok {
+    text = msg
+}
+```
+
+A handler error's payload is
+`{err: "…", message: "handler error", req: "759268"}`. The reader takes
+`message` — the least informative field present — and discards `err`,
+which held Datastore's exact remediation, and `req`, which is the id
+that ties the entry to its request line. `pages.md` promises "an
+opaque 500 with the request id, real error only in your logs." The
+error is in the logs. tako's reader is what hides it.
+
+Proposed rendering — message first, then the payload it came with:
+
+```
+14:12:20 x1-gallery  ERROR  handler error [req=759268]
+                            err: HTTP 400 from /v1/projects/tako-test-01:runQuery: no matching index found.
+                                 recommended index is:
+                                 - kind: photos
+                                   properties: ready, created desc
+```
+
+Continuation lines indent under the entry rather than collapsing, since
+the useful payloads here are multi-line by nature (Datastore's
+recommendation is a YAML block). Unknown keys print as `key: value`
+after the known ones, so a payload shape this command has not met is
+degraded rather than dropped — the current `fmt.Sprint(map)` fallback
+produces Go map syntax with random key order.
+
+### The duplicate request lines (#9)
+
+Every request prints twice — once `INFO` with tako's middleware
+duration, once with Cloud Run's:
+
+```
+14:11:45 x1-gallery  INFO  POST /_tako/api/cron/Cleanup → 200 (514.5ms)
+14:11:46 x1-gallery        POST /_tako/api/cron/Cleanup → 200 (0.5ms)
+```
+
+Proposed: keep **Cloud Run's** line — it is what the client actually
+experienced, platform overhead included — and drop tako's duplicate
+when both are present for one `req`. The judgment worth confirming:
+that discards the handler's own timing, which is the more useful number
+when you are hunting a slow handler rather than a slow request. The
+alternative is one line carrying both (`→ 200 (514.5ms total, 0.5ms in
+handler)`), which is more informative and more machinery.
+
+### What I could not diagnose, stated plainly
+
+The `handler error` entry did not appear in `tako logs` output **at
+all** — not even as the bare label. The filter
+(`resource.type="cloud_run_revision"` minus audit logs) looks broad
+enough to include it, and `gcloud logging read` returned it from the
+same window. I could not chase it further: the walk had already
+destroyed the deployment, and re-deploying gallery to find out is a
+six-minute cycle plus a secret.
+
+So RC2's validation **starts** by reproducing the omission against a
+live service. If the entry is being filtered or paged out, the payload
+rendering above lands on a line that never prints, and the real fix is
+elsewhere. Sequencing this after RC1 is convenient: RC1's live
+verification needs a gallery deployment anyway, and that deployment is
+where this reproduces.
+
+### Tests
+
+`pkg/provision/gcp/logs_test.go` against recorded API responses (the
+package already tests against a fake server): a handler-error payload
+renders `err` and `req`; a multi-line `err` indents; an unknown-key
+payload degrades readably; a request logged by both Cloud Run and tako
+prints once. The live half is the reproduction above, in
+`validate/logs.md`.
