@@ -38,7 +38,7 @@ comment on the declaration says so.
 - The dev process serves ONE port (default 8080; `PORT=8090 tako dev`).
   Everything — workers, subscribers, crons, jobs, singleton loops,
   private callee services — runs inside it.
-- Site `WithBuild` commands re-run on change; their output never
+- Site `SiteConfig.Build` commands re-run on change; their output never
   retriggers the reload loop.
 - The spawned service binary dies with the dev process, however the
   dev process dies — no orphaned binaries holding ports or the

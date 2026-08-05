@@ -98,7 +98,7 @@ Two consequences worth knowing before you rename a var:
   because a rename that carried data would not be. See
   [cli.md](cli.md).
 - A Handler's own scaling comes from its `Compute`/`RunnerConfig`
-  options and [`WithProfile`](footprint.md) — a batch worker and a
+  options and their [`Profile`](footprint.md) field — a batch worker and a
   latency-sensitive API do not want the same instance shape.
 
 ## Test it

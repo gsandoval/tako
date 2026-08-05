@@ -28,7 +28,7 @@ var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{...})
 ```
 
-`WithPrivate` closes the front door: browsers and curl get 403 from
+`Route.Private` closes the front door: browsers and curl get 403 from
 Cloud Run itself; the caller's service account gets `run.invoker`
 derived from the call edge. In dev and tests, `.Call` is a direct
 function call (breakpoints step from `placeOrder` into `charge`); in

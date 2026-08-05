@@ -197,7 +197,7 @@ blog.example.com is already mapped in tako-test-02 — a domain answers for one 
 
 **No edge caching.** Your Cloud Run service serves every byte; the
 runtime's caching headers work at the browser, not at an edge. There is
-no `WithCDN` — see [domain-options.md](../domain-options.md).
+no CDN option — see [domain-options.md](../domain-options.md).
 
 **About ten regions**: `asia-east1`, `asia-northeast1`,
 `asia-southeast1`, `europe-north1`, `europe-west1`, `europe-west4`,

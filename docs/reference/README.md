@@ -51,7 +51,7 @@ Two consequences worth knowing:
 - [pages.md](pages.md) — `tako.Page`: server-rendered HTML, forms,
   CSRF, htmx fragments
 - [site.md](site.md) — `tako.Site`: static serving, templates,
-  frontend builds (`WithBuild`), SPA, redirects
+  frontend builds (`SiteConfig.Build`), SPA, redirects
 - [service.md](service.md) — `tako.Service`: the app service declared —
   its name and its service-wide settings
 - [domains.md](domains.md) — `ServiceConfig.Domain`: a custom domain with
@@ -75,7 +75,7 @@ Two consequences worth knowing:
   events
 - [bucket.md](bucket.md) — `tako.Bucket`: blobs, signed URLs, upload
   events
-- [cron.md](cron.md) — `tako.Cron` (+ `WithSingleflight`)
+- [cron.md](cron.md) — `tako.Cron` (+ `CronConfig.Singleflight`)
 - [lock.md](lock.md) — `tako.Lock`: leases, `Do`/`TryDo`
 - [handler.md](handler.md) — `tako.Handler`: the value every
   background declaration returns, and what you name it for
@@ -83,16 +83,16 @@ Two consequences worth knowing:
 ## Compute
 
 - [job.md](job.md) — `tako.Job` + `tako.Runner`: work that
-  outlives requests, `WithParallel`
+  outlives requests, `RunnerConfig.Parallel`
 - [singleton.md](singleton.md) — `tako.Singleton`: exactly-one loops
 - [calls.md](calls.md) — cross-service `Endpoint.Call`,
-  `WithPrivate`, identity propagation
-- [footprint.md](footprint.md) — `WithProfile` and `WithFootprint`:
+  `Route.Private`, identity propagation
+- [footprint.md](footprint.md) — the `Profile` and `Footprint` fields:
   scaling, explicit compute
 
 ## Edges
 
-- [auth.md](auth.md) — `tako.Auth`: providers, sessions, `WithAuth`,
+- [auth.md](auth.md) — `tako.Auth`: providers, sessions, `Route.SignIn`,
   the dev bar
 - [testing.md](testing.md) — `tako.NewTestApp`: the test surface, the
   fake clock, chaos mode

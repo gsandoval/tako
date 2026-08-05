@@ -14,13 +14,13 @@ From [examples/shop/billing](../../examples/shop/billing/billing.go):
 ```go
 // Charge is the RPC surface: an EXPORTED Endpoint var, callable from
 // other service packages as billing.Charge.Call(ctx, req) — typed,
-// visible at the call site, no client code to maintain. WithPrivate
+// visible at the call site, no client code to maintain. Route.Private
 // closes the front door: only granted service identities invoke
 // (browsers and curl get 403 from Cloud Run itself).
 var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 ```
 
-`WithPrivate` is IAM-only ingress, **not** network-internal — a settled
+`Route.Private` is IAM-only ingress, **not** network-internal — a settled
 decision; VPC anything is a later explicit opt-in. Private and public
 routes cannot share a package (Cloud Run enforces ingress per service).
 
@@ -92,7 +92,7 @@ if !ok || he.HTTPStatus() != 422 || !strings.Contains(err.Error(), "amount must 
   Endpoint var (billing.Charge.Call(ctx, req)) so the RPC boundary
   stays visible (tako/raw-call)`
 - `service mixedingress mixes private and public routes — Cloud Run
-  enforces WithPrivate at the service level, so private endpoints need
+  enforces Route.Private at the service level, so private endpoints need
   their own package (tako/mixed-ingress)`
 - A 401/403 at the callee's front door: `this service cannot invoke
   billing — the derived grant run.invoker is missing or still

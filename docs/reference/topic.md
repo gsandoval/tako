@@ -21,8 +21,8 @@ subscribers on one topic fail independently.
 
 The name must be a string constant (analyzer-enforced). `Subscribe`
 binds a handler to any **event source** — a topic, or a bucket's
-`Uploaded` event ([bucket.md](bucket.md)) — and accepts `WithProfile`
-and `WithFootprint` for the service it runs in
+`Uploaded` event ([bucket.md](bucket.md)) — and accepts `Compute.Profile`
+and `Compute.Footprint` for the service it runs in
 ([footprint.md](footprint.md)).
 
 Payloads are compile-checked: `ready` is a `*TopicHandle[PhotoReady]`,
@@ -102,5 +102,5 @@ must tolerate duplicates like any async handler.
   past events to a new subscriber — a subscriber sees what is
   published after it exists.
 - No per-subscriber delivery options beyond compute shape
-  (`WithProfile` / `WithFootprint`); retry pacing and attempt counts
+  (`Compute.Profile` / `Compute.Footprint`); retry pacing and attempt counts
   are framework policy, not knobs.

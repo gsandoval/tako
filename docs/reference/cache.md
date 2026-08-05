@@ -64,8 +64,12 @@ the cache is exercised through the endpoints, never poked directly.
 
 ## Errors you'll meet
 
-Passing any option but `WithTTL` fails with, e.g.,
-a wrong-typed TTL, which the compiler refuses outright.
+`tako.Cache` takes no options at all — the TTL is its second
+parameter, required, because a cache with no expiry policy is a
+decision rather than a default worth making silently. So the mistakes
+here are ones the compiler catches: a missing TTL is a wrong arity, a
+wrong-typed one is a type error.
+
 A non-constant name is the same `tako/const-name` analysis error every
 resource gets (see [entity.md](entity.md)). Outside a wired app:
 `tako: no cache backend wired — run via tako dev, a generated service,

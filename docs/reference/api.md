@@ -120,7 +120,7 @@ The grouping is derived, never declared — `tako.Service` names that
 service and carries its settings, it does not create or split it
 ([service.md](service.md)).
 The default profile scales to zero — an idle API costs nothing.
-`WithPrivate` closes the front door: browsers and curl get 403 from
+`Route.Private` closes the front door: browsers and curl get 403 from
 Cloud Run itself; callers get `run.invoker` derived from the call
 edge. Mixing private and public routes in one package is an analysis
 error — private endpoints need their own package.
@@ -157,7 +157,7 @@ route "GET /_tako/sneaky" is inside /_tako/, which tako reserves for the endpoin
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,
 `{"error":"query \"loud\": \"banana\" is not a bool"}`; `NotFound()`
-is a 404 `{"error":"not found"}`; anonymous on a `WithAuth` route is
+is a 404 `{"error":"not found"}`; anonymous on a `Route.SignIn` route is
 a 401 `sign in to continue`.
 
 ## Not yet
@@ -165,4 +165,4 @@ a 401 `sign in to continue`.
 Responses are JSON or a `tako.Blob` stream — nothing else. Multipart
 uploads buffer through the service (32MB in memory, then temp files);
 large uploads belong on signed URLs — see [bucket.md](bucket.md).
-No per-endpoint rate limiting (rate is a queue setting — `WithDelivery`, see [queue.md](queue.md)).
+No per-endpoint rate limiting (rate is a queue setting — `Delivery`, see [queue.md](queue.md)).

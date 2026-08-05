@@ -96,9 +96,13 @@ never rewinds.
 
 ## Errors you'll meet
 
-- Any option other than `WithFootprint`:
-  `tako.Singleton accepts only WithFootprint — min=1/max=1 plus the
-  lease is the rest of the contract (tako/invalid-option)`
+- A config held in a variable rather than written out:
+  `tako.SingletonConfig must be written as a literal with constant
+  fields — configuration is read at analysis time, not run time; got
+  cfg (tako/config-literal)`
+- A non-constant timeout:
+  `tako.SingletonConfig.Timeout must be a constant duration — it is
+  read at analysis time, not run time`
 - A footprint setting the scale-out:
   `a singleton footprint cannot set MaxInstances — the lease is what
   makes a singleton exactly-one, so a max above 1 only buys instances

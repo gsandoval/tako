@@ -1,4 +1,4 @@
-# tako.Auth — providers, sessions, WithAuth, the dev bar
+# tako.Auth — providers, sessions, Route.SignIn, the dev bar
 
 ## Declare
 
@@ -21,7 +21,7 @@ real, not a cookie waiting to expire. Sessions last 7 days.
 
 ## Use
 
-`WithAuth()` gates a route with a 401; past it, `ctx.User()` is
+`Route{SignIn: true}` gates a route with a 401; past it, `ctx.User()` is
 guaranteed. On public routes use `ctx.MaybeUser()` — calling `User()`
 on an unauthenticated request panics. From
 [examples/journal](../../examples/journal/app.go):
@@ -97,7 +97,7 @@ identity directly.
 
 ## Errors you'll meet
 
-- `401 {"error": "sign in to continue"}` — WithAuth's gate, exact text
+- `401 {"error": "sign in to continue"}` — Route.SignIn's gate, exact text
   pinned by tests.
 - `400 POST {"idToken": …} (the Identity Platform sign-in result)` —
   `/_tako/api/session` got a body without an ID token.

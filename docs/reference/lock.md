@@ -4,7 +4,7 @@ A lock guards critical **sections** — cross-entity rebuilds, calls
 into external systems, sequential cursors — across all instances. It
 is NOT for single-entity atomicity: that is `Tx`'s job, cheaper and
 contention-free. Most apps never touch Lock directly: Cron's
-`WithSingleflight` and Singleton are built on the same mechanism.
+`CronConfig.Singleflight` and Singleton are built on the same mechanism.
 
 ## Declare
 

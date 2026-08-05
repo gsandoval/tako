@@ -119,3 +119,54 @@ func TestMentionsIgnoresWhatIsNotASymbol(t *testing.T) {
 		}
 	}
 }
+
+// The retired `WithX` vocabulary stays retired.
+//
+// X2 replaced a flat Option namespace (23 `With…` functions) with typed
+// config structs, and for a while the docs kept the old names: 84
+// mentions across 22 spellings, none of them a symbol a reader could
+// write. TestEveryTakoSymbolTheDocsNameExists could not see them,
+// deliberately — its pattern requires the `tako.` qualifier, and these
+// were bare — so the vocabulary survived the rename that removed it.
+// tako's own error texts had drifted the same way: one preflight told
+// users to "drop tako.WithDomain", which has never been a symbol.
+//
+// The docs now name fields (`Route.SignIn`, `CronConfig.Singleflight`,
+// `Compute.Profile`), which is both what a user types and what tako's
+// analyzer already says when it refuses one. This test is what keeps
+// the two spellings from diverging again.
+func TestTheDocsDoNotNameRetiredWithOptions(t *testing.T) {
+	// Not ours: Google's Jobs API method, named in job.md's account of
+	// what the deploy calls.
+	notOurs := map[string]bool{"runWithOverrides": true}
+
+	withOption := regexp.MustCompile(`\b(run)?With[A-Z][A-Za-z]*`)
+
+	var checked int
+	for _, section := range []string{SectionGuide, SectionReference} {
+		files, err := fs.Glob(docs.FS, section+"/*.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, file := range files {
+			raw, err := fs.ReadFile(docs.FS, file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for i, line := range strings.Split(string(raw), "\n") {
+				for _, m := range withOption.FindAllString(line, -1) {
+					if notOurs[m] {
+						continue
+					}
+					checked++
+					t.Errorf("%s:%d: the docs name %s — tako has no With… options; "+
+						"name the field a user actually writes (Route.SignIn, CronConfig.Singleflight, Compute.Profile)",
+						file, i+1, m)
+				}
+			}
+		}
+	}
+	if checked > 0 {
+		t.Logf("%d retired option name(s) still in the docs", checked)
+	}
+}

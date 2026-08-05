@@ -18,7 +18,7 @@ var AddComment = tako.Page("POST /frag/comments", addComment)
 ## The division of labor
 
 Hugo owns `./site` — content, layouts, styling, the whole shell.
-`WithBuild` makes its build part of tako's: `tako dev` reruns Hugo on
+`SiteConfig.Build` makes its build part of tako's: `tako dev` reruns Hugo on
 every save (and doesn't watch the output dir, so no rebuild loops),
 `tako deploy` runs it once and embeds `site/public` in the service
 binary. There are no page routes for posts here — the analyzer's
@@ -56,7 +56,7 @@ so if called without one.
 
 ## Honesty at the edges
 
-- Anonymous comments mean a mutating route without `WithAuth`; the
+- Anonymous comments mean a mutating route without `Route.SignIn`; the
   deploy summary says exactly that, out loud, because it's true.
 - The comment's post path round-trips into a redirect, so the
   handler accepts only site-local paths — an open redirect is not a

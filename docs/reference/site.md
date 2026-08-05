@@ -13,7 +13,7 @@ chapters teach the two shapes.
 var site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
 ```
 
-`WithBuild(command, outDir)` runs a real generator and serves its
+`SiteConfig{Build: tako.Build{Command: …, Out: …}}` runs a real generator and serves its
 output — Hugo in [examples/blog](../../examples/blog/app.go), esbuild
 in [examples/shop](../../examples/shop/app.go):
 
@@ -28,10 +28,10 @@ var site = tako.Site("./web/dist",
 	}})
 ```
 
-`SPA()` serves index.html for unknown paths (single-page apps own
-their routing; without it, unknown paths 404). `WithDevProxy(url)`
+`SiteConfig.SPA` serves index.html for unknown paths (single-page apps own
+their routing; without it, unknown paths 404). `SiteConfig.DevProxy`
 forwards site requests to a generator's own dev server (Vite/Hugo
-HMR) during `tako dev`. `WithTrustedHTML()` sets the markdown posture
+HMR) during `tako dev`. `SiteConfig.TrustedHTML` sets the markdown posture
 ([pages.md](pages.md)).
 
 A custom domain is not a site setting — it belongs to the SERVICE that
@@ -45,7 +45,7 @@ Serving comes with the headers nobody configures by hand correctly:
 strong content ETags everywhere (304 on If-None-Match), immutable
 caching for fingerprinted assets (`app.3f2a1c.js`), no-cache for
 everything else (HTML above all), security headers on documents.
-Pretty URLs work (`/about` → `about/index.html`); `WithRedirect`
+Pretty URLs work (`/about` → `about/index.html`); `SiteConfig.Redirects`
 answers with a permanent 308. Declared API/Page routes win over the
 site by mux precedence; the site takes the rest.
 
@@ -107,9 +107,9 @@ says so at call time.
 
 ## Local
 
-`tako dev` serves the directory from disk. `WithBuild` commands
+`tako dev` serves the directory from disk. `SiteConfig.Build` commands
 re-run on change, and the output dir is not watched, so no rebuild
-loops. `WithDevProxy` applies only under the local backend — the
+loops. `SiteConfig.DevProxy` applies only under the local backend — the
 deployed site never proxies. Blog needs Hugo on your machine
 (`brew install hugo`); shop needs Node — production needs neither.
 
@@ -170,7 +170,7 @@ Every site is embedded in the app service's binary — one service, one
 URL — so a site's static assets and its dynamic handlers always answer
 on the same origin.
 
-There is no `WithCDN`. It was removed in U1a once the custom-domain
+There is no CDN option. It was removed in U1a once the custom-domain
 research settled on Cloud Run domain mappings rather than a load
 balancer: with no balancer there is nothing to switch on, and an option
 that cannot be implemented is worse than one that does not exist. If

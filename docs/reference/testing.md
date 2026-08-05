@@ -61,14 +61,14 @@ Three things are load-bearing there:
 | `app.HTMX(user…)` | the same, with `ctx.IsHTMX()` true — drives a Page down its fragment branch |
 | `app.SignIn(name)` | a stub `User{ID: name, Email: name+"@example.test"}` — identity injection, not auth enforcement |
 | `app.DrainQueues()` | block until every published message has acked or dead-lettered |
-| `app.Advance(d)` | move the fake clock, releasing `WithDelay` messages that came due |
+| `app.Advance(d)` | move the fake clock, releasing `PublishAfter` messages that came due |
 | `app.AdvanceCron(cron)` | run one cron body once, synchronously — pass the cron itself |
 | `app.SetSecret(name, v)` | provide a declared secret; removed when the test ends |
 | `app.Chaos()` | duplicate, reorder and redeliver messages — seeded and reproducible |
 
 ### Time is fake, and only for delays
 
-`app.Advance(d)` moves *scheduled* time: a `WithDelay(4 * time.Hour)`
+`app.Advance(d)` moves *scheduled* time: a `PublishAfter(ctx, msg, 4 * time.Hour)`
 publish becomes testable in microseconds.
 
 ```go
@@ -79,7 +79,7 @@ app.DrainQueues()          // the worker ran exactly once
 
 The subtlety worth knowing: **`DrainQueues` treats a not-yet-due
 message as idle** rather than waiting out its delay. Without that,
-every `WithDelay` test would hang for the real duration. Retry backoff
+every `PublishAfter` test would hang for the real duration. Retry backoff
 and chaos reordering keep their real (millisecond) timers, because
 those are the contract under test.
 

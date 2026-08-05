@@ -32,7 +32,7 @@ func (s *QueueStore) Publish(ctx context.Context, queue string, payload []byte, 
 		return s.c.enqueueTask(ctx, route, queue, payload, opts.Delay)
 	}
 	if opts.Delay > 0 {
-		return fmt.Errorf("queue %q has no Cloud Tasks route — a WithDelay publish site the analyzer did not see? redeploy so the deploy can provision it", queue)
+		return fmt.Errorf("queue %q has no Cloud Tasks route — a PublishAfter site the analyzer did not see? redeploy so the deploy can provision it", queue)
 	}
 	return s.c.publish(ctx, TopicName(s.c.Opts.Env, queue), payload, map[string]string{"tako-queue": queue})
 }

@@ -34,7 +34,7 @@ Exclusion is never silent — the reasons land in the generated header:
 //   billing.Charge POST /charge — private (IAM-only — browsers cannot mint OIDC)
 ```
 
-Three things get excluded: `WithPrivate` ("browsers cannot mint
+Three things get excluded: `Route.Private` ("browsers cannot mint
 OIDC"), multipart uploads ("the signed-URL flow, not the JSON
 client"), and form-bound endpoints ("browsers post forms to it
 directly").
@@ -70,7 +70,7 @@ callers pass the session cookie here.
 ## Local
 
 The recommended loop: change the api, regenerate, and let your
-frontend toolchain typecheck the result — shop's `WithBuild` esbuild
+frontend toolchain typecheck the result — shop's `SiteConfig.Build` esbuild
 step bundles `app.ts` against the committed client, so signature
 drift is a frontend build error. The client is a zero-dependency ES
 module: **no tako needed in frontend builds** — just a committed file.

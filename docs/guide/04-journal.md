@@ -21,8 +21,8 @@ var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true
 `tako.Site` serves `./web` embedded in the binary — fingerprinted
 assets immutable, HTML no-cache, ETags, security headers. Its
 `templates/` back `site.Render(ctx, "post.html", p)` and are never
-served raw. `WithBuild` runs any static generator (Hugo, esbuild…) on
-the deploying machine; `SPA()` and `WithDevProxy` cover the
+served raw. `SiteConfig.Build` runs any static generator (Hugo, esbuild…) on
+the deploying machine; `SiteConfig.SPA` and `SiteConfig.DevProxy` cover the
 JS-framework shapes.
 
 Pages bind browser FORMS (`form:` tags), never JSON; CSRF on unsafe
@@ -52,7 +52,7 @@ not escapes. Trusting raw HTML is an explicit, graph-visible opt-out
 ## Auth and sessions
 
 `tako.Auth(tako.AuthConfig{Google: true})` is one declaration: `/_tako/api/session*`
-routes mount, a framework sign-in page appears, `WithAuth` gates
+routes mount, a framework sign-in page appears, `Route.SignIn` gates
 routes with a 401, `ctx.User()` is guaranteed past it, and ownership
 stays YOUR rule (`403 only the author can publish`). Sessions are
 **revocable records in the entity store** — delete one in the console

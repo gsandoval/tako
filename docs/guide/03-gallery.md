@@ -44,7 +44,7 @@ shape downloads the same way.
 
 ## Coordination
 
-`WithSingleflight` on the cron collapses overlapping runs across all
+`CronConfig.Singleflight` on the cron collapses overlapping runs across all
 instances via a lease; `tako.Lock("reindex")` guards gallery's
 cross-entity repair the same way:
 

@@ -68,7 +68,7 @@ var Settle = tako.Runner(settle, runSettle,
 	})
 ```
 
-`WithRetries(n)` sets how many times a failed task is retried before the
+`RunnerConfig.Attempts` sets how many times a failed task is retried before the
 execution fails (default 3, range 0–10). Jobs are compute, not
 messaging: **there is no dead letter** to catch a task that runs out of
 attempts, which is why the ceiling is low — a task that fails ten times
@@ -129,9 +129,9 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
 - A second `JobHandler` on the same job:
   `job "settle" already has handler shop.Settle (app.go:99) — a job has
   exactly one body (tako/one-job-handler)`
-- `tako.RunnerConfig must be written as a literal (tako.Runner
-  accepts WithParallel, WithRetries, WithProfile, WithFootprint)
-  (tako/invalid-option)`
+- `tako.RunnerConfig must be written as a literal with constant fields
+  — configuration is read at analysis time, not run time; got cfg
+  (tako/config-literal)`
 - `Run` in a bare test panics: `tako: no queue backend wired — run via
   tako dev, a generated service, or tako.NewTestApp`
 - Missing env in the cloud: `job "settle" has no execution target —

@@ -16,8 +16,8 @@ what the service deploys as and what an alert names.
 
 The name must be a string constant (analyzer-enforced). A queue has
 **exactly one** worker — a second one is an analysis error, with a
-pointer to the fix (see below). `tako.Worker` accepts `WithProfile`
-and `WithFootprint` to shape the compute its service gets
+pointer to the fix (see below). `tako.Worker` accepts `Compute.Profile`
+and `Compute.Footprint` to shape the compute its service gets
 ([footprint.md](footprint.md)); gallery's resizer uses both:
 
 ```go
@@ -53,13 +53,13 @@ idempotency is the worker's job. Shortlink claims each click's ID in a
 transaction before counting; see the
 [shortlink chapter](../guide/02-shortlink.md).
 
-`Publish` takes one option, `WithDelay(d)`, deferring first delivery —
+`Publish` takes one option, `PublishAfter(ctx, msg, d)`, deferring first delivery —
 a timer (or the test clock) locally, a Cloud Tasks `scheduleTime` in
 the cloud (T3).
 
 ### The delivery contract
 
-Every queue and topic has one, and `WithDelivery` overrides it
+Every queue and topic has one, and `Delivery` overrides it
 field-by-field — zero fields inherit the framework's defaults:
 
 ```go
@@ -78,11 +78,11 @@ var archive = tako.Queue[Expiry]("archive", tako.Delivery{
 | `MaxBackoff` | 300s | 1s–10m |
 | `RateLimit` | none | 1–500 (Cloud Tasks' dispatch ceiling) |
 
-Setting `RateLimit`, or publishing with `WithDelay`, routes the queue's
+Setting `RateLimit`, or publishing with `PublishAfter`, routes the queue's
 cloud traffic through a Cloud Tasks queue in front of the worker — same
 API, provisioner's choice — with one trade to know: Tasks has no dead
 letter (see Not yet). Shortlink's TTL'd links publish their own expiry
-with `WithDelay`, and its archive walks at `RateLimit: 2` with slower,
+with `PublishAfter`, and its archive walks at `RateLimit: 2` with slower,
 fewer retries because archiving is idempotent and never urgent.
 
 `RateLimit` is a QUEUE setting only. A topic fans out to subscribers
@@ -189,7 +189,7 @@ things to the same message.
 - `queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out (tako/one-worker)`
 - `tako.Compute takes one configuration value, got 2 — merge them into a single literal (tako/one-config)`
 - `tako.Queue name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
-- `queue "x" has no Cloud Tasks route — a WithDelay publish site the analyzer did not see? redeploy so the deploy can provision it` — a binary older than its deploy.
+- `queue "x" has no Cloud Tasks route — a PublishAfter site the analyzer did not see? redeploy so the deploy can provision it` — a binary older than its deploy.
 - `delivery RateLimit must be 1–500 messages per second (Cloud Tasks' dispatch ceiling); got 501 (tako/delivery)`
 - `delivery MaxAttempts must be 5–100 — Pub/Sub's dead-letter policy accepts no other range, and tako will not quietly clamp yours; got 2 (tako/delivery)`
 - `delivery MinBackoff (5m0s) is longer than MaxBackoff (1m0s) — backoff grows, it does not shrink (tako/delivery)`

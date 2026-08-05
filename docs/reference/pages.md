@@ -17,8 +17,8 @@ var Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 ```
 
-Page takes the same options as `tako.API` — `WithAuth` and
-`WithPrivate`. Service-wide settings (domain, scaling) live on
+Page takes the same options as `tako.API` — `Route.SignIn` and
+`Route.Private`. Service-wide settings (domain, scaling) live on
 [`tako.Service`](service.md).
 
 Pages render through a declared [`tako.Site`](site.md); its
@@ -132,7 +132,7 @@ exactly this body:
 CSRF token missing or invalid — forms need {{ csrf }}
 ```
 
-An anonymous request to a `WithAuth` page is a 401 `sign in to
+An anonymous request to a `Route.SignIn` page is a 401 `sign in to
 continue`. `site.Render` against a layoutless site fails with:
 
 ```

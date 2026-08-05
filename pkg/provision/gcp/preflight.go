@@ -170,7 +170,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	// services are live — so they are named here, before anything runs.
 	if len(needs.Domains) > 0 {
 		if !RegionMaps(c.Region) {
-			gaps = append(gaps, fmt.Sprintf("Cloud Run domain mappings are not available in %s — deploy to one of %s (tako deploy --region <region>), or drop tako.WithDomain and use the run.app URL",
+			gaps = append(gaps, fmt.Sprintf("Cloud Run domain mappings are not available in %s — deploy to one of %s (tako deploy --region <region>), or drop the Domain field and use the run.app URL",
 				c.Region, strings.Join(MappableRegions, ", ")))
 		}
 		// Ownership is proven once per project, in Search Console. If the

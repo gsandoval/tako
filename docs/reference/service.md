@@ -64,11 +64,11 @@ var MakeThumb = tako.Worker(thumbs, makeThumb,
 	})
 ```
 
-| option | `tako.Service` | Worker / Subscribe / Job / Singleton | API / Page |
+| setting | `tako.Service` | Worker / Subscribe / Job / Singleton | API / Page |
 |---|---|---|---|
-| `WithDomain` | yes | no — nothing public to answer on | no |
-| `WithProfile` | yes | yes | no |
-| `WithFootprint` | yes | yes | no |
+| `ServiceConfig.Domain` | yes | no — nothing public to answer on | no |
+| `Profile` | yes | yes | no |
+| `Footprint` | yes | yes | no |
 
 ## Local
 

@@ -50,7 +50,7 @@ ctx.Log().Error("notify failed", "err", err)
 The logger is **pre-tagged with the execution it belongs to**, which is
 the reason to prefer it over a package-level `slog`: requests carry
 `req=<id>`, crons carry `cron=<name>`, jobs carry `job=<name>` (and
-`task=<i>` under `WithParallel`), singletons carry `singleton=<name>`,
+`task=<i>` under `RunnerConfig.Parallel`), singletons carry `singleton=<name>`,
 and push deliveries carry `handler` and `source`. Every line from one
 request is therefore greppable as a unit without you passing an id
 around.
@@ -349,7 +349,7 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
   `--severity` flag yet (the severities are there; the CLI does not
   filter on them). The Logs Explorer does.
 - No log sampling and no level knob: a deployed service logs everything
-  `INFO` and above, and there is no `WithLogging` to change that.
+  `INFO` and above, and there is no field to change that.
 - No log-based metrics and no log-based alerting: `tako.Alert` reads
   metrics only, so "page me when this line appears" has no expression.
 - Log volume is billed by Cloud Logging like any other. Structured

@@ -22,11 +22,11 @@ analysis time with the mapping rule. The analyzer, the runtime, and
 the provisioner share one parser, so a schedule that analyzes runs
 locally AND provisions.
 
-`WithSingleflight` wraps the handler in the §4.4 lease
+`CronConfig.Singleflight` wraps the handler in the §4.4 lease
 ([lock.md](lock.md)), so overlapping or double-fired runs collapse to
 one execution — across all instances, not just one process. The wrap
 happens at declaration, so every trigger — dev ticker, `AdvanceCron`,
-Cloud Scheduler — inherits it. `WithProfile` and `WithFootprint`
+Cloud Scheduler — inherits it. `CronConfig.Profile` and `CronConfig.Footprint`
 ([footprint.md](footprint.md)) shape the HOSTING service, the escape
 hatch a cron-only package would otherwise lack.
 
@@ -50,13 +50,13 @@ var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans,
 	})
 ```
 
-Schedules run in **UTC** unless `WithTimezone` says otherwise — nine
+Schedules run in **UTC** unless `CronConfig.Timezone` says otherwise — nine
 o'clock means nine o'clock somewhere, and the zone follows daylight
 saving. The name is an IANA zone, checked against the tz database **at
 analysis time**, so a misspelling is a build error rather than a 3am
 surprise.
 
-`WithDeadline` caps one run (default 180s, range 15s–30m) before Cloud
+`CronConfig.Deadline` caps one run (default 180s, range 15s–30m) before Cloud
 Scheduler abandons the attempt. There is no retry config: the schedule
 IS the retry policy for an idempotent cron. Work that needs longer than
 30 minutes wants a [job](job.md).
@@ -73,7 +73,7 @@ IS the retry policy for an idempotent cron. Work that needs longer than
 
 Runs are serialized per cron in-process — a tick landing mid-run is
 skipped with a `⏰ … run still in progress — tick skipped` line. With
-`WithSingleflight` the collapse is cross-instance and lease-based,
+`CronConfig.Singleflight` the collapse is cross-instance and lease-based,
 with its own narration — the feature working, never an error:
 
 ```
@@ -106,7 +106,7 @@ the jobs with everything else.
 
 **The cron's identity is its variable.** `var Cleanup = tako.Cron(...)`
 deploys as the Scheduler job for `/_tako/api/cron/Cleanup`, leases as
-`cron-Cleanup` under `WithSingleflight`, and is fired in a test as
+`cron-Cleanup` under `CronConfig.Singleflight`, and is fired in a test as
 `app.AdvanceCron(Cleanup)` — one name, from one place. Renaming the
 variable renames the cron; renaming its function does not.
 

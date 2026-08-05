@@ -1,7 +1,7 @@
-# footprint.md — `WithProfile` and `WithFootprint`
+# footprint.md — the `Profile` and `Footprint` fields
 
-Two layers of compute intent. `WithProfile` names it — the framework
-owns the values. `WithFootprint` pins exact values field-by-field over
+Two layers of compute intent. `Profile` names it — the framework
+owns the values. `Footprint` pins exact values field-by-field over
 the profile — the escape hatch for when a workload's needs are known
 and specific. Prefer the profile; pin only what the profile can't know.
 
@@ -22,7 +22,7 @@ Default scales to zero; Latency keeps an instance warm — min=1 bills
 continuously; Batch favors throughput per instance for background work.
 
 **Jobs default to batch and singletons to the singleton profile, but
-both are now DEFAULTS you can override** with `WithProfile` — the
+both are now DEFAULTS you can override** with `Profile` — the
 provisioner used to overwrite whatever you asked for, which made the
 option accepted and ignored.
 
@@ -34,7 +34,7 @@ startup boost are the other three quarters — an instance that is up but
 throttled still stalls on the first request, and a warm floor of 1 does
 nothing for the second instance a traffic spike starts.
 
-`WithProfile` and `WithFootprint` are declared on
+`Profile` and `Footprint` are declared on
 [`tako.Service`](service.md) for a package's app service, and on the
 handler itself for a worker, subscriber, job or singleton (where the one
 handler IS the service). They are refused on `API` and `Page`
@@ -55,7 +55,7 @@ type Footprint struct {
 }
 ```
 
-`WithTraffic` is its sibling, for how requests REACH the service rather
+`Traffic` is its sibling, for how requests REACH the service rather
 than how much machine runs them:
 
 ```go

@@ -37,11 +37,11 @@ func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 
 For large files, skip the service entirely: `SignedPut` returns a URL
 the browser PUTs to directly — no 32MB request cap, no proxying —
-constrained by `WithMaxSize` and `WithContentType` (trailing wildcard
+constrained by `PutPolicy.MaxSize` and `PutPolicy.ContentType` (trailing wildcard
 allowed), enforced when the client uploads, not when the URL is
 minted. `SignedGet` shapes downloads the same way.
 
-A `WithMaxSize` URL signs a size-range condition into the request, so
+A `PutPolicy.MaxSize` URL signs a size-range condition into the request, so
 the PUT **must carry the matching header** — `PutPolicy.Headers`
 builds it from the same options, and both backends refuse a PUT
 without it (local says so with a pointer; GCS fails the signature):
