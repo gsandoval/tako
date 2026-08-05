@@ -231,13 +231,30 @@ func serveableFiles(moduleDir string, site *Resource) []string {
 			}
 			return nil
 		}
-		out = append(out, path.Join("/", rel))
+		out = append(out, servedURL(rel))
 		return nil
 	})
 	if err != nil && !os.IsNotExist(err) {
 		return nil
 	}
 	return out
+}
+
+// servedURL is the URL a browser asks for to get this file, which is
+// not always the file's own path: the site handler resolves pretty URLs
+// (/about → about/index.html), so an index.html is reachable one
+// segment above where it sits. Asking about the literal path would
+// report /about/index.html as shadowed while /about serves perfectly —
+// a warning about a page nobody is missing, which is the kind that
+// teaches people to skip the real ones.
+func servedURL(rel string) string {
+	if rel == "index.html" {
+		return "/"
+	}
+	if strings.HasSuffix(rel, "/index.html") {
+		return path.Join("/", strings.TrimSuffix(rel, "/index.html"))
+	}
+	return path.Join("/", rel)
 }
 
 // routeSegments counts the path segments a route pattern matches — the

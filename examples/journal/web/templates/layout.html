@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="csrf-token" content="{{ csrfToken }}">
   <title>{{ block "title" . }}journal{{ end }}</title>
-  <link rel="stylesheet" href="/assets/site.9f86d081.css">
-  <script src="/assets/htmx.min.e209dda5.js" defer></script>
+  <!-- Assets sit BELOW the depth of Perma's GET /{year}/{slug}: a
+       two-segment route beats the site's "/" for every two-segment URL,
+       so /assets/site.css would reach Perma and 404. tako warns about
+       this (tako/site-shadow); three segments clear it. -->
+  <link rel="stylesheet" href="/assets/css/site.9f86d081.css">
+  <script src="/assets/js/htmx.min.e209dda5.js" defer></script>
 </head>
 <!-- hx-headers: every htmx request carries the CSRF token — zero per-form wiring -->
 <body hx-headers='{"X-CSRF-Token": "{{ csrfToken }}"}'>

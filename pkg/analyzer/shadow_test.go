@@ -117,9 +117,12 @@ func TestAPostRouteDoesNotShadowStaticGets(t *testing.T) {
 	}
 }
 
-// The site's own root route is not a shadow of the site.
+// A root route takes the root and nothing else — codegen anchors it
+// with {$}, so it is not a second catch-all standing in front of every
+// file the site serves. (The root index.html it DOES take has its own
+// case below.)
 func TestARootRouteDoesNotShadowEverything(t *testing.T) {
-	dir := withFiles(t, "index.html", "assets/css/site.css")
+	dir := withFiles(t, "assets/css/site.css", "about/index.html")
 	if got := ShadowedSiteFiles(dir, siteGraph("GET /")); len(got) != 0 {
 		t.Errorf("the root route swallowed the site: %s", got[0].Warning())
 	}
@@ -181,5 +184,40 @@ func TestConflictingPatternsAreDeclinedNotReported(t *testing.T) {
 	})
 	if got := ShadowedSiteFiles(dir, g); len(got) != 0 {
 		t.Errorf("reported shadows on a router that cannot exist: %s", got[0].Warning())
+	}
+}
+
+// A page the site serves at a pretty URL is judged at THAT url. The
+// file about/index.html sits at depth 2, but a browser asks for
+// /about, which a two-segment route does not touch — reporting it
+// would be a warning about a page nobody is missing.
+func TestPrettyURLsAreJudgedAtTheURLTheyServe(t *testing.T) {
+	dir := withFiles(t, "about/index.html")
+	if got := ShadowedSiteFiles(dir, siteGraph("GET /{year}/{slug}")); len(got) != 0 {
+		t.Errorf("reported a pretty URL that is not shadowed: %s", got[0].Warning())
+	}
+}
+
+// The same file IS shadowed when a route takes the URL it is actually
+// served at.
+func TestAPrettyURLIsReportedWhenItsOwnRouteTakesIt(t *testing.T) {
+	dir := withFiles(t, "about/index.html")
+	got := ShadowedSiteFiles(dir, siteGraph("GET /{page}"))
+	if len(got) != 1 {
+		t.Fatalf("got %d shadows, want 1", len(got))
+	}
+	if got[0].Files[0] != "/about" {
+		t.Errorf("named %q, want the URL the browser asks for (/about)", got[0].Files[0])
+	}
+}
+
+// A root index.html is reached at "/", so a declared root page shadows
+// it — which journal does deliberately (W2 made / a rendered page).
+// Deliberate is still worth naming: the static file is dead.
+func TestARootPageShadowsTheStaticIndex(t *testing.T) {
+	dir := withFiles(t, "index.html")
+	got := ShadowedSiteFiles(dir, siteGraph("GET /"))
+	if len(got) != 1 || got[0].Files[0] != "/" {
+		t.Fatalf("got %+v, want the root index reported at /", got)
 	}
 }

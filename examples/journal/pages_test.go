@@ -31,7 +31,10 @@ func servePages(t *testing.T) *httptest.Server {
 	// The 404 page has to be here for the same reason it is there: both
 	// halves of the feature — a handler's tako.NotFound() and the site
 	// handler's static miss — read it from the wired options.
-	siteOpts := runtime.SiteOptions{NotFound: "404.html"}
+	siteOpts := runtime.SiteOptions{
+		Redirects: map[string]string{"/about-us": "/about"},
+		NotFound:  "404.html",
+	}
 	runtime.RegisterSiteTemplates(os.DirFS("web"), siteOpts)
 	// Two muxes, exactly as codegen emits them: tako's reserved
 	// endpoints answer before the app's router is consulted. On one
