@@ -228,7 +228,25 @@ this package declares the domain "blog.example.com", but nothing here serves pub
 
 ## Errors that are not analysis errors
 
-Three other kinds of failure look similar and are not this:
+Four other kinds of message look similar and are not this:
+
+- **Warnings** — printed by `tako dev` and `tako deploy`, marked `⚠`,
+  never failing anything. They wear a rule id and a source position
+  like an error because the fix is at the same place, but they describe
+  a cost or a surprise rather than something with no correct meaning.
+  `tako/site-shadow` is one: a declared route matching URLs the site
+  has files at is legitimate — an app may own that space deliberately —
+  so tako says what it will do and serves it.
+
+  ```
+  app.go:73:2: ⚠ GET /{year}/{slug} shadows 3 files the site serves — /about/index.html, /assets/htmx.min.e209dda5.js, /assets/site.9f86d081.css reach Perma instead of the site, and answer 404; move them deeper than the route's 2 segments, or narrow the pattern (tako/site-shadow)
+  ```
+
+  This one is worth reading closely when you see it. A shadowed
+  stylesheet is not a failure anywhere: the route answers, honestly,
+  404 — and the only symptom is an unstyled site nobody notices until
+  it is deployed.
+
 
 - **Boot refusals** — an unset secret, a missing site directory at run
   time. These stop a service from serving rather than from building;
@@ -247,8 +265,9 @@ Three other kinds of failure look similar and are not this:
 - No `//tako:ignore` escape hatch, and none planned: every rule refuses
   something that has no correct meaning downstream, so suppressing one
   would move the failure to deploy or to run time.
-- Rules are not configurable — no severity levels, no per-project
-  opt-outs.
+- Rules are not configurable — no per-project opt-outs, and no severity
+  to turn down: a rule refuses, a warning informs, and which one a
+  given id is was decided when it was written.
 - Analysis stops at the first *load* failure (the module has to compile
   before rules can run), but rule violations are collected and reported
   together, in source order.

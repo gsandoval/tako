@@ -153,6 +153,13 @@ func (s *session) cycle(first bool) error {
 		return err
 	}
 
+	// After the build, because an unbuilt site has no files to shadow —
+	// and on EVERY cycle, not just the first: the warning's moment is
+	// the edit that adds the route, which is mid-session.
+	for _, sh := range analyzer.ShadowedSiteFiles(s.dir, graph) {
+		fmt.Fprintf(s.out(), "  %s\n", sh.Warning())
+	}
+
 	written, err := codegen.Generate(graph, s.dir)
 	if err != nil {
 		return err

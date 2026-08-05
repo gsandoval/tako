@@ -35,8 +35,8 @@ HMR) during `tako dev`. `WithTrustedHTML()` sets the markdown posture
 ([pages.md](pages.md)).
 
 A custom domain is not a site setting — it belongs to the SERVICE that
-serves the site, so it goes on [`tako.Service`](service.md) via
-`WithDomain`. A service with no site at all can have one too;
+serves the site, so it goes on [`tako.Service`](service.md) as
+`ServiceConfig{Domain: …}`. A service with no site at all can have one too;
 [domains.md](domains.md) is the whole story.
 
 ## Use
@@ -48,6 +48,23 @@ everything else (HTML above all), security headers on documents.
 Pretty URLs work (`/about` → `about/index.html`); `WithRedirect`
 answers with a permanent 308. Declared API/Page routes win over the
 site by mux precedence; the site takes the rest.
+
+That precedence is worth one more sentence, because it is not about
+which route you declared first — it is about which pattern is more
+specific. `GET /{year}/{slug}` is more specific than the site's `/`
+for **every** two-segment URL, so it takes `/assets/site.css` too, and
+answers 404 for a stylesheet that is sitting right there. tako warns
+when it sees this (`tako/site-shadow` in [errors.md](errors.md)),
+naming the files, because nothing else about it looks like a failure:
+
+```
+app.go:73:2: ⚠ GET /{year}/{slug} shadows 3 files the site serves — …
+```
+
+The usual fix is to keep static files deeper than your wildcard routes
+(`/assets/css/site.css` clears a two-segment route). Shadowing on
+purpose is fine — a `/media/{key}` route serving its own files is not a
+mistake — and the warning never fails a build.
 
 ### The 404 page
 
@@ -137,7 +154,7 @@ tako.SiteConfig.Redirects must be a map literal with constant keys and values �
 a package serves one site — onesite.site is already declared; remove onesite.admin or merge the two (tako/one-site)
 ```
 
-`WithDomain`'s own refusals — bad shape, two domains on one service, a
+`ServiceConfig.Domain`'s own refusals — bad shape, two domains on one service, a
 domain in front of a package nothing public reaches, and the two deploy
 gates — live in [domains.md](domains.md).
 

@@ -220,6 +220,7 @@ func runDeploy(args []string) error {
 	warnCallEdges(graph)
 	warnFootprints(graph)
 	warnDomains(graph)
+	warnSiteShadows(dir, graph)
 
 	if t.planOnly {
 		return nil
@@ -720,6 +721,18 @@ func warnDomains(graph *analyzer.AppGraph) {
 		}
 		fmt.Printf("  ⚠ %s answers on a Cloud Run domain mapping — Google ships these as preview and does not recommend them for production (latency); no standing charge. Moving %s to a load balancer later is a tako change, not a change to your code\n",
 			svc.Domain, svc.Name)
+	}
+}
+
+// warnSiteShadows names the site files a declared route takes over.
+// The warning belongs at DECISION time like the ones above: a shadowed
+// stylesheet is not a failure anywhere — the route answers, honestly,
+// 404 — so the only signal it ever produces is an unstyled site someone
+// notices later. It runs after build.Sites above, because a site that
+// has not been generated yet has no files to shadow.
+func warnSiteShadows(dir string, graph *analyzer.AppGraph) {
+	for _, s := range analyzer.ShadowedSiteFiles(dir, graph) {
+		fmt.Printf("  %s\n", s.Warning())
 	}
 }
 
