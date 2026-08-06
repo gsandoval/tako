@@ -94,7 +94,7 @@ func (c *Client) SearchDescriptors(ctx context.Context, term string, limit int) 
 			} `json:"labels"`
 		} `json:"metricDescriptors"`
 	}
-	q := "?filter=" + urlQueryEscape(`metric.type=has_substring("`+term+`")`) + "&pageSize=500"
+	q := "?filter=" + provision.URLEscape(`metric.type=has_substring("`+term+`")`) + "&pageSize=500"
 	if err := c.do(ctx, http.MethodGet, url+q, nil, &out); err != nil {
 		return nil, Classify(err, c.Project, "list metric descriptors", "roles/monitoring.viewer")
 	}
@@ -129,24 +129,6 @@ func (c *Client) SearchDescriptors(ctx context.Context, term string, limit int) 
 		found = found[:limit]
 	}
 	return found, nil
-}
-
-// urlQueryEscape percent-encodes a filter for a query string.
-func urlQueryEscape(s string) string {
-	const hex = "0123456789ABCDEF"
-	var b strings.Builder
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		if c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' ||
-			c == '-' || c == '_' || c == '.' || c == '~' {
-			b.WriteByte(c)
-			continue
-		}
-		b.WriteByte('%')
-		b.WriteByte(hex[c>>4])
-		b.WriteByte(hex[c&0xf])
-	}
-	return b.String()
 }
 
 // FirstSentence trims a descriptor's prose to the part that identifies

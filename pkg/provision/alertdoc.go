@@ -322,7 +322,7 @@ func serviceLogsLink(cfg Config, service string) docLink {
 func errorLogsLink(cfg Config, service string) docLink {
 	q := fmt.Sprintf(`resource.labels.service_name="%s" severity>=ERROR`, cfg.Name(service))
 	return docLink{"Errors in the logs", fmt.Sprintf("%s/logs/query;query=%s?project=%s",
-		consoleHost, urlEscape(q), cfg.Project)}
+		consoleHost, URLEscape(q), cfg.Project)}
 }
 
 func schedulerLink(cfg Config) docLink {
@@ -349,10 +349,15 @@ func metricsExplorerLink(cfg Config) docLink {
 		consoleHost, cfg.Project)}
 }
 
-// urlEscape percent-encodes a Logs Explorer query. The Logs Explorer
+// URLEscape percent-encodes a string for a Google console URL: the
+// RFC 3986 unreserved set, everything else in %XX.
+//
+// Hand-rolled rather than url.QueryEscape because the Logs Explorer
 // reads its query from a PATH segment (;query=…), not a query
-// parameter, so a space must not become "+".
-func urlEscape(s string) string {
+// parameter, so a space must not become "+". The Metrics Explorer's
+// filter has the same requirement, which is why this is exported and
+// pkg/provision/gcp calls it rather than keeping a second copy.
+func URLEscape(s string) string {
 	const hex = "0123456789ABCDEF"
 	var b strings.Builder
 	for i := 0; i < len(s); i++ {

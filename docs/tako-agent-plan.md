@@ -527,9 +527,8 @@ Designed and argued, waiting on a trigger rather than on time:
   migrating `tako rename` (rename is a data migration; detection
   shipped, the command did not), session cache, email
   account-creation UI, VPC, per-command `--help`. *(Styled error pages
-  left this list on 2026-08-04 — scheduled as FL2, in the flautas-gaps
-  plan at `stage10-resume.md` §4, which is what the removed Z6 waits
-  on.)*
+  left this list on 2026-08-04 and shipped as FL2; FL11 later made
+  every status tako answers render through the app's own page.)*
 - **Console-link rot.** Two link shapes were wrong in Y2 and were found
   by hand. Detecting a future move would need network access and a
   deployed project in CI; it stays a per-walk human check rather than a

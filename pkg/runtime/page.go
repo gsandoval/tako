@@ -354,13 +354,7 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// A page that declared no MaxAge answers no-cache, which is
 		// what every page did before Route.MaxAge existed.
 		h.Set("Cache-Control", cacheControl(conf.maxAge))
-		h.Set("X-Content-Type-Options", "nosniff")
-		if !fragment {
-			// Documents carry the CSP; fragments are partials injected
-			// into a page that already has one.
-			h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
-			h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-		}
+		securityHeaders(h, fragment)
 		_, _ = w.Write(markup)
 	})
 }

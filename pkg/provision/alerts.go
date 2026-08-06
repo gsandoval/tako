@@ -807,11 +807,7 @@ type AlertConditionAlias = analyzer.AlertCondition
 func shortNames(vars []string) []string {
 	out := make([]string, 0, len(vars))
 	for _, v := range vars {
-		if dot := strings.LastIndexByte(v, '.'); dot >= 0 {
-			out = append(out, v[dot+1:])
-			continue
-		}
-		out = append(out, v)
+		out = append(out, analyzer.ShortName(v))
 	}
 	return out
 }

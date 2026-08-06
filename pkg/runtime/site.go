@@ -172,12 +172,7 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	ctype := contentTypeOf(p)
 	h.Set("Content-Type", ctype)
 	if strings.HasPrefix(ctype, "text/html") {
-		// Documents get the conservative defaults: report-only CSP to
-		// start (spec §2.11), never breaking a site before its owner
-		// has read the reports.
-		h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		securityHeaders(h, false)
 	}
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
 		w.WriteHeader(http.StatusNotModified)

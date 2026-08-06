@@ -116,11 +116,17 @@ func ResourceLine(r Resource) string {
 
 // ShortVar is the handler var without its package qualifier, for display
 // within its own service.
-func ShortVar(h Handler) string {
-	if i := strings.LastIndex(h.Var, "."); i >= 0 {
-		return h.Var[i+1:]
+func ShortVar(h Handler) string { return ShortName(h.Var) }
+
+// ShortName drops the package qualifier from a "pkg.Name" reference.
+// Handlers, resources and channels are all declared as package-level
+// vars and all get named this way, so the split lives here once —
+// codegen and the provisioner call it rather than re-deriving it.
+func ShortName(v string) string {
+	if i := strings.LastIndex(v, "."); i >= 0 {
+		return v[i+1:]
 	}
-	return h.Var
+	return v
 }
 
 // ShortPos drops the column from a path:line:col position for display.

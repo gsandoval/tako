@@ -18399,3 +18399,101 @@ tako-test-01: no services, no buckets, no indexes. tako-test-02: the
 were cleared by running each example's own destroy, as the owner
 directed for the tako-test-01 leftovers; both now DELETING. The FL14
 probe account was deleted immediately after the test.
+
+## Code review 2 — reviewed and landed (2026-08-06)
+
+Owner-requested health review: structure, simplicity, duplication, dead
+documents, readability for a newcomer. Taken through `/senior-task`.
+The findings and the numbers are `docs/code-review-2.md`; this is what
+changed.
+
+**No backlog handle** — the request was the whole brief, so acceptance
+was sharpened before starting and written into the review: every
+duplication claim a measured pair, every dead document dead by a stated
+test, every readability finding naming the file a newcomer opens, and
+every code change **hardening** (behaviour provably unchanged).
+
+### The headline number
+
+`code-review-1` measured 29.5k lines of Go outside `examples/` and 38
+analyzer rules on 2026-08-01. Today: **45,260 and 52** — half again as
+much code in five days — with `TODO`/`FIXME`/`XXX` still at **zero**.
+The code is healthy. The documentation was where the rot was.
+
+### A — hardening, three de-duplications
+
+1. **`urlEscape`** was written byte-for-byte twice
+   (`alertdoc.go`, `gcp/descriptorsearch.go`), hand-rolled in both
+   because `url.QueryEscape` turns a space into `+` and the Logs
+   Explorer reads its query from a path segment. One home
+   (`provision.URLEscape`, which `gcp` already imports), with the
+   reason stated once instead of in one copy of two.
+2. **The package-qualifier split** existed four times.
+   `analyzer.ShortName` is now the one, called by `ShortVar`, codegen
+   and `provision.shortNames`. `gcp.lastSegment` splits a different
+   separator for a different domain and stays.
+   **`codegen.shortVarName` was mine**, added five commits ago in FL11
+   because `ShortVar` took a `Handler` and I had a `Resource`. Writing
+   the review found my own duplicate, which is the argument for
+   measuring rather than remembering.
+3. **The security-header set** was written in three places
+   (`page.go`, `site.go`, `status.go`). Now `securityHeaders(h,
+   fragment)`, with the fragment rule — nosniff yes, CSP and
+   Referrer-Policy no, because a partial is swapped into a document
+   that already declares both — stated once.
+
+(3) is the one that had already failed: FL11 existed because a declared
+404 got the CSP as a template and not as a static file. FL11 unified
+the four *writers* and left the *list* in triplicate. It now has the
+test that absence deserved, and the test was checked against the
+mistake a real implementer makes — re-inlining one path:
+
+```
+--- FAIL: TestEveryHTMLDocumentCarriesTheSameSecurityHeaders
+    site: Content-Security-Policy-Report-Only = "", want "default-src 'self'"
+    site: Referrer-Policy = "", want "strict-origin-when-cross-origin"
+```
+
+Behaviour unchanged: the full suite passes untouched.
+
+### B — three dead documents, 814 lines
+
+Dead by a stated test: **its stated purpose is to instruct work that
+has since shipped.** Deliberately stronger than "nothing links to it",
+because an unlinked review is still dated reasoning the code obeys.
+
+- `stage7-handoff.md` (315) — "a brief for whoever implements Stage 7"
+- `stage7-resume.md` (119) — "Resume here — U2, U3, U4"
+- `stage10-resume.md` (380) — "FL1–FL4 are next and still unapproved.
+  Z6 is removed. Z7 is proposed, unapproved."
+
+Stages 5–9 are closed, FL1–FL14 shipped, Z7 shipped, Z6 is unblocked.
+`stage10-resume.md` was the most actively misleading file in the
+repository: five status claims, all false, in confident briefing tense.
+
+Deleting it exposed a stale pointer in `tako-agent-plan.md:531` —
+itself wrong twice ("scheduled as FL2" shipped; "the removed Z6" is
+unblocked). Corrected rather than repointed.
+
+**Everything else stays.** The reviews are cited from the shipped
+reference pages (`errors.md` → `api-review-3`, `cli.md` →
+`cli-review-1`) and from code comments.
+
+### C — the finding that actually cost a newcomer
+
+`README.md` is good and gets someone to a URL. Their second step is
+`docs/`, which had **fifteen loose files, no index**, beside the three
+subdirectories that are the real documentation — and 84% of the words
+in an append-only log of 226 entries.
+
+`docs/README.md` now says which is which and who each is for, including
+the sentence the log needed: *it is not meant to be read front to
+back — search it for a feature ID.*
+
+### Discovered work
+
+**15. `internal/hooks` is 22 mutable package vars** bridging the SDK
+and the runtime, assigned at boot. It is the one structure in the tree
+a newcomer will find surprising, and it is load-bearing: it is how the
+SDK calls into a runtime it cannot import. Unpicking it is a design
+task, not a cleanup, and it stays on the fence's far side.

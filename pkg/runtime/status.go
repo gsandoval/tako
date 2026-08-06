@@ -119,17 +119,32 @@ func renderStatus(r *http.Request, s tako.Status) (markup []byte, ok bool) {
 }
 
 // writeStatusMarkup is the header set every tako-rendered page carries.
-// One list, one place — which is the cleanup: these used to differ by
-// which function happened to answer.
 func writeStatusMarkup(w http.ResponseWriter, code int, markup []byte) {
 	h := w.Header()
 	h.Set("Content-Type", "text/html; charset=utf-8")
 	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
-	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+	securityHeaders(h, false)
 	w.WriteHeader(code)
 	_, _ = w.Write(markup)
+}
+
+// securityHeaders is the conservative posture every HTML response tako
+// writes carries (spec §2.11). It is one function because it has
+// already drifted once: a declared 404 got the CSP when it resolved as
+// a template and not when it resolved as a static file, and nothing
+// decided that — the two paths simply had two copies of the list.
+//
+// A fragment gets nosniff and stops. It is a partial injected into a
+// document that already declares a CSP and a referrer policy;
+// re-declaring them on the piece is noise, and the header a partial
+// still needs is the one about how its bytes are typed.
+func securityHeaders(h http.Header, fragment bool) {
+	h.Set("X-Content-Type-Options", "nosniff")
+	if fragment {
+		return
+	}
+	h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
+	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 }
 
 // statusCtx builds the Ctx a status page runs with: the same request

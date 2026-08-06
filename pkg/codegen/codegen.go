@@ -358,7 +358,7 @@ import (
 	// response tako produces for itself renders through it (FL11).
 	if sp := statusOf(g, svc); sp != nil {
 		fmt.Fprintf(&b, "\t// %s answers every response this service produces itself —\n\t// 404, 403, 405, 500 — so they wear the app rather than plain text.\n", sp.Var)
-		fmt.Fprintf(&b, "\truntime.RegisterStatusPage(%s.%s)\n\n", alias, shortVarName(sp.Var))
+		fmt.Fprintf(&b, "\truntime.RegisterStatusPage(%s.%s)\n\n", alias, analyzer.ShortName(sp.Var))
 	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
 	if site != nil {
@@ -775,12 +775,4 @@ func statusOf(g *analyzer.AppGraph, svc analyzer.Service) *analyzer.Resource {
 		}
 	}
 	return nil
-}
-
-// shortVarName is the identifier half of a "pkg.Name" var reference.
-func shortVarName(v string) string {
-	if i := strings.LastIndex(v, "."); i >= 0 {
-		return v[i+1:]
-	}
-	return v
 }
