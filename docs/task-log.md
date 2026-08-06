@@ -16577,3 +16577,368 @@ the grant was not there to assert.
 `httpKey` (`logging.go:40`) remains dead code, named as a non-goal in
 the proposal and still true: a one-line deletion for whoever is next in
 that file.
+
+**CLOSED 2026-08-06** (`60c7f5a`). One reference, its own declaration —
+a leftover from when tako wrote its own request entry beside Cloud
+Run's. The four constants beside it (`severityKey`, `messageKey`,
+`traceKey`, `spanKey`) are live in `cloudAttrs`/`traceAttrs` and stay.
+
+## Friction-log review (2026-08-06)
+
+Owner-requested, after `make build` / `make install`. flauta's log was
+re-read against tako at `60c7f5a`, and every claim in it re-checked
+against today's source rather than carried forward.
+
+Its own summary table is now: two `promote-to-tako-task`, four
+`workaround-fine`. The four are settled on both sides (403 status
+pages, the dev bar on htmx fragments, `NotFoundData`, one root
+template per site) and none of them blocks. The two are new, and both
+were confirmed in tako's tree today:
+
+1. **`Config.Labels()` sends the Go module path to Google as a label
+   value** (`desired.go:101`). Blocks every deploy of flauta, with no
+   app-side workaround — the only entry in this log's history that has
+   none. Promoted below as **FL8**.
+2. **The index attribution names the wrong query** (`analyzer.go:349`).
+   Shipped by RC1 five days after it was designed and wrong on
+   arrival; flauta found it before tako did. Promoted below as **FL9**.
+
+Also closed by flauta's own review, so tako has nothing left to do on
+them: FL6 closed the wildcard-shadow entry, FL7 closed the config-seam
+domain entry, and RC1 closed an index entry flauta had hit twice and
+never filed. Discovered work #4 (`reference/service.md`'s option
+table) is likewise already fixed — `f1dc5ab` rewrote it to
+`ServiceConfig.Domain` / `Profile` / `Footprint`, and nothing under
+`docs/reference/` or `docs/guide/` names a retired `WithX` symbol now.
+Only the archival files (`api-review-*.md`, `domain-options.md`,
+`stage7-resume.md`) still spell them, and they should: they are dated
+records of decisions, not instructions.
+
+Owner direction: proceed in the proposed order, FL8 then FL9, and come
+back to the Datastore index work rather than leaving it half-shipped.
+
+## FL8 — DX proposal: the app identifier is derived, not assumed (2026-08-06) — AWAITING APPROVAL
+
+flauta's entry, promoted. tako builds Google-facing identifiers out of
+the Go module path and never asks whether Google will accept them.
+
+### What is confirmed
+
+`pkg/provision/desired.go:100`:
+
+```go
+func (c Config) Labels() map[string]string {
+	return map[string]string{"tako-app": c.App, "tako-env": c.Env}
+}
+```
+
+`c.App` is `graph.Module` at every call site (`deploy.go:157`,
+`destroy.go:43`, `lifecycle.go:33`, `logs.go:41`, `alerts.go:60`), so
+for a normally-named module it is `github.com/gsandoval/flauta`. GCS
+label values admit `[\p{Ll}\p{Lo}\p{N}_-]{0,63}`, so the first create
+fails:
+
+```
+tako: create the framework bucket: Invalid user label: tako-app with value
+github.com/gsandoval/flauta. Reason: … character "." at position 6 is not a
+non-uppercased letter … (HTTP 400 from storage.googleapis.com)
+```
+
+That value reaches eleven reconcilers — Artifact Registry, Run
+services, Run jobs, domain mappings, buckets, topics, both
+subscription kinds, both alert kinds, and the lease — via
+`cfg.Labels()`. Each has its own rules; none of them accepts a dot.
+
+### The blind spot, which is the finding
+
+Every example declares a bare module name. I checked all seven:
+`blog gallery hello journal shop shortlink siren`. Every one is
+already label-legal, so **no example can produce this failure**. Tako
+has deployed twice to a real project and met no bug that fires on the
+first create of a normally-named app, because the acceptance corpus
+contains no app that is named like an app. flauta's correction to its
+own entry says this better than I did, and it is the reason FL8 ships
+an example rather than only a function.
+
+### What flauta has not hit yet, and would hit next
+
+The label is not the only unsanitised use. `pkg/backends/gcp/naming.go:25`:
+
+```go
+func BucketName(project, app, env, base string) string {
+	return project + "-" + app + "-" + Prefixed(env, base)
+}
+```
+
+A declared `tako.Bucket` on flauta would ask GCS for
+`tako-test-02-github.com/gsandoval/flauta-media` — a slash is illegal
+in a bucket name outright, and a dot demands domain verification.
+flauta declares no bucket today, which is the only reason the label
+failed first; the framework bucket is `<project>-tako` and carries no
+app segment. **Sanitising the label alone unblocks flauta and strands
+the next app one `tako.Bucket` in**, so FL8 covers names too.
+
+### The rule
+
+One derivation, in `pkg/backends/gcp/naming.go` — the file whose
+header already states why it exists: *"shared verbatim by the runtime
+and the provisioner so the names services read are the names deploys
+create."* The app identifier has exactly that property.
+
+```go
+// AppID is the app's machine identifier: what Google is asked to
+// store when Google constrains the characters. The module path stays
+// the app's NAME — it is what a person reads in the plan header, the
+// alert doc and a service account's description, none of which Google
+// validates.
+//
+// A module path that is already a legal identifier is its own id, so
+// every app deployed before this existed keeps the labels and bucket
+// names it already has. Anything else is derived from its last
+// segment plus a hash of the whole path: short enough for a bucket
+// name, unique because the hash covers what truncation dropped, and
+// stable because both halves are pure functions of go.mod. Same
+// discipline as SAName (desired.go:74), applied one level up.
+func AppID(module string) string
+```
+
+- `hello` → `hello` · `shortlink` → `shortlink` (identity, all seven examples)
+- `github.com/gsandoval/flauta` → `flauta-a70a87`
+- `github.com/Me/My_App.v2` → `my-app-v2-<hash6>`
+- a 41-char bare name → truncated to 22 + `-<hash6>`
+
+Legal-as-is means `^[a-z0-9][a-z0-9_-]{0,29}$`. The 30-char bound is
+not cosmetic: a bucket name is capped at 63 and already spends
+`project` + `env` + the declared name.
+
+`AppID` replaces the raw module path in the four places Google
+constrains characters — both label values, the app segment of
+`BucketName`, the lease object path (a slash there is a path separator
+in every GCS tool), and the metric namespace `<app>-<env>`. The
+namespace moves on both sides at once: the runtime writes it from
+`TAKO_APP` and `pkg/provision/alerts.go` spells the same string into
+every matcher, so they must change together or every alert silently
+stops matching. That is what the FA1 lock golden and the twins test
+are for, and both are in the test list below.
+
+### The env half, deliberately different
+
+`--env` has the same exposure — `--env Staging` produces the same
+illegal label, and `Prefixed` puts it in every resource name — but it
+is **typed by a person, not read from go.mod**. Silently deriving
+`staging` from `Staging` would make `tako destroy --env Staging`
+address something the user did not name. So env is validated, not
+sanitised:
+
+```
+tako: --env "Staging" is not a valid environment name
+
+    environments become part of every resource name and every label,
+    so they are limited to lowercase letters, digits and hyphens
+    (1–20 characters), starting with a letter
+
+    did you mean --env staging?
+```
+
+The "did you mean" line appears only when sanitising the input yields
+something legal, which is the common case (a capital, a slash).
+
+### What the user sees
+
+Unchanged for every app whose module is already an id — no example's
+output moves. When the id is derived, the plan header says so once:
+
+```
+tako deploy · github.com/gsandoval/flauta → tako-test-02 (us-central1)
+              id flauta-a70a87 — labels and bucket names use this
+
+  analyzing    1 service · 33 endpoints · 1 site
+  generating   .tako/gen
+  preflight    ok (run, iam, artifactregistry, storage, datastore, identitytoolkit)
+```
+
+Stated once, at the top, where someone about to read a plan full of
+`flauta-a70a87` finds out why. Not repeated per object.
+
+### Cloud errors & permissions
+
+No new permission: FL8 changes the *value* of a label tako already
+writes with the roles it already holds, and the deployer setup in
+`docs/tako-cloud-permissions.md` is untouched.
+
+The failure modes it removes are all HTTP 400s from a resource create
+— the class where Google's message is precise about the character and
+useless about the cause, because the offending value was derived by
+tako and never appears in the user's code. The one it adds is the
+`--env` rejection above, raised in argument parsing before any network
+call, so a bad env costs nothing.
+
+Preflight gains one check, because a derived id can still be too long
+once a project and a bucket name are added to it:
+
+```
+tako: bucket "originals" would be created as
+  tako-test-02-flauta-a70a87-staging-originals (67 characters)
+
+    Google caps bucket names at 63. The name is
+    <project>-<app id>-<env>-<declared name>; shorten the declared
+    name, the env, or the project id.
+```
+
+Raised in preflight, before the first create, alongside the API-enabled
+probes — the existing rule that a deploy fails before it changes
+anything or not at all.
+
+### Tests
+
+- `pkg/backends/gcp/naming_test.go` — `AppID` table: identity for all
+  seven example modules, the flauta case, uppercase, trailing
+  punctuation, an over-long bare name, a path whose last segment is
+  empty. Stability asserted by hashing twice, uniqueness by two module
+  paths sharing a last segment.
+- A **new example with a host-shaped module path**. This is the part
+  that keeps FL8 fixed: the corpus that could not catch it becomes the
+  corpus that can. Cheapest honest form is `examples/hello`'s module
+  becoming `github.com/gsandoval/tako-example-hello` — one line of
+  `go.mod`, its golden moves once, and every future label change is
+  measured against a realistic name. (Alternative: a new
+  `examples/module-path` fixture. I prefer moving hello — a fixture
+  nobody deploys is a fixture that rots.)
+- `pkg/provision` — a `Labels()` case asserting the derived value, and
+  a `BucketName` case for a derived app.
+- FA1's metric lock golden and `pkg/provision/testdata/twins` re-run
+  unchanged: the namespace must still be spelled identically on both
+  sides. A twins diff is the failure signal for the alerts half.
+- `--env` validation: the exact error text, the `did you mean` line
+  present and absent.
+- Preflight: the over-long bucket name, exact text.
+
+### Validation
+
+`validate/app-identifier.md`, new, run by me before the gate: `tako
+deploy --plan` on an example with a host-shaped module (header shows
+the id, plan is otherwise identical), `tako destroy --plan` on the
+same (finds the same objects by the same label — the round trip is the
+point, since the label is the state), and `--env Staging` rejected
+without a network call. The live half — an actual create against a
+real project with a derived label — belongs to the next release-cycle
+walk, and I will say so rather than claim it.
+
+### Non-goals
+
+- Renaming or migrating anything already deployed. Identity on legal
+  module paths means there is nothing to migrate; an app that cannot
+  have deployed cannot have state.
+- Sanitising the module path in human-facing text. The plan header,
+  alert docs and SA descriptions keep `github.com/gsandoval/flauta`,
+  because Google does not validate those and a person reading them
+  wants the name they typed.
+- Datastore namespaces (env only, no app) and Cloud Run service names
+  (`Prefixed(env, service)`, no app) — neither carries the app, and
+  neither changes.
+- Multi-app projects. The dedicated-project doctrine holds
+  (`RepoName`, `desired.go:55`); the hash is uniqueness insurance, not
+  a multi-tenancy feature.
+
+## FL9 — DX proposal: an index note belongs to its index (2026-08-06) — AWAITING APPROVAL
+
+The Datastore work RC1 left half-shipped. RC1 added the attribution
+that names the call site behind each derived composite; the
+attribution is attached to the wrong index.
+
+### The confirmed defect
+
+`pkg/analyzer/analyzer.go:344` appends in lockstep:
+
+```go
+res.Composites = append(res.Composites, tuple)
+res.CompositeSources = append(res.CompositeSources, c.source)
+```
+
+and `analyzer.go:349` then sorts one of them:
+
+```go
+sort.Slice(res.Composites, func(i, j int) bool {
+	return strings.Join(res.Composites[i], ",") < strings.Join(res.Composites[j], ",")
+})
+```
+
+`appgraph.go:130` states the invariant that breaks: *"CompositeSources
+runs parallel to Composites."* After the sort it does not. An entity
+whose walk order already matches sorted order is unharmed, which is
+why flauta's revisions pair reads correctly and its articles pair is
+swapped:
+
+```
++ create  datastore index articles (section, state, -publishAt)  ← entity.go:231 publishedArticles
++ create  datastore index articles (state, -publishAt)  ← entity.go:238 publishedInSection
+```
+
+`publishedArticles` filters on `State` alone; it is the two-property
+index. Both notes are one row off.
+
+### Why no test caught it
+
+There is no analyzer golden containing `CompositeSources` at all —
+`grep` finds it in `analyzer.go`, `appgraph.go`, `desired.go` and one
+provision test. RC1 shipped a parallel-slice invariant with nothing
+asserting the pairing survives the sort. That is the real defect; the
+sort is just where it shows.
+
+### The fix
+
+Sort the pair as one thing. `Composites []([]string)` and
+`CompositeSources []string` stay as they are on `AppGraph` — they are
+the JSON shape `tako gen graph` prints and changing it is an API
+change, which is its own task — but the analyzer builds
+`[]struct{tuple []string; source string}`, sorts that, and unzips into
+the two slices at the end. The invariant then holds by construction
+rather than by remembering to sort twice, and `appgraph.go:130`'s
+comment gains the sentence saying where the pairing is established.
+
+### What the user sees
+
+The same two lines, correctly paired:
+
+```
++ create  datastore index articles (state, -publishAt)  ← entity.go:231 publishedArticles
++ create  datastore index articles (section, state, -publishAt)  ← entity.go:238 publishedInSection
+```
+
+No new surface, no new flag, no changed ordering of the plan itself.
+
+### Tests
+
+- A new analyzer golden whose entity's **walk order differs from its
+  sorted order** — flauta's exact shape: a two-property query written
+  first, a three-property one written second, sorting the other way.
+  This is the case every existing golden lacks, and it fails on
+  today's code before the fix.
+- The golden asserts the full `CompositeSources` array, not just its
+  length: a length check passes on swapped notes, which is how this
+  survived.
+- `pkg/provision/gallery_plan_test.go` extended so a note is asserted
+  against its tuple rather than its position.
+
+### The rest of the Datastore work, named so it is not lost again
+
+Two items stay open after FL9, both recorded, neither in scope here:
+
+1. **Cross-function query assembly.** RC1's stated non-goal: a helper
+   that takes a `*EntityQuery` and adds a filter forms its own chain
+   and misses the caller's, so the derived set can still be short.
+   Same failure class as the 500 RC1 fixed, one call frame away. It
+   needs its own proposal — the analysis is interprocedural and the DX
+   question (warn? derive? refuse?) is not obvious.
+2. **The `query-shapes` ceiling.** `maxOptionalMods = 4` refuses at 5
+   optional modifiers with an exact message. Nothing has hit it; it is
+   listed so a future reader knows the number was chosen, not
+   inherited.
+
+### Non-goals
+
+Changing what is derived. FL9 moves no index; the composite set before
+and after is identical, and both flauta indexes were always correct.
+This is an attribution bug in output a person reads while deciding
+whether a query shape is right — which is exactly why a confidently
+wrong `file:line` is worse than none.
