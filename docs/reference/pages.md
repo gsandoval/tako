@@ -162,3 +162,36 @@ rest are waiting for a second app to need them.
 
 Rendering is Go templates only: static generator output plus Go SSR is
 the v0 model, no Node runtime services.
+
+## Caching a page
+
+Every rendered page answers `Cache-Control: no-cache`. That is the safe
+default and a costly one: a read-heavy site revalidates every visitor's
+request against the app and the entity store, which on Datastore is a
+billed read per visitor per page.
+
+`Route.MaxAge` says otherwise, per route:
+
+```go
+var Article = tako.Page("GET /{section}/{slug}", article, tako.Route{
+	MaxAge: 5 * time.Minute,
+})
+```
+
+That renders `Cache-Control: public, max-age=300`. Zero — every route
+that does not ask — keeps `no-cache`, so nothing changes until you say
+so. The value is a constant between one second and a year, because it
+is baked into the header at build time rather than decided per request.
+
+**It is refused on a `SignIn` route.** A shared cache holding an
+authenticated page hands it to whoever asks next, and nothing about that
+failure is visible from the app — the tests pass, the page renders, and
+one day a reader sees someone else's page. So it fails analysis:
+
+```
+app.go:64:2: Dashboard sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn (tako/cache-signin)
+```
+
+Static assets are already handled and need nothing: a fingerprinted file
+(`app.3f2a1c.js`) gets `public, max-age=31536000, immutable`, everything
+else under the site gets `no-cache` with a strong ETag.

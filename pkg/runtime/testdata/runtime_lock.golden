@@ -5,6 +5,7 @@ func BlobHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/g
 func Boot()
 func BootGCP() error
 func BootLocal(dir string) error
+func CacheFor(seconds int) HandlerOption
 func CronDispatch() net/http.Handler
 func DecodeJSON(r *net/http.Request, req any) error
 func FormBlob(r *net/http.Request, name string) (github.com/gsandoval/tako.Blob, error)

@@ -1,0 +1,2 @@
+app.go:17:10: Dashboard sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn (tako/cache-signin)
+app.go:26:60: tako.Route.MaxAge takes a constant between 1s and a year — it is baked into the Cache-Control header at build time, not decided per request (tako/max-age)

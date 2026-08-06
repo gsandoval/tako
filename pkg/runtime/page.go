@@ -26,12 +26,29 @@ type sessionUserKey struct{}
 // HandlerOption tunes a generated handler wrapper.
 type HandlerOption func(*handlerConf)
 
-type handlerConf struct{ requireAuth bool }
+type handlerConf struct {
+	requireAuth bool
+	// maxAge is Route.MaxAge in seconds: how long a shared cache may
+	// keep this page. Zero is no-cache, which is every page that does
+	// not ask otherwise.
+	maxAge int
+}
 
 // RequireAuth enforces Route.SignIn: no valid session → 401 before
 // the handler runs; past it, ctx.User() is guaranteed.
 func RequireAuth() HandlerOption {
 	return func(c *handlerConf) { c.requireAuth = true }
+}
+
+// CacheFor sets Route.MaxAge on a generated page handler: the response
+// may be kept by shared caches for that many seconds. Without it every
+// rendered page answers no-cache, which makes a read-heavy site
+// revalidate every visitor's request against the app and its store.
+//
+// The analyzer refuses it on a SignIn route (tako/cache-signin), so a
+// public cache can never be handed an authenticated page.
+func CacheFor(seconds int) HandlerOption {
+	return func(c *handlerConf) { c.maxAge = seconds }
 }
 
 // csrfCookie is the double-submit cookie; when auth lands (W5) the
@@ -315,7 +332,9 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		}
 		h := w.Header()
 		h.Set("Content-Type", "text/html; charset=utf-8")
-		h.Set("Cache-Control", "no-cache")
+		// A page that declared no MaxAge answers no-cache, which is
+		// what every page did before Route.MaxAge existed.
+		h.Set("Cache-Control", cacheControl(conf.maxAge))
 		h.Set("X-Content-Type-Options", "nosniff")
 		if !fragment {
 			// Documents carry the CSP; fragments are partials injected
@@ -383,3 +402,13 @@ func pageError(w http.ResponseWriter, r *http.Request, ctx tako.Ctx, reqID strin
 // (The 404 writers that used to live here are one writer now, in
 // status.go — every response tako produces for itself goes through
 // writeStatus, so its headers and its fallback are decided once.)
+
+// cacheControl renders the page's caching posture. "public" is the
+// point of the setting — a private max-age would only help the one
+// browser that already has the page.
+func cacheControl(maxAge int) string {
+	if maxAge <= 0 {
+		return "no-cache"
+	}
+	return fmt.Sprintf("public, max-age=%d", maxAge)
+}

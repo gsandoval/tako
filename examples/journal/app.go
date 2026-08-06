@@ -110,7 +110,12 @@ var (
 	// service at startup until tako's endpoints moved to a mux of their
 	// own (FL5). /p/{id} stays — a literal first segment is more
 	// specific, so the short URL and the permalink coexist.
-	Perma = tako.Page("GET /{year}/{slug}", perma)
+	// A published post does not change between requests, and a reader
+	// arriving from a shared link is the common case — so the permalink
+	// lets shared caches keep it for five minutes instead of
+	// revalidating against the entity store on every visit. Every other
+	// page here answers no-cache, which is what a zero MaxAge means.
+	Perma = tako.Page("GET /{year}/{slug}", perma, tako.Route{MaxAge: 5 * time.Minute})
 )
 
 // HomeView is the home page's data: one page of posts, and how many

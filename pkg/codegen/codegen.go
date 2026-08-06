@@ -388,6 +388,9 @@ import (
 		if h.RequiresAuth {
 			auth = ", runtime.RequireAuth()"
 		}
+		if h.MaxAge > 0 && h.Kind == "page" {
+			auth += fmt.Sprintf(", runtime.CacheFor(%d)", h.MaxAge)
+		}
 		fmt.Fprintf(&b, "\t// %s\n", analyzer.HandlerLine(h))
 		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s%s))\n\n",
 			muxPattern(h.Route), wrapper, alias, analyzer.ShortVar(h), decode, auth)

@@ -15,10 +15,12 @@ var Greet = tako.API("GET /greet/{name}", greet)
 var Echo = tako.API("POST /echo", echo)
 ```
 
-The only two settings, both on `tako.Route`: `SignIn` (401 without a session;
-`ctx.User()` guaranteed past it) and `Private` (IAM-only
-ingress — other services, not the public internet). Both describe the
-ROUTE they sit on.
+`tako.Route` carries the settings that describe the ROUTE they sit on:
+`SignIn` (401 without a session; `ctx.User()` guaranteed past it),
+`Private` (IAM-only ingress — other services, not the public internet),
+and `MaxAge` (how long shared caches may keep a rendered page — see
+[pages.md](pages.md); it has no effect on an API route, where the
+client decides how it caches JSON).
 
 Settings that describe the whole service — the domain it answers on, how
 it scales — live on [`tako.Service`](service.md) instead, because a

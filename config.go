@@ -54,6 +54,22 @@ type Route struct {
 	// services, not the public internet). IAM-only, not
 	// network-internal.
 	Private bool
+	// MaxAge lets shared caches keep this page's response, which they
+	// otherwise may not: every rendered page answers no-cache, so a
+	// read-heavy site revalidates every visitor's request against the
+	// app and the entity store.
+	//
+	//	tako.Page("GET /{section}/{slug}", article, tako.Route{
+	//		MaxAge: 5 * time.Minute,
+	//	})
+	//
+	// Zero keeps no-cache, so nothing changes until you say so. A
+	// constant between one second and one year.
+	//
+	// It is refused on a SignIn route: a shared cache holding an
+	// authenticated page would serve one signed-in visitor's page to
+	// another, and that is a bug you find from a support ticket.
+	MaxAge time.Duration
 }
 
 // Compute sizes the service an async handler is the whole of. Workers

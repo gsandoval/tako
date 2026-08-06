@@ -34,7 +34,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:141 home"
+        "app.go:146 home"
       ],
       "pos": "app.go:15:2"
     },
@@ -196,6 +196,7 @@
       "package": "journal",
       "service": "journal",
       "route": "GET /{year}/{slug}",
+      "max_age": 300,
       "req_type": "PermaReq",
       "req_ref": "journal.PermaReq",
       "res_ref": "tako.HTML",
@@ -213,7 +214,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:113:2"
+      "pos": "app.go:118:2"
     }
   ],
   "edges": [

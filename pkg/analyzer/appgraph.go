@@ -236,6 +236,10 @@ type Handler struct {
 	// browser clients; enforced at deploy from Phase H's service
 	// slice).
 	Private bool `json:"private,omitempty"`
+	// MaxAge is Route.MaxAge in SECONDS: how long a shared cache may
+	// keep this page's response. 0 is no-cache, which is every page
+	// that does not ask otherwise.
+	MaxAge int `json:"max_age,omitempty"`
 	// BindingKind distinguishes a Subscribe handler's source: "topic" or
 	// "bucket". Empty for workers (always a queue) and sync handlers.
 	BindingKind string `json:"binding_kind,omitempty"`

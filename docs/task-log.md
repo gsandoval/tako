@@ -17732,3 +17732,54 @@ and this slice is it.
 `status.html` with real data. `examples/blog` takes
 `SiteConfig{NotFound: "404.html"}` — Hugo emits the file already — so
 the one-line spelling keeps an example demanding it.
+
+## FL12 — shipped (2026-08-06)
+
+Item 4 of 8. flauta's SR-6, which was in their backlog rather than the
+friction log — worth recording, because it means the friction log is
+not the whole inventory.
+
+### What shipped
+
+`tako.Route{MaxAge: 5 * time.Minute}` on a Page renders
+`Cache-Control: public, max-age=300`. Zero — every route that does not
+ask — keeps `no-cache`, so no existing app moves. The value is a
+constant (1s–1y), because it is baked into the header at build time.
+
+Two analyzer refusals:
+
+```
+app.go:17:10: Dashboard sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn (tako/cache-signin)
+app.go:26:60: tako.Route.MaxAge takes a constant between 1s and a year — it is baked into the Cache-Control header at build time, not decided per request (tako/max-age)
+```
+
+`cache-signin` is the reason this is more than a field. A shared cache
+holding an authenticated page hands it to whoever asks next, and
+nothing about that failure is visible from the app — tests pass, the
+page renders, and one day a reader sees someone else's page. Refused,
+not documented as a caution.
+
+### Live, on examples/journal
+
+```
+$ curl -s -i localhost:8080/2026/<slug> | grep -i cache-control
+Cache-Control: public, max-age=300
+$ curl -s -i localhost:8080/ | grep -i cache-control
+Cache-Control: no-cache
+```
+
+The permalink opts in — a published post does not change between
+requests and a reader arriving from a shared link is the common case.
+The home page does not, and gets exactly what it got before.
+
+### API
+
+`Route` gains one field, so `sdk_lock.golden` moves; `runtime_lock`
+gains `CacheFor` (generated code names it). Both deliberate, both in
+this commit with `reference/api.md` and `reference/pages.md`.
+
+### Non-goals held
+
+`s-maxage`/CDN split, `stale-while-revalidate`, ETag revalidation for
+rendered pages, and MaxAge on API routes — a JSON client decides its
+own caching, and no example asks.

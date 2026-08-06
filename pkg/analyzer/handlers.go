@@ -7,6 +7,7 @@ import (
 	"go/types"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/internal/routes"
 	"golang.org/x/tools/go/packages"
@@ -87,6 +88,31 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 	requiresAuth := boolField(dir, pkg, cfg, "SignIn", "Route", errs)
 	private := boolField(dir, pkg, cfg, "Private", "Route", errs)
+	maxAge := 0
+	if e, set := fieldOf(cfg, "MaxAge"); set {
+		n, aok := constInt(pkg, e)
+		secs := n / int(time.Second)
+		if !aok || secs < 1 || secs > 31536000 {
+			fail(&Error{
+				Pos:  relPos(dir, pkg.Fset, e.Pos()),
+				Msg:  "tako.Route.MaxAge takes a constant between 1s and a year — it is baked into the Cache-Control header at build time, not decided per request",
+				Rule: "max-age",
+			})
+		}
+		// A shared cache holding a signed-in page hands it to the next
+		// visitor. This is refused rather than documented, because the
+		// failure is invisible until someone reports seeing another
+		// person's page.
+		if requiresAuth {
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, e.Pos()),
+				Msg: fmt.Sprintf("%s sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn",
+					name.Name),
+				Rule: "cache-signin",
+			})
+		}
+		maxAge = secs
+	}
 
 	req, reqErr := reqStruct(pkg, call.Args[1])
 	if reqErr != "" {
@@ -212,6 +238,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
 		RequiresAuth: requiresAuth,
 		Private:      private,
+		MaxAge:       maxAge,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

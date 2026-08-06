@@ -6,7 +6,7 @@ journal: 1 service
     POST /p → Save 🔒 (app.go:104)
     POST /p/{id}/publish → Publish 🔒 (app.go:105)
     POST /p/{id}/rename → Rename 🔒 (app.go:106)
-    GET /{year}/{slug} → Perma (app.go:113)
+    GET /{year}/{slug} → Perma (app.go:118)
     entity posts (indexes: Published, Created)
     entity moved_urls
     site ./web

@@ -176,7 +176,7 @@ type QueueHandle[T any] struct{}
 type QueueWatch struct{DeadLetters bool; For time.Duration}
 type RequestMsHandle struct{}
 type RequestsHandle struct{}
-type Route struct{SignIn bool; Private bool}
+type Route struct{SignIn bool; Private bool; MaxAge time.Duration}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
 type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
