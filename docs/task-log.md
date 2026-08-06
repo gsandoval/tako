@@ -17496,3 +17496,36 @@ its own program, not a tail on this one. **Discovered work #10**
 FL11 or stay settled. The parked list (load balancer, multi-service dev
 routing, `tako rename`, session cache, VPC, per-command `--help`) is
 unchanged.
+
+### The list — the contract for this program (2026-08-06)
+
+Approved with one addition: "and cleanups related to not found." Eight
+items. This is what the closing report is checked against.
+
+1. **FL10** — cross-function query assembly.
+2. **FL11** — status pages as a class (`SiteConfig.Status`, `tako.Status`).
+3. **FL11c** — the NotFound cleanups, folded into FL11 rather than
+   scheduled beside it, because they are the same seam:
+   - **Two 404 writers with different security headers.**
+     `writeNotFoundPage` (`page.go:400`) sets CSP-Report-Only and
+     Referrer-Policy; `writeStaticNotFound` (`site.go:113`) sets
+     neither. Which one a visitor gets depends on whether the declared
+     404 resolved as a template or as a static file — invisible from
+     the app, and a security-header difference rather than a cosmetic
+     one.
+   - **A third writer**, `http.NotFound` (`site.go:99`), with no
+     headers at all.
+   - **A fourth**, `cron.go:117`, writing its own plain-text 404.
+   - **Package-level mutable state**, `notFoundPage` (`page.go:383`),
+     a second global beside `renderSite`.
+   - **404 is special-cased** in `pageError` (`page.go:368`) while
+     every other explicit status falls to `http.Error`.
+   One status writer replaces all of it: headers decided once, the
+   app's shell applied once, the plain-text fallback in one place.
+4. **FL12** — per-route cache policy (`Route.MaxAge` + `tako/cache-signin`).
+5. **Z8** — the docs mention check catches unqualified names.
+6. **Docs** — guide, reference, and api, all three.
+7. **Validation** — full local suite and scripted validation, plus
+   LIVE against a real project (which also finally exercises FL8's
+   create).
+8. **Build** — `make build`, `make install`.
