@@ -132,6 +132,12 @@ type Resource struct {
 	// It is annotation, never identity — the deploy plan prints it so a
 	// reader can tell an index against the code that asks for it, which
 	// is what nobody could do when RC1's missing index shipped.
+	//
+	// The pairing is established in analyzer.go, where the tuple and its
+	// source are one value through the sort and are unzipped only on
+	// the way out. Sorting the two slices separately shifted every note
+	// of every entity whose walk order differed from its sorted order
+	// (FL9); pinned by TestEachCompositeKeepsItsOwnSource.
 	CompositeSources []string `json:"composite_sources,omitempty"`
 	// Delivery is a queue's or topic's WithDelivery contract; zero
 	// fields inherit the framework defaults. RateLimit above zero

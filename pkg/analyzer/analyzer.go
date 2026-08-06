@@ -308,6 +308,16 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		// need no composite (built-in indexes serve them). Property
 		// names are the MARSHALED names (json tag rule) — that is what
 		// the wire and Datastore see, not the Go field names.
+		// A tuple and the note naming the query it came from travel as
+		// ONE value until the moment they are written out. They used to
+		// be appended to two slices and then sorted separately, which
+		// shifted every note of every entity whose walk order differed
+		// from its sorted order.
+		type composite struct {
+			tuple  []string
+			source string
+		}
+		var composites []composite
 		seenTuple := map[string]bool{}
 		for _, c := range et.chains {
 			distinct := map[string]bool{}
@@ -342,13 +352,16 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			key := strings.Join(tuple, ",")
 			if !seenTuple[key] {
 				seenTuple[key] = true
-				res.Composites = append(res.Composites, tuple)
-				res.CompositeSources = append(res.CompositeSources, c.source)
+				composites = append(composites, composite{tuple: tuple, source: c.source})
 			}
 		}
-		sort.Slice(res.Composites, func(i, j int) bool {
-			return strings.Join(res.Composites[i], ",") < strings.Join(res.Composites[j], ",")
+		sort.Slice(composites, func(i, j int) bool {
+			return strings.Join(composites[i].tuple, ",") < strings.Join(composites[j].tuple, ",")
 		})
+		for _, c := range composites {
+			res.Composites = append(res.Composites, c.tuple)
+			res.CompositeSources = append(res.CompositeSources, c.source)
+		}
 	}
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })

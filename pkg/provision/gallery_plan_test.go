@@ -25,9 +25,13 @@ func galleryGraph() *analyzer.AppGraph {
 		},
 		Resources: []analyzer.Resource{
 			{Kind: "bucket", Name: "photos"},
-			{Kind: "entity", Name: "photos", Type: "Photo", Composites: [][]string{{"owner", "ready"}},
+			// Two composites whose sources differ, so the plan's
+			// rendering pairs each note with its own tuple rather than
+			// with a position that happens to line up (FL9).
+			{Kind: "entity", Name: "photos", Type: "Photo",
+				Composites: [][]string{{"owner", "ready"}, {"ready", "-created"}},
 				// The query that asks for it rides to the plan (RC1).
-				CompositeSources: []string{"app.go:385 readyPhotos"}},
+				CompositeSources: []string{"app.go:385 readyPhotos", "app.go:404 readyPage"}},
 			{Kind: "queue", Name: "thumbnails", Type: "ThumbJob"},
 			{Kind: "topic", Name: "photo-ready", Type: "PhotoReady"},
 			{Kind: "secret", Name: "notifier-key"},
@@ -91,6 +95,7 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  service account gallery-warmfeed-sa
   + create  bucket my-proj-gallery-photos
   + create  datastore index photos (owner, ready)  ← app.go:385 readyPhotos
+  + create  datastore index photos (ready, -created)  ← app.go:404 readyPage
   + create  topic thumbnails
   + create  topic photo-ready
   + create  topic photos-uploaded
@@ -138,7 +143,7 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  push subscription gallery-notifyowner
   + create  push subscription gallery-warmfeed
   + create  scheduler job gallery-cron-cleanup
-  55 creates, 0 updates, 0 skips, 0 orphans
+  56 creates, 0 updates, 0 skips, 0 orphans
 `
 	if got := plan.Render(); got != want {
 		t.Fatalf("plan:\n%s\nwant:\n%s", got, want)

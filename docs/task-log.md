@@ -17104,3 +17104,74 @@ paths) can still set any env. The names it would produce are caught by
 `CheckNames` for buckets and by nothing for topics or Run services.
 Not promoted: no path in tako reaches it without going through
 `parseTarget` today.
+
+## FL9 — shipped (2026-08-06)
+
+The Datastore index work RC1 left half-shipped, closed.
+
+### The test came first, and failed
+
+`pkg/analyzer/testdata/indexnotes/` is a fixture module with flauta's
+exact shape: `publishedArticles` (two properties) written first and
+sorting second, `publishedInSection` (three) written second and sorting
+first. On the unfixed analyzer:
+
+```
+composite "section,state,-publishAt" is credited to "app.go:38 publishedArticles", want the note for publishedInSection
+composite "state,-publishAt" is credited to "app.go:46 publishedInSection", want the note for publishedArticles
+```
+
+Both notes one row off, which is what flauta reported. Every other
+fixture in the tree — gallery included — has an entity whose walk order
+already matches its sorted order, or two shapes from the SAME function
+whose notes are identical, so none of them can tell a correct
+implementation from this one.
+
+### The fix
+
+`analyzer.go` now builds `[]struct{tuple, source}`, sorts that, and
+unzips into the two slices on the way out. The invariant holds by
+construction rather than by remembering to sort twice, and
+`appgraph.go` says where it is established and what breaking it costs.
+
+Nothing about WHICH indexes are derived changed. Both of flauta's were
+always correct; only the attribution was wrong.
+
+### Validation, on the app that found it
+
+flauta builds against `replace => ../tako`, so tako's working tree is
+its dependency. `tako gen graph --json` in `~/Programming/flautas`:
+
+```
+articles
+   (section, state, -publishAt)  <- entity.go:238 publishedInSection
+   (state, -publishAt)  <- entity.go:231 publishedArticles
+revisions
+   (targetKind, targetSlug, -created)  <- revision.go:199 latestRevision
+   (targetKind, targetSlug, cause, -created)  <- revision.go:208 latestRevisionOfCause
+```
+
+`publishedArticles` filters `State` alone and is credited with the
+two-property index; `publishedInSection` adds `Section` and is credited
+with the three-property one. The revisions pair, which was right by
+luck before, is still right.
+
+### Tests
+
+- `pkg/analyzer/composites_test.go` — the pairing asserted as a map
+  from tuple to function, not by position, plus a case pinning that
+  composites stay sorted (sorting is what broke it, so the order is
+  part of the contract now).
+- `pkg/provision/gallery_plan_test.go` — the entity carries two
+  composites with two different sources instead of one, so the plan's
+  rendering has a pairing to get wrong. It had exactly one before,
+  which is why the render test could not catch this either.
+
+### The Datastore work still open, named again so it is not lost
+
+1. **Cross-function query assembly.** A helper taking a `*EntityQuery`
+   forms its own chain and misses the caller's. Interprocedural, and
+   the DX question (warn / derive / refuse) is unanswered. Needs its
+   own proposal.
+2. **The `query-shapes` ceiling.** `maxOptionalMods = 4`; nothing has
+   reached it. The number was chosen, not inherited.
