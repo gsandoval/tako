@@ -273,10 +273,15 @@ var symbolPage = map[string]string{
 	"Site":              "site.md",
 	"SiteHandle":        "site.md",
 	"SiteConfig":        "site.md",
-	"Build":             "site.md",
-	"Service":           "service.md",
-	"ServiceHandle":     "service.md",
-	"ServiceConfig":     "service.md",
+	// The pages tako renders on the app's behalf live with the site,
+	// because that is what they wear.
+	"StatusPage":    "site.md",
+	"Status":        "site.md",
+	"StatusHandle":  "site.md",
+	"Build":         "site.md",
+	"Service":       "service.md",
+	"ServiceHandle": "service.md",
+	"ServiceConfig": "service.md",
 
 	// Data
 	"Entity":          "entity.md",

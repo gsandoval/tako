@@ -27,12 +27,6 @@ var (
 	// subtree backs site.Render and is never served statically.
 	site = tako.Site("./web", tako.SiteConfig{
 		Redirects: map[string]string{"/about-us": "/about"},
-		// One field, both ways a request can miss: a mistyped URL that
-		// matches no static file, and a handler returning
-		// tako.NotFound() for a post that is not there. To a visitor
-		// they are the same experience, and only one of them could ever
-		// have been answered by something a handler returns.
-		NotFound: "404.html",
 	})
 
 	// auth injects /_tako/api/session (Identity Platform's Google flow in the
@@ -40,6 +34,52 @@ var (
 	// records in the entity store.
 	auth = tako.Auth(tako.AuthConfig{Google: true})
 )
+
+// Status is the page tako renders for every response it produces
+// itself: a mistyped URL, a handler's tako.NotFound(), an expired CSRF
+// token, a method the site does not serve, a handler that failed.
+//
+// It is an ordinary page — same Ctx, same templates, same layout — so
+// it carries the masthead and the post count like every other page.
+// SiteConfig.NotFound is still the one-line spelling for a plain 404
+// (examples/blog uses it); this is what the shell needs when it is
+// built from data rather than baked into the template.
+var Status = tako.StatusPage(status)
+
+// StatusView is the shell's data plus what tako can say about the
+// response. A 500 carries no message by design — the failure is in the
+// log under RequestID.
+type StatusView struct {
+	Code      int
+	Heading   string
+	Detail    string
+	RequestID string
+	Total     int64
+}
+
+var statusHeadings = map[int]string{
+	404: "Not found",
+	403: "That form expired",
+	405: "Not that way",
+	500: "Something broke",
+}
+
+func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
+	heading := statusHeadings[s.Code]
+	if heading == "" {
+		heading = "Something went wrong"
+	}
+	// The count the masthead shows on every other page. A 404 that
+	// drops the site's chrome is the thing this exists to prevent.
+	total, err := published(posts.Query(ctx)).Count()
+	if err != nil {
+		total = 0
+	}
+	return site.Render(ctx, "status.html", StatusView{
+		Code: s.Code, Heading: heading, Detail: s.Message,
+		RequestID: s.RequestID, Total: total,
+	})
+}
 
 // MovedURL is one retired slug and where it went. Keyed by the OLD
 // slug, because that is what an incoming request has.

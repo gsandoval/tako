@@ -251,7 +251,7 @@ func main() {
 func serviceMain(g *analyzer.AppGraph, svc analyzer.Service) ([]byte, error) {
 	alias := pkgAlias(g, svc)
 	site := siteOf(g, svc)
-	usesApp := false
+	usesApp := statusOf(g, svc) != nil // the status page is named from here too
 	for _, h := range g.Handlers {
 		if h.Service == svc.Name || h.Package == svc.Package {
 			usesApp = true
@@ -352,6 +352,12 @@ import (
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.CronDispatch())\n", routes.PatternCron)
 		}
 		b.WriteString("\n")
+	}
+	// The status page is registered before anything can answer: every
+	// response tako produces for itself renders through it (FL11).
+	if sp := statusOf(g, svc); sp != nil {
+		fmt.Fprintf(&b, "\t// %s answers every response this service produces itself —\n\t// 404, 403, 405, 500 — so they wear the app rather than plain text.\n", sp.Var)
+		fmt.Fprintf(&b, "\truntime.RegisterStatusPage(%s.%s)\n\n", alias, shortVarName(sp.Var))
 	}
 	b.WriteString("\tmux := http.NewServeMux()\n\n")
 	if site != nil {
@@ -752,4 +758,25 @@ func remotePathExpr(path string, bindings []analyzer.Binding) (expr, queryLines 
 		queryLines = q.String()
 	}
 	return expr, queryLines, usesNetURL
+}
+
+// statusOf finds the status page the service's package declares, if
+// any. Like the site, it belongs to the package, so an async service
+// of the same package registers it too — a worker can answer a 404 on
+// its push endpoint like anything else.
+func statusOf(g *analyzer.AppGraph, svc analyzer.Service) *analyzer.Resource {
+	for i, r := range g.Resources {
+		if r.Kind == "status" && r.Package == svc.Package {
+			return &g.Resources[i]
+		}
+	}
+	return nil
+}
+
+// shortVarName is the identifier half of a "pkg.Name" var reference.
+func shortVarName(v string) string {
+	if i := strings.LastIndex(v, "."); i >= 0 {
+		return v[i+1:]
+	}
+	return v
 }

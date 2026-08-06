@@ -74,6 +74,8 @@
     func (EntityTx[T any]).Get(id string) (T, error)
     func (EntityTx[T any]).Put(entity T) error
     func (PutPolicy).Headers() map[string]string
+    func (StatusHandle).Declared() bool
+    func (StatusHandle).Render(ctx Ctx, s Status) (HTML, error)
     func (context.Context).Deadline() (deadline time.Time, ok bool)
     func (context.Context).Done() <-chan struct{}
     func (context.Context).Err() error
@@ -129,6 +131,7 @@ func ServicePercentile(t Target, metricType string, q float64, filters ...string
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler
 func SingletonDown(loop Handler, w ...Window) Condition
 func Site(dir string, cfg ...SiteConfig) *SiteHandle
+func StatusPage(fn func(Ctx, Status) (HTML, error)) StatusHandle
 func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 func Topic[T any](name string, cfg ...Delivery) *TopicHandle[T]
 func WhenAbove(m Metric, threshold float64, w Window) Condition
@@ -181,6 +184,8 @@ type ServiceHandle struct{}
 type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
 type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool; NotFound string}
 type SiteHandle struct{}
+type Status struct{Code int; Path string; RequestID string; Message string}
+type StatusHandle struct{}
 type Target interface{alertTarget() metricRef}
 type TestApp struct{}
 type Toggle int

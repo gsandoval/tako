@@ -89,13 +89,62 @@ becomes a 500**: the visitor already could not find what they wanted,
 and an error page that errors turns "we don't have that" into "we are
 broken".
 
-500s stay plain text always, and deliberately. A 500 means something in
-the process is already wrong; running the template engine to say so is
-the worst moment to depend on it.
-
 htmx requests get the rendered document like everyone else — one
 behaviour, no mode switch. A partial saying "not found" swapped into a
 page is a worse answer than a page.
+
+### Status pages
+
+`NotFound` names a template. When the page needs **data** — a masthead
+built from config, a nav, a count — declare a status page instead:
+
+```go
+var Status = tako.StatusPage(status)
+
+func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
+	return site.Render(ctx, "status.html", StatusView{
+		Code: s.Code, Detail: s.Message, RequestID: s.RequestID,
+		Total: postCount(ctx),
+	})
+}
+```
+
+It answers **every response tako produces itself**, not just the 404: a
+mistyped URL, a handler's `tako.NotFound()`, an expired CSRF token, a
+method the site does not serve, a handler that failed. One page, one
+place, and a status tako learns to answer later needs no new field.
+
+Before this, each of those was written separately and looked it — a 404
+rendered with no data, a 403 as plain text, and security headers that
+differed depending on whether the declared 404 resolved as a template
+or as a static file. They are one writer now.
+
+`tako.Status` carries what tako can honestly say:
+
+| field | |
+|---|---|
+| `Code` | the status being answered |
+| `Path` | the request path |
+| `RequestID` | ties the page to the log line that explains it |
+| `Message` | safe, already-public text; **empty for any 5xx** |
+
+There is deliberately no error field. A 5xx's detail is logged against
+`RequestID` and never handed to the page, so leaking it is not
+something the type lets you do.
+
+The page runs with an ordinary `Ctx` — session, logger, queries — so a
+status page can greet a signed-in visitor and read the store like any
+other page.
+
+**It can never make things worse.** If it panics, errors, or renders
+nothing, tako falls back to the same plain text with the same status
+code. That guarantee is what makes it safe to render the 500 through
+it: a 500 does mean something in the process is already wrong, and the
+recover is what pays for asking the app anyway.
+
+One per package. `NotFound` and a status page together is fine — the
+status page wins, and `NotFound` keeps serving the static-file case a
+generator emits.
 
 The `templates/` subtree is the one part never served raw: it backs
 `site.Render` / `site.Fragment` ([pages.md](pages.md)).

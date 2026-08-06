@@ -52,7 +52,7 @@ var siteTemplates map[string]*template.Template
 // errors are recorded per template and surface at render time with the
 // template named — the dev loop iterates on exactly that text.
 func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
-	notFoundPage = opts.NotFound
+	fallbackNotFound = opts.NotFound
 	hooks.RenderSite = renderSite
 	hooks.RenderFragment = renderFragment
 	siteTrustedHTML = opts.TrustedHTML
@@ -238,14 +238,17 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// cookie from W2.
 		session := loadSession(r)
 		if conf.requireAuth && session == nil {
-			http.Error(w, authRequired, http.StatusUnauthorized)
+			// A PAGE's 401 is read by a person, so it renders like every
+			// other answer tako gives (FL11). The API's stays JSON —
+			// http.go writes that one, and a client parses it.
+			writeStatus(w, r, tako.Status{Code: http.StatusUnauthorized, RequestID: reqID, Message: authRequired})
 			return
 		}
 		token := ""
 		if session != nil {
 			token = session.CSRF
 			if unsafeMethod(r.Method) && !csrfValidAgainst(r, token) {
-				http.Error(w, csrfRejection, http.StatusForbidden)
+				writeStatus(w, r, tako.Status{Code: http.StatusForbidden, RequestID: reqID, Message: csrfRejection})
 				return
 			}
 		} else {
@@ -253,7 +256,7 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 			token, minted = csrfEnsure(w, r)
 			if unsafeMethod(r.Method) {
 				if minted || !csrfValidAgainst(r, token) {
-					http.Error(w, csrfRejection, http.StatusForbidden)
+					writeStatus(w, r, tako.Status{Code: http.StatusForbidden, RequestID: reqID, Message: csrfRejection})
 					return
 				}
 			}
@@ -279,13 +282,13 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		if decode != nil {
 			var err error
 			if req, err = decode(r); err != nil {
-				pageError(w, ctx, reqID, err)
+				pageError(w, r, ctx, reqID, err)
 				return
 			}
 		}
 		res, err := e.Call(ctx, req)
 		if err != nil {
-			pageError(w, ctx, reqID, err)
+			pageError(w, r, ctx, reqID, err)
 			return
 		}
 		markup, redirect, status, fragment := hooks.HTMLParts(res)
@@ -360,51 +363,23 @@ func csrfValidAgainst(r *http.Request, token string) bool {
 // 400s) as-is; everything else an opaque 500 — the real error is logged
 // with the request id, never sent to the client.
 //
-// A 404 wears the site when SiteConfig.NotFound names a page. Only 404:
-// a 500 means something in this process is already broken, and running
-// the template engine to say so is the worst moment to depend on it.
-func pageError(w http.ResponseWriter, ctx tako.Ctx, reqID string, err error) {
+// EVERY status goes through the app's status page now, not just 404
+// (FL11). The old rule — render for a 404, plain text for anything
+// else, because a 500 means the process is already broken and running
+// the template engine is the worst moment to depend on it — was right
+// about the risk and wrong about the remedy: writeStatus catches a
+// panicking status page and falls through to the same plain text. The
+// downside is bounded, and the upside is that a 403 and a 500 stop
+// being the two places a site drops its own skin.
+func pageError(w http.ResponseWriter, r *http.Request, ctx tako.Ctx, reqID string, err error) {
 	if he, ok := err.(interface{ HTTPStatus() int }); ok {
-		if he.HTTPStatus() == http.StatusNotFound && writeNotFoundPage(ctx, w) {
-			return
-		}
-		http.Error(w, err.Error(), he.HTTPStatus())
+		writeStatus(w, r, tako.Status{Code: he.HTTPStatus(), RequestID: reqID, Message: err.Error()})
 		return
 	}
 	ctx.Log().Error("page error", "err", err)
-	http.Error(w, "internal error (req "+reqID+")", http.StatusInternalServerError)
+	writeStatus(w, r, tako.Status{Code: http.StatusInternalServerError, RequestID: reqID})
 }
 
-// notFoundPage is the site's declared 404, installed by
-// RegisterSiteTemplates alongside the renderers. It is package state for
-// the same reason renderSite is: the generated main wires the site once,
-// and both 404 paths — a handler's tako.NotFound() and the site
-// handler's static miss — have to reach it from different places.
-var notFoundPage string
-
-// writeNotFoundPage renders the site's 404 page, reporting whether it
-// managed to. A false answer means the caller should fall back to plain
-// text — which is the whole failure policy: a missing or broken 404
-// template must never turn a 404 into a 500. The visitor already could
-// not find what they wanted; an error page that errors helps nobody.
-//
-// Both 404 paths call it: a handler's tako.NotFound() through
-// pageError, and the site handler's static miss.
-func writeNotFoundPage(ctx context.Context, w http.ResponseWriter) bool {
-	if notFoundPage == "" {
-		return false
-	}
-	markup, err := renderSite(ctx, notFoundPage, nil)
-	if err != nil {
-		return false
-	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy-Report-Only", "default-src 'self'")
-	h.Set("Referrer-Policy", "strict-origin-when-cross-origin")
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write(markup)
-	return true
-}
+// (The 404 writers that used to live here are one writer now, in
+// status.go — every response tako produces for itself goes through
+// writeStatus, so its headers and its fallback are decided once.)

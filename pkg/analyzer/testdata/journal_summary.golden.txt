@@ -1,13 +1,14 @@
 journal: 1 service
   service journal (package journal, profile default)
-    GET / → Home (app.go:61)
-    GET /p/{id} → Read (app.go:62)
-    GET /write → Write (app.go:63)
-    POST /p → Save 🔒 (app.go:64)
-    POST /p/{id}/publish → Publish 🔒 (app.go:65)
-    POST /p/{id}/rename → Rename 🔒 (app.go:66)
-    GET /{year}/{slug} → Perma (app.go:73)
+    GET / → Home (app.go:101)
+    GET /p/{id} → Read (app.go:102)
+    GET /write → Write (app.go:103)
+    POST /p → Save 🔒 (app.go:104)
+    POST /p/{id}/publish → Publish 🔒 (app.go:105)
+    POST /p/{id}/rename → Rename 🔒 (app.go:106)
+    GET /{year}/{slug} → Perma (app.go:113)
     entity posts (indexes: Published, Created)
     entity moved_urls
     site ./web
     auth (google)
+    status status

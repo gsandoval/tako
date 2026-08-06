@@ -34,7 +34,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:101 home"
+        "app.go:141 home"
       ],
       "pos": "app.go:15:2"
     },
@@ -52,7 +52,6 @@
       "var": "journal.site",
       "package": "journal",
       "dir": "web",
-      "not_found": "404.html",
       "redirects": [
         {
           "from": "/about-us",
@@ -69,7 +68,14 @@
       "providers": [
         "google"
       ],
-      "pos": "app.go:41:2"
+      "pos": "app.go:35:2"
+    },
+    {
+      "kind": "status",
+      "name": "status",
+      "var": "journal.Status",
+      "package": "journal",
+      "pos": "app.go:47:5"
     }
   ],
   "handlers": [
@@ -81,7 +87,7 @@
       "route": "GET /",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:61:2"
+      "pos": "app.go:101:2"
     },
     {
       "kind": "page",
@@ -100,7 +106,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:62:2"
+      "pos": "app.go:102:2"
     },
     {
       "kind": "page",
@@ -110,7 +116,7 @@
       "route": "GET /write",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:63:2"
+      "pos": "app.go:103:2"
     },
     {
       "kind": "page",
@@ -136,7 +142,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:64:2"
+      "pos": "app.go:104:2"
     },
     {
       "kind": "page",
@@ -156,7 +162,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:65:2"
+      "pos": "app.go:105:2"
     },
     {
       "kind": "page",
@@ -182,7 +188,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:66:2"
+      "pos": "app.go:106:2"
     },
     {
       "kind": "page",
@@ -207,7 +213,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:73:2"
+      "pos": "app.go:113:2"
     }
   ],
   "edges": [

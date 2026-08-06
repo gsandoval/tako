@@ -108,13 +108,14 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	endpointVars := map[types.Object]string{} // Endpoint vars (API/Page) → Var, for call edges
 	channelVars := map[types.Object]string{}  // alert destination vars → Var
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
-	siteOfPackage := map[string]string{}      // package → declaring site var (one per package)
-	sitePackages := map[string]string{}       // package path → package name (service-from-site)
-	serviceOfPackage := map[string]string{}   // package path → declaring var (one per package)
-	serviceNames := map[string]string{}       // package path → declared app-service name
-	workersByQueue := map[string]*Handler{}   // queue name → its worker
-	jobVars := map[types.Object]string{}      // job var object → job name
-	jobsByName := map[string]*Handler{}       // job name → its handler
+	siteOfPackage := map[string]string{}
+	statusOfPackage := map[string]string{}  // package → declaring site var (one per package)
+	sitePackages := map[string]string{}     // package path → package name (service-from-site)
+	serviceOfPackage := map[string]string{} // package path → declaring var (one per package)
+	serviceNames := map[string]string{}     // package path → declared app-service name
+	workersByQueue := map[string]*Handler{} // queue name → its worker
+	jobVars := map[types.Object]string{}    // job var object → job name
+	jobsByName := map[string]*Handler{}     // job name → its handler
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
 			graph.Module = pkg.Module.Path
@@ -191,6 +192,19 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				}
 			case "Auth":
 				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+				}
+			case "StatusPage":
+				if r := extractStatusPage(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					if prior, exists := statusOfPackage[pkg.PkgPath]; exists {
+						errs = append(errs, &Error{
+							Pos:  relPos(cfg.Dir, pkg.Fset, d.call.Pos()),
+							Msg:  fmt.Sprintf("a package declares one status page — %s is already declared; remove %s or merge the two", prior, r.Var),
+							Rule: "one-status",
+						})
+						continue
+					}
+					statusOfPackage[pkg.PkgPath] = r.Var
 					graph.Resources = append(graph.Resources, *r)
 				}
 			case "Job":

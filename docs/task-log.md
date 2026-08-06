@@ -17620,3 +17620,115 @@ the code.
 Cross-package fragments (package = service; a query crossing that
 boundary is not a query — the escape rule covers it), and proving a
 derived shape is reachable.
+
+## FL11 — shipped (2026-08-06)
+
+Items 2 and 3 of 8: the class, and the NotFound cleanups folded into
+it because they are the same seam.
+
+### The spelling changed from the design, for a reason
+
+The design said `SiteConfig{Status: statusPage}`. **That cannot be
+built.** `SiteOptions` reaches the runtime as a struct LITERAL rendered
+by codegen from the AppGraph (`siteOptionsLiteral`), and a func value
+is not a literal; the generated main is package `main`, so it can only
+name exported identifiers, and every example's site var is lowercase.
+
+What shipped instead obeys settled decision 1 exactly:
+
+```go
+var Status = tako.StatusPage(status)
+```
+
+A package-level var via a constructor, like every other handler, named
+from the generated main the same way `journal.Home` is. No new wiring
+mechanism, and the analyzer gets to enforce the constraints: exported
+(`tako/unexported-status`) and one per package (`tako/one-status`).
+
+### What it covers
+
+Every response tako produces for itself, through one writer
+(`pkg/runtime/status.go`):
+
+| was | now |
+|---|---|
+| `writeNotFoundPage` — template, CSP + Referrer-Policy | `writeStatus` |
+| `writeStaticNotFound` — static file, **neither header** | `writeStatus` |
+| `http.NotFound` — no headers at all | `writeStatus` |
+| `pageError` non-404 — `http.Error`, plain text | `writeStatus` |
+| `pageError` 500 — plain text by policy | `writeStatus` |
+| CSRF 403 ×2 — `http.Error` | `writeStatus` |
+| a page's 401 — `http.Error` | `writeStatus` |
+| site 405, site read 500 ×2 — `http.Error` | `writeStatus` |
+
+The 401 was **not in the design**. It surfaced during live validation:
+`POST /p` on a `SignIn` route answered before CSRF could, still in
+plain text. Same class, same slice.
+
+Deliberately NOT converted: `cron.go`'s four (machine-facing, OIDC
+triggers from Cloud Scheduler — a person never sees them) and
+`http.go`'s API 401 (a client parses JSON; rendering it a page would
+break the parse).
+
+### The rule that pays for the risk
+
+`page.go` used to argue that a 500 must stay plain text, because
+running the template engine when the process is already broken is the
+worst moment to depend on it. Right about the risk, wrong about the
+remedy: `renderStatus` recovers from a panicking status page and falls
+through to the same plain text. The downside is bounded, so the app's
+own page can answer the 500 too.
+
+`tako.Status` has **no error field**, and `Message` is cleared for any
+5xx before the page is called. Leaking a 500's detail is not something
+the type permits.
+
+### Live, on examples/journal
+
+```
+$ curl -s -i localhost:8080/no-such-page
+HTTP/1.1 404 Not Found
+Cache-Control: no-cache
+Content-Security-Policy-Report-Only: default-src 'self'
+Content-Type: text/html; charset=utf-8
+Referrer-Policy: strict-origin-when-cross-origin
+X-Content-Type-Options: nosniff
+
+  <title>Not found · journal</title>
+  <header><h1><a href="/">journal</a></h1>
+    <nav><a href="/write">write</a> · <a href="/about">about</a> ·
+  <h2>Not found</h2>
+  <p><a href="/">Back to the journal</a> — 3 published posts.</p>
+```
+
+**"3 published posts" is the whole feature.** That number is a live
+query from the status page's Ctx; before FL11 the 404 rendered with
+`nil` and a shell built from data rendered its bands empty, which is
+exactly what flauta filed. `POST /about` answers 405 as HTML (1209
+bytes), `POST /p` answers 401 as HTML (1261), and `/p/does-not-exist` —
+a handler's `tako.NotFound()` — renders the identical page as the
+static miss.
+
+### Tests
+
+`pkg/runtime/status_test.go`: the fallback (panics / errors / renders
+nothing → plain text, right code), every code wearing the app, the
+header set identical on the rendered AND static paths, the 5xx
+non-leak, and the bare floor. They render through a **real site**
+rather than a test-only HTML constructor — adding `tako.RawHTML` just
+to test would have widened the API for nobody.
+
+### API and docs, in this commit
+
+`sdk_lock.golden` (+5), `runtime_lock.golden` (+1,
+`RegisterStatusPage` — generated code in users' repos names it),
+`docs/api/surface.txt`, `symbolPage`, and `reference/site.md`'s new
+"Status pages" section. Per CLAUDE.md an API change is its own task,
+and this slice is it.
+
+### Examples
+
+`examples/journal` declares the status page and its `404.html` becomes
+`status.html` with real data. `examples/blog` takes
+`SiteConfig{NotFound: "404.html"}` — Hugo emits the file already — so
+the one-line spelling keeps an example demanding it.

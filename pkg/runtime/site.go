@@ -13,6 +13,8 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+
+	tako "github.com/gsandoval/tako"
 )
 
 // SiteOptions carries a declared site's serving behavior — extracted by
@@ -88,41 +90,37 @@ type siteServer struct {
 // just works. Either way a failure falls through to plain text: a 404
 // never becomes a 500.
 func (s *siteServer) notFound(w http.ResponseWriter, r *http.Request) {
-	if s.opts.NotFound != "" {
-		if writeNotFoundPage(r.Context(), w) {
-			return
-		}
-		if s.writeStaticNotFound(w) {
+	// The static file is tried FIRST here and only here: it is the
+	// generator-emitted 404.html case, and only the site handler can
+	// open the site's own FS. Everything after it — the declared
+	// template, the app's status page, plain text — is the one writer.
+	if s.opts.NotFound != "" && !statusPage.Declared() {
+		if body, ok := s.staticNotFound(); ok {
+			writeStatusMarkup(w, http.StatusNotFound, body)
 			return
 		}
 	}
-	http.NotFound(w, r)
+	writeStatus(w, r, tako.Status{Code: http.StatusNotFound})
 }
 
-// writeStaticNotFound serves the declared page as a file from the site
+// staticNotFound reads the declared page as a file from the site
 // directory — the generator-emitted 404.html case.
-func (s *siteServer) writeStaticNotFound(w http.ResponseWriter) bool {
+func (s *siteServer) staticNotFound() ([]byte, bool) {
 	file, err := s.open(path.Clean(strings.TrimPrefix(s.opts.NotFound, "/")))
 	if err != nil {
-		return false
+		return nil, false
 	}
 	defer file.Close()
 	body, err := io.ReadAll(file)
-	if err != nil {
-		return false
+	if err != nil || len(body) == 0 {
+		return nil, false
 	}
-	h := w.Header()
-	h.Set("Content-Type", "text/html; charset=utf-8")
-	h.Set("Cache-Control", "no-cache")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusNotFound)
-	_, _ = w.Write(body)
-	return true
+	return body, true
 }
 
 func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeStatus(w, r, tako.Status{Code: http.StatusMethodNotAllowed, Message: "method not allowed"})
 		return
 	}
 	p := path.Clean(strings.TrimPrefix(r.URL.Path, "/"))
@@ -161,7 +159,7 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 
 	etag, err := s.etag(p, file)
 	if err != nil {
-		http.Error(w, "site read error", http.StatusInternalServerError)
+		writeStatus(w, r, tako.Status{Code: http.StatusInternalServerError})
 		return
 	}
 	h := w.Header()
@@ -188,7 +186,7 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	// Re-open: the etag pass consumed the reader on first computation.
 	fresh, err := s.open(p)
 	if err != nil {
-		http.Error(w, "site read error", http.StatusInternalServerError)
+		writeStatus(w, r, tako.Status{Code: http.StatusInternalServerError})
 		return
 	}
 	defer fresh.Close()

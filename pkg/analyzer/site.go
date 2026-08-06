@@ -177,3 +177,29 @@ func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	}
 	return r
 }
+
+// extractStatusPage validates one tako.StatusPage declaration. It
+// carries no configuration — the whole declaration is the function —
+// so what is validated is the shape: an exported var, because the
+// generated service names it from package main.
+func extractStatusPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" {
+		return nil
+	}
+	if !name.IsExported() {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, name.Pos()),
+			Msg: fmt.Sprintf("status page %s must be exported — the generated service registers it by name from outside the package; rename it %s",
+				name.Name, strings.ToUpper(name.Name[:1])+name.Name[1:]),
+			Rule: "unexported-status",
+		})
+		return nil
+	}
+	return &Resource{
+		Kind:    "status",
+		Name:    "status",
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+}

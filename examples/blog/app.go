@@ -20,7 +20,14 @@ var (
 	// The fragment templates ride Hugo's static/ dir into
 	// public/templates — the one subtree a Site never serves raw.
 	site = tako.Site("./site/public",
-		tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
+		tako.SiteConfig{
+			Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"},
+			// The one-line spelling: name a page, get a 404. Hugo emits
+			// 404.html already, so this is the whole of it. A site that
+			// needs the shell to carry data declares a tako.StatusPage
+			// instead (examples/journal).
+			NotFound: "404.html",
+		})
 )
 
 // Comment hangs off a post by the post's own URL path — the one stable
