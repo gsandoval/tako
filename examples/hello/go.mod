@@ -1,4 +1,4 @@
-module hello
+module github.com/gsandoval/tako-example-hello
 
 go 1.26
 

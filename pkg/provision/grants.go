@@ -57,7 +57,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	for _, r := range g.Resources {
 		switch r.Kind {
 		case "bucket":
-			ensure(target{TargetBucket, gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, r.Name)})
+			ensure(target{TargetBucket, gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)})
 			if events[r.Name] {
 				ensure(target{TargetTopic, gcpb.EventTopicName(cfg.Env, r.Name)})
 			}
@@ -197,7 +197,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			// project-wide, and the security summary says so.
 			add(target{TargetProject, cfg.Project}, "roles/datastore.user", member)
 		case "bucket":
-			b := gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, e.To)
+			b := gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, e.To)
 			switch e.Verb {
 			case "read":
 				add(target{TargetBucket, b}, "roles/storage.objectViewer", member)

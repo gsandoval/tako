@@ -1,5 +1,5 @@
-hello: 1 service
-  service hello (package hello, profile default)
+github.com/gsandoval/tako-example-hello: 1 service
+  service hello (package github.com/gsandoval/tako-example-hello, profile default)
     GET /hello → Hello (hello.go:9)
     GET /greet/{name} → Greet (hello.go:10)
     POST /echo → Echo (hello.go:11)

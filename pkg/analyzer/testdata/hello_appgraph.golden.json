@@ -1,9 +1,9 @@
 {
-  "module": "hello",
+  "module": "github.com/gsandoval/tako-example-hello",
   "services": [
     {
       "name": "hello",
-      "package": "hello",
+      "package": "github.com/gsandoval/tako-example-hello",
       "handlers": [
         "hello.Hello",
         "hello.Greet",
@@ -17,7 +17,7 @@
     {
       "kind": "api",
       "var": "hello.Hello",
-      "package": "hello",
+      "package": "github.com/gsandoval/tako-example-hello",
       "service": "hello",
       "route": "GET /hello",
       "req_ref": "struct{}",
@@ -27,7 +27,7 @@
     {
       "kind": "api",
       "var": "hello.Greet",
-      "package": "hello",
+      "package": "github.com/gsandoval/tako-example-hello",
       "service": "hello",
       "route": "GET /greet/{name}",
       "req_type": "GreetReq",
@@ -52,7 +52,7 @@
     {
       "kind": "api",
       "var": "hello.Echo",
-      "package": "hello",
+      "package": "github.com/gsandoval/tako-example-hello",
       "service": "hello",
       "route": "POST /echo",
       "req_type": "EchoReq",

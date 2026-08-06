@@ -102,6 +102,9 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 	if t.region == "" {
 		t.region = "us-central1"
 	}
+	if err := checkEnv(t.env); err != nil {
+		return t, nil, err
+	}
 	return t, rest, nil
 }
 
@@ -126,8 +129,23 @@ func runDeploy(args []string) error {
 		return err
 	}
 	app := graph.Module
-	fmt.Printf("tako deploy · %s → %s (%s)\n\n", app, t.project, t.region)
+	fmt.Printf("tako deploy · %s → %s (%s)\n", app, t.project, t.region)
+	// A module path Google will not take as a label value or a bucket
+	// segment is derived into one (gcp.AppID). Said once, here, so a
+	// person about to read a plan full of the derived name finds out
+	// why — not repeated per object.
+	if id := gcpb.AppID(app); id != app {
+		fmt.Printf("              id %s — labels and bucket names use this\n", id)
+	}
+	fmt.Println()
 	fmt.Printf("  analyzing    %s\n", devserver.CountLine(graph))
+	// Names Google would refuse are refused here — before the frontend
+	// build, before codegen, before the first network call. A length
+	// failure discovered mid-apply names a string that appears nowhere
+	// in the user's code.
+	if err := provision.CheckNames(graph, provision.Config{Project: t.project, App: app, Env: t.env}); err != nil {
+		return err
+	}
 	// Frontend builds run BEFORE codegen: the generated services embed
 	// the built output.
 	if err := build.Sites(dir, graph, sayf); err != nil {
@@ -198,8 +216,10 @@ func runDeploy(args []string) error {
 	scheds := &gcp.SchedulerJobs{C: client, App: cfg.App, Env: cfg.Env}
 	tasks := &gcp.TasksQueues{C: client}
 	domains := &gcp.DomainMappings{C: client, Labels: cfg.Labels(), Say: sayf}
-	channels := &gcp.AlertChannels{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels()}
-	policies := &gcp.AlertPolicies{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
+	// Alert ownership is decided by the tako-app LABEL (gcp.ownedBy),
+	// so these carry the id the labels carry, not the module path.
+	channels := &gcp.AlertChannels{C: client, App: cfg.AppID(), Env: cfg.Env, Labels: cfg.Labels()}
+	policies := &gcp.AlertPolicies{C: client, App: cfg.AppID(), Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
 	buckets := &gcp.Buckets{C: client, Labels: cfg.Labels()}
 	indexes := &gcp.DatastoreIndexes{C: client, Desired: desired, Kinds: entityKinds(graph), Say: sayf}
 	topics := &gcp.Topics{C: client, Labels: cfg.Labels()}
@@ -244,7 +264,7 @@ func runDeploy(args []string) error {
 	}
 	runs.Canary = t.canary
 
-	lease := &gcp.Lease{C: client, App: app, Env: t.env, Labels: cfg.Labels(), Say: sayf}
+	lease := &gcp.Lease{C: client, App: cfg.AppID(), Env: t.env, Labels: cfg.Labels(), Say: sayf}
 	release, err := lease.Acquire(ctx, holder())
 	if err != nil {
 		return err
@@ -355,7 +375,7 @@ func runDeploy(args []string) error {
 		}
 		// A descriptor alone is not enough: PromQL resolves names from
 		// DATA, so the series has to exist before a policy may name it.
-		if err := descriptors.Seed(ctx, graph, cfg.App, cfg.Env, cfg.Region); err != nil {
+		if err := descriptors.Seed(ctx, graph, cfg.AppID(), cfg.Env, cfg.Region); err != nil {
 			return err
 		}
 		// Seeding covers tako's own metrics. It cannot cover Google's —

@@ -16942,3 +16942,165 @@ and after is identical, and both flauta indexes were always correct.
 This is an attribution bug in output a person reads while deciding
 whether a query shape is right — which is exactly why a confidently
 wrong `file:line` is worse than none.
+
+## FL8 — shipped (2026-08-06)
+
+Approved as proposed, with the owner's direction to move hello's module
+path. Everything below is measured, not asserted.
+
+### What shipped
+
+`gcp.AppID` (`pkg/backends/gcp/appid.go`), in the file whose header
+already says why it exists — the runtime and the provisioner must
+derive names identically. A module path that is already a legal id is
+its own id; anything else is its last segment, sanitised, plus six hex
+digits of sha256 over the whole path.
+
+Applied at four places, all of them ones Google constrains:
+`Config.Labels()`, the app segment of `BucketName` (four call sites
+across `desired.go` and `grants.go`), the lease object, and the metric
+namespace — the last one on BOTH sides at once (`TAKO_APP` at
+`desired.go:262`, the four matcher spellings in `alerts.go`), because a
+namespace written by the runtime and matched by the provisioner has to
+move together or every alert silently stops matching. The twins test
+and the FA1 lock golden both stayed green, which is the signal that
+they did.
+
+NOT applied where Google validates nothing and a person reads the
+value: the deploy banner, alert docs, notification subjects, service
+account descriptions, the scheduler marker, and the OCI image label.
+Those keep the module path. The rule is one sentence — the id is for
+Google, the module path is the name.
+
+`--env` is validated rather than derived (`cmd/tako/env.go`), because
+it is typed by a person and `tako destroy --env Staging` silently
+addressing `staging` is not a thing to ship. The repair is offered only
+when there is one.
+
+`provision.CheckNames` refuses an assembled bucket name past 63
+characters. It runs before the frontend build, before codegen and
+before the first network call — earlier than the proposal's "alongside
+the preflight probes", which was the wrong place: nothing about it
+needs the network.
+
+### The second wall, found by the example move
+
+`module hello` → `module github.com/gsandoval/tako-example-hello` and
+codegen broke immediately:
+
+```
+generated main for service hello does not format: 13:6: missing import path
+```
+
+`pkgAlias` used the last segment of the import path as the Go import
+alias, and `tako-example-hello` is not an identifier — it emitted
+`tako-example-hello "github.com/…"`, a parse error at the hyphen. Any
+app whose repository name contains a hyphen could not generate a
+service at all. **flauta never hit this** because `flauta` happens to
+be identifier-shaped; it would have hit it the day it was renamed.
+This is the corpus blind spot closing on the first day, exactly as the
+proposal argued it would.
+
+Fixed twice over. `pkgAlias` now takes the graph and uses the
+package's OWN name — which is what `Handler.Var` has always been
+prefixed with, and is an identifier by definition — so hello's
+generated main differs from before by exactly one line, the import
+path, and every reference stays `hello.Hello`. `aliasFromPath` is the
+fallback for a service with no handler to read a name from, and it
+sanitises: hyphens and dots to underscores, a `pkg` prefix ahead of a
+leading digit, a trailing underscore on a keyword. Its table is
+`pkg/codegen/alias_test.go`.
+
+The first cut sanitised the path instead, which compiled and read
+`tako_example_hello.GreetReq` throughout — legal, and worse than what
+it replaced. Generated code is a product (settled decision 3).
+
+### Tests
+
+- `pkg/backends/gcp/appid_test.go` — identity for all seven example
+  modules, flauta's path, the new hello path, uppercase, an empty last
+  segment, an over-long bare name; plus legality of every derived id
+  against the rule, idempotence (what lets `TAKO_APP` round-trip),
+  separation of two modules sharing a last segment, and stability.
+- `pkg/codegen/alias_test.go` — the alias table, `token.IsIdentifier`
+  as the oracle rather than a restated rule, and the two paths through
+  `pkgAlias`.
+- `pkg/provision/names_test.go` — realistic names pass, an over-long
+  one is refused with all four parts named, the check follows the env
+  (prod fits where a long env does not), and example-shaped names pass
+  so a false positive cannot block a deploy.
+- `cmd/tako/env_test.go` — valid names, the three illegal shapes with
+  their repairs, no repair when there is none, the length bound, and
+  `parseTarget` doing the check so every cloud command inherits it.
+
+### Validation
+
+`validate/app-identifier.md`, written and run. Real transcripts:
+
+Section 1 — the header, on the moved example:
+
+```
+tako deploy · github.com/gsandoval/tako-example-hello → tako-test-01 (us-central1)
+              id tako-example-hello-812a9c — labels and bucket names use this
+
+  analyzing    1 service, 3 endpoints
+  generating   .tako/gen
+  preflight    ok (run, iam, artifactregistry, storage)
+  building     1 service image(s), digest-pinned
+  plan
+    + create  artifact repo tako
+    + create  service account hello-sa
+    + create  run service hello
+    + create  iam grants bucket tako-test-01-tako
+    ~ update  iam grants project
+      skip    iam grants run hello
+    + create  iam grants serviceAccount hello-sa@tako-test-01.iam.gserviceaccount.com
+    5 creates, 1 updates, 1 skips, 0 orphans
+```
+
+and `examples/gallery` (module `gallery`) prints no id line at all —
+the quiet case is quiet.
+
+Section 2 — `tako dev` on hello, generated import and two live
+responses:
+
+```
+	hello "github.com/gsandoval/tako-example-hello"
+
+$ curl localhost:8080/hello      → {"message":"Hello from Tako!"}
+$ curl localhost:8080/greet/memo → {"message":"Hello, memo!"}
+```
+
+Section 3 — the env rejections, all three before any network call:
+
+```
+tako: --env "Staging" is not a valid environment name
+
+    environments become part of every resource name and every label,
+    so they are limited to lowercase letters, digits and hyphens
+    (1–20 characters), starting with a letter
+
+    did you mean --env staging?
+```
+
+`--env feature/x` offers `feature-x`; `--env ...` offers nothing,
+because there is nothing to offer.
+
+### What is NOT validated, stated plainly
+
+The create. `--plan` never creates an object, so nothing run here
+exercised the HTTP 400 FL8 exists to fix — the label is rejected at
+create time. Proving it end to end needs one real deploy of a
+host-shaped module plus a destroy, and that belongs to the next
+release-cycle walk. Everything up to the create is verified; the create
+is not.
+
+### Discovered work
+
+**10. `Prefixed` has no bound of its own.** `checkEnv` caps an env at
+20 characters, but that is a CLI check: a caller constructing
+`provision.Config` directly (tests, and `cmd/tako/lifecycle.go`'s
+paths) can still set any env. The names it would produce are caught by
+`CheckNames` for buckets and by nothing for topics or Run services.
+Not promoted: no path in tako reaches it without going through
+`parseTarget` today.

@@ -95,10 +95,19 @@ func ManagedMember(member, project string) bool {
 	return ok && strings.HasSuffix(local, "-sa")
 }
 
+// AppID is the app as Google stores it (gcpb.AppID): the module path
+// when the module path is already a legal identifier — which is every
+// app deployed before this existed — and a derived, hyphenated,
+// hash-suffixed form otherwise. Config.App stays the module path,
+// because that is the app's NAME and is what a person reads.
+func (c Config) AppID() string { return gcpb.AppID(c.App) }
+
 // Labels is the label set every managed object carries; listing these
-// labels IS the observed state.
+// labels IS the observed state. The value is the id, not the module
+// path: Google refuses a label value with a dot or a slash in it, and
+// this is the first create of every deploy.
 func (c Config) Labels() map[string]string {
-	return map[string]string{"tako-app": c.App, "tako-env": c.Env}
+	return map[string]string{"tako-app": c.AppID(), "tako-env": c.Env}
 }
 
 // Profile → knob values live in analyzer.ProfileKnobs (spec §4.6): one
@@ -248,8 +257,12 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		env := map[string]any{
 			"TAKO_BACKEND": "gcp",
 			"TAKO_PROJECT": cfg.Project,
-			"TAKO_APP":     cfg.App,
-			"TAKO_ENV":     cfg.Env,
+			// The id, not the module path: the runtime hands this
+			// value straight to BucketName and stamps it on every
+			// metric's namespace, so it must be the same string the
+			// deploy planned those names with.
+			"TAKO_APP": cfg.AppID(),
+			"TAKO_ENV": cfg.Env,
 			// The service's own base name: dead-topic derivation
 			// (Permanent publishes there directly) and log labeling.
 			"TAKO_SERVICE": svc.Name,
@@ -402,7 +415,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		case "bucket":
 			objs = append(objs, Object{
 				Kind: KindBucket,
-				Name: gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, r.Name),
+				Name: gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
 				// cors: browsers execute signed URLs directly against
 				// the bucket (SignedPut's whole point).
 				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": true},
@@ -465,7 +478,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 	// publish (GCS validates that at config-creation time; the deploy
 	// sequences it).
 	for _, b := range eventList {
-		physical := gcpb.BucketName(cfg.Project, cfg.App, cfg.Env, b)
+		physical := gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, b)
 		objs = append(objs,
 			Object{
 				Kind: KindTopic,

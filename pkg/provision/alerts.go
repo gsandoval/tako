@@ -202,7 +202,7 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 		base := promName(metrics.RequestMs.Type())
 		labels := append([]string{
 			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
-			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.AppID()+"-"+cfg.Env),
 			fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
 		}, routeMatcher(a)...)
 		// The range selector goes AFTER the closing brace. Built by
@@ -281,7 +281,7 @@ func frameworkQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition
 	if a.Framework == metrics.RequestMsName {
 		labels := append([]string{
 			fmt.Sprintf("monitored_resource=%q", resourceGenericTask),
-			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+			fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.AppID()+"-"+cfg.Env),
 			fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
 		}, extra...)
 		if a.Op == "absent" {
@@ -319,7 +319,7 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 	metric := customMetricPrefix + a.SubjectName
 	// namespace keeps prod and a preview env from sharing an alert, the
 	// same way it keeps them from sharing a series.
-	ns := fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env)
+	ns := fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.AppID()+"-"+cfg.Env)
 	// Absence is not a threshold: WhenAbsent asks whether the series
 	// exists at all, and comparing a count to a number can never answer
 	// that — an empty result set compares to nothing and yields nothing.
@@ -352,7 +352,7 @@ func customQuery(cfg Config, a *analyzer.AlertCondition, every time.Duration) (s
 // endpoint or one cron, and this one can.
 func takoRequests(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition, extra ...string) string {
 	matchers := append([]string{
-		fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.App+"-"+cfg.Env),
+		fmt.Sprintf("%s=%q", metrics.ResourceNamespace, cfg.AppID()+"-"+cfg.Env),
 		fmt.Sprintf("%s=%q", metrics.ResourceJob, metricJob(serviceOf(g, a.SubjectVar))),
 	}, extra...)
 	return selector(metrics.Requests.Type(), resourceGenericTask, matchers...)

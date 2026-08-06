@@ -65,8 +65,8 @@ func runDestroy(args []string) error {
 	subs := &gcp.PushSubscriptions{C: client, Labels: cfg.Labels()}
 	pulls := &gcp.PullSubscriptions{C: client, Labels: cfg.Labels()}
 	notifications := &gcp.BucketNotifications{C: client, Desired: desired}
-	channels := &gcp.AlertChannels{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels()}
-	policies := &gcp.AlertPolicies{C: client, App: cfg.App, Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
+	channels := &gcp.AlertChannels{C: client, App: cfg.AppID(), Env: cfg.Env, Labels: cfg.Labels()}
+	policies := &gcp.AlertPolicies{C: client, App: cfg.AppID(), Env: cfg.Env, Labels: cfg.Labels(), Channels: channels}
 	managedSA, err := sas.ManagedEmails(ctx)
 	if err != nil {
 		return err
@@ -95,7 +95,7 @@ func runDestroy(args []string) error {
 		observed = kept
 	}
 	if len(observed) == 0 {
-		fmt.Printf("nothing to destroy: no objects labeled tako-app=%s tako-env=%s in %s\n", app, t.env, t.project)
+		fmt.Printf("nothing to destroy: no objects labeled tako-app=%s tako-env=%s in %s\n", cfg.AppID(), t.env, t.project)
 		return nil
 	}
 	var dataKinds []string
@@ -216,7 +216,7 @@ func runDestroy(args []string) error {
 		fmt.Printf("✓ destroyed (env %s only — shared repo, indexes, and framework bucket stay)\n", t.env)
 		return nil
 	}
-	lease := &gcp.Lease{C: client, App: app, Env: t.env, Labels: cfg.Labels(), Say: sayf}
+	lease := &gcp.Lease{C: client, App: cfg.AppID(), Env: t.env, Labels: cfg.Labels(), Say: sayf}
 	if err := lease.DeleteBucket(ctx); err != nil {
 		return err
 	}

@@ -45,6 +45,12 @@ func runAlerts(args []string) error {
 			only = a
 		}
 	}
+	// The env reaches the rendered PromQL through the namespace, so it
+	// is checked here too — this command's whole promise is that what
+	// it prints is what deploys.
+	if err := checkEnv(env); err != nil {
+		return err
+	}
 
 	dir, err := os.Getwd()
 	if err != nil {

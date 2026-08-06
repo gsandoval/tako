@@ -10,7 +10,7 @@ import (
 
 	runtime "github.com/gsandoval/tako/pkg/runtime"
 
-	hello "hello"
+	hello "github.com/gsandoval/tako-example-hello"
 )
 
 func main() {
