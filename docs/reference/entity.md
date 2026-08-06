@@ -153,6 +153,29 @@ constrains its leading properties. Filters in mutually exclusive arms
 (`if`/`else`) are treated as independently optional, so the combination
 that cannot occur is derived too — over-indexing is the safe direction.
 
+**A query built across FUNCTIONS is still one query.** A function that
+takes or returns an `*EntityQuery[T]` is a fragment of somebody's
+query, not a query of its own:
+
+```go
+func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {
+	return q.Where("Published", "=", true)
+}
+
+list, err := published(posts.Query(ctx)).OrderBy("-Created").Limit(50).All()
+```
+
+The fragment's filter is folded into each caller at the position it is
+called and under that call site's branches — call it inside an `if` and
+everything it carries becomes optional there. Fragments compose, and an
+uncalled one derives nothing, because a shape that never runs does not
+need an index.
+
+What tako **cannot** follow it refuses (`tako/query-escapes`): a query
+stored in a struct field, sent on a channel, or passed to a function
+value has no traceable path to the code that runs it. Guessing low
+there is a 500 in production that nothing local would show.
+
 Past **four** conditional filters in one function the powerset stops
 being reasonable — sixteen indexes for one query — and tako refuses at
 analysis time (`tako/query-shapes`) rather than deriving a set that

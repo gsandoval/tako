@@ -17838,3 +17838,41 @@ that is WRONG about a symbol that exists. `cache.md` once said
 "`WithTTL` is the only Cache option" when Cache has no options at all.
 Three checks now cover three claims — the type exists, the retired
 vocabulary is gone, the member exists — and none of them reads English.
+
+## Docs — all three trees (2026-08-06)
+
+Item 6 of 8. The reference and api pages moved with their slices (an
+API change lands with its docs, per CLAUDE.md); this closes the guide
+and the cross-cutting reference pages.
+
+- **guide/02-shortlink.md** — "per query" means per SHAPE, not per
+  function, with the fragment form and the escape rule. The guide
+  taught index derivation and stopped exactly where FL10 begins.
+- **guide/04-journal.md** — a new "The pages tako writes" section
+  (`tako.StatusPage`, what it covers, the never-worse guarantee) and
+  the cache sentence on the permalink.
+- **reference/entity.md** — query fragments beside the branch rule.
+- **reference/errors.md** — four new rules in the tables they belong
+  to (`query-escapes`, `max-age`, `cache-signin`, `one-status`,
+  `unexported-status`), with `cache-signin` called out as the one
+  worth reading twice.
+- **reference/site.md**, **reference/pages.md**, **reference/api.md** —
+  landed with FL11/FL12.
+- **api/surface.txt** — regenerated; `/api` lists the new symbols.
+
+Verified the way `validate/docs.md` says to: a binary built to /tmp,
+run from /tmp, every changed page fetched over HTTP.
+
+```
+/                        200
+/reference/site          200
+/reference/pages         200
+/reference/entity        200
+/reference/errors        200
+/guide/04-journal        200
+/guide/02-shortlink      200
+/api                     200
+```
+
+`/api` carries StatusPage, StatusHandle, Status and MaxAge; site.md
+serves its "Status pages" section and pages.md its "Caching a page".

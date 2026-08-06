@@ -133,6 +133,10 @@ that the value is written as a literal, and that it is in range.
 | `cron-schedule` | a schedule can't map onto unix-cron | [cron.md](cron.md) |
 | `delivery` | a `Delivery` field is out of range or wrong for the carrier | [queue.md](queue.md) |
 | `auth-provider` | `tako.Auth` declares no provider | [auth.md](auth.md) |
+| `max-age` | `Route.MaxAge` is not a constant between 1s and a year | [pages.md](pages.md) |
+| `cache-signin` | `Route.MaxAge` on a route that requires sign-in | [pages.md](pages.md) |
+| `one-status` | a package declares two status pages | [site.md](site.md) |
+| `unexported-status` | a status page var is not exported | [site.md](site.md) |
 | `site-dir` | a site's directory doesn't exist and nothing builds it | [site.md](site.md) |
 
 ```
@@ -164,6 +168,16 @@ That is caught earlier and says less — it does not point you at
 `tako.Service` the way the analyzer's message did. The trade was
 deliberate: a whole class of silently-dropped configuration disappears
 with it (see [api-review-3](../api-review-3.md)).
+
+```
+Dashboard sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn
+status page status must be exported — the generated service registers it by name from outside the package; rename it Status
+```
+
+`cache-signin` is the one worth reading twice. Nothing about that
+failure is visible from the app: the tests pass, the page renders, and
+one day a reader is served someone else's page by a cache neither of
+them can see. It is refused rather than documented as a caution.
 
 ## Sizing has to resolve to one answer
 
@@ -202,6 +216,7 @@ service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) f
 | `entity-id` | the id field is missing, duplicated, or not a string | [entity.md](entity.md) |
 | `unindexed-query` | a query filters or orders on an untagged field | [entity.md](entity.md) |
 | `query-shapes` | one function assembles a query from too many conditional filters | [entity.md](entity.md) |
+| `query-escapes` | a query is built somewhere tako cannot follow it | [entity.md](entity.md) |
 
 ```
 entity type Link must have exactly one field tagged entity:"id"
@@ -222,6 +237,19 @@ each needs its own index; past four conditional filters that powerset
 stops fitting in a project. Refusing at analysis time is the whole
 point — the alternative is discovering it as a 500 from Datastore in
 production, which is exactly how this rule came to exist.
+
+`query-escapes` is the boundary of what "derived from the call sites"
+can mean. A helper that takes and returns an `*EntityQuery[T]` is
+followed — its filters belong to whoever calls it — but a query stored
+in a struct field, sent on a channel, or handed to a function value
+cannot be traced to the code that runs it:
+
+```
+this query is stored in a struct field, so the composite indexes it needs cannot be derived — assemble it in one function, or in helpers that take and return *tako.EntityQuery[Article]
+```
+
+Refusing beats guessing here for the same reason as above: guessing low
+is a 500 in production, and nothing local would ever show it.
 
 ## Domains
 

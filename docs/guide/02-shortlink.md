@@ -27,6 +27,25 @@ and order by. Querying an unindexed field is an ANALYSIS error, not a
 production surprise; combined query shapes derive their Datastore
 composite indexes automatically, per query.
 
+"Per query" means per SHAPE, not per function. A filter added inside an
+`if` makes two shapes, and both get an index — a composite serves only
+queries that constrain its leading properties, so the narrow one would
+otherwise have none and answer 500 in production while every local test
+passed. Helpers work too:
+
+```go
+func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {
+    return q.Where("Published", "=", true)
+}
+
+list, err := published(posts.Query(ctx)).OrderBy("-Created").Limit(50).All()
+```
+
+A function that takes or returns a query is part of its caller's query,
+not a query of its own. A query tako cannot follow — stored in a struct
+field, handed to a function value — is refused at analysis time rather
+than under-indexed silently.
+
 Claiming a slug atomically is a transaction on the store:
 
 ```go

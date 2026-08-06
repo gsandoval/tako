@@ -29,6 +29,37 @@ Pages bind browser FORMS (`form:` tags), never JSON; CSRF on unsafe
 page routes is automatic (`{{ csrf }}` in forms, a meta tag for
 fetch). `tako.Redirect("/p/"+id)` is POST-redirect-GET.
 
+Every page answers `no-cache` unless it says otherwise, because that is
+the only safe default. The permalink says otherwise —
+`tako.Route{MaxAge: 5 * time.Minute}` — so shared caches keep a
+published post instead of revalidating it against the entity store on
+every visit. Saying that on a `SignIn` route fails analysis: a shared
+cache would hand one signed-in reader's page to the next.
+
+## The pages tako writes
+
+Some answers are not yours. A mistyped URL, a post that is gone, an
+expired form, a handler that failed — tako produces those itself, and
+`tako.StatusPage` is how they still look like your site:
+
+```go
+var Status = tako.StatusPage(status)
+
+func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
+	return site.Render(ctx, "status.html", StatusView{
+		Code: s.Code, RequestID: s.RequestID, Total: postCount(ctx),
+	})
+}
+```
+
+One page for every code — 404, 403, 405, 500 — with an ordinary `Ctx`,
+so journal's 404 carries the masthead, the nav, and a live post count.
+It runs at the worst moments, so it cannot make them worse: if it
+panics or errors, tako answers the same plain text it always did.
+
+`SiteConfig{NotFound: "404.html"}` is still the one-liner when a
+template is all you need ([blog](06-blog.md) uses it).
+
 ## One handler, both worlds
 
 ```go
