@@ -17783,3 +17783,58 @@ this commit with `reference/api.md` and `reference/pages.md`.
 `s-maxage`/CDN split, `stale-while-revalidate`, ETag revalidation for
 rendered pages, and MaxAge on API routes — a JSON client decides its
 own caching, and no example asks.
+
+## Z8 — shipped (2026-08-06)
+
+Item 5 of 8. Discovered work #5, and the answer turned out to be
+narrower and better than "check bare names".
+
+### What the gap actually was
+
+#5 said the mention check keys on `tako.X`, so prose naming
+`WithDomain` bare escapes it. That specific hole was already closed by
+`TestTheDocsDoNotNameRetiredWithOptions` (the WithX retirement). What
+was still open is **what replaced the WithX vocabulary**: the docs now
+spell options as `Route.SignIn`, `CronConfig.Singleflight`,
+`SiteConfig.Build` — 93 qualified members across the guide and
+reference — and nothing checked a single one of them. A renamed field
+would rot exactly the way `WithDomain` did, silently, reading like
+documentation the whole time.
+
+Checking any capitalised word would have meant an allowlist arms race.
+A QUALIFIED member is a claim about API precise enough to verify and
+specific enough not to fire on prose.
+
+### The check
+
+`pkg/docserver/members_test.go` parses `api/surface.txt` — the same
+lock the api page is generated from — into type → fields + methods,
+then scans the guide and reference for `Type.Member`. Unknown types are
+skipped (that is prose); a known type with an unknown member is an
+error.
+
+It refuses to pass vacuously: zero mentions checked is a failure, not a
+clean bill, because a scanner that finds nothing is broken rather than
+satisfied.
+
+### Verified by mutation, not by passing
+
+A check that has never failed is worth nothing. Two bogus names added
+to `reference/api.md`:
+
+```
+--- FAIL: TestEveryFieldTheDocsNameExists
+    reference/api.md:172: the docs name Route.Nonexistent, and Route has no such field or method
+    reference/api.md:172: the docs name SiteConfig.Missing, and SiteConfig has no such field or method
+    checked 95 Type.Member mentions against the lock
+```
+
+Reverted; the tree is clean at 93.
+
+### The limit, stated
+
+Same one the file above it states: no symbol check catches a sentence
+that is WRONG about a symbol that exists. `cache.md` once said
+"`WithTTL` is the only Cache option" when Cache has no options at all.
+Three checks now cover three claims — the type exists, the retired
+vocabulary is gone, the member exists — and none of them reads English.
