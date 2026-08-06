@@ -37,7 +37,6 @@ const (
 	messageKey  = "message"
 	traceKey    = "logging.googleapis.com/trace"
 	spanKey     = "logging.googleapis.com/spanId"
-	httpKey     = "httpRequest"
 )
 
 // traceProject is the project log lines name in their trace field. It is
