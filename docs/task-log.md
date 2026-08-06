@@ -16207,3 +16207,112 @@ renders `err` and `req`; a multi-line `err` indents; an unknown-key
 payload degrades readably; a request logged by both Cloud Run and tako
 prints once. The live half is the reproduction above, in
 `validate/logs.md`.
+
+## RC1 + RC2 — shipped and verified live (2026-08-05)
+
+Both approved as proposed and implemented as approved. Commits
+`b90ac51` (RC1) and `1ad390e` (RC2).
+
+### RC1, live
+
+The plan showed the fix before anything was applied — the two indexes
+that survived the env-scoped destroy skipping, the missing one being
+created, each naming the query that asks for it:
+
+```
+    skip    datastore index photos (owner, ready)             ← app.go:384 readyPhotos
+    skip    datastore index photos (owner, ready, -created)   ← app.go:404 readyPage
+  + create  datastore index photos (ready, -created)          ← app.go:404 readyPage
+```
+
+Then the request that started all of this:
+
+```
+GET /api/photos → 200
+{"photos":[]}
+```
+
+**§4 of validate/release-cycle.md now passes.** The same URL that
+answered 500 four hours ago answers 200, from an index tako derived
+because the filter that produces it sits inside an `if`.
+
+Index build was 3m8s, consistent with the ~4 minutes entity.md
+promises, and the deploy overlapped it with the image push as designed
+(6m5s total).
+
+### RC2, live
+
+The structured rendering works on real entries. tako's cron line now
+arrives with its fields instead of just its message:
+
+```
+20:30:54 x1-gallery   INFO    cron driven by Cloud Scheduler
+                              cron: Cleanup
+                              schedule: every 24h
+```
+
+Before RC2 that was one line reading `cron driven by Cloud Scheduler`,
+with `cron` and `schedule` dropped — the same discard that hid
+Datastore's remediation.
+
+Not exercised live: the multi-line `err` path, because after RC1 there
+is no handler error left to provoke on this app. It is covered by
+`logs_test.go` against the exact payload gallery wrote.
+
+Incidental: hammering `tako logs` tripped Cloud Logging's read quota,
+and the retry narration behaved — `↻ POST entries:list: HTTP 429 —
+retrying in 1s`, then a clean 429 error naming the quota when the
+retries ran out.
+
+### Discovered work #9 — diagnosed, NOT fixed
+
+The duplicate request lines reproduce on `hello` and **not** on
+gallery. One curl, two entries:
+
+```
+20:33:47 hello        INFO    GET /hello → 200 (8.8ms)
+20:33:47 hello                GET /hello → 200 (0.7ms)
+```
+
+The blank-severity line with the handler-only duration is tako's own
+`logRequest` `fmt.Printf`. It should never run in the cloud —
+`logging.go:156` returns early when `traceProject` is set — so
+`traceProject` is empty, so `useCloudLogging` never ran, so `BootGCP`
+never ran. And it never ran because **codegen does not emit `Boot()`
+for this service** (`codegen.go:316`):
+
+```go
+if hasResources(g, svc) || hasAuth(g) {
+	b.WriteString("\truntime.Boot() …")
+}
+```
+
+hello declares no resources and no auth. The guard reasons about
+BACKENDS — nothing to wire when nothing is declared, which is correct —
+but cloud logging setup rides inside `Boot` and is not a backend
+concern. So a resource-less service in production:
+
+1. writes plain text instead of Cloud Logging JSON, so **every line has
+   no severity** — `tako logs` shows a blank column, and severity
+   filtering in the console matches nothing;
+2. carries no trace, so handler lines do not nest under their request;
+3. double-logs every request, which is only the visible symptom.
+
+This is why `hello` duplicated and `gallery` did not, and it is a
+framework bug rather than the reader cosmetic #9 was filed as. The fix
+belongs in codegen or in `Boot`'s split — install cloud logging
+unconditionally, wire backends conditionally — and it changes generated
+code for every resource-less service, so it is its own task. Renamed
+from "prints each request twice" to what it actually is:
+
+**#9 (revised). A service with no resources never installs cloud
+logging.** Severity, tracing and request-log de-duplication all ride on
+`Boot()`, which codegen omits when there is nothing to wire.
+
+### Cleanup
+
+hello and gallery destroyed, `x1-notifier-key` deleted, project
+verified clean of `x1-`/`hello` run services, service accounts and
+secrets. The three Datastore composite indexes remain by design —
+env-scoped destroy says so on the tin ("shared repo, indexes, and
+framework bucket stay") and they are derivable, never data.
