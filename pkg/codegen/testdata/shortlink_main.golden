@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	runtime.Boot() // wire backends: local under .tako/data, gcp from Phase E
+	runtime.Boot() // observability always; backends when this package declares any
 
 	// queue archive: WithDelivery RateLimit 2 — Cloud Tasks caps dispatch
 	// in the cloud; locally the dispatcher paces to the same rate.

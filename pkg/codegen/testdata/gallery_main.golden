@@ -14,7 +14,7 @@ import (
 )
 
 func main() {
-	runtime.Boot() // wire backends: local under .tako/data, gcp from Phase E
+	runtime.Boot() // observability always; backends when this package declares any
 
 	// tako's own endpoints, on a mux of their own. They are answered
 	// before the app's router below is consulted, so nothing under

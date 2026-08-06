@@ -435,7 +435,7 @@ func runDeploy(args []string) error {
 // than the deploy actually asks for.
 func projectGrantReason(role string) string {
 	if strings.HasPrefix(role, "roles/monitoring") {
-		return "counters and histograms derive no usage edges, so every service writes metrics — package-wide, like secrets"
+		return "every service exports requests and request_ms from the request middleware, and counters derive no usage edges — package-wide, like secrets"
 	}
 	return "GCP has no per-kind Datastore IAM"
 }

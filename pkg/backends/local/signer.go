@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gsandoval/tako/internal/routes"
@@ -22,8 +23,12 @@ import (
 // The HMAC secret persists at <dir>/signing.key so URLs survive tako
 // dev reloads and restarts.
 type URLSigner struct {
-	base   string // e.g. "http://localhost:8090"
+	base string // e.g. "http://localhost:8090"
+	dir  string
+	once sync.Once
+	// secret is minted on first use, not at boot — see NewURLSigner.
 	secret []byte
+	err    error
 }
 
 // signedClaims is the token payload. Field names are single letters
@@ -39,23 +44,39 @@ type signedClaims struct {
 
 // NewURLSigner roots a signer at dir (sharing the backend data root) with
 // URLs served from base.
+// The key is read (or minted) on the first signature, not here (RC3):
+// every generated service boots now, and one that never signs a URL
+// should not create a data directory to hold a key it never uses.
 func NewURLSigner(dir, base string) (*URLSigner, error) {
-	path := filepath.Join(dir, "signing.key")
-	secret, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		secret = make([]byte, 32)
-		if _, err := rand.Read(secret); err != nil {
-			return nil, err
+	return &URLSigner{base: strings.TrimRight(base, "/"), dir: dir}, nil
+}
+
+// key loads the signing secret once, minting and persisting it the
+// first time. Reload-stable: the same file backs every later run, which
+// is what lets a signed URL outlive a dev restart.
+func (s *URLSigner) key() ([]byte, error) {
+	s.once.Do(func() {
+		path := filepath.Join(s.dir, "signing.key")
+		secret, err := os.ReadFile(path)
+		if os.IsNotExist(err) {
+			secret = make([]byte, 32)
+			if _, err := rand.Read(secret); err != nil {
+				s.err = err
+				return
+			}
+			if err := os.MkdirAll(s.dir, 0o755); err != nil {
+				s.err = err
+				return
+			}
+			err = os.WriteFile(path, secret, 0o600)
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return nil, err
+		if err != nil {
+			s.err = fmt.Errorf("signing key: %w", err)
+			return
 		}
-		err = os.WriteFile(path, secret, 0o600)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("signing key: %w", err)
-	}
-	return &URLSigner{base: strings.TrimRight(base, "/"), secret: secret}, nil
+		s.secret = secret
+	})
+	return s.secret, s.err
 }
 
 func (s *URLSigner) SignPut(ctx context.Context, bucket, key string, ttl time.Duration, c backends.SignConstraints) (string, error) {
@@ -84,7 +105,11 @@ func (s *URLSigner) sign(c signedClaims) (string, error) {
 		return "", err
 	}
 	body := base64.RawURLEncoding.EncodeToString(raw)
-	return s.base + routes.Signed + body + "." + s.mac(body), nil
+	sig, err := s.mac(body)
+	if err != nil {
+		return "", err
+	}
+	return s.base + routes.Signed + body + "." + sig, nil
 }
 
 // verify authenticates a token (the path segment after /_tako/api/signed/)
@@ -92,7 +117,11 @@ func (s *URLSigner) sign(c signedClaims) (string, error) {
 // endpoint maps them to distinct texts.
 func (s *URLSigner) verify(token string) (signedClaims, error) {
 	body, mac, ok := strings.Cut(token, ".")
-	if !ok || !hmac.Equal([]byte(s.mac(body)), []byte(mac)) {
+	want, err := s.mac(body)
+	if err != nil {
+		return signedClaims{}, err
+	}
+	if !ok || !hmac.Equal([]byte(want), []byte(mac)) {
 		return signedClaims{}, errBadSignature
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(body)
@@ -109,10 +138,14 @@ func (s *URLSigner) verify(token string) (signedClaims, error) {
 	return c, nil
 }
 
-func (s *URLSigner) mac(body string) string {
-	h := hmac.New(sha256.New, s.secret)
+func (s *URLSigner) mac(body string) (string, error) {
+	secret, err := s.key()
+	if err != nil {
+		return "", err
+	}
+	h := hmac.New(sha256.New, secret)
 	h.Write([]byte(body))
-	return base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+	return base64.RawURLEncoding.EncodeToString(h.Sum(nil)), nil
 }
 
 var (

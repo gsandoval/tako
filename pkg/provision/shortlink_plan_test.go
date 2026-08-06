@@ -108,7 +108,14 @@ func TestShortlinkGrantContents(t *testing.T) {
 	workerSA := "serviceAccount:shortlink-countclick-sa@my-proj.iam.gserviceaccount.com"
 	agent := "serviceAccount:service-123456@gcp-sa-pubsub.iam.gserviceaccount.com"
 	checks := map[string][]string{
-		"project":                         {"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA},
+		// metricWriter on both: every service exports requests and
+		// request_ms from the middleware, whether or not the app
+		// declares a Counter of its own (RC3 — shortlink declares none,
+		// and its flushes were being refused in production).
+		"project": {
+			"roles/datastore.user → " + workerSA, "roles/datastore.user → " + apiSA,
+			"roles/monitoring.metricWriter → " + workerSA, "roles/monitoring.metricWriter → " + apiSA,
+		},
 		"topic clicks":                    {"roles/pubsub.publisher → " + apiSA},
 		"run shortlink":                   {}, // public API service: no tako-member bindings
 		"run shortlink-countclick":        {"roles/run.invoker → " + workerSA},

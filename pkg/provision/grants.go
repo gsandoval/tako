@@ -91,11 +91,16 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// touches it — so there is no per-service set to narrow this to.
 	// Package-wide, like secrets, and the security summary says so rather
 	// than implying tako scoped it.
-	if hasMetrics {
-		for _, svc := range g.Services {
-			add(target{TargetProject, cfg.Project}, "roles/monitoring.metricWriter",
-				"serviceAccount:"+cfg.SAEmail(svc.Name))
-		}
+	//
+	// EVERY service, declared counters or not (RC3): the request
+	// middleware exports requests and request_ms from all of them, so
+	// gating this on a declared Counter left four of the six examples
+	// deploying services that write metrics they were refused —
+	// observed on shortlink as "Permission monitoring.timeSeries.create
+	// denied", which tako's own client correctly calls a deploy bug.
+	for _, svc := range g.Services {
+		add(target{TargetProject, cfg.Project}, "roles/monitoring.metricWriter",
+			"serviceAccount:"+cfg.SAEmail(svc.Name))
 	}
 	// Sessions are entity records (W5): every service that serves
 	// routes reads/writes them, so Auth alone grants datastore.user to

@@ -16500,3 +16500,80 @@ attempted and refused.
 - **Making request metrics optional.** They are what every alert in the
   reference is built on; an app that silently exports none is the bug,
   not the configuration.
+
+## RC3 — shipped and verified live (2026-08-05)
+
+Approved with the lazy-directory option taken. Validation step 1 ran
+first, as the proposal required, and it changed nothing about the shape
+— it confirmed Part B rather than eliminating it.
+
+### Step 1: the 403 is real
+
+`shortlink` deployed (boots, declares no Counter), one request, one
+flush interval:
+
+```
+21:40:06 shortlink  WARNING  tako: metrics flush failed — the totals are cumulative, so a later flush recovers unless this was the last one
+                             err: permission denied by /v3/projects/tako-test-01/timeSeries — this service's grants derive from the app graph at deploy time, so a runtime 403 is a tako deploy bug: re-run tako deploy, and file it if it persists (Permission monitoring.timeSeries.create denied…)
+                             final: false
+```
+
+Every 60s, in production, for four of the six examples.
+
+**RC2 is why that was readable.** Before it, this line printed its
+message and dropped `err` — the diagnosis would have needed
+`gcloud logging read` again. The previous task paid for itself inside
+one day.
+
+### What shipped
+
+**Part A** — `runtime.Boot()` is now emitted unconditionally
+(`codegen.go`). The guard asked "does this service have backends to
+wire", which is right for backends and wrong for the three things that
+ride along: Cloud Logging, trace correlation, and request metrics.
+
+**Part B** — `roles/monitoring.metricWriter` goes to every service, not
+only apps declaring a Counter, because the middleware exports
+`requests`/`request_ms` from all of them. The security summary's reason
+text was written for the counter case and is now accurate for the real
+one: "every service exports requests and request_ms from the request
+middleware, and counters derive no usage edges".
+
+**The lazy directory** — `local.OpenEntity` and `local.NewURLSigner`
+create nothing at boot; the bolt file, the signing key and `.tako/data`
+itself appear on first use. The cost, named in the proposal and
+accepted: a database another process holds is now reported at the first
+query rather than at boot, with the same message.
+
+### Verified live
+
+| Claim | Evidence |
+|---|---|
+| resource-less service logs with severity | `21:55:28 hello INFO GET /hello → 200 (4.9ms)` — **one** line where there were two, the second previously with no severity at all |
+| resource-less service exports metrics | Monitoring API: 1 series for `job=hello`, `custom.googleapis.com/tako/requests{route: GET /hello, status: 2xx} = 1` |
+| the 403 is gone | 0 flush failures in 6m of shortlink logs, where the same window previously held one per minute |
+| metrics actually land | `custom.googleapis.com/tako/requests{route: GET /api/links, status: 2xx}` present for shortlink |
+| local unchanged, no data dir | `tako dev` on hello serves `/hello` and `/greet/{name}`; `.tako/` holds `bin` and `gen` only |
+
+Both apps destroyed; project verified clean of `hello-`/`shortlink-`
+run services and service accounts.
+
+Incidental confirmations along the way: preflight caught a disabled
+`cloudtasks.googleapis.com` with the exact enable command; the port-in-use
+message named `lsof -i :8080` when a stale dev server held 8080; the
+logging read-quota retry narrated `↻ POST entries:list: HTTP 429 —
+retrying in 1s` before failing readably.
+
+### Test changes, deliberate
+
+`hello_main.golden` gains `runtime.Boot()`; four `pkg/provision`
+expectations gain the project-scope grant (hello's object count 6 → 7);
+`TestShortlinkGrantContents` gains `metricWriter` for both of
+shortlink's services — the case that had no coverage precisely because
+the grant was not there to assert.
+
+### Still open
+
+`httpKey` (`logging.go:40`) remains dead code, named as a non-goal in
+the proposal and still true: a one-line deletion for whoever is next in
+that file.

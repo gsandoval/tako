@@ -313,12 +313,15 @@ import (
 	}
 	b.WriteString("func main() {\n")
 
-	if hasResources(g, svc) || hasAuth(g) {
-		// Auth is app-wide: even a resource-less service resolves
-		// PROPAGATED sessions (§2.12) against the shared session store,
-		// and that store is wired at boot.
-		b.WriteString("\truntime.Boot() // wire backends: local under .tako/data, gcp from Phase E\n\n")
-	}
+	// Unconditional (RC3). The guard this replaces asked "does this
+	// service have backends to wire", which is the right question for
+	// backends and the wrong one for everything else Boot installs:
+	// Cloud Logging (so lines carry a severity and a trace) and the
+	// request metrics every service is supposed to export. A
+	// resource-less service got none of it — hello deployed with no
+	// severity on any line and no requests/request_ms at all, so an
+	// alert built on them watched a series nothing wrote.
+	b.WriteString("\truntime.Boot() // observability always; backends when this package declares any\n\n")
 	b.WriteString(callBlock)
 	for _, r := range g.Resources {
 		if r.Package == svc.Package && r.Kind == "queue" && r.RateLimit > 0 {

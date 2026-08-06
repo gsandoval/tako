@@ -14,6 +14,8 @@ import (
 )
 
 func main() {
+	runtime.Boot() // observability always; backends when this package declares any
+
 	mux := http.NewServeMux()
 
 	// GET /hello → Hello (hello.go:9)

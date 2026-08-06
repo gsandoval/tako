@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -22,34 +23,65 @@ import (
 // one bucket per kind, JSON documents as values, queries as in-process
 // scans. The file lives at <dir>/entity.db and survives restarts.
 type EntityStore struct {
-	db *bolt.DB
+	dir  string
+	once sync.Once
+	db   *bolt.DB
+	err  error
 }
 
-// OpenEntity opens (creating if needed) the entity database under dir.
+// OpenEntity prepares the entity database under dir. The file — and
+// the directory holding it — are created on FIRST USE, not here (RC3):
+// every generated service now calls Boot so that logging and metrics
+// are wired, including services that declare no entity at all, and
+// those should not litter a .tako/data they never read.
+//
+// The cost is that a database another process holds is reported at the
+// first query rather than at boot. The message is the same one, and it
+// still names the file and how to find the holder.
 func OpenEntity(dir string) (*EntityStore, error) {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	path := filepath.Join(dir, "entity.db")
-	db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: time.Second})
-	if err != nil {
-		if errors.Is(err, bolt.ErrTimeout) {
-			// The one way this happens in practice: another process has
-			// the file locked — usually an orphaned service from an
-			// earlier dev run. Say so, and say how to find it.
-			return nil, fmt.Errorf("opening local entity store: another process holds %s — an orphaned service from a previous run? find it with `lsof %s` and kill it (or remove .tako/data if nothing holds it)", path, path)
-		}
-		return nil, fmt.Errorf("opening local entity store: %w", err)
-	}
-	return &EntityStore{db: db}, nil
+	return &EntityStore{dir: dir}, nil
 }
 
-// Close releases the underlying database file.
-func (s *EntityStore) Close() error { return s.db.Close() }
+// handle opens the database once, on demand.
+func (s *EntityStore) handle() (*bolt.DB, error) {
+	s.once.Do(func() {
+		if err := os.MkdirAll(s.dir, 0o755); err != nil {
+			s.err = err
+			return
+		}
+		path := filepath.Join(s.dir, "entity.db")
+		db, err := bolt.Open(path, 0o644, &bolt.Options{Timeout: time.Second})
+		if err != nil {
+			if errors.Is(err, bolt.ErrTimeout) {
+				// The one way this happens in practice: another process
+				// has the file locked — usually an orphaned service from
+				// an earlier dev run. Say so, and say how to find it.
+				s.err = fmt.Errorf("opening local entity store: another process holds %s — an orphaned service from a previous run? find it with `lsof %s` and kill it (or remove .tako/data if nothing holds it)", path, path)
+				return
+			}
+			s.err = fmt.Errorf("opening local entity store: %w", err)
+			return
+		}
+		s.db = db
+	})
+	return s.db, s.err
+}
+
+// Close releases the underlying database file, if one was ever opened.
+func (s *EntityStore) Close() error {
+	if s.db == nil {
+		return nil
+	}
+	return s.db.Close()
+}
 
 func (s *EntityStore) Get(ctx context.Context, kind, id string) ([]byte, error) {
+	db, err := s.handle()
+	if err != nil {
+		return nil, err
+	}
 	var doc []byte
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return backends.ErrNotFound
@@ -65,7 +97,11 @@ func (s *EntityStore) Get(ctx context.Context, kind, id string) ([]byte, error) 
 }
 
 func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+	db, err := s.handle()
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(kind))
 		if err != nil {
 			return err
@@ -75,7 +111,11 @@ func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte) erro
 }
 
 func (s *EntityStore) Delete(ctx context.Context, kind, id string) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+	db, err := s.handle()
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return nil
@@ -85,8 +125,12 @@ func (s *EntityStore) Delete(ctx context.Context, kind, id string) error {
 }
 
 func (s *EntityStore) Exists(ctx context.Context, kind, id string) (bool, error) {
+	db, err := s.handle()
+	if err != nil {
+		return false, err
+	}
 	exists := false
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		if b := tx.Bucket([]byte(kind)); b != nil {
 			exists = b.Get([]byte(id)) != nil
 		}
@@ -96,7 +140,11 @@ func (s *EntityStore) Exists(ctx context.Context, kind, id string) (bool, error)
 }
 
 func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(doc []byte) ([]byte, error)) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+	db, err := s.handle()
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return backends.ErrNotFound
@@ -114,7 +162,11 @@ func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(d
 }
 
 func (s *EntityStore) Tx(ctx context.Context, kind string, fn func(tx backends.EntityTxOps) error) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
+	db, err := s.handle()
+	if err != nil {
+		return err
+	}
+	return db.Update(func(tx *bolt.Tx) error {
 		b, err := tx.CreateBucketIfNotExists([]byte(kind))
 		if err != nil {
 			return err
@@ -148,8 +200,12 @@ func (s *EntityStore) Query(ctx context.Context, kind string, q backends.EntityQ
 		doc    []byte
 		fields map[string]any
 	}
+	db, err := s.handle()
+	if err != nil {
+		return nil, err
+	}
 	var rows []row
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return nil
@@ -261,8 +317,12 @@ func (s *EntityStore) Page(ctx context.Context, kind string, q backends.EntityQu
 		doc    []byte
 		fields map[string]any
 	}
+	db, err := s.handle()
+	if err != nil {
+		return nil, "", err
+	}
 	var rows []row
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return nil
@@ -351,8 +411,12 @@ func afterCursor(v any, id string, c pageCursor, desc bool) bool {
 // Limit and Order are deliberately not consulted — see the contract on
 // backends.Entity.
 func (s *EntityStore) Count(ctx context.Context, kind string, q backends.EntityQuery) (int64, error) {
+	db, err := s.handle()
+	if err != nil {
+		return 0, err
+	}
 	var n int64
-	err := s.db.View(func(tx *bolt.Tx) error {
+	err = db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket([]byte(kind))
 		if b == nil {
 			return nil
