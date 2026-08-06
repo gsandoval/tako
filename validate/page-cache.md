@@ -57,3 +57,23 @@ go test ./...
 
 Every other example still answers `no-cache`, because zero means what
 it always meant.
+
+## 4. Live — the half only a deploy can show
+
+Deploy an app with a cacheable page and request it **with no cookies
+held**:
+
+```
+curl -s -i https://<service>/<cacheable-path> | grep -iE "^cache-control|^set-cookie"
+```
+
+Expect `public, max-age=300` and **no** `Set-Cookie`. If a Set-Cookie
+appears, Cloud Run's frontend rewrites the header to `private` and the
+page is not shared-cacheable on the visit that matters. This cannot be
+reproduced locally: the header tako writes is correct either way, and
+the rewrite happens above the process.
+
+Seeding a page to request may need writing an entity directly
+(`datastore.googleapis.com/v1/projects/<p>:commit`, `_doc` blob plus
+indexed properties, namespace = env) when the app's own write path
+needs a sign-in.

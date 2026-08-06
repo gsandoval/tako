@@ -192,6 +192,23 @@ one day a reader sees someone else's page. So it fails analysis:
 app.go:64:2: Dashboard sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in visitor's page to another; drop MaxAge, or drop SignIn (tako/cache-signin)
 ```
 
+**A cacheable page carries no CSRF token.** A response a shared cache
+stores is handed to the next visitor, so it must contain nothing that
+belongs to one — and a CSRF token is exactly that. tako mints no cookie
+on a page with `MaxAge`, which means `{{ csrf }}` renders empty there:
+a cacheable page cannot carry a form. Same bargain as `cache-signin`,
+same reason.
+
+That is also what makes the header REACHABLE. Cloud Run's frontend
+downgrades `public` to `private` whenever a response carries a
+`Set-Cookie`, so before this a cacheable page was publicly cached on
+every visit except the first — the one a shared cache exists for:
+
+```
+cache-control: private, max-age=300   ← first visit, Set-Cookie present
+cache-control: public,  max-age=300   ← cookie already held
+```
+
 Static assets are already handled and need nothing: a fingerprinted file
 (`app.3f2a1c.js`) gets `public, max-age=31536000, immutable`, everything
 else under the site gets `no-cache` with a strong ETag.
