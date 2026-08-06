@@ -487,6 +487,35 @@ fresh-project cycle against the published module path. The verdicts also
 need to travel back to `flautas/docs/friction.md` under its ADR 0008 —
 a flauta-session job; tako never patches flauta.
 
+**FL5b–FL9 and RC1–RC3 — the friction log, worked down (2026-08-05/06).**
+Details and transcripts in `task-log.md`; this is the map.
+
+- **FL5b** — shop's browser code follows the `/_tako/` move. FL5 moved
+  six public URLs and left one hand-written `app.ts` behind; the guard
+  is a test in `internal/routes` that checks examples against the
+  constants, not against a copy.
+- **FL6 / FL6a** — `tako/site-shadow`, a decision-time warning, and
+  journal's assets out from under `GET /{year}/{slug}`. FL6 found
+  journal serving its own stylesheet as a 404 on its first run.
+- **FL7** — `ServiceHandle.Domain()`: a service reads back the domain
+  it declared.
+- **RC1** — index derivation follows the branches (gallery's production
+  500). **RC2** — `tako logs` prints the error, not the label.
+  **RC3** — every deployed service is observable: `runtime.Boot()`
+  unconditionally, and `metricWriter` granted to match what the
+  middleware actually writes.
+- **FL8** — the app identifier is derived where Google constrains the
+  characters. Blocked every deploy of every app whose module path names
+  a host, with no app-side workaround; no example could reach it, so
+  `examples/hello` moved to a host-shaped module path. That move
+  immediately found a second wall in codegen's import alias.
+- **FL9** — an index note belongs to its index (RC1's attribution, one
+  row off).
+
+Live-verified against tako-test-01 through RC3; FL8's create is the one
+step `--plan` cannot exercise and belongs to the next release-cycle
+walk.
+
 ### Deliberately NOT scheduled
 
 Designed and argued, waiting on a trigger rather than on time:
