@@ -18100,3 +18100,147 @@ Both of today's real defects were invisible below the cloud boundary.
 `private, max-age=300` cannot be reproduced locally at all, and the IAM
 race only fires against a real, eventually-consistent IAM. A green
 local suite says nothing about either.
+
+## Friction-log review #3 (2026-08-06, after FL10–FL13)
+
+flauta re-reviewed at `0bd2aef` — **before** FL10–FL13 — and **flauta
+is now deployed**: `https://flauta-web-rnldhq6wqa-uc.a.run.app`. Their
+seven open items, each re-checked against tako's source today rather
+than carried forward:
+
+| Their entry | Actually |
+|---|---|
+| The project IAM grant races the SA it names | **CLOSED** by FL13 (`7d3085d`), shipped after their review |
+| The 404 renders with nil data | **CLOSED** by FL11 (`9c8d77f`) — the status page gets a full Ctx |
+| A Page handler cannot answer 403 with a page | **closed in substance, differently than asked** — see below |
+| `AuthConfig` cannot scope which providers a session may come from | **still true**, verified line by line — the task below |
+| `tako logs` reads Logging against the shared gcloud quota project | still true, not yet read in detail |
+| The dev bar is appended to htmx fragments | still true |
+| Every page renders through one root template | still true |
+
+**On the 403.** flauta asked for `tako.StatusHTML(403, html)` — a
+handler returning its own markup with a status. FL11 does not provide
+that. What it does provide is that a 403 renders through the app's own
+status page, with a full `Ctx`, in the site's chrome — which is R1's
+"warm dead-end" (*tell them which address they signed in with*)
+reachable via `ctx.User()` inside the status page. The outcome is
+available; the spelling they proposed is not. **Theirs to verify, not
+mine to close** — tako never edits flauta's log.
+
+## FL14 — DX proposal: a declared provider is a scoped door (2026-08-06) — AWAITING APPROVAL
+
+flauta's first **security** entry, taken as a task.
+
+### The finding holds, verified line by line
+
+`pkg/runtime/session.go:281` unmarshals exactly:
+
+```go
+var claims struct {
+	Iss, Aud string; Exp int64; Sub, Email, Name string
+}
+```
+
+There is no `firebase.sign_in_provider`, and `tako.User` (`ctx.go:39`)
+carries `ID`, `Email`, `Name` — nothing else. So **any** Identity
+Platform token for the project verifies, whatever provider minted it.
+
+The other half is in the provisioner. `EnsureAuthClient`
+(`preflight.go:318`) enables a declared provider — *"declared →
+enabled: the declaration is the decision"* — and **never disables an
+undeclared one**. A project where email/password is on (Firebase's
+default, another app's deploy, or a console click) accepts password
+sessions for an app that declared `AuthConfig{Google: true}`.
+
+flauta's own words for why this matters: *"the declaration reads like
+a restriction and is not one."* An author writing `Google: true`
+believes they have scoped their door. tako-test-02 had self-service
+password sign-up open, so a self-registered account would have produced
+a session tako accepted; only an allowlist string comparison stood
+behind it.
+
+### What ships
+
+**1. The session is scoped to the declared providers.** `verifyIDToken`
+reads `firebase.sign_in_provider` and refuses a token whose provider
+the app did not declare:
+
+```
+sign-in refused: this token was minted by password, and this app declares google — tako.AuthConfig{Google: true}
+```
+
+The claim is already in the token. This is a comparison tako is
+positioned to make and the app is not.
+
+The declared set reaches the verifier the way every other declaration
+reaches the runtime: codegen passes it, so
+`runtime.SessionHandler()` becomes `runtime.SessionHandler("google")`.
+That is a `runtime_lock` change — generated code in users' repos names
+it — and therefore deliberate and called out.
+
+**2. The claims an app cannot otherwise see.** `tako.User` gains:
+
+```go
+// Provider is the sign-in method that minted this session:
+// "google", "email". Scoping already refused anything undeclared;
+// this is for an app that declares more than one and treats them
+// differently.
+Provider string
+// EmailVerified is the provider's claim about the address. A Google
+// identity is verified by Google; a password account is whatever
+// Identity Platform was configured to require.
+EmailVerified bool
+```
+
+`EmailVerified` is not decoration. An allowlist keyed on **email** —
+which is what flauta's `editors` is, and the obvious shape — is only as
+strong as the guarantee that the address is real. For Google that
+guarantee is Google's; for password it is a project setting nobody in
+the app can see. Exposing the claim is what lets an app say
+`if !u.EmailVerified { deny }` instead of trusting a string.
+
+Both halves are one change to one function, which is why they ship
+together rather than as 1-then-2.
+
+### The behaviour change, stated loudly
+
+An app declaring `Google: true` whose users have been signing in with
+password will start refusing those sign-ins. **That is the fix**, not a
+side effect. It is a sign-in-time check, so sessions already
+established in the entity store keep working until they expire or are
+revoked — the change cannot log anybody out mid-visit.
+
+`tako dev` is unaffected: the dev bar establishes sessions at
+`session.go:136` without going through `verifyIDToken` at all.
+
+### Not in scope (the fence)
+
+- **Disabling undeclared providers at the project level.** flauta's
+  workaround (`client.permissions.disabledUserSignup`) is a real
+  control, and tako reaching in to turn off a provider it did not
+  declare would be tako deciding something about a project it shares.
+  Scoping the session gets the security property without that.
+  Recorded as a candidate, not built.
+- `anonymous`, phone, or any provider tako does not declare — they are
+  refused by the same rule, with no per-provider handling.
+- Re-verifying live sessions against a provider list that changed after
+  they were minted.
+
+### Tests
+
+- `verifyIDToken` with a `password` token against a `google` app →
+  refused, exact text; the same token against an app declaring both →
+  accepted.
+- `Provider` and `EmailVerified` populated from the claim on both
+  paths, and absent-claim defaults (`EmailVerified` false when the
+  claim is missing — the safe direction).
+- A token with no `firebase` object at all → refused, not accepted as
+  "no provider".
+- The runtime lock and SDK lock move; both deliberate.
+
+### Validation
+
+`validate/auth.md` gains the scoping step. The live half needs a
+password account on a project with both providers enabled — which is
+exactly the configuration flauta found, and which I can reproduce on
+tako-test-02 rather than tako-test-01.
