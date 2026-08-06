@@ -18355,3 +18355,47 @@ config. It is an ADC-wide property — user credentials carry no quota
 project — so the fix (send `x-goog-user-project`, or say so in the
 error) belongs to the shared client, not to one command. Their entry
 understates the scope.
+
+## Wrap-up check (2026-08-06)
+
+### Discovered work
+
+**14. A destroy of ONE app removes the project's SHARED objects.** The
+framework bucket (`<project>-tako`) and the Artifact Registry repo
+(`RepoName = "tako"`, explicitly "app-agnostic") carry no app label and
+are deleted by any app's `tako destroy`. Under the dedicated-project
+doctrine that is correct and intended. On a project holding more than
+one app — which every tako TEST project does — one app's teardown takes
+the lease bucket and the image repo out from under the others.
+
+Nothing was harmed today, and the audit log is the reason I can say so
+rather than assume it:
+
+```
+15:09:33-39  flauta-web + SA + framework bucket deleted   (flauta's own destroy)
+15:12:37     journal-sa created                            (my deploy's first write)
+15:16:41     journal created
+15:18:21-25  journal + SA + framework bucket deleted       (my destroy)
+```
+
+flauta's teardown finished three minutes before my deploy wrote
+anything, and `RunServices.List` filters by the `tako-app` label
+(`run.go:89`), so an orphan sweep could not have reached their service
+either. Two independent reasons, one of them structural.
+
+The hazard is still real: had flauta still been deployed at 15:18, my
+journal destroy would have deleted the bucket their deploy lease lives
+in. Both objects are recreated on demand, so the blast radius is a
+failed concurrent deploy rather than data loss — but a destroy that
+says "✓ destroyed" while removing another app's infrastructure is not
+honest. Candidate fix: name shared objects in the destroy preamble as
+shared, or skip them when another app's labels are present in the
+project.
+
+### Cleanup
+
+tako-test-01: no services, no buckets, no indexes. tako-test-02: the
+`orders` (shop) and `photos` (gallery) indexes left by earlier sessions
+were cleared by running each example's own destroy, as the owner
+directed for the tako-test-01 leftovers; both now DELETING. The FL14
+probe account was deleted immediately after the test.
