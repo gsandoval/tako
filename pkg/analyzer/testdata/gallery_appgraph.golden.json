@@ -85,7 +85,16 @@
           "owner",
           "ready",
           "-created"
+        ],
+        [
+          "ready",
+          "-created"
         ]
+      ],
+      "composite_sources": [
+        "app.go:384 readyPhotos",
+        "app.go:404 readyPage",
+        "app.go:404 readyPage"
       ],
       "pos": "app.go:22:2"
     },

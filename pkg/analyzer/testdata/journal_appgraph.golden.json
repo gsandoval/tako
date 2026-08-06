@@ -33,6 +33,9 @@
           "-created"
         ]
       ],
+      "composite_sources": [
+        "app.go:91 home"
+      ],
       "pos": "app.go:15:2"
     },
     {

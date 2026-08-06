@@ -68,6 +68,9 @@
           "-created"
         ]
       ],
+      "composite_sources": [
+        "app.go:184 listOrders"
+      ],
       "pos": "app.go:27:2"
     },
     {

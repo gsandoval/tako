@@ -19,12 +19,19 @@ type entityType struct {
 	indexed  map[string]bool   // membership set of declared
 	wire     map[string]string // Go field → marshaled property name (json tag rule)
 	used     map[string]bool   // fields seen in Where/OrderBy call sites
-	// chains are per-FUNCTION query shapes (R0): every Where/OrderBy
-	// on this entity inside one function forms one tuple. Chains built
-	// across functions merge conservatively per function — this can
-	// over-index a function with two separate queries, never
-	// under-index one (the aggregate-per-entity scheme it replaces
-	// DID under-index once query shapes split; shop proved it live).
+	// chains are the query shapes derived per function (R0), one per
+	// combination of branches that function can take (RC1). A function
+	// whose filters are all unconditional contributes exactly one.
+	//
+	// The pre-RC1 rule was "one tuple per function", justified as
+	// over-indexing a function with two separate queries but never
+	// under-indexing one. That was false for a query assembled ACROSS a
+	// branch: gallery's readyPhotos adds its owner filter inside an if,
+	// which folded into the single tuple and left the without-owner
+	// shape unindexed. It answered 500 in production — Datastore asked
+	// for exactly the index nobody derived — while every local test
+	// passed, because the local backend is bbolt and has no indexes to
+	// be wrong about.
 	chains []queryChain
 }
 
@@ -32,6 +39,18 @@ type entityType struct {
 type queryChain struct {
 	filters map[string]bool
 	orders  []orderBy // in call order
+	// source is the query this shape came from, "app.go:385 readyPhotos".
+	// It rides to the deploy plan as an annotation (RC1).
+	source string
+}
+
+// queryMod is one Where or OrderBy call, in the order it appears, and
+// whether a branch guards it. optional modifiers are what make a
+// function produce more than one shape (RC1); dir is "" for a filter.
+type queryMod struct {
+	field    string
+	dir      string
+	optional bool
 }
 
 type orderBy struct {
@@ -174,6 +193,21 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 // scanQueries walks the package for Where/OrderBy calls on entity
 // queries, enforces constant + indexed fields, and records each store's
 // used fields — the derived index set.
+//
+// Filters are classified by the block they sit in (RC1). One assembled
+// across a branch produces MORE THAN ONE runtime shape:
+//
+//	q := photos.Query(ctx).Where("Ready", "=", true)
+//	if owner != "" {
+//	    q = q.Where("Owner", "=", owner)
+//	}
+//
+// runs as {ready} for an anonymous caller and {ready, owner} otherwise,
+// and Datastore needs an index for each — a composite on
+// (owner, ready, -created) does not serve a query that never constrains
+// owner. Folding both Where calls into one shape, which is what this
+// did before RC1, left the narrower one unindexed and answered 500 in
+// production while every local test passed.
 func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityType, errs *ErrorList) {
 	for _, file := range pkg.Syntax {
 		for _, decl := range file.Decls {
@@ -181,17 +215,26 @@ func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityT
 			if !ok || fd.Body == nil {
 				continue
 			}
-			// One chain per (entity, function): see entityType.chains.
-			fnChains := map[*entityType]*queryChain{}
-			chainOf := func(et *entityType) *queryChain {
-				if fnChains[et] == nil {
-					fnChains[et] = &queryChain{filters: map[string]bool{}}
-					et.chains = append(et.chains, queryChain{})
+			// Modifiers in call order, per entity, each tagged with
+			// whether a branch guards it.
+			fnMods := map[*entityType]*[]queryMod{}
+			modsOf := func(et *entityType) *[]queryMod {
+				if fnMods[et] == nil {
+					fnMods[et] = &[]queryMod{}
 				}
-				return fnChains[et]
+				return fnMods[et]
 			}
-			_ = chainOf
+			// ast.Inspect visits a node, then its children, then nil —
+			// so pushing on entry and popping on nil keeps an accurate
+			// ancestor stack, which is what tells a guarded call from an
+			// unconditional one.
+			var stack []ast.Node
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
+				if n == nil {
+					stack = stack[:len(stack)-1]
+					return true
+				}
+				stack = append(stack, n)
 				call, ok := n.(*ast.CallExpr)
 				if !ok || len(call.Args) < 1 {
 					return true
@@ -234,19 +277,118 @@ func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityT
 					return true
 				}
 				et.used[field] = true
-				c := chainOf(et)
-				if direction == "" {
-					c.filters[field] = true
-				} else {
-					c.orders = append(c.orders, orderBy{field: field, dir: direction})
-				}
+				mods := modsOf(et)
+				*mods = append(*mods, queryMod{
+					field:    field,
+					dir:      direction,
+					optional: guarded(stack),
+				})
 				return true
 			})
-			for et, c := range fnChains {
-				et.chains[len(et.chains)-1] = *c
+			for et, mods := range fnMods {
+				expandShapes(dir, pkg, fd, et, *mods, errs)
 			}
 		}
 	}
+}
+
+// branchStmts are the statements whose bodies a query modifier can hide
+// inside. A modifier under any of them may or may not run, which is the
+// whole of RC1.
+func guarded(stack []ast.Node) bool {
+	for _, n := range stack {
+		switch n.(type) {
+		case *ast.IfStmt, *ast.ForStmt, *ast.RangeStmt, *ast.SwitchStmt,
+			*ast.TypeSwitchStmt, *ast.SelectStmt, *ast.CaseClause, *ast.CommClause:
+			return true
+		}
+	}
+	return false
+}
+
+// maxOptionalMods caps the powerset. k optional modifiers in one
+// function are 2^k shapes and so up to 2^k composite indexes; Datastore
+// allows 200 per project and each takes minutes to build. Real code sits
+// at one to three. Past this tako refuses at analysis time rather than
+// deriving an index set nobody can deploy.
+const maxOptionalMods = 4
+
+// expandShapes turns one function's modifiers into one chain per
+// runtime shape: the mandatory ones, plus every subset of the guarded
+// ones. Call order is preserved within each shape, which is what makes
+// the OrderBy suffix of a tuple correct.
+func expandShapes(dir string, pkg *packages.Package, fd *ast.FuncDecl, et *entityType, mods []queryMod, errs *ErrorList) {
+	var optional []int
+	for i, m := range mods {
+		if m.optional {
+			optional = append(optional, i)
+		}
+	}
+	if len(optional) > maxOptionalMods {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, fd.Name.Pos()),
+			Msg: fmt.Sprintf("%s assembles one query from %d conditional filters — that is %d composite indexes for a single function, and Datastore allows 200 in a project; split it into separate queries whose filters are unconditional",
+				fd.Name.Name, len(optional), 1<<len(optional)),
+			Rule: "query-shapes",
+		})
+		return
+	}
+	// "app.go:385 readyPhotos" — the column is dropped: this points a
+	// reader at a query, it is not a compiler diagnostic to jump to.
+	pos := relPos(dir, pkg.Fset, fd.Name.Pos())
+	if i := strings.LastIndex(pos, ":"); i >= 0 {
+		pos = pos[:i]
+	}
+	shapes := shapesOf(mods)
+	for i := range shapes {
+		shapes[i].source = pos + " " + fd.Name.Name
+	}
+	et.chains = append(et.chains, shapes...)
+}
+
+// shapesOf enumerates the runtime shapes of one function's modifiers:
+// the mandatory ones, plus every subset of the guarded ones. Pure, so
+// the enumeration is testable without an AST.
+//
+// The mandatory-only shape is always among them — index 0 of the
+// powerset — and it is the one the pre-RC1 scheme dropped, because it
+// is what runs when every branch is skipped.
+//
+// Deliberate over-indexing: if/else arms are treated as independently
+// optional, so a combination that cannot occur together still derives
+// an index. Over-indexing is the safe direction, and ruling it out
+// needs path sensitivity this does not have.
+func shapesOf(mods []queryMod) []queryChain {
+	var optional []int
+	for i, m := range mods {
+		if m.optional {
+			optional = append(optional, i)
+		}
+	}
+	out := make([]queryChain, 0, 1<<len(optional))
+	for mask := 0; mask < 1<<len(optional); mask++ {
+		on := map[int]bool{}
+		for bit, idx := range optional {
+			if mask&(1<<bit) != 0 {
+				on[idx] = true
+			}
+		}
+		c := queryChain{filters: map[string]bool{}}
+		for i, m := range mods {
+			if m.optional && !on[i] {
+				continue
+			}
+			if m.dir == "" {
+				c.filters[m.field] = true
+			} else {
+				// Call order is preserved, which is what makes the
+				// OrderBy suffix of the derived tuple correct.
+				c.orders = append(c.orders, orderBy{field: m.field, dir: m.dir})
+			}
+		}
+		out = append(out, c)
+	}
+	return out
 }
 
 // entityQueryMethod reports the EntityQuery method a call invokes and the

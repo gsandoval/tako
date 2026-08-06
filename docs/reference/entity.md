@@ -131,11 +131,32 @@ indexes from the fields you actually `Where`/`OrderBy`, and a Datastore
 **composite index per combined query shape**, grouped per function —
 filter fields first (struct order, ascending), then `OrderBy` fields in
 call order, `-`-prefixed for descending, in marshaled JSON property
-names. Grouping per function can over-index a function running two
-separate queries; it never under-indexes a shape. The one query in
-[examples/blog](../../examples/blog/app.go) —
+names. The one query in [examples/blog](../../examples/blog/app.go) —
 `.Where("Post", "=", …).OrderBy("Created")` — derives
 `comments (post, created)`; shortlink's derives `links (owner, -created)`.
+
+**A query built across a branch is more than one shape**, and each gets
+its own index:
+
+```go
+q := photos.Query(ctx).Where("Ready", "=", true)
+if owner != "" {
+	q = q.Where("Owner", "=", owner)
+}
+```
+
+runs as `{ready}` for an anonymous caller and `{ready, owner}` for a
+signed-in one — so tako derives `photos (ready, -created)` **and**
+`photos (owner, ready, -created)`. Datastore will not serve the first
+query from the second index: a composite is only usable by a query that
+constrains its leading properties. Filters in mutually exclusive arms
+(`if`/`else`) are treated as independently optional, so the combination
+that cannot occur is derived too — over-indexing is the safe direction.
+
+Past **four** conditional filters in one function the powerset stops
+being reasonable — sixteen indexes for one query — and tako refuses at
+analysis time (`tako/query-shapes`) rather than deriving a set that
+would not fit Datastore's 200-per-project limit. Split the query.
 
 Composite indexes are built at deploy time and are the slowest part of a
 first deploy: **~4 minutes each**, flat, regardless of how much data you
@@ -144,9 +165,16 @@ concurrently) and collects them just before your services go live, so
 the wait overlaps the image push rather than adding to it. Two indexes
 cost ~4 minutes, not ~8.
 
-`tako deploy` shows each composite as a `+ datastore index` plan entry
-and creates it before the services, waiting on the build (first builds
-take minutes). Live indexes on kinds tako manages that match no current
+`tako deploy` shows each composite as a `+ datastore index` plan entry,
+annotated with the query that asks for it, and creates it before the
+services, waiting on the build (first builds take minutes):
+
+```
++ create  datastore index photos (ready, -created)         ← app.go:404 readyPage
++ create  datastore index photos (owner, ready, -created)  ← app.go:404 readyPage
+```
+
+An entry with no arrow is an index nothing declares. Live indexes on kinds tako manages that match no current
 query shape are orphans — schema churn's leftovers — shown as
 `? orphaned (kept)` and deleted by `tako prune` with no ceremony:
 indexes are derivable, never data. Entity data only ever goes behind

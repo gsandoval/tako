@@ -201,18 +201,27 @@ service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) f
 |---|---|---|
 | `entity-id` | the id field is missing, duplicated, or not a string | [entity.md](entity.md) |
 | `unindexed-query` | a query filters or orders on an untagged field | [entity.md](entity.md) |
+| `query-shapes` | one function assembles a query from too many conditional filters | [entity.md](entity.md) |
 
 ```
 entity type Link must have exactly one field tagged entity:"id"
 entity id field Slug must be a string; got int
 query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable
 query orders by Link.Hits, but Hits is not indexed — tag it entity:"index" to make it orderable
+search assembles one query from 6 conditional filters — that is 64 composite indexes for a single function, and Datastore allows 200 in a project; split it into separate queries whose filters are unconditional
 ```
 
 `unindexed-query` is the one rule that pays off entirely in the cloud:
 the local backend would happily scan, and Datastore would fail the
 query at run time in production. Indexes are derived from the tags, so
 the tag is both the fix and the provisioning input.
+
+`query-shapes` is the same bargain at a different scale. A query built
+across branches has one shape per combination of branches taken, and
+each needs its own index; past four conditional filters that powerset
+stops fitting in a project. Refusing at analysis time is the whole
+point — the alternative is discovering it as a 500 from Datastore in
+production, which is exactly how this rule came to exist.
 
 ## Domains
 

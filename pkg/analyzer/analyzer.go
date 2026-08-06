@@ -343,6 +343,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			if !seenTuple[key] {
 				seenTuple[key] = true
 				res.Composites = append(res.Composites, tuple)
+				res.CompositeSources = append(res.CompositeSources, c.source)
 			}
 		}
 		sort.Slice(res.Composites, func(i, j int) bool {

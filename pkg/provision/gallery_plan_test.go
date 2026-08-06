@@ -25,7 +25,9 @@ func galleryGraph() *analyzer.AppGraph {
 		},
 		Resources: []analyzer.Resource{
 			{Kind: "bucket", Name: "photos"},
-			{Kind: "entity", Name: "photos", Type: "Photo", Composites: [][]string{{"owner", "ready"}}},
+			{Kind: "entity", Name: "photos", Type: "Photo", Composites: [][]string{{"owner", "ready"}},
+				// The query that asks for it rides to the plan (RC1).
+				CompositeSources: []string{"app.go:385 readyPhotos"}},
 			{Kind: "queue", Name: "thumbnails", Type: "ThumbJob"},
 			{Kind: "topic", Name: "photo-ready", Type: "PhotoReady"},
 			{Kind: "secret", Name: "notifier-key"},
@@ -88,7 +90,7 @@ func TestGalleryPlanRender(t *testing.T) {
   + create  service account gallery-notifyowner-sa
   + create  service account gallery-warmfeed-sa
   + create  bucket my-proj-gallery-photos
-  + create  datastore index photos (owner, ready)
+  + create  datastore index photos (owner, ready)  ← app.go:385 readyPhotos
   + create  topic thumbnails
   + create  topic photo-ready
   + create  topic photos-uploaded

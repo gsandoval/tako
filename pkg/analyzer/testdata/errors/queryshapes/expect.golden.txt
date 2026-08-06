@@ -1,0 +1,1 @@
+app.go:31:6: search assembles one query from 6 conditional filters — that is 64 composite indexes for a single function, and Datastore allows 200 in a project; split it into separate queries whose filters are unconditional (tako/query-shapes)

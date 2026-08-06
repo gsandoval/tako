@@ -70,6 +70,12 @@ type Object struct {
 	Name string
 	// Spec is the canonical intended spec; its hash is the diff unit.
 	Spec map[string]any
+	// Note is a plan-time annotation — what DECLARED this object, so a
+	// reader can tell the plan against their code. It is deliberately
+	// outside Spec: the hash is the diff unit, and a source position
+	// moving when someone adds a line above is not a change to the
+	// object. Derived indexes carry the query they serve (RC1).
+	Note string
 }
 
 // Observed is one live object as listed by label.
@@ -133,6 +139,10 @@ type Entry struct {
 	// it recorded — edited outside tako; tako-owned fields will be
 	// overwritten on apply.
 	Drift bool
+	// Note is the desired object's annotation (what declared it).
+	// Orphans have none, which is the point: an object nothing declares
+	// is exactly the one with nothing to point at.
+	Note string
 }
 
 // Plan is the classified diff for one deploy.
@@ -161,19 +171,19 @@ func Compute(app, env string, desired []Object, observed []Observed) Plan {
 			live, exists := byKey[key]
 			switch {
 			case !exists:
-				plan.Entries = append(plan.Entries, Entry{Action: Create, Kind: d.Kind, Name: d.Name, Class: ClassAdditive})
+				plan.Entries = append(plan.Entries, Entry{Action: Create, Kind: d.Kind, Name: d.Name, Class: ClassAdditive, Note: d.Note})
 			case live.SpecHash != SpecHash(d.Spec):
 				class, reason := classify(d, live)
-				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name,
+				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name, Note: d.Note,
 					Class: class, Reason: reason, Drift: drifted(live)})
 			case drifted(live):
 				// The record matches the intent but the live object does
 				// not: a console edit. The warning promises an overwrite,
 				// so the plan applies one — a skip would let drift stand.
-				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name,
+				plan.Entries = append(plan.Entries, Entry{Action: Update, Kind: d.Kind, Name: d.Name, Note: d.Note,
 					Class: ClassInPlace, Drift: true})
 			default:
-				plan.Entries = append(plan.Entries, Entry{Action: Skip, Kind: d.Kind, Name: d.Name})
+				plan.Entries = append(plan.Entries, Entry{Action: Skip, Kind: d.Kind, Name: d.Name, Note: d.Note})
 			}
 		}
 	}
@@ -300,6 +310,9 @@ func (p Plan) Render() string {
 		}
 		if e.Drift {
 			line += "  ← DRIFT: modified outside tako; tako-owned fields will be overwritten"
+		}
+		if e.Note != "" && e.Class != ClassReplace && !e.Drift {
+			line += "  ← " + e.Note
 		}
 		out += "  " + line + "\n"
 		if e.Action == Orphan && e.Suspect != "" {

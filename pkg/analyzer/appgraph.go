@@ -127,6 +127,12 @@ type Resource struct {
 	// under-indexes a shape (the aggregate-per-entity scheme this
 	// replaced did — shop, R0).
 	Composites [][]string `json:"composites,omitempty"`
+	// CompositeSources runs parallel to Composites: the position of the
+	// query each tuple was derived from, as "app.go:385 readyPhotos".
+	// It is annotation, never identity — the deploy plan prints it so a
+	// reader can tell an index against the code that asks for it, which
+	// is what nobody could do when RC1's missing index shipped.
+	CompositeSources []string `json:"composite_sources,omitempty"`
 	// Delivery is a queue's or topic's WithDelivery contract; zero
 	// fields inherit the framework defaults. RateLimit above zero
 	// routes the queue through Cloud Tasks (only a broker with a cap
