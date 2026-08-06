@@ -268,6 +268,25 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 				writeStatus(w, r, tako.Status{Code: http.StatusForbidden, RequestID: reqID, Message: csrfRejection})
 				return
 			}
+		} else if conf.maxAge > 0 && !unsafeMethod(r.Method) {
+			// A page declared cacheable is a page whose response is the
+			// same for everybody, so it must carry no per-visitor state
+			// — and a CSRF token is exactly that. Minting one here would
+			// bake one visitor's token into a page a shared cache hands
+			// to the next.
+			//
+			// It also makes the header REACHABLE: Cloud Run's frontend
+			// downgrades public to private whenever a response carries a
+			// Set-Cookie, so a cacheable page that minted a cookie was
+			// never publicly cached on the visit that matters. Measured
+			// live before this existed:
+			//
+			//	cache-control: private, max-age=300   (first visit, Set-Cookie)
+			//	cache-control: public, max-age=300    (cookie already held)
+			//
+			// The trade is that {{ csrf }} renders empty on such a page,
+			// so a cacheable page cannot carry a form. That is the same
+			// bargain as tako/cache-signin, and the same reason.
 		} else {
 			var minted bool
 			token, minted = csrfEnsure(w, r)

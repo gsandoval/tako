@@ -182,6 +182,11 @@ func (g *Grants) List(ctx context.Context) ([]provision.Observed, error) {
 	return observed, nil
 }
 
+// grantRetryDelay is the wait between policy-write attempts: four
+// attempts, so 45 seconds of propagation window. A var so tests can
+// shrink it, never so callers can.
+var grantRetryDelay = 15 * time.Second
+
 func (g *Grants) apply(ctx context.Context, o provision.Object) error {
 	// A policy write can 400 on a MEMBER the IAM backend hasn't seen
 	// yet — a service account created seconds earlier in this same
@@ -191,7 +196,7 @@ func (g *Grants) apply(ctx context.Context, o provision.Object) error {
 	var err error
 	for attempt := 0; attempt < 4; attempt++ {
 		if attempt > 0 {
-			time.Sleep(15 * time.Second)
+			time.Sleep(grantRetryDelay)
 		}
 		var retry bool
 		retry, err = g.applyOnce(ctx, o)
@@ -260,16 +265,26 @@ func (g *Grants) applyOnce(ctx context.Context, o provision.Object) (bool, error
 			// The target died between read and write (destroy): converge.
 			return false, nil
 		}
-		if isAPI && typ != provision.TargetProject &&
-			(ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
-			// Gone target (partial destroys answer 403/400 tombstones) —
-			// or a REAL rejection, like a just-created member the IAM
-			// backend hasn't propagated. Only convergence on a target
-			// that no longer reads back; everything else retries, then
-			// fails loudly instead of silently dropping the grant.
-			if _, stillThere, rerr := g.read(ctx, typ, id); rerr == nil && !stillThere {
-				return false, nil
+		if isAPI && (ae.Status == http.StatusForbidden || ae.Status == http.StatusBadRequest) {
+			// Two different things answer alike here, and conflating
+			// them cost a deploy (FL13).
+			//
+			// A NON-project target that no longer reads back is GONE —
+			// partial destroys answer 403/400 tombstones — and
+			// converging is what stops a half-destroyed app failing
+			// forever. A project is never gone: it is the thing being
+			// deployed into, so it is not asked.
+			if typ != provision.TargetProject {
+				if _, stillThere, rerr := g.read(ctx, typ, id); rerr == nil && !stillThere {
+					return false, nil
+				}
 			}
+			// Otherwise the rejection may be a MEMBER the IAM backend
+			// has not propagated yet — a service account created
+			// seconds ago in this same deploy. That is retryable
+			// wherever it happens, and since RC3 it happens most often
+			// on the project, where every service's monitoring grant
+			// lands moments after its identity is created.
 			return true, Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")
 		}
 		return false, Classify(err, g.C.Project, "write the IAM policy of "+typ+" "+id, "roles/resourcemanager.projectIamAdmin")

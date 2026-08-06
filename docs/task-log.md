@@ -17992,3 +17992,111 @@ destroy was env-scoped (`destroy.go:216` keeps shared repo, indexes and
 framework bucket by design for a non-prod env) or destroy missed them.
 Recorded as a thing to CHECK rather than a claim — I did not create
 them and did not verify which.
+
+## FL13 + the FL12 verification — shipped (2026-08-06)
+
+Owner-directed follow-ups: verify FL12 for real, fix discovered #11,
+clear #12's leftovers.
+
+### FL13 — the project grant survives IAM propagation (#11)
+
+The retry was already there, and already written for this exact
+failure — `apply` loops four times, 15 seconds apart, with a comment
+saying it exists because "a policy write can 400 on a MEMBER the IAM
+backend hasn't seen yet". The bug was one clause in `applyOnce`:
+
+```go
+if isAPI && typ != provision.TargetProject && (ae.Status == 403 || ae.Status == 400) {
+```
+
+The project target could never set `retry`. Two different things
+answer 403/400 there and the condition conflated them: a NON-project
+target that no longer reads back is GONE (converge — that carve-out is
+what stops a half-destroyed app failing forever), and a member that is
+not propagated yet is EARLY (retry). RC3 then made a project-scope
+grant part of every service, so the one target that could not retry
+became the one applied soonest after a fresh identity exists.
+
+Split: the gone-check runs only for non-project targets; the retry runs
+for all of them. `grantRetryDelay` is a var now so a test can shrink it.
+
+Verified by mutation, not by passing: with the old clause restored the
+new test fails with the live error text, character for character.
+
+```
+--- FAIL: TestAProjectGrantWaitsForAFreshServiceAccount
+    the project grant gave up on an unpropagated member: write the IAM policy of project p: Service account new-sa@p.iam.gserviceaccount.com does not exist. (HTTP 400 …)
+```
+
+Live: journal redeployed from nothing — fresh SA, fresh grant — and
+completed in one run.
+
+### FL12 verified live, and it was broken
+
+The owner was right to insist. To reach a cacheable page in the cloud I
+seeded a published post straight into Datastore with tako's own
+encoding (`_doc` blob + indexed properties, namespace `prod`). The
+permalink then answered:
+
+```
+HTTP/2 200
+cache-control: private, max-age=300
+set-cookie: __tako_csrf=b656810e346edf653fe286623ea9b05a; …
+```
+
+**`private`, not `public`.** tako emits `public`; something rewrote it.
+Tested rather than assumed — the same URL with the cookie already
+held:
+
+```
+$ curl -H "Cookie: __tako_csrf=…" …
+cache-control: public, max-age=300
+```
+
+**Cloud Run's frontend downgrades `public` to `private` whenever the
+response carries a Set-Cookie.** Sane proxy behaviour, and it made
+FL12's whole point unreachable on the FIRST visit — the one a shared
+cache exists for. Nothing local could show it: the header tako writes
+was correct, and the rewrite happens above the process.
+
+It also exposed a correctness bug FL12 would have shipped: a page
+declared cacheable must carry no per-visitor state, and a CSRF token is
+exactly that. Minting one bakes one visitor's token into a page a
+shared cache hands to the next.
+
+One fix for both: a page with `MaxAge > 0` mints no CSRF cookie on a
+safe method. The trade — `{{ csrf }}` renders empty, so a cacheable
+page cannot carry a form — is the same bargain as `tako/cache-signin`,
+and for the same reason.
+
+Live, after the fix, first visit, no cookie held:
+
+```
+HTTP/2 200
+cache-control: public, max-age=300
+```
+
+with no Set-Cookie. The home page still mints its cookie and still
+answers `no-cache`.
+
+### #12's leftovers, cleared
+
+`cd examples/gallery && tako destroy --project tako-test-01` removed
+all three:
+
+```
+✗ datastore index photos (owner, ready)
+✗ datastore index photos (owner, ready, -created)
+✗ datastore index photos (ready, -created)
+```
+
+So destroy was never broken — an earlier session simply left gallery
+deployed, or destroyed it env-scoped. The project now lists four
+indexes in DELETING and nothing else: no services, no buckets.
+
+### The pattern worth keeping
+
+Both of today's real defects were invisible below the cloud boundary.
+`private, max-age=300` cannot be reproduced locally at all, and the IAM
+race only fires against a real, eventually-consistent IAM. A green
+local suite says nothing about either.

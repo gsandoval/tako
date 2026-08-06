@@ -54,3 +54,42 @@ func TestTheCacheHeaderIsPublic(t *testing.T) {
 		t.Errorf("cacheControl(0) = %q", got)
 	}
 }
+
+// A cacheable page must not mint per-visitor state.
+//
+// Two reasons, and the second is the one only a live deploy showed.
+// Correctness: a CSRF token baked into a page a shared cache stores is
+// handed to the next visitor. Reachability: Cloud Run's frontend
+// downgrades `public` to `private` whenever a response carries a
+// Set-Cookie, so before this a cacheable page was publicly cacheable on
+// every visit EXCEPT the first — the one a shared cache actually needs.
+func TestACacheablePageMintsNoCSRFCookie(t *testing.T) {
+	fsys := fstest.MapFS{
+		"templates/layout.html": {Data: []byte(`{{ define "layout.html" }}<html>{{ block "content" . }}{{ end }}</html>{{ end }}`)},
+		"templates/p.html":      {Data: []byte(`{{ define "content" }}post{{ end }}`)},
+	}
+	RegisterSiteTemplates(fsys, SiteOptions{})
+	t.Cleanup(func() { RegisterSiteTemplates(fstest.MapFS{"templates/x": {Data: []byte("")}}, SiteOptions{}) })
+	site := tako.Site(".")
+	page := tako.Page("GET /p", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return site.Render(ctx, "p.html", nil)
+	})
+
+	cached := httptest.NewRecorder()
+	PageHandler(page, nil, CacheFor(300)).ServeHTTP(cached, httptest.NewRequest(http.MethodGet, "/p", nil))
+	if cookies := cached.Result().Cookies(); len(cookies) > 0 {
+		t.Errorf("a cacheable page set %d cookie(s): %v — Cloud Run downgrades public to private when it sees one",
+			len(cookies), cookies)
+	}
+	if got := cached.Header().Get("Cache-Control"); got != "public, max-age=300" {
+		t.Errorf("Cache-Control = %q", got)
+	}
+
+	// An ordinary page still mints it: the double-submit cookie is what
+	// makes an anonymous browser's later POST verifiable.
+	plain := httptest.NewRecorder()
+	PageHandler(page, nil).ServeHTTP(plain, httptest.NewRequest(http.MethodGet, "/p", nil))
+	if len(plain.Result().Cookies()) == 0 {
+		t.Error("an uncached page minted no CSRF cookie — anonymous POSTs depend on it")
+	}
+}
