@@ -17175,3 +17175,324 @@ luck before, is still right.
    own proposal.
 2. **The `query-shapes` ceiling.** `maxOptionalMods = 4`; nothing has
    reached it. The number was chosen, not inherited.
+
+## Program: FL10 → FL13, then release (2026-08-06) — DESIGN, AWAITING APPROVAL
+
+Owner-directed, in the order proposed and approved: cross-function
+query assembly, the 404-nil-data gap **taken as a class rather than a
+fix**, the per-route cache policy, the docs mention check. Then: update
+all three doc trees, run comprehensive local **and live** validation,
+`make build` / `make install`. The loop itself becomes a skill.
+
+Four slices, four gates. Each has its own DX proposal below; approving
+this design approves the order and the shape, and each slice still
+reports before the next begins.
+
+---
+
+## FL10 — a query assembled across a function boundary
+
+### The defect
+
+`scanQueries` (`resources.go:211`) walks `file.Decls` and collects
+modifiers **per `*ast.FuncDecl`**. A query value that crosses a
+function boundary breaks the chain in both directions:
+
+```go
+// The caller's derived shape is (section) — State is missing.
+func list(ctx tako.Ctx, section string) ([]Article, error) {
+	return published(articles.Query(ctx).Where("Section", "=", section)).
+		OrderBy("-PublishAt").Limit(50).All()
+}
+
+// This helper derives a shape of its own that never runs alone.
+func published(q *tako.EntityQuery[Article]) *tako.EntityQuery[Article] {
+	return q.Where("State", "=", "published")
+}
+```
+
+Under-derivation is the RC1 failure again — a composite only serves a
+query that constrains its leading properties, so the real query has no
+index and Datastore answers 500 in production. Over-derivation is
+cheaper but not free: every derived index is ~4 minutes of build and
+one of a project's 200.
+
+### Why this is worse than it looks
+
+**tako's own example already does this, and gets away with it by
+accident.** `examples/journal/app.go:92`:
+
+```go
+published := func() *tako.EntityQuery[Post] {
+	return posts.Query(ctx).Where("Published", "=", true)
+}
+list, err := published().OrderBy("-Created").Limit(pageSize).All()
+```
+
+That derives `(published, -created)` correctly (`journal_appgraph.golden.json:30`)
+— because a **closure** lives inside the enclosing FuncDecl's body, so
+`ast.Inspect` walks straight through it. Promote the same closure to a
+package-level func and the index silently changes. The user cannot see
+which of the two they wrote, nothing warns, and the difference only
+appears as a production 500.
+
+### The three options
+
+1. **Warn.** RC1 proved the failure mode is silent under-indexing that
+   surfaces as a 500 in production. A warning that can be ignored is
+   the state we are already in.
+2. **Refuse** — an analyzer error on any query value crossing a
+   function boundary. Cheap and safe, and it outlaws a helper, which is
+   ordinary good Go and which tako's own example uses.
+3. **Derive, and refuse only what cannot be followed.** Recommended.
+
+Option 3 is the framework's existing posture (derive what is derivable,
+refuse the rest loudly, never silently under-derive), and the shape is
+narrower than "interprocedural analysis" sounds: a query value has a
+**known type** (`*tako.EntityQuery[T]`), so `go/types` finds every
+function that takes or returns one without any dataflow. Within a
+package, resolving a direct call by identifier is the same machinery
+`scanQueries` already uses for `entityQueryMethod`.
+
+### The rule
+
+- A function whose parameter or result is `*tako.EntityQuery[T]` is a
+  **query fragment**, not a query. It contributes no chain of its own —
+  which also deletes today's phantom indexes.
+- At a direct call to a fragment, the fragment's modifiers are inlined
+  into the caller's chain, in call order, carrying their own
+  guarded/unconditional classification. A fragment called inside an
+  `if` makes all of its modifiers optional at that site.
+- Fragments compose (a fragment may call a fragment), bounded by a
+  recursion depth and by the existing `maxOptionalMods` ceiling, which
+  the inlined optional modifiers now count against.
+- A query value tako **cannot follow** — assigned to a struct field, a
+  package-level var, sent on a channel, passed as an interface, or
+  handed to a function in another module — is refused:
+
+```
+app.go:118:9: this query is built somewhere tako cannot follow (stored in a struct field), so the composite indexes it needs cannot be derived — build the query in one function, or in helpers that take and return *tako.EntityQuery[Article] (tako/query-escapes)
+```
+
+- Cross-PACKAGE fragments: same package only in this slice, since
+  package = service and a query crossing a service boundary is not a
+  query. Named as a non-goal, with the escape rule covering it.
+
+### Tests
+
+Golden fixtures under `pkg/analyzer/testdata/`: the caller/fragment
+pair above (derives the full shape), a fragment called under an `if`
+(its modifiers become optional), a fragment chain two deep, a fragment
+that is never called (contributes nothing — today it contributes a
+phantom), the closure form (unchanged, so journal's golden must not
+move), and the escape cases with exact error text. Plus `examples/journal`
+gaining the promoted-helper form so an example demands the feature.
+
+### Non-goals
+
+Cross-package fragments; queries built in loops accumulating a variable
+number of filters (already the `query-shapes` ceiling's business);
+proving that a derived shape is reachable (over-indexing stays the safe
+direction, per `shapesOf`).
+
+---
+
+## FL11 — tako's own pages are the app's pages
+
+**Taken as a class, per owner direction. The specific 404-nil-data fix
+is a symptom, and shipping only the symptom guarantees the next entry.**
+
+### The class
+
+tako answers some requests **itself**, without reaching the app's
+handlers, and every one of those answers is a dead end that does not
+look like the app:
+
+| Where | Today | Filed as |
+|---|---|---|
+| `writeNotFoundPage` (`page.go:393`) | renders `SiteConfig.NotFound` with **nil data** | friction 2026-08-04 |
+| `pageError` non-404 status (`page.go:371`) | `http.Error` — **plain text** | friction 2026-08-04 (the 403) |
+| `pageError` 500 (`page.go:375`) | plain text, deliberately | — |
+| site static miss (`site.go`) | same nil-data 404 | friction 2026-08-04 |
+| `SignInPage` (`session.go:419`) | tako's own markup, app cannot touch it | — |
+| every future one: 405, 413, 429, CSRF failure, maintenance | plain text by default | not yet |
+
+Flauta filed two of these separately, three days apart, as if they were
+different problems. They are one: **the app has no way to tell tako
+what a page it owns should look like.** Every future status tako learns
+to answer arrives as a new friction entry until that seam exists.
+
+### The seam
+
+One field, one function, every page tako renders on the app's behalf:
+
+```go
+var site = tako.Site("web", tako.SiteConfig{
+	Status: statusPage,
+})
+
+// Called for every response tako produces itself. The app decides
+// what it looks like and what data it carries; tako decides when.
+func statusPage(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
+	return tako.Render("status.html", shell(ctx, statusData{
+		Code:  s.Code,
+		Title: titles[s.Code],
+		Nav:   navFromConfig(),
+	}))
+}
+```
+
+`tako.Status` carries what a status page can honestly know: `Code`,
+`Path`, `RequestID`, and `Err` (nil unless the app's own handler
+produced it — never populated for a 5xx, where the message is logged
+and the visitor gets the request id). It is a struct so later fields
+are additive.
+
+`SiteConfig.NotFound` stays, and stays the easy path: name a template,
+get a 404. `Status` is the seam for anything more, and `NotFound`
+becomes shorthand for a `Status` function that renders that template
+for 404 only. One mechanism, two spellings, the simple one unchanged.
+
+### The rule that governs all of it
+
+**A status page must never become a 500.** Today's contract — "a
+missing or broken 404 template must never turn a 404 into a 500" — is
+generalised: `Status` is called with recover, its failure is logged,
+and the fallback is today's plain text. It is called for 4xx AND 5xx;
+`page.go:365` currently argues against rendering during a 500, and the
+guard is what makes that argument moot — a 500 page in the site's
+chrome is what a visitor wants, and a broken one costs nothing it did
+not already cost. A `Status` function that itself 500s does not
+re-enter.
+
+### This is an API task
+
+Per CLAUDE.md, adding `SiteConfig.Status` and `tako.Status` is an SDK
+change and therefore its own task, which is what this slice is. It
+lands with `sdk_lock_test.go` and the api reference page updated in the
+same commit.
+
+### Tests
+
+The conformance-shaped question here is the fallback: a `Status` that
+panics, one that returns an error, one that returns empty HTML, and one
+that is absent — all four produce the plain-text answer with the right
+code. Then one case per call site (handler 404, static miss, 403, 500,
+sign-in required), asserting the app's chrome is present. `examples/journal`
+grows the masthead-and-nav 404 flauta wants, which is the example that
+demands the feature.
+
+### Non-goals
+
+Letting `Status` change the status code (it renders an answer, it does
+not decide one); a per-route status page; theming tako's sign-in page
+beyond wrapping it in the app's shell.
+
+---
+
+## FL12 — a page can say how long it may be cached
+
+### The defect
+
+`page.go:315` sets `Cache-Control: no-cache` on **every** SSR render,
+unconditionally. There is no way to say otherwise. A read-heavy site
+that publishes twice a week revalidates every reader request against
+the app and the entity store — which on Datastore is a billed read per
+visitor per page. flauta calls it "an inherited default, nobody's
+decision," and it is: `site.go:170` already gives fingerprinted static
+assets `public, max-age=31536000, immutable`, so the static half was
+thought about and the rendered half was not.
+
+Not in the friction log — it is in flauta's backlog as SR-6. Worth
+recording that the friction log is not the whole picture.
+
+### The surface
+
+`Route` is the config struct for "settings that belong to a single
+route", which is exactly what this is:
+
+```go
+var Article = tako.Page("GET /{section}/{slug}", article, tako.Route{
+	MaxAge: 5 * time.Minute,
+})
+```
+
+Zero keeps today's `no-cache`, so nothing existing moves. Non-zero
+emits `public, max-age=<seconds>`.
+
+### The interaction that makes it an analyzer rule
+
+`MaxAge` on a route with `SignIn: true` is a **cache-poisoning bug**: a
+shared cache would serve one user's authenticated page to another. It
+is refused at analysis time, not documented as a caution:
+
+```
+app.go:64:2: Article sets MaxAge on a route that requires sign-in — a shared cache would serve one signed-in user's page to another; drop MaxAge, or drop SignIn (tako/cache-signin)
+```
+
+### Tests
+
+Golden for the analyzer refusal; runtime tests for the header on a
+plain page, a `SignIn` page (refused before it can run), a fragment
+response, and a redirect. `examples/journal`'s public article page
+takes a `MaxAge`, since it is the case that motivated it.
+
+### Non-goals
+
+`s-maxage`/CDN split, `stale-while-revalidate`, ETag-based
+revalidation for rendered pages, and per-route cache policy on API
+routes (JSON clients cache differently; no example asks).
+
+---
+
+## Z8 — the docs check catches names as they are written
+
+`pkg/docserver/mentions_test.go` keys on `tako.X`. Prose naming
+`WithDomain` without the qualifier walks straight past it, which is how
+all four retired-symbol mentions survived until they were found by
+hand. Widen it: an identifier-shaped word in prose or a code span that
+looks like SDK surface (`WithFoo`, `PascalCase` adjacent to a tako
+term) is checked against the lock, with an allowlist for the words that
+legitimately are not SDK symbols. Cheap, and it belongs before a
+v0.1.0, because after the tag the docs are what people read first.
+
+---
+
+## Closing sequence, after the four gates
+
+1. **Documentation, all three trees.** `docs/guide/` (the narrative —
+   FL11 and FL12 change what a site author writes), `docs/reference/`
+   (site.md, pages.md, entity.md, errors.md gain the two new rules),
+   `docs/api/` (the `SiteConfig.Status`, `tako.Status` and `Route.MaxAge`
+   entries, plus the lock). Z7b's check and Z8's widened one are what
+   keep this honest.
+2. **Comprehensive validation, local and live.** The full `validate/`
+   suite locally; live means a real deploy to `tako-test-01` — which
+   also finally exercises **FL8's create**, the one step `--plan`
+   cannot reach, with a host-shaped module path. Destroy after, and
+   confirm the project is clean.
+3. **`make build` / `make install`.**
+
+### The skill
+
+The loop the owner described — take a requirement, hold the whole plan
+without dropping items, build to the end, validate local **and** live,
+update the docs, cut a build — is written as `~/.claude/skills/ship-loop/`.
+It is deliberately project-agnostic: the tako specifics (three doc
+trees, `validate/`, `make install`) are what it asks the project for,
+not what it hardcodes.
+
+### Order, and what is NOT in this program
+
+FL10 → FL11 → FL12 → Z8 → docs → validate → build.
+
+Deliberately excluded, and why: **Z6 (publish)** is owner-only (no git
+remote, tag, push). **flauta's M4 request** — expose codegen's
+generated request binders so their 2,837-line `pages_test.go` stops
+hand-mirroring them — is a real gap and a real API question, and it is
+its own program, not a tail on this one. **Discovered work #10**
+(`Prefixed` has no bound) stays logged and unpromoted. The four
+`workaround-fine` friction entries other than the 404 are covered by
+FL11 or stay settled. The parked list (load balancer, multi-service dev
+routing, `tako rename`, session cache, VPC, per-command `--help`) is
+unchanged.
