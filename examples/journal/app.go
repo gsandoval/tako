@@ -88,17 +88,24 @@ type HomeView struct {
 
 const pageSize = 50
 
+// published is a query FRAGMENT: it takes a query and adds to it, so
+// tako folds its filter into whatever the caller builds (FL10). This
+// used to be a closure inside home, which worked for a reason nobody
+// could see — a closure is inside its enclosing function, so the
+// analyzer never crossed a boundary. Promoted to a package-level
+// helper it derives the same index, which is the point.
+func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {
+	return q.Where("Published", "=", true)
+}
+
 func home(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
-	published := func() *tako.EntityQuery[Post] {
-		return posts.Query(ctx).Where("Published", "=", true)
-	}
-	list, err := published().OrderBy("-Created").Limit(pageSize).All()
+	list, err := published(posts.Query(ctx)).OrderBy("-Created").Limit(pageSize).All()
 	if err != nil {
 		return tako.HTML{}, err
 	}
 	// Count ignores Limit, which is the point: this is the total, not
 	// the size of the page above.
-	total, err := published().Count()
+	total, err := published(posts.Query(ctx)).Count()
 	if err != nil {
 		return tako.HTML{}, err
 	}

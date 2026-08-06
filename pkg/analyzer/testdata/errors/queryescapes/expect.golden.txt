@@ -1,0 +1,2 @@
+app.go:31:2: this query is stored in a struct field, so the composite indexes it needs cannot be derived — assemble it in one function, or in helpers that take and return *tako.EntityQuery[Article] (tako/query-escapes)
+app.go:40:16: this query is passed to something tako cannot resolve statically (a function value, a method on an interface, or another package), so the composite indexes it needs cannot be derived — pass it to a helper in this package that takes and returns *tako.EntityQuery[Article] (tako/query-escapes)

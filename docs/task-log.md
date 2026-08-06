@@ -17529,3 +17529,94 @@ items. This is what the closing report is checked against.
    LIVE against a real project (which also finally exercises FL8's
    create).
 8. **Build** — `make build`, `make install`.
+
+## FL10 — shipped (2026-08-06)
+
+Item 1 of 8. A query assembled across a function boundary now derives
+the shapes that actually run.
+
+### The rule, as built
+
+A function with an `*EntityQuery[T]` parameter or result is a
+**fragment**: `pkg/analyzer/fragments.go` finds every one of them from
+`go/types` alone, with no dataflow analysis, because a query value has
+a known type. A fragment contributes no chain of its own; its modifiers
+are spliced into each caller at the call's position, carrying that call
+site's branch context (`optional = fragmentOptional || guarded(stack)`).
+Fragments compose, memoized, with a cycle guard.
+
+A query tako cannot follow is refused, in three wordings under one rule
+(`tako/query-escapes`): stored in a struct field, a package-level var,
+a map or slice element, a pointer's target or a composite literal; sent
+on a channel; or passed to something that does not resolve to a
+declaration in this package.
+
+### What the slice found on the way
+
+**Two OrderBys were recorded backwards.** Not in the design, not in the
+friction log, found by writing the fixture:
+
+```
+OrderBy("Section").OrderBy("-PublishAt")   derived   (state, -publishAt, section)
+```
+
+`ast.Inspect` visits a chained call **outermost-first**, so the last
+`OrderBy` written was the first one collected. A composite whose sort
+suffix is in the wrong order is one Datastore will not use — the same
+production 500 as a missing index, from a different clause.
+
+It is the same class as FL10 and was fixed inside it: modifiers now
+carry a `token.Pos` and are sorted by source position, which is what
+"in call order" was always supposed to mean. Traversal order was
+standing in for it and happened to agree in every case any example or
+fixture had.
+
+### What did NOT change
+
+`examples/journal`'s derived index. The example used a **closure**,
+which worked for a reason nobody could see: a closure lives inside its
+enclosing function, so the analyzer never crossed a boundary. FL10's
+commit promotes it to a package-level fragment and the tuple is
+identical — `(published, -created)`, before and after. That is the
+proof the two spellings now mean the same thing, and it is why the
+example moved.
+
+### Tests
+
+- `pkg/analyzer/testdata/queryfragments/` + `fragments_test.go` — the
+  caller/fragment pair with a conditional filter, a two-deep chain, two
+  OrderBys, a fragment called under an `if` (everything it carries
+  becomes optional), and an uncalled fragment that must ask for
+  nothing. All three tests fail on the pre-FL10 analyzer, each for its
+  own reason.
+- `pkg/analyzer/testdata/errors/queryescapes/` — both refusals, exact
+  text and position.
+- Every example green, which is the false-positive check: an escape
+  rule that fires wrongly blocks a deploy.
+
+### Validation
+
+`validate/query-fragments.md`, written and run. Step 1, live:
+
+```
+$ cd examples/journal && go run ../../cmd/tako gen graph --json | …
+posts: (published, -created)  <- app.go:101 home
+```
+
+Step 4's two refusals are the golden above. Step 5 is the full suite,
+green.
+
+### Correction to the design
+
+The design predicted `byAuthor` would derive `(author, state, -publishAt)`.
+It derives `(state, author, -publishAt)`: filter order is STRUCT order
+and always has been (gallery's `(owner, ready)`, flauta's
+`(section, state, -publishAt)`), and only the OrderBy suffix follows
+call order. The test asserted the wrong thing and was corrected, not
+the code.
+
+### Non-goals held
+
+Cross-package fragments (package = service; a query crossing that
+boundary is not a query — the escape rule covers it), and proving a
+derived shape is reachable.

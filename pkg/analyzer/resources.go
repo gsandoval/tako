@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
+	"go/token"
 	"go/types"
+	"sort"
 	"strings"
 
 	"golang.org/x/tools/go/packages"
@@ -47,10 +49,20 @@ type queryChain struct {
 // queryMod is one Where or OrderBy call, in the order it appears, and
 // whether a branch guards it. optional modifiers are what make a
 // function produce more than one shape (RC1); dir is "" for a filter.
+//
+// pos is what "in the order it appears" MEANS, and it has to be
+// recorded rather than inferred from traversal order: ast.Inspect
+// visits a chained call outermost-first, so
+// OrderBy("A").OrderBy("-B") is walked as [-B, A] and derived a
+// composite whose sort suffix was backwards — an index Datastore will
+// not use, which is the same failure as a missing one. Modifiers
+// spliced in from a fragment carry the position of the CALL, so they
+// land where the fragment was invoked (FL10).
 type queryMod struct {
 	field    string
 	dir      string
 	optional bool
+	pos      token.Pos
 }
 
 type orderBy struct {
@@ -208,88 +220,155 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 // owner. Folding both Where calls into one shape, which is what this
 // did before RC1, left the narrower one unindexed and answered 500 in
 // production while every local test passed.
+// A modifier can also arrive from a FRAGMENT — a function taking or
+// returning an *EntityQuery, whose modifiers belong to its callers
+// (FL10). Fragments derive nothing themselves; a query tako cannot
+// follow is refused.
 func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityType, errs *ErrorList) {
+	s := newQueryScan(dir, pkg, entities, errs)
+	// Every declaration is collected, so its own errors are reported
+	// whether or not anything calls it; only NON-fragments expand into
+	// shapes.
 	for _, file := range pkg.Syntax {
 		for _, decl := range file.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok || fd.Body == nil {
 				continue
 			}
-			// Modifiers in call order, per entity, each tagged with
-			// whether a branch guards it.
-			fnMods := map[*entityType]*[]queryMod{}
-			modsOf := func(et *entityType) *[]queryMod {
-				if fnMods[et] == nil {
-					fnMods[et] = &[]queryMod{}
-				}
-				return fnMods[et]
+			mods := s.modsOf(fd)
+			if s.isFragmentDecl(fd) {
+				continue
 			}
-			// ast.Inspect visits a node, then its children, then nil —
-			// so pushing on entry and popping on nil keeps an accurate
-			// ancestor stack, which is what tells a guarded call from an
-			// unconditional one.
-			var stack []ast.Node
-			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				if n == nil {
-					stack = stack[:len(stack)-1]
-					return true
-				}
-				stack = append(stack, n)
-				call, ok := n.(*ast.CallExpr)
-				if !ok || len(call.Args) < 1 {
-					return true
-				}
-				method, payloadKey := entityQueryMethod(pkg, call)
-				if method != "Where" && method != "OrderBy" {
-					return true
-				}
-				et := entities[payloadKey]
-				if et == nil {
-					return true
-				}
-
-				fieldArg := call.Args[0]
-				field, err := constString(pkg, fieldArg)
-				if err != nil {
-					*errs = append(*errs, &Error{
-						Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
-						Msg: fmt.Sprintf("query field must be a string constant — indexes are derived at analysis time; got %s",
-							describeExpr(fieldArg)),
-						Rule: "const-query-field",
-					})
-					return true
-				}
-				verb, suffix, direction := "filters on", "queryable", ""
-				if method == "OrderBy" {
-					verb, suffix, direction = "orders by", "orderable", "asc"
-					if len(field) > 0 && field[0] == '-' {
-						field = field[1:]
-						direction = "desc"
-					}
-				}
-				if !et.indexed[field] {
-					*errs = append(*errs, &Error{
-						Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
-						Msg: fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
-							verb, et.display, field, field, suffix),
-						Rule: "unindexed-query",
-					})
-					return true
-				}
-				et.used[field] = true
-				mods := modsOf(et)
-				*mods = append(*mods, queryMod{
-					field:    field,
-					dir:      direction,
-					optional: guarded(stack),
-				})
-				return true
-			})
-			for et, mods := range fnMods {
-				expandShapes(dir, pkg, fd, et, *mods, errs)
+			for et, m := range mods {
+				expandShapes(dir, pkg, fd, et, m, errs)
 			}
 		}
 	}
+}
+
+// isFragmentDecl reports whether this declaration is a query fragment.
+func (s *queryScan) isFragmentDecl(fd *ast.FuncDecl) bool {
+	fn, ok := s.pkg.TypesInfo.Defs[fd.Name].(*types.Func)
+	return ok && s.fragments[fn] != nil
+}
+
+// modsOf collects one declaration's query modifiers per entity, in the
+// order they run: its own Where/OrderBy calls, plus the modifiers of
+// every fragment it calls, spliced in at the call site. Memoized, so a
+// fragment called five times is analyzed once and reports its errors
+// once.
+func (s *queryScan) modsOf(fd *ast.FuncDecl) map[*entityType][]queryMod {
+	if done, ok := s.mods[fd]; ok {
+		return done
+	}
+	if s.busy[fd] {
+		// A fragment that (indirectly) calls itself builds a query of
+		// unbounded shape; there is nothing to derive.
+		return nil
+	}
+	s.busy[fd] = true
+	defer func() { s.busy[fd] = false }()
+
+	dir, pkg, entities, errs := s.dir, s.pkg, s.entities, s.errs
+	fnMods := map[*entityType]*[]queryMod{}
+	modsFor := func(et *entityType) *[]queryMod {
+		if fnMods[et] == nil {
+			fnMods[et] = &[]queryMod{}
+		}
+		return fnMods[et]
+	}
+	{
+		// ast.Inspect visits a node, then its children, then nil —
+		// so pushing on entry and popping on nil keeps an accurate
+		// ancestor stack, which is what tells a guarded call from an
+		// unconditional one.
+		var stack []ast.Node
+		ast.Inspect(fd.Body, func(n ast.Node) bool {
+			if n == nil {
+				stack = stack[:len(stack)-1]
+				return true
+			}
+			stack = append(stack, n)
+			s.escapes(n)
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			// A call to a fragment contributes the fragment's own
+			// modifiers, at this position, under this branch context.
+			if frag := s.fragmentCall(call); frag != nil && frag != fd {
+				for et, fm := range s.modsOf(frag) {
+					dst := modsFor(et)
+					for _, m := range fm {
+						m.pos = call.Rparen
+						m.optional = m.optional || guarded(stack)
+						*dst = append(*dst, m)
+					}
+				}
+				return true
+			}
+			if len(call.Args) < 1 {
+				return true
+			}
+			method, payloadKey := entityQueryMethod(pkg, call)
+			if method != "Where" && method != "OrderBy" {
+				return true
+			}
+			et := entities[payloadKey]
+			if et == nil {
+				return true
+			}
+
+			fieldArg := call.Args[0]
+			field, err := constString(pkg, fieldArg)
+			if err != nil {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
+					Msg: fmt.Sprintf("query field must be a string constant — indexes are derived at analysis time; got %s",
+						describeExpr(fieldArg)),
+					Rule: "const-query-field",
+				})
+				return true
+			}
+			verb, suffix, direction := "filters on", "queryable", ""
+			if method == "OrderBy" {
+				verb, suffix, direction = "orders by", "orderable", "asc"
+				if len(field) > 0 && field[0] == '-' {
+					field = field[1:]
+					direction = "desc"
+				}
+			}
+			if !et.indexed[field] {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
+					Msg: fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
+						verb, et.display, field, field, suffix),
+					Rule: "unindexed-query",
+				})
+				return true
+			}
+			et.used[field] = true
+			mods := modsFor(et)
+			*mods = append(*mods, queryMod{
+				field:    field,
+				dir:      direction,
+				optional: guarded(stack),
+				pos:      fieldArg.Pos(),
+			})
+			return true
+		})
+	}
+	out := map[*entityType][]queryMod{}
+	for et, mods := range fnMods {
+		// Source order, not traversal order. Stable, so modifiers
+		// spliced from one fragment call keep their order among
+		// themselves.
+		m := *mods
+		sort.SliceStable(m, func(i, j int) bool { return m[i].pos < m[j].pos })
+		out[et] = m
+	}
+	s.mods[fd] = out
+	return out
 }
 
 // branchStmts are the statements whose bodies a query modifier can hide
