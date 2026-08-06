@@ -17876,3 +17876,119 @@ run from /tmp, every changed page fetched over HTTP.
 
 `/api` carries StatusPage, StatusHandle, Status and MaxAge; site.md
 serves its "Status pages" section and pages.md its "Caching a page".
+
+## Validation — local and LIVE (2026-08-06)
+
+Item 7 of 8. Local first, then a real project.
+
+### Local
+
+`go clean -testcache && go test ./...` — every package green, 24s in
+the analyzer, conformance included. `gofmt` clean.
+
+### Live: FL8's create, finally
+
+`examples/hello` (module `github.com/gsandoval/tako-example-hello`)
+deployed to tako-test-01. **This is the step FL8 shipped unvalidated**
+— `--plan` never creates, and the label is refused at create time.
+
+```
+tako deploy · github.com/gsandoval/tako-example-hello → tako-test-01 (us-central1)
+              id tako-example-hello-812a9c — labels and bucket names use this
+  …
+✓ hello → https://hello-cgbk74ip3q-uc.a.run.app
+  (30s)
+```
+
+The create Google refused for flauta now succeeds, and the label is
+what FL8 derived:
+
+```
+$ gcloud storage buckets describe gs://tako-test-01-tako --format="value(labels)"
+tako-app=tako-example-hello-812a9c;tako-env=prod
+$ gcloud run services describe hello … --format="value(metadata.labels)"
+…tako-app=tako-example-hello-812a9c;tako-env=prod
+```
+
+Both endpoints answered (`{"message":"Hello from Tako!"}`,
+`{"message":"Hello, live!"}`), and `tako destroy` found every object by
+the derived label and removed it — the round trip, which is what
+matters when the label IS the state.
+
+### Live: FL10, FL11, FL12 on examples/journal
+
+The plan shows FL10's derivation through a fragment:
+
+```
++ create  datastore index posts (published, -created)  ← app.go:146 home
+```
+
+`home` no longer contains the `Where` — `published` does — and the
+index is still derived and still credited to the caller.
+
+**FL10, in production:** `GET /` answered **200**. That query is built
+through the fragment and runs against the real composite index; this
+is the exact place RC1 answered 500 when derivation was short.
+
+**FL11, in production:**
+
+```
+$ curl -s -i https://journal-…/no-such-page
+HTTP/2 404
+cache-control: no-cache
+content-security-policy-report-only: default-src 'self'
+content-type: text/html; charset=utf-8
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+
+    <nav><a href="/write">write</a> · <a href="/about">about</a> ·
+  <h2>Not found</h2>
+  <p><a href="/">Back to the journal</a> — 0 published posts.</p>
+```
+
+The nav, the full header set, and a **live Datastore query from the
+status page's Ctx** (0 is correct — the store is empty). `tako logs`
+shows the 404s at WARNING and the 200s at INFO, so RC2/RC3's
+observability is intact.
+
+**FL12: NOT verified in the cloud, and here is why.** The only route
+carrying `MaxAge` is the permalink, which needs a published post;
+creating one needs an interactive Google sign-in. `/2026/anything`
+answered 404 with `no-cache` — correct, that is the status page, not
+the cached page. FL12 is verified locally end to end (`public,
+max-age=300` on the permalink, `no-cache` on the home page) and the
+header comes from the same code path in both. Saying it is
+cloud-verified would be a lie.
+
+### Cleanup
+
+Both deployments destroyed. `gcloud run services list` and
+`gcloud storage buckets list` are empty; the only service accounts left
+are pre-existing (firebase-adminsdk, the compute default, and
+conformance's `conf-signer`). journal's Datastore index shows
+`DELETING`, which is Datastore's asynchronous delete, not a leak.
+
+### Discovered work
+
+**11. A deploy can lose a race with IAM propagation.** journal's first
+deploy failed here:
+
+```
+tako: update iam grants project: write the IAM policy of project tako-test-01: Service account journal-sa@… does not exist. (HTTP 400 from cloudresourcemanager.googleapis.com)
+```
+
+The SA was created seconds earlier in the same run. IAM's create is
+eventually consistent and the project-scope grant (RC3's) is reconciled
+right after it. Re-running succeeded with no changes — the reconciler
+is idempotent, which is why this is a retry-shaped bug rather than a
+correctness one. hello's deploy won the same race minutes earlier, so
+it is intermittent. **Not this program's class**; it belongs with the
+provisioner's retry policy. Worth fixing before a v0.1.0, because
+"run it again" is a bad first experience.
+
+**12. Three `photos` Datastore indexes remain on tako-test-01** from a
+gallery deployment in an earlier session, all READY. Either that
+destroy was env-scoped (`destroy.go:216` keeps shared repo, indexes and
+framework bucket by design for a non-prod env) or destroy missed them.
+Recorded as a thing to CHECK rather than a claim — I did not create
+them and did not verify which.
