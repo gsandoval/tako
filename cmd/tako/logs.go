@@ -6,6 +6,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
@@ -60,7 +61,18 @@ func runLogs(args []string) error {
 		return nil
 	}
 	for _, e := range entries {
-		fmt.Printf("%s %-12s %-7s %s\n", e.Time.Local().Format("15:04:05"), e.Service, e.Severity, e.Text)
+		lines := strings.Split(e.Text, "\n")
+		fmt.Printf("%s %-12s %-7s %s\n", e.Time.Local().Format("15:04:05"), e.Service, e.Severity, lines[0])
+		// A structured entry's fields hang under its message, aligned
+		// past the columns — an err carrying a Datastore index
+		// recommendation is several lines and is worth every one.
+		for _, l := range lines[1:] {
+			fmt.Printf("%s%s\n", strings.Repeat(" ", logGutter), l)
+		}
 	}
 	return nil
 }
+
+// logGutter is the width of the timestamp, service and severity columns
+// above, so continuation lines start where the message does.
+const logGutter = 9 + 13 + 8

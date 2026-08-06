@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 )
@@ -75,11 +76,7 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 		e := out.Entries[i]
 		text := e.TextPayload
 		if text == "" && e.JSONPayload != nil {
-			if msg, ok := e.JSONPayload["message"].(string); ok {
-				text = msg
-			} else {
-				text = fmt.Sprint(e.JSONPayload)
-			}
+			text = renderPayload(e.JSONPayload)
 		}
 		if text == "" && e.HTTPRequest.RequestMethod != "" {
 			text = requestLine(e.HTTPRequest.RequestMethod, e.HTTPRequest.RequestURL,
@@ -99,6 +96,72 @@ func (c *Client) Logs(ctx context.Context, services []string, since time.Duratio
 		})
 	}
 	return entries, nil
+}
+
+// payloadNoise are Cloud Logging's own keys, already rendered as the
+// entry's columns or meaningless to a reader.
+var payloadNoise = map[string]bool{
+	"message": true, "severity": true, "time": true, "timestamp": true,
+	"logging.googleapis.com/trace": true, "logging.googleapis.com/sourceLocation": true,
+	"logging.googleapis.com/spanId": true, "logging.googleapis.com/labels": true,
+}
+
+// renderPayload turns a structured entry into what a person needs.
+//
+// This used to be `jsonPayload["message"]` and nothing else, which for a
+// handler error printed "handler error" and dropped the err — the field
+// carrying the actual failure. RC1's 500 was diagnosed with
+// `gcloud logging read` for exactly that reason: Datastore's "no
+// matching index found. recommended index is: …" was one query away and
+// tako's own reader was hiding it.
+//
+// The request id comes along on the first line: it is what ties this
+// entry to the request line above it, which is the correlation
+// pages.md's "an opaque 500 with the request id" promises.
+func renderPayload(payload map[string]any) string {
+	msg, _ := payload["message"].(string)
+	var b strings.Builder
+	b.WriteString(msg)
+	if req, ok := payload["req"].(string); ok && req != "" {
+		if b.Len() > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString("[req=" + req + "]")
+	}
+	// err first — it is why you are reading this line — then whatever
+	// else the handler attached, in a stable order.
+	var rest []string
+	for k := range payload {
+		if payloadNoise[k] || k == "req" || k == "err" {
+			continue
+		}
+		rest = append(rest, k)
+	}
+	sort.Strings(rest)
+	if _, ok := payload["err"]; ok {
+		rest = append([]string{"err"}, rest...)
+	}
+	for _, k := range rest {
+		v := fmt.Sprint(payload[k])
+		if v == "" {
+			continue
+		}
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		// A multi-line value (Datastore's index recommendation is a YAML
+		// block) keeps its shape, indented under its key rather than
+		// folded into one unreadable line.
+		lines := strings.Split(strings.TrimRight(v, "\n"), "\n")
+		b.WriteString(k + ": " + lines[0])
+		for _, l := range lines[1:] {
+			// The value's OWN indentation is kept — Datastore's
+			// recommendation is nested YAML, and flattening it throws
+			// away the part that makes it copyable.
+			b.WriteString("\n" + strings.Repeat(" ", len(k)+2) + l)
+		}
+	}
+	return b.String()
 }
 
 // requestLine renders Cloud Run's own request entry the way the dev

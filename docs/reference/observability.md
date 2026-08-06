@@ -301,6 +301,24 @@ form, fetches up to 200 recent entries, and prints
 `time service severity text` per line. No matching service lists the
 real names; no entries prints `no log entries in the last 15m0s`.
 
+A structured entry prints its **fields**, not just its message. The
+handler line `ctx.Log().Error("handler error", "err", err)` reaches you
+as the error, with the request id that ties it to the request line
+above:
+
+```
+14:12:20 x1-gallery   ERROR   handler error [req=759268]
+                              err: no matching index found. recommended index is:
+                                   - kind: photos
+                                     properties:
+                                     - name: ready
+```
+
+A multi-line value keeps its own shape, because for the errors worth
+reading — a Datastore index recommendation, a stack — the shape is the
+remediation. Whatever else a handler attaches rides along as
+`key: value`.
+
 ## Test it
 
 From [examples/gallery](../../examples/gallery/app_test.go) — tests
