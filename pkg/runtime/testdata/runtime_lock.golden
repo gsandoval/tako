@@ -44,7 +44,7 @@ func Reserved(framework net/http.Handler, app net/http.Handler) net/http.Handler
 func RunJobMain(name string, h github.com/gsandoval/tako.Handler)
 func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
 func Serve(h net/http.Handler)
-func SessionHandler() net/http.Handler
+func SessionHandler(providers ...string) net/http.Handler
 func SetQueueRate(queue string, perSec int)
 func SetRequestMetrics(m github.com/gsandoval/tako/pkg/backends.Metrics)
 func SignInPage(providers ...string) net/http.Handler

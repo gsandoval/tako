@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -128,7 +129,14 @@ func setSessionCookie(w http.ResponseWriter, r *http.Request, id string, expires
 // a session; on the local backend it also accepts the dev bar's
 // dev_user form (no GCP anywhere near tako dev). DELETE signs out by
 // deleting the record — real revocation.
-func SessionHandler() http.Handler {
+func SessionHandler(providers ...string) http.Handler {
+	// The declaration reaches the verifier: a session may only come
+	// from a provider the app declared (FL14). Before this, AuthConfig
+	// decided which buttons the sign-in page rendered and nothing else,
+	// so any Identity Platform token for the project was accepted —
+	// including one from a provider enabled on the project by something
+	// other than this app.
+	declaredProviders = providers
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
@@ -279,14 +287,7 @@ func verifyIDToken(ctx context.Context, token string) (tako.User, error) {
 	if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig) != nil {
 		return tako.User{}, errors.New("bad signature")
 	}
-	var claims struct {
-		Iss   string `json:"iss"`
-		Aud   string `json:"aud"`
-		Exp   int64  `json:"exp"`
-		Sub   string `json:"sub"`
-		Email string `json:"email"`
-		Name  string `json:"name"`
-	}
+	var claims idTokenClaims
 	if json.Unmarshal(claimRaw, &claims) != nil {
 		return tako.User{}, errors.New("malformed claims")
 	}
@@ -296,11 +297,66 @@ func verifyIDToken(ctx context.Context, token string) (tako.User, error) {
 	if time.Now().Unix() > claims.Exp {
 		return tako.User{}, errors.New("token expired")
 	}
+	return userFromClaims(claims, declaredProviders)
+}
+
+// idTokenClaims is the part of an Identity Platform ID token tako
+// reads. The firebase object is the half that was missing: the token
+// says which provider minted it, and until FL14 nothing looked.
+type idTokenClaims struct {
+	Iss           string `json:"iss"`
+	Aud           string `json:"aud"`
+	Exp           int64  `json:"exp"`
+	Sub           string `json:"sub"`
+	Email         string `json:"email"`
+	Name          string `json:"name"`
+	EmailVerified bool   `json:"email_verified"`
+	Firebase      struct {
+		SignInProvider string `json:"sign_in_provider"`
+	} `json:"firebase"`
+}
+
+// providerNames maps Identity Platform's sign_in_provider onto the
+// names an app declares in tako.AuthConfig.
+var providerNames = map[string]string{
+	"google.com": "google",
+	"password":   "email",
+}
+
+// userFromClaims applies the rule the declaration always looked like it
+// applied: a session may only come from a provider the app declared.
+//
+// Split from verifyIDToken so the rule is testable without a signing
+// key — the signature check above is Google's business, this is tako's.
+func userFromClaims(claims idTokenClaims, declared []string) (tako.User, error) {
 	if claims.Sub == "" {
 		return tako.User{}, errors.New("no subject")
 	}
-	return tako.User{ID: claims.Sub, Email: claims.Email, Name: claims.Name}, nil
+	raw := claims.Firebase.SignInProvider
+	provider, known := providerNames[raw]
+	if raw == "" {
+		// No provider claim at all is not "any provider" — it is a
+		// token tako cannot place, and the safe reading of an absent
+		// claim is refusal.
+		return tako.User{}, errors.New("the token names no sign-in provider")
+	}
+	if !known {
+		provider = raw
+	}
+	if len(declared) > 0 && !slices.Contains(declared, provider) {
+		return tako.User{}, fmt.Errorf("this token was minted by %s, and this app declares %s — tako.AuthConfig decides which doors exist",
+			provider, strings.Join(declared, " and "))
+	}
+	return tako.User{
+		ID: claims.Sub, Email: claims.Email, Name: claims.Name,
+		Provider: provider, EmailVerified: claims.EmailVerified,
+	}, nil
 }
+
+// declaredProviders is the app's tako.AuthConfig, installed by the
+// generated main. Empty means no app declared auth, in which case
+// nothing reaches verifyIDToken anyway.
+var declaredProviders []string
 
 // csrfMatches compares a submitted token in constant time.
 func csrfMatches(sent, want string) bool {

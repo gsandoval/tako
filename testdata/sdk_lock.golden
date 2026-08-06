@@ -191,5 +191,5 @@ type TestApp struct{}
 type Toggle int
 type TopicHandle[T any] struct{}
 type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
-type User struct{ID string; Email string; Name string}
+type User struct{ID string; Email string; Name string; Provider string; EmailVerified bool}
 type Window struct{For time.Duration; Every time.Duration}

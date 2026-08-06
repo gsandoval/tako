@@ -43,4 +43,19 @@ type User struct {
 	Email string
 	// Name is the user's display name, when the provider supplies one.
 	Name string
+	// Provider is the sign-in method that minted this session:
+	// "google", "email". A session can only come from a provider the
+	// app declared in tako.AuthConfig — this says which one it was, for
+	// an app that declares more than one and treats them differently.
+	Provider string
+	// EmailVerified is the provider's claim about the address.
+	//
+	// It matters when an app authorizes BY EMAIL, which is the obvious
+	// shape for an editor allowlist: such a check is only as strong as
+	// the guarantee that the address belongs to whoever signed in. For
+	// Google that guarantee is Google's. For email/password it is
+	// whatever the Identity Platform project was configured to require,
+	// which no app can see — so the claim is exposed rather than
+	// assumed.
+	EmailVerified bool
 }

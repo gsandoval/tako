@@ -18244,3 +18244,114 @@ revoked — the change cannot log anybody out mid-visit.
 password account on a project with both providers enabled — which is
 exactly the configuration flauta found, and which I can reproduce on
 tako-test-02 rather than tako-test-01.
+
+## FL14 — shipped (2026-08-06)
+
+flauta's first security entry, closed. Taken through `/senior-task`,
+which is where the re-confirm step earned its place: three of their
+seven open items had already been closed by FL11 and FL13 after their
+review was written.
+
+### The finding held, and had a second half
+
+Verified line by line before writing anything: `verifyIDToken`
+unmarshalled `Iss, Aud, Exp, Sub, Email, Name` and nothing else, and
+`tako.User` carried `ID, Email, Name`. So any Identity Platform token
+for the project verified.
+
+The half flauta did not name is in the provisioner: `EnsureAuthClient`
+(`preflight.go:318`) *enables* a declared provider — "declared →
+enabled: the declaration is the decision" — and **never disables an
+undeclared one**. The gap is therefore not a missing check on an
+unlikely configuration; it is the ordinary one.
+
+### What shipped
+
+`userFromClaims` reads `firebase.sign_in_provider`, maps Identity
+Platform's names onto the ones an app declares (`google.com` → google,
+`password` → email), and refuses anything not declared. Split from
+`verifyIDToken` deliberately: the signature check is Google's business
+and needs a key, this rule is tako's and needs nothing, so it is
+testable on its own.
+
+An absent provider claim is refused too. "No provider" is not "any
+provider" — it is a token tako cannot place.
+
+`tako.User` gains `Provider` and `EmailVerified`. The second is the one
+that matters: an allowlist keyed on email — flauta's `editors`, and the
+obvious shape — is only as strong as the guarantee the address belongs
+to whoever signed in. Google guarantees it; email/password guarantees a
+project setting no app can see.
+
+The declared set reaches the verifier through codegen:
+`runtime.SessionHandler("google")`. Runtime lock and SDK lock both
+move, both deliberate.
+
+### Live, on tako-test-02 — the real attack
+
+The project is the configuration flauta described, confirmed first:
+
+```
+email: {"enabled": true, "passwordRequired": true}
+perms: {"disabledUserSignup": true}
+```
+
+journal (declares `Google: true`) deployed there. A password account
+created through the admin API, signed in for a real ID token:
+
+```
+sign_in_provider: password
+email_verified  : False
+aud             : tako-test-02
+```
+
+A valid, signed, unexpired token for the project — everything
+`verifyIDToken` used to check, it passes. Offered to the app:
+
+```
+HTTP/2 401
+the ID token did not verify: this token was minted by email, and this app declares google — tako.AuthConfig decides which doors exist
+```
+
+**Before FL14 that session would have been minted.** Proven by
+mutation rather than by assertion: disabling the one condition makes
+both refusal tests fail —
+
+```
+--- FAIL: TestASessionCannotComeFromAnUndeclaredProvider
+    a password token was accepted by an app that declares only google
+--- FAIL: TestAnUnknownProviderIsRefusedUnlessDeclared
+    an anonymous token was accepted
+```
+
+Probe account deleted, deployment destroyed.
+
+### The docs check caught me
+
+Writing `reference/auth.md` I used `tako.Forbidden()`, which has never
+existed. Z8's sibling check failed the build on it within the minute:
+
+```
+reference/auth.md:64: the docs name tako.Forbidden, and tako exports no such symbol
+```
+
+Corrected to `tako.Errorf(403, …)`. Worth recording because it is the
+first time that check fired on new prose rather than on old rot — which
+is what it was actually built for.
+
+### Fence held
+
+tako does not disable providers at the project level. That would be
+tako reaching into a shared project to turn off something it did not
+declare; scoping the session gets the security property without it.
+flauta's `disabledUserSignup` stays their control.
+
+### Discovered work
+
+**13. `tako logs`' ADC quota-project failure is not just `tako logs`.**
+flauta filed it against Logging; I hit the identical 403 against
+`identitytoolkit.googleapis.com` while reading the project's auth
+config. It is an ADC-wide property — user credentials carry no quota
+project — so the fix (send `x-goog-user-project`, or say so in the
+error) belongs to the shared client, not to one command. Their entry
+understates the scope.

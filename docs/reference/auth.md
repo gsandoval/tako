@@ -19,7 +19,51 @@ CSRF token. Sign-out (or an operator, in the console) deletes the
 record and the session is dead on the next request — revocation is
 real, not a cookie waiting to expire. Sessions last 7 days.
 
+**The declaration is a restriction.** A session may only come from a
+provider you declared: `AuthConfig{Google: true}` refuses a token
+minted by email/password, whatever else the Identity Platform project
+has enabled.
+
+That matters because a project's providers are not only yours. Identity
+Platform enables them per project, and a deploy of another app, a
+console click, or a default can turn on email/password with
+self-service sign-up. Before tako checked, an app declaring
+`Google: true` accepted any token the project would issue — so a
+self-registered password account produced a session, and the only thing
+between it and an admin was whatever the app compared next.
+
+The refusal names both halves:
+
+```
+the ID token did not verify: this token was minted by email, and this app declares google — tako.AuthConfig decides which doors exist
+```
+
+It is checked at **sign-in**, so sessions already established keep
+working until they expire or are revoked. Changing what you declare
+never signs anyone out mid-visit.
+
 ## Use
+
+`tako.User` carries `ID`, `Email`, `Name`, and two claims about how the
+user got here:
+
+| field | |
+|---|---|
+| `Provider` | which declared provider minted this session: `"google"`, `"email"` |
+| `EmailVerified` | the provider's claim about the address |
+
+`EmailVerified` is worth a moment if you authorize **by email** — an
+editor allowlist, say. That check is only as strong as the guarantee
+that the address belongs to whoever signed in. Google guarantees it.
+Email/password guarantees whatever the project was configured to
+require, which your app cannot see, so the claim is handed to you
+rather than assumed:
+
+```go
+if !ctx.User().EmailVerified {
+	return tako.HTML{}, tako.Errorf(403, "this address is not verified")
+}
+```
 
 `Route{SignIn: true}` gates a route with a 401; past it, `ctx.User()` is
 guaranteed. On public routes use `ctx.MaybeUser()` — calling `User()`

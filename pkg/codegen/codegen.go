@@ -339,7 +339,8 @@ import (
 		b.WriteString("\ttakoMux := http.NewServeMux()\n")
 		if hasAuth(g) {
 			b.WriteString("\n\t// Auth (tako.Auth): the session endpoint — sign-in posts the\n\t// Identity Platform ID token here once; sessions are revocable\n\t// records in the entity store. The signout form is the dev bar's.\n")
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SessionHandler())\n", routes.PatternSession)
+			b.WriteString("\t//\n\t// The declared providers ride along: a session may only come from\n\t// one of them, whatever else the Identity Platform project has\n\t// enabled.\n")
+			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SessionHandler(%s))\n", routes.PatternSession, providerArgs(g))
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignOutHandler())\n", routes.PatternSignOut)
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignInPage(%s))\n", routes.PatternSignIn, providerArgs(g))
 		}
