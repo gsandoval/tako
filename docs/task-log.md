@@ -16316,3 +16316,187 @@ verified clean of `x1-`/`hello` run services, service accounts and
 secrets. The three Datastore composite indexes remain by design —
 env-scoped destroy says so on the tin ("shared repo, indexes, and
 framework bucket stay") and they are derivable, never data.
+
+## RC3 — DX proposal: every deployed service is observable (2026-08-05) — AWAITING APPROVAL
+
+Discovered work #9 (revised), promoted, and it grew a second half on
+the way. What began as "tako logs prints each request twice" is two
+defects sharing one root: **a service is only wired for observability
+if it happens to declare something else.**
+
+### What is confirmed
+
+Observed live, on `hello` deployed to tako-test-01:
+
+```
+20:33:47 hello        INFO    GET /hello → 200 (8.8ms)
+20:33:47 hello                GET /hello → 200 (0.7ms)
+```
+
+One request, two entries. The blank-severity line with the
+handler-only duration is tako's own `logRequest` `fmt.Printf`, which
+`logging.go:156` returns early from whenever `traceProject` is set. It
+is not set, so `useCloudLogging` never ran, so `BootGCP` never ran —
+because codegen never emitted the call (`codegen.go:316`):
+
+```go
+if hasResources(g, svc) || hasAuth(g) {
+	b.WriteString("\truntime.Boot() …")
+}
+```
+
+`hello` declares no resources and no auth. The guard reasons about
+BACKENDS, correctly — there is nothing to wire. But three things ride
+inside `Boot` that are not backends, and they go with it:
+
+1. **Cloud Logging JSON.** Every line the service writes is plain
+   text, so **every line has no severity**. Console severity filters
+   match nothing, and `tako logs` prints a blank column — visible in
+   the transcript above.
+2. **Trace correlation.** Handler lines never nest under their request.
+3. **Request metrics.** `SetRequestMetrics` is called from `BootGCP`
+   and nowhere else, and `recordRequest` opens with
+   `if requestMetrics == nil { return }` — so a service that never
+   booted exports **no `requests` and no `request_ms`**.
+
+(3) is the one that matters. `http.go:225`'s comment says wiring it in
+Boot "is what makes 'every service exports requests and request_ms'
+true of deployed services and not only of tests". For a resource-less
+service it is not true, and an alert built on those metrics —
+`tako.RequestsErroring`, `tako.RequestsSlow` — watches a series nothing
+writes. An alert that cannot fire looks exactly like an alert that is
+not firing.
+
+The duplicate log line, the thing originally filed, is the least of it.
+
+### The second half — the grant does not match what the runtime writes
+
+Following (3) turned up a wider mismatch. `grants.go:94` grants
+`roles/monitoring.metricWriter` **only when the app declares a Counter
+or Histogram**:
+
+```go
+if hasMetrics {
+	for _, svc := range g.Services { add(…, "roles/monitoring.metricWriter", …) }
+}
+```
+
+But `recordRequest` writes `requests` and `request_ms` from **every
+service that booted**, declared counters or not. Of the six examples,
+only gallery declares a Counter. So shortlink, journal, shop and blog
+deploy services that boot, wire request metrics, and attempt writes
+their identity was never granted.
+
+**Status: inferred from code, NOT yet observed.** The flush is every
+60s (`metricsFlush`), so confirming it means deploying one of those
+apps, serving a request, and waiting a flush. It is the first
+validation step below rather than a claim being made here.
+
+Two details argue it is real. `client.go:78` already knows what this
+looks like:
+
+> `permission denied by %s — this service's grants derive from the app
+> graph at deploy time, so a runtime 403 is a tako deploy bug: re-run
+> tako deploy, and file it if it persists`
+
+A metricWriter 403 would print exactly that, and it would be right: by
+tako's own standard, a runtime 403 IS a deploy bug. And the comment
+above the grant already describes the intended shape —
+"Package-wide, like secrets" — so only the condition is wrong, not the
+design.
+
+### Part A — observability installs unconditionally
+
+Generated main for a resource-less service, today and proposed:
+
+```go
+ func main() {
++	runtime.Boot() // observability always; backends when this package declares any
+ 	mux := http.NewServeMux()
+```
+
+One unconditional line, which is also simpler than the conditional it
+replaces. Safe to call with nothing declared, and I checked rather than
+assumed: `gcpb.New` only builds an authenticated HTTP client (no API
+call), the declared-secrets loop is empty, hook wiring touches nothing,
+and the single boot-time call — `gcpb.WhoAmI` against the instance
+metadata server — is instance-local and needs no IAM. Its failure path
+already degrades to log-only metrics rather than refusing to boot.
+
+`Boot` itself gains the ordering the comment in `BootGCP` already
+implies: observability first, backends after, so a failure wiring a
+backend is reported through a logger that works.
+
+**Local is unchanged, deliberately.** `BootLocal` still installs no
+JSON handler — the dev console is a product and JSON in it is a
+regression — and `logRequest` keeps printing the dev line, because
+locally `traceProject` stays empty. That asymmetry is the existing
+design and this must not disturb it.
+
+**One local consequence worth your call.** `Boot()` in local mode is
+`BootLocal(".tako/data")`, so `tako dev` on a resource-less app would
+begin creating an empty `.tako/data`. Harmless and gitignored, but
+untidy. The tidy alternative is making the directory lazily, on first
+backend use. I lean lazy; it is a small change and it is strictly more
+honest about what the app uses.
+
+### Part B — grant what the runtime writes
+
+```go
+-if hasMetrics {
+-	for _, svc := range g.Services { add(…metricWriter…) }
+-}
++// Every service writes requests and request_ms from the middleware,
++// whether or not the app declares a counter of its own.
++for _, svc := range g.Services { add(…metricWriter…) }
+```
+
+The security summary already explains this posture for apps that
+declare metrics; it will now say it for all of them. `metricWriter` is
+write-only and project-scoped, which is the true minimum given what
+the middleware does — narrowing it further would mean not exporting
+request metrics, and those are the ones every alert in
+`reference/alerts.md` is built on.
+
+Deployed effect for an app like journal: one added grant per service,
+and `requests`/`request_ms` start arriving where today they are
+attempted and refused.
+
+### Tests
+
+- **codegen golden**: a resource-less service's generated main contains
+  `runtime.Boot()`. `pkg/codegen` already goldens generated mains, so
+  this is a golden update plus one new fixture — the case that has no
+  coverage today precisely because nothing was emitted.
+- **grants**: `pkg/provision` asserts every service SA receives
+  `roles/monitoring.metricWriter` for an app declaring no Counter. The
+  existing grant tests cover the declared-counter path only.
+- **runtime**: `recordRequest` records through a fake sink after a boot
+  with nothing declared — the unit-level statement of "every service
+  exports requests".
+- The security-summary text changes for four examples' expected output;
+  those are goldened and will be regenerated deliberately.
+
+### Validation
+
+1. **Confirm the 403 first** — deploy `shortlink` (boots, declares no
+   Counter), serve a request, wait one 60s flush, read logs. If the
+   metric write is failing, Part B is a fix; if it is somehow
+   succeeding, Part B is unnecessary and the proposal shrinks to Part
+   A. This is the step that decides the shape, so it runs before any
+   code moves.
+2. Deploy `hello` after Part A: one request, one log line, severity
+   present, and `requests` visible in Cloud Monitoring for a service
+   that declares nothing.
+3. `validate/logging.md` gains the resource-less case; it is the gap
+   that let this ship.
+
+### Non-goals
+
+- **The `httpKey` constant** (`logging.go:40`) is dead — a leftover
+  from when tako wrote its own request entry alongside Cloud Run's.
+  Deleting it is a one-line cleanup that belongs to whoever is next in
+  that file, not to a task about grants.
+- **Making request metrics optional.** They are what every alert in the
+  reference is built on; an app that silently exports none is the bug,
+  not the configuration.
