@@ -736,7 +736,7 @@ promoted items are all in the first.
 | # | The construct | Evidence in flauta | Verdict |
 |---|---|---|---|
 | **AB1** | **Authorization is declared, not repeated** — `Route{Allow: policy}` | `requireEditor(ctx)` at **49 call sites in 12 files**, `renderNoAccess` at 48; the same four lines opening every admin handler | **DONE 2026-08-09** (`107ac03`) |
-| **AB2** | **An app's real HTTP surface in tests** — `app.Handler()` | `harness_test.go` is **874 lines** hand-mirroring codegen's binders and mounts; `harnessguard_test.go` regexes `app.go` against it because nothing else could; four write routes were tested by nothing at all until M4-04. tako's own `examples/journal/pages_test.go` is **1,052 lines** of the same | **approved, not yet built** — wiring decided: `tako test` + `-overlay`, and `tako test` becomes the documented command |
+| **AB2** | **An app's real HTTP surface in tests** — `app.Handler()` | `harness_test.go` is **874 lines** hand-mirroring codegen's binders and mounts; `harnessguard_test.go` regexes `app.go` against it because nothing else could; four write routes were tested by nothing at all until M4-04. tako's own `examples/journal/pages_test.go` is **1,052 lines** of the same | **DONE 2026-08-09** (`2845383`) |
 | **AB3a** | **A handler can see its client** — `ctx.Client()` | the log's #1 open entry; `contact.go` caps site-wide (30/h) because per-IP is inexpressible | **promote — small** |
 | **AB4** | **An app can ask where it is running** — `tako.Env` | `admin.go:85` `deployed()` reads `os.Getenv("TAKO_BACKEND")`, tako's private boot switch, at 5 call sites — and `editorAllowed` **authorizes on it** | **DONE 2026-08-09** (`efcedec`) |
 | AB3b | A declared rate limit — `Route{Limit: …}` | same entry as AB3a | **designed, blocked**: honest enforcement needs a cross-instance counter, and `tako.Cache` is per-instance in-memory (`cache.go:11`) even on GCP. A backend decision, not a patch |
@@ -755,7 +755,9 @@ that inside AB1 — declared policies are enforced by `Endpoint.Call` as
 well as by the mount, because a policy is about the caller's identity and
 a cross-service call is exactly where a trust boundary is crossed — but
 AB2 is what lets an app assert the *whole* refusal (status, page, nav)
-rather than an error value.
+rather than an error value. **Both shipped, AB1 first**; AB2 then
+retired journal's hand-mirrored harness, and its own build found three
+defects nothing else had (see `task-log.md`).
 
 AB4 rides with AB1: the reason flauta authorizes on a private env var is
 that `editorAllowed` admits dev identities locally and must not deployed.
@@ -771,7 +773,8 @@ shipping if flauta were a shop, a dashboard, or a docs site instead.
 Proposals: `task-log.md`, "AB1–AB4 — DX proposals". Gate: one per task,
 per the standing rules.
 
-**Status (2026-08-09).** AB10 is closed — roles, accounts, local
+**Status (2026-08-09).** AB2 is done, so the only unscheduled promoted
+item is AB3a (`ctx.Client()`). AB10 is closed — roles, accounts, local
 password sign-in and the two account events, four slices and four
 gates. AB1 and AB4 are shipped and validated —
 outcome, transcripts and three discovered items in `task-log.md` under

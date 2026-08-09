@@ -20147,3 +20147,92 @@ second call inside a test that already booted a server silently points
 later reads at a fresh empty store. It cost a wrong "the record was
 never created" diagnosis here. Worth either a refusal (a second
 `NewTestApp` in one test) or a doc line.
+
+## AB2 — shipped (2026-08-09)
+
+Commit `2845383`. The last open item of the abstraction review, and the
+one with the most evidence behind it: three separate slices this session
+added hand-typed mounts to an example harness, and item 31 in this log
+counted it the fifth sighting.
+
+Shipped as proposed, with the wiring the owner chose on 2026-08-09:
+`tako test` + `-overlay`, and `tako test` as the documented command for
+an app.
+
+### The property, not the copy
+
+`main.go` and the harness are emitted by **one function**
+(`writeMounts`). `TestTheHarnessMountsWhatTheMainMounts` then compares
+the two generated files route by route AND option by option
+(`RequireAuth`, `RequirePolicy`, `CacheFor`) — so the guard asserts a
+property rather than policing a duplicate. Contrast the app-side guard
+this replaces, which had to **regex `app.go` against `harness_test.go`**
+because there was nothing better to compare, and could not see options
+at all.
+
+### Three defects it found in itself
+
+All three from running it against the seven examples rather than
+reasoning about it:
+
+1. **Two packages in one directory.** The harness declares the app's
+   package and sat beside `main.go`, so `go build ./.tako/gen/<svc>` —
+   which the image build does — failed with "found packages main and
+   hello". Caught by `TestImageDigestIsDeterministic`, not by anything I
+   wrote. It gets a `harness/` subdirectory.
+2. **A package name is not a path segment.** hello's module is
+   `tako-example-hello`, so `path.Base` emitted `package
+   tako-example-hello`, which parses as `package tako` and then fails on
+   the dash. `pkgAlias` already reads the name off a declaration, which
+   is where it is actually written down.
+3. **An exclusion filter that had been wrong all along.** `writeMounts`
+   skipped worker/subscribe/cron by name, missing `singleton` and `job`.
+   Invisible in `main.go` (Generate routes those services elsewhere) and
+   fatal in a harness generated for every service — it mounted shop's
+   singleton as a JSON endpoint. Now a positive filter: routes only.
+
+### What the harness deliberately leaves out
+
+`runtime.Boot` (NewTestApp booted the backends), the async registrations
+(NewTestApp wires every worker and subscriber from the declarations —
+double-registering would deliver twice), and the dev bar. journal's
+founder test switched from `runtime.WaitIdle` to `app.DrainQueues()`
+because of exactly that: the barrier belongs to whoever owns the
+dispatcher.
+
+Routes an app does NOT declare are not in there either, by definition.
+journal's three runtime-contract routes (a redirect, a permanent
+redirect, a handler that fails) mount through `serveWith`, on the same
+origin because a session-bound CSRF token is only valid there. An app
+should not carry a `/boom` route so that tako can test its 500 page.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root — the framework's own command is
+unchanged. All seven examples green under `tako test`. Goldens for the
+harness of journal (site + auth + role + policy + cacheable route) and
+shop (API-only, no site — the shape that would break if the site block
+were assumed).
+
+The message a stale habit meets:
+
+```
+tako: app.Handler needs the generated mounts, which `go test` cannot see.
+      Run `tako test` (it regenerates first) — or `tako test ./pkg/...` for a subset.
+```
+
+Scripted walk: `validate/harness.md`. The human walk is batched per the
+Stage 3 amendment.
+
+### Discovered work
+
+**33. Only journal was converted.** gallery, shop, shortlink, siren and
+blog still hand-mount their harnesses and still pass — the change is
+opt-in per app, which is right for shipping it, and leaves five examples
+demonstrating the workaround in a repo that now has the answer. Convert
+them when each is next touched.
+
+**34. flauta is the app this was built for and has not seen it.** Its
+874-line `harness_test.go` and its regex guard (`harnessguard_test.go`)
+both retire against `app.Handler()`, and its `tako test` already runs.
+That is a flauta-session job, not a tako one.
