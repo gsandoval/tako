@@ -326,6 +326,7 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// a request-shape probe — the framework never switches modes on
 		// it by itself; handlers do).
 		ctx := &requestCtx{Context: rctx, log: requestLogger(r, reqID),
+			client: clientOf(r),
 			isHTMX: r.Header.Get("HX-Request") == "true"}
 		if session != nil {
 			u := session.user()

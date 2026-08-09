@@ -310,6 +310,11 @@ func (c *testCtx) Log() *slog.Logger { return c.log }
 
 func (c *testCtx) IsHTMX() bool { return c.htmx }
 
+// Client is the zero value: a Ctx from NewTestApp stands for a call, not
+// a request. A test that needs a client fact drives the app's real HTTP
+// surface instead — app.Handler(), where the header is a header.
+func (c *testCtx) Client() Client { return Client{} }
+
 func (c *testCtx) Task() (int, int) {
 	if c.taskCount > 1 {
 		return c.taskIndex, c.taskCount

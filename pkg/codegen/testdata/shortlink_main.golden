@@ -22,22 +22,22 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// POST /api/links → Create (app.go:50)
+	// POST /api/links → Create (app.go:54)
 	mux.Handle("POST /api/links", runtime.JSONHandler(shortlink.Create, decodeCreate))
 
-	// GET /api/links/{slug} → Resolve (app.go:51)
+	// GET /api/links/{slug} → Resolve (app.go:55)
 	mux.Handle("GET /api/links/{slug}", runtime.JSONHandler(shortlink.Resolve, decodeResolve))
 
-	// GET /api/links → List (app.go:52)
+	// GET /api/links → List (app.go:56)
 	mux.Handle("GET /api/links", runtime.JSONHandler(shortlink.List, decodeList))
 
-	// worker CountClick ← queue clicks (app.go:54) — local mode runs the worker in-process
+	// worker CountClick ← queue clicks (app.go:58) — local mode runs the worker in-process
 	runtime.RegisterWorker("CountClick", shortlink.CountClick)
 
-	// worker Expire ← queue expiries (app.go:55) — local mode runs the worker in-process
+	// worker Expire ← queue expiries (app.go:59) — local mode runs the worker in-process
 	runtime.RegisterWorker("Expire", shortlink.Expire)
 
-	// worker Archive ← queue archive (app.go:56) — local mode runs the worker in-process
+	// worker Archive ← queue archive (app.go:60) — local mode runs the worker in-process
 	runtime.RegisterWorker("Archive", shortlink.Archive)
 
 	runtime.Serve(mux)

@@ -61,4 +61,5 @@ func (c rerootedCtx) User() User              { return c.inner.User() }
 func (c rerootedCtx) MaybeUser() (User, bool) { return c.inner.MaybeUser() }
 func (c rerootedCtx) Log() *slog.Logger       { return c.inner.Log() }
 func (c rerootedCtx) IsHTMX() bool            { return c.inner.IsHTMX() }
+func (c rerootedCtx) Client() Client          { return c.inner.Client() }
 func (c rerootedCtx) Task() (int, int)        { return c.inner.Task() }

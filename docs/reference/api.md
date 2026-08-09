@@ -25,6 +25,36 @@ and `MaxAge` (how long shared caches may keep the response — see
 It has no effect on a JSON route, where the client decides how it
 caches what it parsed.
 
+### Who sent the request
+
+```go
+c := ctx.Client()   // c.IP, c.UserAgent
+```
+
+Two fields, deliberately. Country, device class and browser name are
+guesses dressed as facts.
+
+`IP` is read from `X-Forwarded-For` by counting from the **right** past
+the one hop tako provisions (Google's frontend) — never by taking the
+left-most entry, which is whatever the caller sent. A rate limit keyed on
+the left-most entry is a rate limit with an opt-out. A list shorter than
+that did not come through those hops, so the socket address wins
+instead; locally, where there is no proxy, that is always the answer.
+
+It is the **zero Client** in a worker, a cron, a job or a subscriber: a
+queue message has no client, and inventing the publisher's would be
+worse than saying nothing. Capture what you need at the request and put
+it in the message — [shortlink](../../examples/shortlink/app.go) records
+`ctx.Client().IP` on the `Click` it publishes, because the worker that
+counts it cannot ask.
+
+There is no declared rate limit yet (`Route{Limit: …}`). It needs a
+counter shared across instances, and `tako.Cache` is per-instance in
+memory even in the cloud — a limit of 5/hour enforced per instance is
+100/hour at max=20, which is a promise the framework would break
+silently. With `ctx.Client()` an app can implement the policy it wants
+over the store it already has.
+
 Settings that describe the whole service — the domain it answers on, how
 it scales — live on [`tako.Service`](service.md) instead, because a
 service has many routes and none of them is a more honest place to put a

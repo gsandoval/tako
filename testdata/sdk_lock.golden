@@ -79,6 +79,7 @@
     func (*UsersHandle).Grant(ctx Ctx, id string, role RoleHandle) error
     func (*UsersHandle).List(ctx Ctx) *UserQuery
     func (*UsersHandle).Revoke(ctx Ctx, id string, role RoleHandle) error
+    func (Ctx).Client() Client
     func (Ctx).IsHTMX() bool
     func (Ctx).Log() *log/slog.Logger
     func (Ctx).MaybeUser() (User, bool)
@@ -176,12 +177,13 @@ type BucketHandle struct{Uploaded BucketEvent}
 type Build struct{Command string; Out string}
 type CacheHandle[T any] struct{}
 type ChannelHandle struct{}
+type Client struct{IP string; UserAgent string}
 type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
 type Condition struct{}
 type Consumer interface{consumerRef() metricRef}
 type CounterHandle struct{}
 type CronConfig struct{Singleflight bool; Timezone string; Deadline time.Duration; Profile Profile; Footprint Footprint}
-type Ctx interface{IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
+type Ctx interface{Client() Client; IsHTMX() bool; Log() *log/slog.Logger; MaybeUser() (User, bool); Task() (index int, count int); User() User; context.Context}
 type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
 type Endpoint[Req any, Res any] struct{}
 type EntityHandle[T any] struct{}

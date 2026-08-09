@@ -266,6 +266,7 @@ var symbolPage = map[string]string{
 	"NotFound":          "api.md",
 	"IsNotFound":        "api.md",
 	"Route":             "api.md",
+	"Client":            "api.md",
 	"Page":              "pages.md",
 	"HTML":              "pages.md",
 	"Redirect":          "pages.md",

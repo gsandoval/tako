@@ -32,6 +32,7 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		ctx := &requestCtx{
 			Context: r.Context(),
 			log:     requestLogger(r, reqID),
+			client:  clientOf(r),
 		}
 
 		if session != nil {

@@ -27,11 +27,34 @@ type Ctx interface {
 	// route serve both full pages and fragments.
 	IsHTMX() bool
 
+	// Client is what tako can honestly say about who sent this request:
+	// their address and their user agent. It is the zero Client in a
+	// worker, a cron or a job — a queue message has no client, and
+	// inventing the publisher's would be worse than saying nothing.
+	Client() Client
+
 	// Task reports this execution's shard: (index, count). Everywhere
 	// except inside a parallel job task it is (0, 1); inside one, index
 	// is this task's 0-based number and count the RunnerConfig.Parallel fan-out —
 	// shard work by them (hash the key, take index's share).
 	Task() (index, count int)
+}
+
+// Client is who sent a request, as far as the platform can be believed.
+//
+// It is deliberately two fields. Country, device class and browser name
+// are all guesses dressed as facts, and none of them has an app asking.
+type Client struct {
+	// IP is the caller's address.
+	//
+	// Behind Cloud Run this is read from X-Forwarded-For by counting
+	// from the RIGHT past the one hop tako provisions (Google's
+	// frontend), never by taking the left-most entry — that one is
+	// whatever the caller sent, and a rate limit keyed on it is a rate
+	// limit with an opt-out. It is empty when there is no honest answer.
+	IP string
+	// UserAgent is the header, unparsed.
+	UserAgent string
 }
 
 // User is an authenticated identity as established by the app's Auth

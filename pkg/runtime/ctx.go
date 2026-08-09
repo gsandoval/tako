@@ -11,9 +11,12 @@ import (
 // slice: User panics honestly and MaybeUser reports no user.
 type requestCtx struct {
 	context.Context
-	log       *slog.Logger
-	isHTMX    bool
-	user      *tako.User
+	log    *slog.Logger
+	isHTMX bool
+	user   *tako.User
+	// client is who sent this request; the zero value in a worker, a
+	// cron or a job, where there is nobody on the other end.
+	client    tako.Client
 	taskIndex int
 	taskCount int
 }
@@ -39,6 +42,8 @@ func (c *requestCtx) MaybeUser() (tako.User, bool) {
 }
 
 func (c *requestCtx) Log() *slog.Logger { return c.log }
+
+func (c *requestCtx) Client() tako.Client { return c.client }
 
 func (c *requestCtx) IsHTMX() bool { return c.isHTMX }
 

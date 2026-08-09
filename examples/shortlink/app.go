@@ -44,6 +44,10 @@ type Link struct {
 type Click struct {
 	ID   string `entity:"id" json:"id"`
 	Slug string `json:"slug"`
+	// From is who followed the link, captured at the REQUEST and
+	// carried in the message: a worker has no client of its own, so a
+	// fact about the caller has to travel with the work.
+	From string `json:"from"`
 }
 
 var (
@@ -117,7 +121,9 @@ func resolve(ctx tako.Ctx, req ResolveReq) (Link, error) {
 	if err != nil {
 		return Link{}, err
 	}
-	return l, clicks.Publish(ctx, Click{ID: tako.NewID(), Slug: req.Slug})
+	return l, clicks.Publish(ctx, Click{
+		ID: tako.NewID(), Slug: req.Slug, From: ctx.Client().IP,
+	})
 }
 
 var errAlreadyCounted = errors.New("already counted")

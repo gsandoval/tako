@@ -20,7 +20,7 @@ func main() {
 	// tako's reserved endpoints and is served directly.
 	takoMux := http.NewServeMux()
 
-	// worker CountClick ← queue clicks (app.go:54)
+	// worker CountClick ← queue clicks (app.go:58)
 	runtime.RegisterWorker("CountClick", shortlink.CountClick)
 	// Cloud deliveries arrive as pushes: 204 acks, 500 retries, 400 = permanent.
 	takoMux.Handle("POST /_tako/api/push", runtime.PushHandler("CountClick", shortlink.CountClick))

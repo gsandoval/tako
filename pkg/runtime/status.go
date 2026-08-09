@@ -165,6 +165,7 @@ func statusCtx(r *http.Request) tako.Ctx {
 	ctx := &requestCtx{
 		Context: r.Context(),
 		log:     requestLogger(r, reqID),
+		client:  clientOf(r),
 		isHTMX:  r.Header.Get("HX-Request") == "true",
 	}
 	if session != nil {

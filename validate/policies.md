@@ -348,3 +348,60 @@ both events fire within a second of each other.
 created in the Identity Platform console and never used announces
 nothing. Blocking functions and Firebase Auth triggers are Gen1 Cloud
 Functions only, and tako provisions no functions.
+
+---
+
+## AB3a — who sent the request
+
+## 22. The IP is the caller's, not the caller's claim
+
+From the repo root:
+
+```
+go test ./pkg/runtime -run TestTheClientIPIsReadPastTheHopsTakoPutsThere
+```
+
+**Expect** green across five cases. The one that matters:
+
+```
+X-Forwarded-For: 1.2.3.4, 203.0.113.7, 130.211.0.1   → 203.0.113.7
+```
+
+`1.2.3.4` is whatever the caller put there — Google's frontend appends
+to the header rather than replacing it, so the left-most entry is a
+claim, not a fact. tako counts from the RIGHT past the one hop it
+provisions. A list shorter than that did not come through them, so the
+socket address wins instead.
+
+## 23. A click remembers who followed it
+
+```
+cd examples/shortlink && tako test -run TestAClickRemembersWhoFollowedIt ./...
+```
+
+**Expect** green: the request captures `ctx.Client().IP` and puts it in
+the queue message, because the worker that counts the click has no
+client of its own. That split is the shape of this feature in any app
+with workers.
+
+Live, against the built service (see the defect below for why not
+through `tako dev`):
+
+```
+go build -o /tmp/slbin ./.tako/gen/shortlink && PORT=8118 /tmp/slbin &
+curl -X POST -d '{"slug":"gh","url":"https://github.com"}' localhost:8118/api/links
+curl -H "X-Forwarded-For: 1.2.3.4, 203.0.113.7, 130.211.0.1" localhost:8118/api/links/gh
+strings .tako/data/entity.db | grep '"from"'
+→ "from":"203.0.113.7"
+```
+
+## 24. An async handler has no client
+
+```
+go test ./pkg/runtime -run "AsyncHandler|EveryRequestPath"
+```
+
+**Expect** green: the zero `Client` in a worker, a cron, a job and a
+subscriber, and the same answer on every one of the four request paths —
+page, JSON, blob, status — so the fact does not depend on which kind of
+route you happened to declare.

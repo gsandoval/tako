@@ -47,6 +47,7 @@ func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Requ
 		ctx := &requestCtx{
 			Context: base,
 			log:     requestLogger(r, reqID),
+			client:  clientOf(r),
 		}
 		if session != nil {
 			u := session.user()
