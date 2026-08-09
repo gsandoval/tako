@@ -37,18 +37,18 @@ func bindableList(kind string) string {
 // extractAPI validates one tako.API declaration and returns its AppGraph
 // entry. It appends every rule violation it finds to errs and returns nil
 // when any occurred.
-func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
-	return extractRoute("API", dir, pkg, name, call, errs)
+func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
+	return extractRoute("API", dir, pkg, name, call, policyVars, errs)
 }
 
 // extractPage validates one tako.Page declaration — the same route +
 // tagged-Req shape as API, except pages receive browser forms, never
 // JSON bodies, and render HTML (the signature enforces the result).
-func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
-	return extractRoute("Page", dir, pkg, name, call, errs)
+func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
+	return extractRoute("Page", dir, pkg, name, call, policyVars, errs)
 }
 
-func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
+func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
 	if name.Name == "_" || len(call.Args) < 2 {
 		return nil
 	}
@@ -99,6 +99,31 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 	requiresAuth := boolField(dir, pkg, cfg, "SignIn", "Route", errs)
 	private := boolField(dir, pkg, cfg, "Private", "Route", errs)
+	policy := ""
+	if e, set := fieldOf(cfg, "Allow"); set {
+		if p, ok := resolvePolicy(dir, pkg, name.Name, e, policyVars, errs); ok {
+			policy = p
+		} else {
+			bad = true
+		}
+		// Allow IMPLIES SignIn, in the graph and not only in the docs: a
+		// policy takes a User, so the generated mount needs the 401 gate
+		// in front of it — and the existing rules that read RequiresAuth
+		// (cache-signin above all) must see this route as authenticated.
+		requiresAuth = true
+		// A private route has no user to authorize: ingress is IAM, the
+		// caller is another service, and no session rides the hop. The
+		// pair can only ever refuse every call, so it is refused here
+		// instead of at 3am.
+		if private {
+			fail(&Error{
+				Pos: relPos(dir, pkg.Fset, e.Pos()),
+				Msg: fmt.Sprintf("%s sets both Allow and Private — a policy authorizes a signed-in user, and a private route is reached by another service with no session, so every call would be refused; drop one",
+					name.Name),
+				Rule: "policy-private",
+			})
+		}
+	}
 	maxAge := 0
 	if e, set := fieldOf(cfg, "MaxAge"); set {
 		n, aok := constInt(pkg, e)
@@ -248,6 +273,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		HasBody:      hasBody,
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
 		RequiresAuth: requiresAuth,
+		Policy:       policy,
 		Private:      private,
 		MaxAge:       maxAge,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),

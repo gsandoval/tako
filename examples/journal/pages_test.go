@@ -72,6 +72,16 @@ func servePages(t *testing.T) *httptest.Server {
 		// the line codegen emits for a []string binding.
 		return UnpublishReq{Selected: runtime.FormStrings(r, "selected")}, nil
 	}, runtime.RequireAuth()))
+	// The moderation desk. RequirePolicy carries the NAME so the status
+	// page can tell this refusal from CSRF's; RequireAuth is there
+	// because Route.Allow implies SignIn — codegen emits both, and a
+	// harness that emitted only one would let an anonymous request reach
+	// the rule instead of the 401 gate.
+	mux.Handle("GET /moderate", runtime.PageHandler(Moderate, nil,
+		runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
+	mux.Handle("POST /moderate/{id}/retract", runtime.PageHandler(Retract, func(r *http.Request) (RetractReq, error) {
+		return RetractReq{ID: runtime.PathString(r, "id")}, nil
+	}, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
 	// Harness-only: a route that ALWAYS redirects, pinning the
 	// dual-mode contract (200 + HX-Redirect under htmx).
 	alwaysRedirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {

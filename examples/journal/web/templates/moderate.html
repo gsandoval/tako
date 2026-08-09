@@ -1,0 +1,30 @@
+{{ define "title" }}moderation · journal{{ end }}
+{{ define "content" }}
+<h2>Moderation desk</h2>
+<!-- Everything anyone wrote, including other people's drafts — which is
+     why the route carries Route{Allow: Moderators} and the home page
+     carries nothing. -->
+<p class="who">Signed in as {{ .Who }}.</p>
+{{ if .Posts }}
+<table class="desk">
+  <tbody>
+  {{ range .Posts }}
+    <tr>
+      <td><a href="/p/{{ .ID }}">{{ .Title }}</a></td>
+      <td>{{ if .Published }}published{{ else }}draft{{ end }}</td>
+      <td>
+        {{ if .Published }}
+        <form method="post" action="/moderate/{{ .ID }}/retract">
+          {{ csrf }}
+          <button>retract</button>
+        </form>
+        {{ end }}
+      </td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
+{{ else }}
+<p>Nothing written yet.</p>
+{{ end }}
+{{ end }}

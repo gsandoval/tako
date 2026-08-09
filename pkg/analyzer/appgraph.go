@@ -229,8 +229,20 @@ type Handler struct {
 	// bucket-event subscribers.
 	Binding string `json:"binding,omitempty"`
 	// RequiresAuth marks a route declared with Route.SignIn: the shim
-	// guarantees ctx.User past a 401 gate.
+	// guarantees ctx.User past a 401 gate. Route.Allow sets it too — a
+	// policy takes a User, so a route with one is authenticated by
+	// construction and "Allow implies SignIn" is a fact of the graph
+	// rather than a sentence in a doc comment.
 	RequiresAuth bool `json:"requires_auth,omitempty"`
+	// Policy is the declared tako.Policy var this route is behind
+	// (Route.Allow), as generated code references it within the
+	// handler's package — "Editors". Empty means the route is open to
+	// anyone who signed in.
+	//
+	// It is here so that "which of my routes can a stranger reach" is a
+	// question the graph answers. Before it, authorization lived in
+	// handler bodies and no tool could see it.
+	Policy string `json:"policy,omitempty"`
 	// Private marks a route declared with Route.Private: IAM-only
 	// ingress, unreachable by browsers (excluded from generated
 	// browser clients; enforced at deploy from Phase H's service

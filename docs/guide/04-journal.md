@@ -91,6 +91,33 @@ and that browser is signed out on its next request. Locally the dev
 bar signs in test users; in the cloud it's real Identity Platform
 (the one manual step: [the Google provider toggle](cloud.md)).
 
+## The door: one policy, two routes
+
+Ownership answers "may this user touch THIS post". The moderation desk
+asks a different question — "who may see everyone else's drafts" — and
+that one belongs to the route:
+
+```go
+var Moderators = tako.Policy(moderator)
+
+Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
+Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+```
+
+`moderator` returns `nil` to admit and `tako.Deny(msg)` to refuse; any
+other error means it could not decide, and answers 500 rather than
+handing a visitor an internal message. `retract` then contains no
+authorization at all — the door is the declaration, and the handler is
+about the act.
+
+Two things follow that are easy to miss. `tako gen graph` now prints
+`GET /moderate → Moderate 🔒 Moderators`, so "which routes can a
+stranger reach" is a question the graph answers. And the status page
+branches on `Status.Policy`, because 403 was CSRF's answer here until
+this journal had a door — without it, a reader who is not a moderator
+would be told their form expired. Details in
+[reference/auth.md](../reference/auth.md).
+
 ## Run it
 
 ```

@@ -41,8 +41,18 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 	// and so do co-located packages, which are never registered).
 	if raw := hooks.RemoteCallFor(e.pkg + " " + e.route); raw != nil {
 		if t, ok := raw.(func(Ctx, Req) (Res, error)); ok {
+			// The callee's own mount enforces its gates, and it is the
+			// only side that can: a policy may read the callee's store.
 			return t(ctx, req)
 		}
+	}
+	// The declared gates, for the direct call — the same rule the
+	// generated mount applies to an HTTP request. Without this, a
+	// cross-package call would walk past the callee's authorization at
+	// exactly the boundary that has one.
+	if err := authorize(ctx, e.cfg); err != nil {
+		var zero Res
+		return zero, err
 	}
 	return e.fn(ctx, req)
 }

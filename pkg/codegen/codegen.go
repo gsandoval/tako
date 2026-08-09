@@ -389,6 +389,13 @@ import (
 		if h.RequiresAuth {
 			auth = ", runtime.RequireAuth()"
 		}
+		// The policy's NAME, not the handle: Endpoint.Call evaluates the
+		// rule (so a cross-service call cannot walk past it), and what
+		// the mount adds is the name a status page needs to tell this
+		// refusal from a stale CSRF token's.
+		if h.Policy != "" {
+			auth += fmt.Sprintf(", runtime.RequirePolicy(%q)", h.Policy)
+		}
 		// Pages and blobs read MaxAge; a JSON handler does not yet, and
 		// passing it there would generate a line that says something
 		// the runtime ignores.

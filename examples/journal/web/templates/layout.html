@@ -16,7 +16,8 @@
 <body hx-headers='{"X-CSRF-Token": "{{ csrfToken }}"}'>
   <header><h1><a href="/">journal</a></h1>
     <nav><a href="/write">write</a> · <a href="/about">about</a> ·
-      {{ if signedIn }}<span class="who">{{ with (user).Name }}{{ . }}{{ else }}{{ (user).Email }}{{ end }}</span>
+      {{ if signedIn }}<a href="/moderate">moderate</a> ·
+      <span class="who">{{ with (user).Name }}{{ . }}{{ else }}{{ (user).Email }}{{ end }}</span>
       <form method="post" action="/_tako/api/session/signout" style="display:inline;margin:0"><button class="linkish">sign out</button></form>
       {{ else }}<a href="/_tako/signin?next=/">sign in</a>{{ end }}</nav></header>
   <main>{{ block "content" . }}{{ end }}</main>

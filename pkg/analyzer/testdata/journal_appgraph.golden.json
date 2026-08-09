@@ -12,7 +12,9 @@
         "journal.Publish",
         "journal.Rename",
         "journal.Unpublish",
-        "journal.Perma"
+        "journal.Perma",
+        "journal.Moderate",
+        "journal.Retract"
       ],
       "profile": "default"
     }
@@ -35,9 +37,9 @@
         ]
       ],
       "composite_sources": [
-        "app.go:151 home"
+        "app.go:217 home"
       ],
-      "pos": "app.go:15:2"
+      "pos": "app.go:16:2"
     },
     {
       "kind": "entity",
@@ -45,7 +47,7 @@
       "var": "journal.moved",
       "package": "journal",
       "type": "MovedURL",
-      "pos": "app.go:24:2"
+      "pos": "app.go:25:2"
     },
     {
       "kind": "site",
@@ -59,7 +61,7 @@
           "to": "/about"
         }
       ],
-      "pos": "app.go:28:2"
+      "pos": "app.go:29:2"
     },
     {
       "kind": "auth",
@@ -69,14 +71,14 @@
       "providers": [
         "google"
       ],
-      "pos": "app.go:35:2"
+      "pos": "app.go:36:2"
     },
     {
       "kind": "status",
       "name": "status",
       "var": "journal.Status",
       "package": "journal",
-      "pos": "app.go:47:5"
+      "pos": "app.go:89:5"
     }
   ],
   "handlers": [
@@ -88,7 +90,7 @@
       "route": "GET /",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:101:2"
+      "pos": "app.go:159:2"
     },
     {
       "kind": "page",
@@ -107,7 +109,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:102:2"
+      "pos": "app.go:160:2"
     },
     {
       "kind": "page",
@@ -117,7 +119,7 @@
       "route": "GET /write",
       "req_ref": "struct{}",
       "res_ref": "tako.HTML",
-      "pos": "app.go:103:2"
+      "pos": "app.go:161:2"
     },
     {
       "kind": "page",
@@ -143,7 +145,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:104:2"
+      "pos": "app.go:162:2"
     },
     {
       "kind": "page",
@@ -163,7 +165,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:105:2"
+      "pos": "app.go:163:2"
     },
     {
       "kind": "page",
@@ -189,7 +191,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:106:2"
+      "pos": "app.go:164:2"
     },
     {
       "kind": "page",
@@ -209,7 +211,7 @@
           "type": "[]string"
         }
       ],
-      "pos": "app.go:111:2"
+      "pos": "app.go:169:2"
     },
     {
       "kind": "page",
@@ -235,7 +237,40 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:123:2"
+      "pos": "app.go:181:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Moderate",
+      "package": "journal",
+      "service": "journal",
+      "route": "GET /moderate",
+      "requires_auth": true,
+      "policy": "Moderators",
+      "req_ref": "struct{}",
+      "res_ref": "tako.HTML",
+      "pos": "app.go:188:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.Retract",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /moderate/{id}/retract",
+      "requires_auth": true,
+      "policy": "Moderators",
+      "req_type": "RetractReq",
+      "req_ref": "journal.RetractReq",
+      "res_ref": "tako.HTML",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:189:2"
     }
   ],
   "edges": [
@@ -329,6 +364,27 @@
       "to_kind": "entity",
       "kind": "resource",
       "verb": "read"
+    },
+    {
+      "from": "journal.Moderate",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Retract",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Retract",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
     }
   ]
 }

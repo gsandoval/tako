@@ -50,6 +50,21 @@ type Route struct {
 	// SignIn requires an authenticated user; the handler's Ctx.User is
 	// then guaranteed rather than a panic waiting to happen.
 	SignIn bool
+	// Allow names the declared tako.Policy that decides whether the
+	// signed-in user may use this route.
+	//
+	//	tako.Page("GET /admin", adminHome, tako.Route{Allow: Editors})
+	//
+	// It implies SignIn — a policy takes a User, so a route carrying one
+	// is authenticated by construction, and writing both is redundant
+	// rather than wrong. A refusal is a 403 rendered through the app's
+	// tako.StatusPage, carrying the policy's name in Status.Policy so a
+	// status page can tell YOUR refusal from a stale CSRF token's.
+	//
+	// It must be a package-level policy var, not a function literal
+	// (tako/policy-var): a door with a name is a door the analyzer can
+	// print, `tako gen graph` can list, and two routes can share.
+	Allow *PolicyHandle
 	// Private restricts ingress to IAM-authenticated callers (other
 	// services, not the public internet). IAM-only, not
 	// network-internal.

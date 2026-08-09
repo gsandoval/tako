@@ -1,0 +1,3 @@
+app.go:14:9: Inline names a policy that is not a declared var in this package — write `var Editors = tako.Policy(editorAllowed)` and set Allow: Editors; a call expression cannot be named by the generated service, printed by `tako gen graph`, or shared by a second route (tako/policy-var)
+app.go:19:5: policy editors must be exported — the generated service names it from outside the package; rename it Editors (tako/unexported-policy)
+app.go:28:11: Internal sets both Allow and Private — a policy authorizes a signed-in user, and a private route is reached by another service with no session, so every call would be refused; drop one (tako/policy-private)

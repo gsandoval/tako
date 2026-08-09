@@ -28,6 +28,12 @@ type HandlerOption func(*handlerConf)
 
 type handlerConf struct {
 	requireAuth bool
+	// policy is the NAME of the route's declared tako.Policy. The check
+	// itself is not here: Endpoint.Call enforces it, so one rule runs at
+	// one place whether the caller is a browser or another service. What
+	// the mount adds is the name, which is what a status page needs to
+	// tell this refusal from a stale CSRF token's.
+	policy string
 	// maxAge is Route.MaxAge in seconds: how long a shared cache may
 	// keep this page. Zero is no-cache, which is every page that does
 	// not ask otherwise.
@@ -38,6 +44,19 @@ type handlerConf struct {
 // the handler runs; past it, ctx.User() is guaranteed.
 func RequireAuth() HandlerOption {
 	return func(c *handlerConf) { c.requireAuth = true }
+}
+
+// RequirePolicy names the route's declared tako.Policy (Route.Allow) so
+// a refusal from it can be told apart from every other 403 — it arrives
+// at the status page as Status.Policy.
+//
+// It carries the name and not the handle deliberately: the policy is
+// evaluated by Endpoint.Call, which is the ONE enforcement point for
+// browsers, in-process callers and cross-service calls alike. A second
+// check here would run an app's rule twice per request, and a rule that
+// reads the entity store is not free.
+func RequirePolicy(name string) HandlerOption {
+	return func(c *handlerConf) { c.policy = name }
 }
 
 // CacheFor sets Route.MaxAge on a generated page handler: the response
@@ -318,13 +337,13 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		if decode != nil {
 			var err error
 			if req, err = decode(r); err != nil {
-				pageError(w, r, ctx, reqID, err)
+				pageError(w, r, ctx, reqID, err, conf.policy)
 				return
 			}
 		}
 		res, err := e.Call(ctx, req)
 		if err != nil {
-			pageError(w, r, ctx, reqID, err)
+			pageError(w, r, ctx, reqID, err, conf.policy)
 			return
 		}
 		markup, redirect, status, fragment := hooks.HTMLParts(res)
@@ -408,9 +427,17 @@ func csrfValidAgainst(r *http.Request, token string) bool {
 // panicking status page and falls through to the same plain text. The
 // downside is bounded, and the upside is that a 403 and a 500 stop
 // being the two places a site drops its own skin.
-func pageError(w http.ResponseWriter, r *http.Request, ctx tako.Ctx, reqID string, err error) {
+func pageError(w http.ResponseWriter, r *http.Request, ctx tako.Ctx, reqID string, err error, policy string) {
 	if he, ok := err.(interface{ HTTPStatus() int }); ok {
-		writeStatus(w, r, tako.Status{Code: he.HTTPStatus(), RequestID: reqID, Message: err.Error()})
+		// The policy name rides along only on a policy's refusal. A
+		// stale CSRF token is also a 403 on the same route, and a status
+		// page that could not tell them apart would send a signed-in
+		// editor to ask for access they already have.
+		named := ""
+		if tako.IsDenied(err) {
+			named = policy
+		}
+		writeStatus(w, r, tako.Status{Code: he.HTTPStatus(), RequestID: reqID, Message: err.Error(), Policy: named})
 		return
 	}
 	ctx.Log().Error("page error", "err", err)

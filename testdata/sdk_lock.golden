@@ -39,6 +39,7 @@
     func (*JobHandle[T]).Run(ctx Ctx, params T) error
     func (*LockHandle).Do(ctx Ctx, fn func(Ctx) error) error
     func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
+    func (*PolicyHandle).Check(ctx Ctx, u User) error
     func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
     func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
     func (*RequestMsHandle).Count() Metric
@@ -101,10 +102,12 @@ func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
 func CronFailed(cron Handler, times int, w ...Window) Condition
 func CronMissed(cron Handler, w ...Window) Condition
+func Deny(msg string) error
 func Entity[T any](name string) *EntityHandle[T]
 func Environment() Env
 func Errorf(status int, format string, args ...any) error
 func Histogram(name string) *HistogramHandle
+func IsDenied(err error) bool
 func IsNotFound(err error) bool
 func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition
 func Job[T any](name string) *JobHandle[T]
@@ -115,6 +118,7 @@ func NotFound() error
 func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) Endpoint[Req, HTML]
 func Permanent(err error) error
 func PlatformMetric(metricType string, filters ...string) Metric
+func Policy(fn func(Ctx, User) error) *PolicyHandle
 func QueueBacklogged(c Consumer, n int, w QueueWatch) Condition
 func QueueMetric(c Consumer, metricType string, filters ...string) Metric
 func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition
@@ -175,13 +179,14 @@ type JobHandle[T any] struct{}
 type LockHandle struct{}
 type Metric interface{metricSubject() metricRef}
 type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
+type PolicyHandle struct{}
 type Profile int
 type PutPolicy struct{MaxSize int64; ContentType string}
 type QueueHandle[T any] struct{}
 type QueueWatch struct{DeadLetters bool; For time.Duration}
 type RequestMsHandle struct{}
 type RequestsHandle struct{}
-type Route struct{SignIn bool; Private bool; MaxAge time.Duration}
+type Route struct{SignIn bool; Allow *PolicyHandle; Private bool; MaxAge time.Duration}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
 type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
@@ -189,7 +194,7 @@ type ServiceHandle struct{}
 type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
 type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool; NotFound string}
 type SiteHandle struct{}
-type Status struct{Code int; Path string; RequestID string; Message string}
+type Status struct{Code int; Path string; RequestID string; Message string; Policy string}
 type StatusHandle struct{}
 type Target interface{alertTarget() metricRef}
 type TestApp struct{}

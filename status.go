@@ -33,6 +33,17 @@ type Status struct {
 	// Message is safe, already-public text — "CSRF token missing or
 	// invalid" — and is empty for any 5xx.
 	Message string
+	// Policy names the declared policy that refused this request —
+	// "Editors" — and is empty for every status tako answers on its own
+	// account, CSRF included.
+	//
+	// It exists because a 403 from your rule and a 403 from a stale form
+	// are different problems with different remediations, and a status
+	// page that cannot tell them apart sends a signed-in editor who
+	// tripped CSRF to ask for access they already have. The first app to
+	// meet this sniffed a sentinel string out of Message to decide; this
+	// is that, typed.
+	Policy string
 }
 
 // StatusHandle is a declared status page, the value tako.StatusPage

@@ -17,6 +17,8 @@ var Echo = tako.API("POST /echo", echo)
 
 `tako.Route` carries the settings that describe the ROUTE they sit on:
 `SignIn` (401 without a session; `ctx.User()` guaranteed past it),
+`Allow` (the declared `tako.Policy` that decides which signed-in users
+may use this route — see [auth.md](auth.md); it implies `SignIn`),
 `Private` (IAM-only ingress — other services, not the public internet),
 and `MaxAge` (how long shared caches may keep the response — see
 [pages.md](pages.md) for pages and [bucket.md](bucket.md) for blobs).

@@ -64,6 +64,12 @@ func HandlerLine(h Handler) string {
 	if h.RequiresAuth {
 		lock = " 🔒"
 	}
+	// A named door prints its name. "🔒" alone says a session is needed;
+	// which people the session must belong to is the other half, and it
+	// used to be invisible because it lived in the handler's body.
+	if h.Policy != "" {
+		lock = " 🔒 " + h.Policy
+	}
 	switch h.Kind {
 	case "job":
 		par := ""

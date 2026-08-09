@@ -392,6 +392,12 @@ var symbolPage = map[string]string{
 	"AuthHandle": "auth.md",
 	"AuthConfig": "auth.md",
 	"User":       "auth.md",
-	"NewTestApp": "testing.md",
-	"TestApp":    "testing.md",
+	// Authorization sits with authentication: Route.Allow is the other
+	// half of the door tako.Auth opens.
+	"Policy":       "auth.md",
+	"PolicyHandle": "auth.md",
+	"Deny":         "auth.md",
+	"IsDenied":     "auth.md",
+	"NewTestApp":   "testing.md",
+	"TestApp":      "testing.md",
 }

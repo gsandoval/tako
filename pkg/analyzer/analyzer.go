@@ -115,6 +115,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	serviceNames := map[string]string{}     // package path → declared app-service name
 	workersByQueue := map[string]*Handler{} // queue name → its worker
 	jobVars := map[types.Object]string{}    // job var object → job name
+	policyVars := map[types.Object]string{} // policy var object → var name
 	jobsByName := map[string]*Handler{}     // job name → its handler
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
@@ -194,6 +195,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 				}
+			case "Policy":
+				// Not a Resource: a policy provisions nothing. It is
+				// recorded per ROUTE (Handler.Policy), which is where the
+				// question "who may reach this" is actually asked.
+				if extractPolicy(cfg.Dir, pkg, d.name, &errs) {
+					policyVars[pkg.TypesInfo.Defs[d.name]] = d.name.Name
+				}
 			case "StatusPage":
 				if r := extractStatusPage(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					if prior, exists := statusOfPackage[pkg.PkgPath]; exists {
@@ -241,13 +249,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		for _, d := range decls {
 			switch d.ctor {
 			case "API":
-				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, policyVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Page":
-				if h := extractPage(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
+				if h := extractPage(cfg.Dir, pkg, d.name, d.call, policyVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var

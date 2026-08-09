@@ -127,10 +127,17 @@ or as a static file. They are one writer now.
 | `Path` | the request path |
 | `RequestID` | ties the page to the log line that explains it |
 | `Message` | safe, already-public text; **empty for any 5xx** |
+| `Policy` | the `tako.Policy` that refused this request; empty for every status tako answers on its own account |
 
 There is deliberately no error field. A 5xx's detail is logged against
 `RequestID` and never handed to the page, so leaking it is not
 something the type lets you do.
+
+`Policy` is what makes a 403 legible. Several things answer 403 on a
+guarded route — your policy, a stale CSRF token, a handler's own
+refusal — and a page that guesses from the code alone tells a reader
+who is simply not a moderator that their form expired. journal branches
+on it in one line; see [auth.md](auth.md).
 
 The page runs with an ordinary `Ctx` — session, logger, queries — so a
 status page can greet a signed-in visitor and read the store like any

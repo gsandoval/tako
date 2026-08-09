@@ -89,6 +89,84 @@ the caller's session id in `X-Tako-Session`, and the callee's record
 lookup IS the verification — revocation kills the identity mid-chain.
 See [calls.md](calls.md).
 
+## Authorize: tako.Policy and Route.Allow
+
+Authentication says somebody signed in. **Which** of the people who
+signed in may use a route is a policy — declared, like everything else:
+
+```go
+var Moderators = tako.Policy(moderator)
+
+func moderator(ctx tako.Ctx, u tako.User) error {
+	for _, m := range moderators {
+		if u.Email == m {
+			return nil
+		}
+	}
+	return tako.Deny("the moderation desk is limited to this journal's moderators")
+}
+```
+
+```go
+Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
+Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+```
+
+One policy serves as many routes as share the door, and the handlers
+open with their own work rather than with four lines of preamble. It is
+worth saying what that preamble cost, since it is the reason this
+exists: an app carrying an admin wrote the same check at **49 call
+sites in 12 files**, and no tool could answer "which of my routes can a
+stranger reach" because the answer lived in function bodies.
+
+| | |
+|---|---|
+| return `nil` | admit |
+| return `tako.Deny(msg)` | refuse: 403, `msg` shown to the visitor |
+| return any other error | **could not decide**: 500, logged under the request id, never rendered |
+
+That third row is the guard. A store read that failed while deciding is
+not a decision, so the only text that reaches a visitor is text you
+wrote deliberately.
+
+**`Allow` implies `SignIn`.** A policy takes a `User`, so the 401 gate
+is in front of it and `ctx.User()` is guaranteed past it. Writing both
+is redundant, not wrong.
+
+**It sees the user, not the request.** A policy answers *who may reach
+this route*. Whether this user may touch *that record* is a question
+about the record, and it belongs in the handler that loaded it —
+journal's `publish` still checks `current.Owner != ctx.User().ID`.
+Keeping the two apart is what lets one policy serve fifty routes.
+
+**Enforced by `Endpoint.Call`, not by the mount.** That is one
+enforcement point for a browser request, an in-package call, a test,
+and a cross-service call — the last being the one place a trust
+boundary is actually crossed. A remote hop is the exception and
+deliberately so: the callee evaluates its own policy, because the rule
+may read the callee's entity store. Callers can test the verdict with
+`tako.IsDenied(err)`.
+
+### Telling your 403 from tako's
+
+Several things answer 403 on a guarded route: your policy, a stale CSRF
+token, a handler's own refusal. `Status.Policy` names the policy that
+refused and is empty for everything tako answers on its own account:
+
+```go
+func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
+	heading := statusHeadings[s.Code]   // 403 → "That form expired"
+	if s.Policy != "" {
+		heading = "Not your desk"
+	}
+	...
+}
+```
+
+Without it a reader who is simply not a moderator is told their form
+expired, and an editor who tripped CSRF is sent to ask for access they
+already have.
+
 ## Local
 
 `tako dev` does auth with no GCP anywhere near it. HTML responses get
@@ -156,7 +234,20 @@ identity directly.
 ## Errors you'll meet
 
 - `401 {"error": "sign in to continue"}` — Route.SignIn's gate, exact text
-  pinned by tests.
+  pinned by tests. An `Endpoint.Call` on a `SignIn` or `Allow` route with
+  no user returns the same 401 as an error (it used to panic inside
+  `ctx.User()`).
+- `403 <your Deny text>` — a policy refused, rendered through your
+  status page with `Status.Policy` set.
+- `app.go:118:41: Admin names a policy that is not a declared var in this
+  package … (tako/policy-var)` — `Route.Allow` takes a declared
+  `tako.Policy` var, never a function literal: a door with no name
+  cannot be printed, shared, or named on a status page.
+- `app.go:19:5: policy editors must be exported … (tako/unexported-policy)`
+  — the generated service names it from outside the package.
+- `app.go:28:11: Internal sets both Allow and Private … (tako/policy-private)`
+  — a private route is reached by another service with no session, so
+  every call would be refused.
 - `400 POST {"idToken": …} (the Identity Platform sign-in result)` —
   `/_tako/api/session` got a body without an ID token.
 - `401 the ID token did not verify: token is for a different project`
@@ -169,8 +260,11 @@ identity directly.
 ## Not yet
 
 - Two providers: Google and email/password. No other OAuth providers.
-- No roles or custom claims — authorization past "signed in" is your
-  handler's code (journal's owner check is the pattern).
+- No roles and no user store. `tako.Policy` is the seam authorization
+  hangs on; who is an editor, and how that list is edited, stays the
+  app's — tako never learns what a role is.
+- No custom claims. Per-record rules (ownership) remain the handler's
+  code; journal's owner check is the pattern.
 - No session cache: every authenticated request pays the entity Get.
 - No account-creation UI for the email provider; the framework page
   signs in existing users only.

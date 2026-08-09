@@ -6,6 +6,7 @@
 package journal
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako"
@@ -35,6 +36,47 @@ var (
 	auth = tako.Auth(tako.AuthConfig{Google: true})
 )
 
+// Moderators is the journal's one DOOR: who, among the people who signed
+// in, may use the moderation desk.
+//
+// It is a declaration rather than four lines at the top of two handlers,
+// which is what it used to be everywhere. Because it is declared, `tako
+// gen graph` prints it per route, the generated mount names it, and the
+// status page below can tell this refusal from a stale CSRF token's.
+//
+// Ownership is NOT here, deliberately. "Only the author may publish"
+// is a question about a post, and it stays in the handler that loaded
+// the post (see publish and rename). A policy answers "who may reach
+// this route" — keeping the two apart is what lets one policy serve
+// every route behind the same door.
+var Moderators = tako.Policy(moderator)
+
+// moderators is the allowlist. A real app reads this from its config
+// seam; the shape is the same either way — a rule tako never sees.
+var moderators = []string{"editor@example.com"}
+
+func moderator(ctx tako.Ctx, u tako.User) error {
+	// The local way in. `tako dev` mints identities under .test, and
+	// without this the moderation desk would be unreachable on a laptop:
+	// sign in, get turned away, every time.
+	//
+	// Two guards, both needed. tako.Environment() keeps the affordance
+	// out of production, and .test is IANA-reserved — it can never be
+	// delegated, so no real account can present one. Neither half alone
+	// would do: an environment check by itself admits any address a
+	// deploy misconfiguration lets through, and a suffix check by itself
+	// is a door left open in the cloud.
+	if tako.Environment() == tako.EnvLocal && strings.HasSuffix(u.Email, ".test") {
+		return nil
+	}
+	for _, m := range moderators {
+		if u.Email == m {
+			return nil
+		}
+	}
+	return tako.Deny("the moderation desk is limited to this journal's moderators — ask one of them to retract a post for you")
+}
+
 // Status is the page tako renders for every response it produces
 // itself: a mistyped URL, a handler's tako.NotFound(), an expired CSRF
 // token, a method the site does not serve, a handler that failed.
@@ -58,6 +100,12 @@ type StatusView struct {
 }
 
 var statusHeadings = map[int]string{
+	// 401 was unreachable by navigation until the moderation desk: every
+	// other guarded route here is a POST, so nobody could arrive at one
+	// by typing a URL. Walking /moderate signed out found this heading
+	// missing and the page saying "Something went wrong" about a request
+	// that had gone exactly right.
+	401: "Sign in first",
 	404: "Not found",
 	403: "That form expired",
 	405: "Not that way",
@@ -68,6 +116,16 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 	heading := statusHeadings[s.Code]
 	if heading == "" {
 		heading = "Something went wrong"
+	}
+	// Two things answer 403 here and they need different words. The
+	// heading above is CSRF's — a form that sat too long — and it was
+	// the only one until this journal had a door. Status.Policy is how
+	// they are told apart: it names the policy that refused, and is
+	// empty for every status tako answers on its own account. Guessing
+	// from the code alone would greet a reader who is simply not a
+	// moderator with "That form expired".
+	if s.Policy != "" {
+		heading = "Not your desk"
 	}
 	// The count the masthead shows on every other page. A 404 that
 	// drops the site's chrome is the thing this exists to prevent.
@@ -121,6 +179,14 @@ var (
 	// revalidating against the entity store on every visit. Every other
 	// page here answers no-cache, which is what a zero MaxAge means.
 	Perma = tako.Page("GET /{year}/{slug}", perma, tako.Route{MaxAge: 5 * time.Minute})
+
+	// The moderation desk: every post, whoever wrote it, and one action
+	// on somebody else's work. Route.Allow is the whole authorization —
+	// no preamble in either handler, and Allow implies SignIn, so
+	// ctx.User() is guaranteed past it exactly as it is on a SignIn
+	// route.
+	Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
+	Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
 )
 
 // HomeView is the home page's data: one page of posts, and how many
@@ -327,4 +393,41 @@ func publish(ctx tako.Ctx, req PublishReq) (tako.HTML, error) {
 		return site.Fragment(ctx, "publish-toggle.html", out)
 	}
 	return tako.Redirect("/p/" + out.ID)
+}
+
+// ModerateView is the desk: everything anyone has written, newest
+// first, with what state it is in.
+type ModerateView struct {
+	Posts []Post
+	Who   string
+}
+
+// moderate lists every post, published or not, including other people's
+// drafts — which is exactly why the route is behind a door and the home
+// page is not.
+func moderate(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+	list, err := posts.Query(ctx).OrderBy("-Created").Limit(pageSize).All()
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	return site.Render(ctx, "moderate.html", ModerateView{Posts: list, Who: ctx.User().Email})
+}
+
+type RetractReq struct {
+	ID string `path:"id"`
+}
+
+// retract takes a post off the site whoever wrote it. Note what is NOT
+// here: no allowlist check, no ctx.User() comparison, no early return.
+// The door is the declaration, so this handler is only about the act.
+func retract(ctx tako.Ctx, req RetractReq) (tako.HTML, error) {
+	if _, err := posts.Get(ctx, req.ID); tako.IsNotFound(err) {
+		return tako.HTML{}, tako.NotFound()
+	} else if err != nil {
+		return tako.HTML{}, err
+	}
+	if err := posts.Update(ctx, req.ID, func(p *Post) { p.Published = false }); err != nil {
+		return tako.HTML{}, err
+	}
+	return tako.Redirect("/moderate")
 }
