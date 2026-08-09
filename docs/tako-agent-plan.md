@@ -534,6 +534,160 @@ Designed and argued, waiting on a trigger rather than on time:
   deployed project in CI; it stays a per-walk human check rather than a
   test that pretends.
 
+## Stage 12 — the fourth friction review (2026-08-08) — AWAITING APPROVAL
+
+**FL10–FL14 shipped between the third review and this one** and are not
+mapped here; `task-log.md` carries each one. In short: FL10 derives a
+query assembled across functions, FL11 `tako.StatusPage`, FL12
+`Route.MaxAge`, FL13 the project IAM grant retries through propagation,
+FL14 a declared provider is a scoped door. Z8 rode along — the docs
+check catches a field that no longer exists.
+
+**Where FL15+ comes from.** A fourth read of `flautas/docs/friction.md`,
+with every open entry re-checked against tako at `7a40353` rather than
+carried forward. Two things the read found before any of the entries:
+
+- **The log's own index is stale.** Its table lists six open entries;
+  the file holds **eight**. Two dated 2026-08-07 — the dev bar's missing
+  hook, and scalar-only form binding — sit below the resolved entries
+  and never reached the table. The second of them is the most valuable
+  item in the log. A flauta-side correction under ADR 0008; noted here
+  because tako read the file, not the table.
+- **Nothing open blocks.** Every one of the eight has a working app-side
+  answer, which is the friction gate passing rather than stalling — the
+  contrast is FL8, whose only app-side answer was renaming the module.
+
+Six entries are taken below as five tasks, one is deferred, and each
+still owes a DX proposal before implementation.
+
+**FL15 — a form may repeat a field.** `bindableTypes`
+(`pkg/analyzer/handlers.go:18`) binds `string`, `bool`, `int`, `int64`,
+`float64`; anything else is `tako/bind-type` at `handlers.go:326`. So a
+group of checkboxes named alike — the native HTML shape of "select some
+rows" — cannot reach a handler: `FormString` returns the first value and
+the other N-1 are dropped before the app runs. flauta's workaround
+travels the selection as one hidden scalar of space-separated
+`slug@token` entries, which forces the boxes to be JS-built and costs
+the no-JS baseline for bulk selection.
+
+The shape: `[]string` for `form:` and `query:` tags. The decode helper
+is `r.Form[name]`; the analyzer already has the type table and the error
+path.
+
+**This one goes before the tag, and it is the only one that does.** It
+changes what a Req struct may *declare* — normative surface, so its own
+DX proposal per the API rule. Pre-tag that is just the v0 surface;
+post-tag it is an API change against a published version.
+
+It also has a corpus problem: none of the five examples asks for it, so
+the standing rule says it waits. Override it the way FL8 already did —
+FL8 moved `examples/hello` to a host-shaped module path *because* the
+corpus could not reach the bug. Here a list screen with selection in
+`shop` is part of the task, not a follow-up. Gate FL15 (agent-side):
+golden for the new binding and for the unchanged `bind-type` error on a
+still-unbindable type; shop's suite green with N checkboxes named alike
+and no JS.
+
+**FL16 — the dev server's readiness probe answers for the wrong
+process.** flauta filed this as "`tako dev` says ready before it has
+bound the port" and asked tako to bind before printing. **The
+diagnosis is wrong and the fix does not follow from it**: `tako dev`
+never binds — the child does. `waitReady` (`pkg/devserver/devserver.go:342`)
+dials `127.0.0.1:PORT` and returns nil the moment *anything* accepts, so
+when a stale example holds 8080 the probe succeeds against the stranger
+and `ready in 590ms` (`devserver.go:214`) is printed truthfully about
+someone else's server. The child then fails to bind and prints the good
+error from `pkg/runtime/http.go:171` — after the success line, which is
+the ordering flauta saw.
+
+The sharp detail: `http.go:168` already carries the comment *"A
+collision here answers requests with SOMEONE ELSE'S responses —
+mysterious 404s."* tako wrote this failure mode down and then built a
+readiness probe that walks into it.
+
+The shape: `waitReady` must confirm it reached *this* child — watch the
+child's exit alongside the dial, or probe a `/_tako/` path carrying a
+per-run nonce. Two tako apps on one machine is the normal case for
+anyone developing tako and an app together. Gate FL16 (agent-side): a
+devserver test that holds the port with a foreign listener and asserts
+`tako dev` fails with the collision text and never prints `ready`.
+
+**FL17 — a blob response carries its headers, and so does a stylesheet.**
+`BlobHandler` (`pkg/runtime/blob.go:20`) sets `Content-Type` and
+`Content-Length` (`blob.go:57-59`) and stops: no `X-Content-Type-Options`,
+no `Cache-Control`, no validator. A blob is the one response kind whose
+bytes came from outside the program, which makes it the response that
+needs nosniff most. flauta's workaround is to constrain what can be
+*declared* — uploads refuse anything that is not one of four image types
+— so a stored type can never be `text/html`.
+
+**tako's read found a second instance flauta could not see.**
+`securityHeaders` (`pkg/runtime/status.go:141`) is the single writer of
+nosniff, and the site handler calls it **only when the content type is
+`text/html`** (`site.go:174-176`). Every non-HTML file the site serves —
+`.css`, `.js`, `.svg` — goes out without it. `contentTypeOf`'s own
+comment two hundred lines later says *"nosniff is set — types must be
+right"* (`site.go:229-232`): an invariant asserted about exactly the
+files that do not hold it.
+
+The shape: hoist nosniff out of the HTML-only branch, set it
+unconditionally in `BlobHandler`, and wire `Route.MaxAge` — the field
+FL12 already added, `handlerConf.maxAge` at `page.go:34` — through blob
+endpoints. Freshness stays opt-in per route, so replace-in-place keeps
+working for apps that have not asked for caching. Gate FL17
+(agent-side): a header test per response kind — page, fragment, HTML
+site file, non-HTML site file, blob, status — asserting the set each one
+carries, so a future writer cannot drop one silently. That table is the
+thing FL11 found missing when it counted four writers and three header
+sets.
+
+**FL18 — the dev bar behaves.** Two entries, one task, both local-only.
+The bar is a `<div>` with inline styles and no id or class
+(`pkg/runtime/session.go:438`), so an app with its own fixed bottom bar
+— flauta's admin shell, and any app-shaped surface — has nothing stable
+to hide. flauta targets it by *behaviour* instead, finding the
+fixed-position child of `<body>` holding a `[name="dev_user"]` control,
+because an inline-style substring match would be a guess at something
+tako never promised. Separately, `barWriter.flush` (`session.go:414`)
+branches on `b.html` alone, so every htmx fragment carries a copy of the
+bar into whatever it swapped into.
+
+The shape: `id="tako-dev-bar"`, and skip injection for fragments. The
+runtime already knows fragment-ness one layer down — `securityHeaders(h,
+fragment)` at `page.go:359` branches on exactly that. Gate FL18
+(agent-side): a fragment response under `tako dev` contains no bar; a
+page response contains one and it carries the id.
+
+**FL19 — `tako logs` bills its reads to the project it was given.**
+Nothing in the tree sets a quota project or `x-goog-user-project`, so
+Logging reads meter against whatever the ADC file carries — for a fresh
+`gcloud auth application-default login` that is the project behind
+gcloud's shared OAuth client, rate-limited across every gcloud user on
+earth. flauta met HTTP 429 on its first deploy. `gcloud logging read`
+against the same project works, because gcloud bills its own reads
+correctly, so tako's log reader looks broken in the one place it cannot
+afford to.
+
+**Smaller in code than in design, which makes it a cloud task**:
+`x-goog-user-project` requires the caller to hold
+`serviceusage.services.use` on the target, so a naive fix trades a 429
+for a 403 on some setups. It carries the "Cloud errors & permissions"
+section per the standing rule — both failure texts, the fallback, and
+whether `docs/tako-cloud-permissions.md` grows a line for the deployer.
+
+**Not promoted: multi-layout rendering.** flauta wants two shells — a
+public masthead and an admin workspace — and `renderSite` fixes the root
+at `layout.html` (`pkg/runtime/page.go:87-90`). It is the only open
+entry that would add real API surface (`RenderIn`, or a `SiteConfig`
+that names more than one layout), flauta calls it "neither is urgent",
+and its workaround is a two-line branching root. Widening the render
+contract immediately before a version tag is the wrong order. Revisit
+after v0.1.0 if a second app asks.
+
+**Z6 impact.** FL15 before the tag; FL16–FL19 after. The friction gate
+itself is met — eight open, none blocking, none without an app-side
+answer.
+
 ## Standing rules
 
 - **No gate skipping, no gate batching.** One feature, one gate. If the human
