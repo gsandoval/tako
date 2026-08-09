@@ -198,6 +198,75 @@ read at analysis time, so `tako gen graph` can print it beside the door:
 GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
 ```
 
+### Accounts: auth.Users()
+
+Creating accounts and handing out roles, from Go:
+
+```go
+users := auth.Users()
+
+u, err := users.Create(ctx, tako.NewUser{
+	Email: "ana@example.com", Name: "Ana", Password: pw,   // Password is optional
+})
+err = users.Grant(ctx, u.ID, Moderator)
+err = users.Revoke(ctx, u.ID, Moderator)
+err = users.Disable(ctx, u.ID)   // sign-in refused, record kept, sessions ended
+err = users.Enable(ctx, u.ID)
+err = users.Delete(ctx, u.ID)
+
+u, err = users.ByEmail(ctx, "ana@example.com")
+page, err := users.List(ctx).Limit(50).Page("")   // page.Next is the cursor
+```
+
+| | |
+|---|---|
+| cloud | Identity Platform accounts; roles are a custom claim |
+| local | the same contract over the local store, in the same bbolt file `tako dev` already keeps |
+
+**An address is one account.** `Create` over an existing one is refused
+with an error `tako.IsEmailTaken(err)` recognises, because the remedy is
+different from every other failure: look it up and grant it what it
+needs, rather than retry.
+
+**Password is optional and usually absent** — an account that signs in
+with Google has none. Where it is set, Identity Platform holds it in the
+cloud and the local store holds a PBKDF2 verifier; tako never keeps a
+password.
+
+**Recovery is not here.** Password reset and email verification are
+Identity Platform's hosted flows, because they are an outbound-email
+story and tako sends no email.
+
+#### A role change lands on the next request
+
+Roles ride in a custom claim, and a claim only reaches a token when the
+token is reissued — while a tako session lasts seven days. So `Grant`
+does two things: it writes the claim, and it MARKS that account's live
+sessions. The next request from that person re-reads exactly one account
+and rewrites its session; every request after it costs nothing extra,
+and nobody is signed out.
+
+`Disable` and `Delete` do not mark, they END those sessions. A disabled
+user who stays signed in for a week is not disabled.
+
+Granting and revoking are read-modify-write — Identity Platform replaces
+the whole claims blob, so tako reads it, changes the `roles` key, and
+writes it back, leaving claims it does not own alone. Both run under a
+lease keyed on the account, so two grants at the same moment cannot lose
+one.
+
+#### The permission this needs
+
+Derived from what your code calls, per service:
+
+| calls | grant |
+|---|---|
+| `Get`, `ByEmail`, `List` | `roles/identitytoolkit.viewer` |
+| `Create`, `Grant`, `Revoke`, `Disable`, `Enable`, `Delete` | `roles/identitytoolkit.admin` |
+| nothing | neither |
+
+`tako deploy` prints it in the security summary like every other grant.
+
 ### Telling your 403 from tako's
 
 Several things answer 403 on a guarded route: your policy, a stale CSRF
@@ -315,12 +384,9 @@ identity directly.
 ## Not yet
 
 - Two providers: Google and email/password. No other OAuth providers.
-- **No user store yet.** Roles can be enforced (`tako.Role`,
-  `RequireRole`) and read; granting one from Go — `auth.Users().Create`,
-  `.Grant` — is AB10b, and today a role is set in the Identity Platform
-  console or ticked on the dev sign-in page.
 - **No local password sign-in yet** (AB10c): `tako dev` signs in through
-  the dev bar, not with an email and a password.
+  the dev bar, not with an email and a password — so an account created
+  locally with a password cannot yet use it.
 - **No registration event yet** (AB10d): `auth.Registered` and
   `auth.FirstSignIn` are designed and unbuilt. A true
   Identity-Platform-side hook is not reachable at all — blocking

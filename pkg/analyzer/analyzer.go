@@ -207,6 +207,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			case "Auth":
 				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
+					// Registered for the edge scan: auth.Users() is how
+					// accounts are reached, and the grant it derives —
+					// viewer or admin on Identity Platform — belongs to
+					// whichever service actually calls it.
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "auth"}
 				}
 			case "Policy":
 				// Not a Resource: a policy provisions nothing. It is

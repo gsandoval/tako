@@ -26,6 +26,7 @@ import (
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/routes"
+	"github.com/gsandoval/tako/pkg/backends"
 )
 
 // Sessions are Datastore-backed records (W5 amendment): the cookie
@@ -55,11 +56,17 @@ type sessionRecord struct {
 	// a user's claims on every request would put an admin API call on
 	// the hot path. A grant or revoke marks the session stale instead
 	// (AB10b), and the next request refreshes exactly one of them.
-	Roles    []string  `json:"roles,omitempty"`
-	Provider string    `json:"provider,omitempty"`
-	CSRF     string    `json:"csrf"`
-	Created  time.Time `json:"created"`
-	Expires  time.Time `json:"expires"`
+	Roles    []string `json:"roles,omitempty"`
+	Provider string   `json:"provider,omitempty"`
+	// Stale marks a session whose roles are known to be out of date: a
+	// grant or revoke landed after it was minted. The next request
+	// re-reads that ONE account and rewrites this record, which is how a
+	// role change takes effect without either signing anybody out or
+	// putting an account read on every request.
+	Stale   bool      `json:"stale,omitempty"`
+	CSRF    string    `json:"csrf"`
+	Created time.Time `json:"created"`
+	Expires time.Time `json:"expires"`
 }
 
 func randomHex(n int) string {
@@ -89,6 +96,121 @@ func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 		return nil, err
 	}
 	return rec, hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+}
+
+// The SDK changes a role; the runtime owns what a session is. This is
+// where the two meet, wired in init rather than at boot because it is
+// not a backend — it is this package's own behaviour, and it is correct
+// from the moment the package is linked in.
+func init() {
+	hooks.StaleSessions = StaleSessions
+	hooks.EndSessions = EndSessions
+}
+
+// devAccount is what `tako dev` signs in as: a real account in the local
+// store, created on first sight and updated with whatever roles were
+// ticked. The ticks ARE the local grant — there is no console to open.
+func devAccount(ctx context.Context, name string, roles []string) (tako.User, error) {
+	email := name + "@example.test"
+	base := tako.User{ID: name, Email: email, Name: name, Provider: "email", Roles: roles}
+	if hooks.Users == nil {
+		return base, nil // unwired: the session still works, it just has no record
+	}
+	rec, err := hooks.Users.ByEmail(ctx, email)
+	if errors.Is(err, backends.ErrNotFound) {
+		rec, err = hooks.Users.Create(ctx, backends.NewUserSpec{Email: email, Name: name, Roles: roles})
+	} else if err == nil && !sameRoles(rec.Roles, roles) {
+		if err = hooks.Users.SetRoles(ctx, rec.ID, roles); err == nil {
+			rec.Roles = roles
+		}
+	}
+	if err != nil {
+		return tako.User{}, err
+	}
+	return tako.User{ID: rec.ID, Email: rec.Email, Name: rec.Name, Provider: "email", Roles: rec.Roles}, nil
+}
+
+func sameRoles(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// StaleSessions marks every live session of an account for refresh.
+// The SDK calls it through the boot seam when a role changes.
+//
+// A query, not a scan of everything: sessions are indexed by uid for
+// exactly this. An account with no live session costs one empty query
+// and needs nothing else — their next sign-in reads the roles fresh.
+func StaleSessions(ctx context.Context, uid string) error {
+	return eachSession(ctx, uid, func(rec sessionRecord) error {
+		if rec.Stale {
+			return nil
+		}
+		rec.Stale = true
+		doc, err := json.Marshal(rec)
+		if err != nil {
+			return err
+		}
+		return hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+	})
+}
+
+// EndSessions deletes every session of an account — what disabling or
+// deleting one means. Revocation is real here for the same reason
+// sign-out is: the cookie carries an id, and the record is the identity.
+func EndSessions(ctx context.Context, uid string) error {
+	return eachSession(ctx, uid, func(rec sessionRecord) error {
+		return hooks.Entity.Delete(ctx, sessionKind, rec.ID)
+	})
+}
+
+func eachSession(ctx context.Context, uid string, fn func(sessionRecord) error) error {
+	if hooks.Entity == nil {
+		return nil
+	}
+	docs, err := hooks.Entity.Query(ctx, sessionKind, backends.EntityQuery{
+		Filters: []backends.Filter{{Field: "uid", Op: "=", Value: uid}},
+	})
+	if err != nil {
+		return err
+	}
+	for _, doc := range docs {
+		var rec sessionRecord
+		if err := json.Unmarshal(doc, &rec); err != nil {
+			continue // a record this process cannot read is not one it can fix
+		}
+		if err := fn(rec); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// refreshRoles re-reads one account and rewrites the session with what
+// it finds. Called only for a session something marked stale, so the
+// steady-state cost of the whole mechanism is zero.
+func refreshRoles(ctx context.Context, rec *sessionRecord) {
+	if hooks.Users == nil {
+		return
+	}
+	account, err := hooks.Users.Get(ctx, rec.UID)
+	if err != nil {
+		// The account is gone or unreadable. Leaving the session as it
+		// is means the roles stay what they were, which is the safe
+		// direction: a failed refresh must not silently GRANT anything.
+		return
+	}
+	rec.Roles, rec.Stale = account.Roles, false
+	if doc, err := json.Marshal(rec); err == nil {
+		_ = hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+	}
 }
 
 // user is the identity a session record stands for. It exists because
@@ -134,6 +256,12 @@ func loadSession(r *http.Request) *sessionRecord {
 		_ = hooks.Entity.Delete(r.Context(), sessionKind, rec.ID)
 		return nil
 	}
+	// A role changed since this session was minted. One account read,
+	// once, on the first request after the change — and then never
+	// again until the next one.
+	if rec.Stale {
+		refreshRoles(r.Context(), &rec)
+	}
 	return &rec
 }
 
@@ -173,8 +301,19 @@ func SessionHandler(providers ...string) http.Handler {
 				// session that silently held every declared role would
 				// make the refusal path — the half of authorization
 				// worth walking — unreachable in dev.
-				u = tako.User{ID: name, Email: name + "@example.test", Name: name,
-					Provider: "email", Roles: r.PostForm["dev_role"]}
+				//
+				// The sign-in also UPSERTS the account, because in the
+				// cloud a session cannot exist without one: Identity
+				// Platform holds the account and issues the token. A dev
+				// session that skipped it left auth.Users().List() empty
+				// while somebody was demonstrably signed in, so an admin
+				// screen worked deployed and was inert on a laptop.
+				var err error
+				u, err = devAccount(r.Context(), name, r.PostForm["dev_role"])
+				if err != nil {
+					http.Error(w, "dev sign-in: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
 			} else {
 				var body struct {
 					IDToken string `json:"idToken"`

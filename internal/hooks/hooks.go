@@ -32,6 +32,25 @@ var Cache backends.Cache
 // Metrics is the wired metrics sink; nil until boot.
 var Metrics backends.Metrics
 
+// Users is the wired accounts backend behind auth.Users(); nil until
+// boot.
+var Users backends.Users
+
+// StaleSessions and EndSessions are pkg/runtime's, wired at boot.
+//
+// Sessions belong to the runtime — it mints them, reads them, and knows
+// their shape — but the SDK is where a role changes, so it has to be
+// able to say "the sessions of this account are out of date" without
+// owning the record. StaleSessions marks them for refresh on their next
+// request; EndSessions deletes them outright, which is what disabling or
+// deleting an account means.
+//
+// Nil in a bare test, where there are no sessions to be stale.
+var (
+	StaleSessions func(ctx context.Context, uid string) error
+	EndSessions   func(ctx context.Context, uid string) error
+)
+
 // Lease is the wired lease backend (spec §4.4) behind tako.Lock and
 // cron singleflight; nil until boot.
 var Lease backends.Lease

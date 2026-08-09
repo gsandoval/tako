@@ -8,6 +8,7 @@ func BootLocal(dir string) error
 func CacheFor(seconds int) HandlerOption
 func CronDispatch() net/http.Handler
 func DecodeJSON(r *net/http.Request, req any) error
+func EndSessions(ctx context.Context, uid string) error
 func FormBlob(r *net/http.Request, name string) (github.com/gsandoval/tako.Blob, error)
 func FormBool(r *net/http.Request, name string) (bool, error)
 func FormFloat64(r *net/http.Request, name string) (float64, error)
@@ -56,6 +57,7 @@ func SignOutHandler() net/http.Handler
 func SignedURLHandler() net/http.Handler
 func SingletonHealth(name string) net/http.Handler
 func SiteHandler(fsys io/fs.FS, opts SiteOptions) net/http.Handler
+func StaleSessions(ctx context.Context, uid string) error
 func WaitIdle(timeout time.Duration) error
 func WithDevBar(next net/http.Handler) net/http.Handler
 type HandlerOption

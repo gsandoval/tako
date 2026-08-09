@@ -188,6 +188,10 @@ var (
 	// route.
 	Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
 	Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+	// Making another moderator. This is the whole of "user admin" in
+	// this example, and it is deliberately behind the same door: the
+	// people who can retract a post are the people who can hand that out.
+	SetRole = tako.Page("POST /people/{id}/role", setRole, tako.Route{Allow: Moderators})
 )
 
 // HomeView is the home page's data: one page of posts, and how many
@@ -397,10 +401,18 @@ func publish(ctx tako.Ctx, req PublishReq) (tako.HTML, error) {
 }
 
 // ModerateView is the desk: everything anyone has written, newest
-// first, with what state it is in.
+// first, with what state it is in — and who may be here at all.
 type ModerateView struct {
-	Posts []Post
-	Who   string
+	Posts  []Post
+	People []Person
+	Who    string
+}
+
+// Person is one account, as the desk shows it.
+type Person struct {
+	ID          string
+	Email       string
+	IsModerator bool
 }
 
 // moderate lists every post, published or not, including other people's
@@ -411,7 +423,48 @@ func moderate(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
 	if err != nil {
 		return tako.HTML{}, err
 	}
-	return site.Render(ctx, "moderate.html", ModerateView{Posts: list, Who: ctx.User().Email})
+	// The accounts, so a moderator can make another one. Reading the
+	// list is all this needs; the grant below is what makes this service
+	// ask for the write permission.
+	page, err := auth.Users().List(ctx).Limit(50).Page("")
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	people := make([]Person, 0, len(page.Users))
+	for _, u := range page.Users {
+		people = append(people, Person{ID: u.ID, Email: u.Email, IsModerator: u.HasRole(Moderator)})
+	}
+	return site.Render(ctx, "moderate.html", ModerateView{
+		Posts: list, People: people, Who: ctx.User().Email,
+	})
+}
+
+// SetRoleReq is the toggle: which account, and whether they should hold
+// the role after this.
+type SetRoleReq struct {
+	ID string `path:"id"`
+	On string `form:"on"`
+}
+
+// setRole hands out the moderator role, or takes it back.
+//
+// Nothing here checks who is asking — Route.Allow did, once, at the
+// declaration. What the handler is about is the act, and the act is two
+// lines because tako owns the mechanism: Grant writes the claim and
+// marks that person's sessions, so their next request is the one where
+// it takes effect. No sign-out, no waiting for a token to expire.
+func setRole(ctx tako.Ctx, req SetRoleReq) (tako.HTML, error) {
+	users := auth.Users()
+	var err error
+	if req.On == "1" {
+		err = users.Grant(ctx, req.ID, Moderator)
+	} else {
+		err = users.Revoke(ctx, req.ID, Moderator)
+	}
+	if err != nil {
+		return tako.HTML{}, err
+	}
+	return tako.Redirect("/moderate")
 }
 
 type RetractReq struct {

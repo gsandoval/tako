@@ -40,6 +40,29 @@ func TestEntity(t *testing.T) {
 	}
 }
 
+func TestUsers(t *testing.T) {
+	switch *backend {
+	case "local":
+		RunUsers(t, func(t *testing.T) backends.Users {
+			e, err := local.OpenEntity(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = e.Close() })
+			return local.NewUserStore(e)
+		})
+	case "gcp":
+		// Accounts are PROJECT-scoped in Identity Platform: there is no
+		// namespace to throw away, so this chapter creates real accounts
+		// under @example.com and deletes them as it goes. It is skipped
+		// unless the test project is one you are willing to have that
+		// happen in.
+		t.Skip("accounts are project-scoped: run this chapter by hand against a scratch Identity Platform project (see validate/users.md)")
+	default:
+		t.Fatalf("unknown -backend %q", *backend)
+	}
+}
+
 func TestBucket(t *testing.T) {
 	switch *backend {
 	case "local":

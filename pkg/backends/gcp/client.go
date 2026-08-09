@@ -35,6 +35,7 @@ const (
 	secretHost     = "secretmanager.googleapis.com"
 	iamCredsHost   = "iamcredentials.googleapis.com"
 	monitoringHost = "monitoring.googleapis.com"
+	identityHost   = "identitytoolkit.googleapis.com"
 )
 
 // Client is the shared authenticated HTTP client behind the stores.

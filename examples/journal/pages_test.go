@@ -86,6 +86,9 @@ func servePages(t *testing.T) *httptest.Server {
 	mux.Handle("POST /moderate/{id}/retract", runtime.PageHandler(Retract, func(r *http.Request) (RetractReq, error) {
 		return RetractReq{ID: runtime.PathString(r, "id")}, nil
 	}, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
+	mux.Handle("POST /people/{id}/role", runtime.PageHandler(SetRole, func(r *http.Request) (SetRoleReq, error) {
+		return SetRoleReq{ID: runtime.PathString(r, "id"), On: runtime.FormString(r, "on")}, nil
+	}, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
 	// Harness-only: a route that ALWAYS redirects, pinning the
 	// dual-mode contract (200 + HX-Redirect under htmx).
 	alwaysRedirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {

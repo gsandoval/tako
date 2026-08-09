@@ -27,4 +27,29 @@
 {{ else }}
 <p>Nothing written yet.</p>
 {{ end }}
+
+<h3>Who may be here</h3>
+<!-- Handing out the role. Same door as the retract above: the people
+     who can take a post down are the people who can appoint another
+     one of themselves. -->
+<table class="people">
+  <tbody>
+  {{ range .People }}
+    <tr>
+      <td>{{ .Email }}</td>
+      <td>{{ if .IsModerator }}moderator{{ else }}—{{ end }}</td>
+      <td>
+        <form method="post" action="/people/{{ .ID }}/role">
+          {{ csrf }}
+          {{ if .IsModerator }}
+            <input type="hidden" name="on" value="0"><button>remove</button>
+          {{ else }}
+            <input type="hidden" name="on" value="1"><button>make moderator</button>
+          {{ end }}
+        </form>
+      </td>
+    </tr>
+  {{ end }}
+  </tbody>
+</table>
 {{ end }}

@@ -10,6 +10,7 @@ journal: 1 service
     GET /{year}/{slug} → Perma (app.go:182)
     GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
     POST /moderate/{id}/retract → Retract 🔒 Moderators (moderator) (app.go:190)
+    POST /people/{id}/role → SetRole 🔒 Moderators (moderator) (app.go:194)
     entity posts (indexes: Published, Created)
     entity moved_urls
     site ./web

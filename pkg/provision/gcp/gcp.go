@@ -126,6 +126,7 @@ var readOnlyVerbs = []string{
 	":runAggregationQuery", // datastore counts
 	":lookup",              // datastore key reads
 	":list",                // logging entries:list, and AIP's list verb generally
+	":batchGet",            // identitytoolkit account pages (AB10b): a POST-shaped read
 }
 
 // idempotentMutatingVerbs are the colon-suffixed POSTs that DO change
@@ -145,6 +146,16 @@ var idempotentMutatingVerbs = []string{
 	// exactly the kind of API that answers 429, and this call sits in
 	// the deploy's critical path.
 	":generateServiceIdentity",
+	// identitytoolkit accounts:update (AB10b) SETS fields to the values
+	// in the request — display name, disabled, the whole custom-claims
+	// blob — so re-sending writes the same thing again. The read half of
+	// the read-modify-write is what makes a role change safe, and that
+	// happens above this layer, under a lease.
+	":update",
+	// accounts:delete of an account already gone answers an error the
+	// store maps to success, so a retry lands in the same place a first
+	// success would.
+	":delete",
 }
 
 // mutatingVerbs are the colon-suffixed POSTs that must NOT be retried,
@@ -158,6 +169,11 @@ var mutatingVerbs = []string{
 	":publish",     // a retried publish is a duplicate message
 	":pull",        // leases messages and moves ack deadlines
 	":acknowledge", // effectively idempotent, but not worth the reasoning
+	// accounts:signUp MAKES an account (AB10b). A retry after a response
+	// tako never saw would make a second one under a second id, and the
+	// duplicate-address check would not catch it because the first write
+	// did succeed. Not retried, deliberately.
+	":signUp",
 }
 
 // idempotent reports whether re-sending this request is safe. GET and

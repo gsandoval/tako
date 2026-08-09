@@ -51,6 +51,39 @@ func verbOf(kind, method string) string {
 		if method == "Run" {
 			return "run"
 		}
+	case "auth":
+		// Accounts (AB10b). The split is the whole point: a service that
+		// only reads the account list is not a service that can mint one,
+		// and Identity Platform has separate roles for exactly that.
+		switch method {
+		case "Get", "ByEmail", "List", "Page":
+			return "read"
+		case "Create", "Grant", "Revoke", "Disable", "Enable", "Delete":
+			return "write"
+		}
+	}
+	return ""
+}
+
+// usersHandleType is the receiver type whose methods derive account
+// grants. It is matched by TYPE rather than by variable, because
+// `users := auth.Users()` puts a local between the declaration and the
+// call and no dataflow is needed to see what that local is.
+const usersHandleType = "*github.com/gsandoval/tako.UsersHandle"
+
+// accountVerb classifies a method call on a *tako.UsersHandle (or on the
+// query its List returns), or returns "" for anything else.
+func accountVerb(pkg *packages.Package, sel *ast.SelectorExpr) string {
+	tv, ok := pkg.TypesInfo.Types[sel.X]
+	if !ok || tv.Type == nil {
+		return ""
+	}
+	switch tv.Type.String() {
+	case usersHandleType:
+		return verbOf("auth", sel.Sel.Name)
+	case "*github.com/gsandoval/tako.UserQuery":
+		// List(...).Limit(n).Page("") — the read is the whole chain.
+		return verbOf("auth", "Page")
 	}
 	return ""
 }
@@ -82,6 +115,15 @@ func funcArg(pkg *packages.Package, call *ast.CallExpr, idx int) *types.Func {
 // edge (§2.12). Raw cross-package handler-function calls — the hidden
 // RPC boundary — are diagnosed here, where the scan already looks.
 func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
+	// The declared auth resource, if this app has one: account usage
+	// attaches its edges to it, because auth.Users() is how accounts are
+	// reached and tako.Auth is what declares them.
+	authRes := ""
+	for _, r := range vars {
+		if r.kind == "auth" {
+			authRes = r.name
+		}
+	}
 	type ref struct {
 		res  resRef
 		verb string
@@ -131,6 +173,13 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 								epRefs[fn] = append(epRefs[fn], callee)
 								return true
 							}
+						}
+						// Accounts are reached through a handle, not
+						// through the declared var, so they are matched
+						// on the receiver's TYPE.
+						if v := accountVerb(pkg, sel); v != "" && authRes != "" {
+							refs[fn] = append(refs[fn], ref{resRef{authRes, "auth"}, v})
+							return true
 						}
 						if id, ok := sel.X.(*ast.Ident); ok {
 							if r, ok := vars[pkg.TypesInfo.Uses[id]]; ok {

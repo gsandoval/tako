@@ -162,3 +162,78 @@ go test ./pkg/analyzer -run TestErrors/roleshape
 **Expect** four diagnostics: `tako/const-role`, `tako/unexported-role`,
 `tako/empty-role` (a door with no key refuses everyone, silently), and
 `tako/role-var`.
+
+---
+
+## AB10b — accounts
+
+Run from `examples/journal`.
+
+## 12. The desk lists real accounts
+
+```
+PORT=8099 tako dev
+```
+
+Sign in as alice with **moderator** ticked, open `/moderate`. **Expect**
+a "Who may be here" table listing every account — including anyone who
+has ever signed in, because a dev sign-in now UPSERTS a local account.
+
+That last part is a fidelity fix, not a convenience: in the cloud a
+session cannot exist without an Identity Platform account, so a local
+session that had none left `auth.Users().List()` empty while somebody
+was demonstrably signed in — an admin screen that worked deployed and
+was inert on a laptop.
+
+## 13. A role lands on a session that is already open
+
+In a second browser (or a second cookie jar), sign in as **bob** with
+nothing ticked and open `/moderate` → **403**.
+
+As alice, press **make moderator** on bob's row. Then, in bob's browser,
+reload `/moderate` **without signing in again** → **200**.
+
+Press **remove**, reload → **403**.
+
+That is the owner's decision 5 working: the grant marked bob's sessions,
+and the first request after it re-read exactly one account. Steady state
+costs nothing, and nobody was signed out.
+
+## 14. The grant tako asks Google for is the one the code earns
+
+```
+go run ../../cmd/tako gen graph --json | python3 -c \
+  "import sys,json;print([e for e in json.load(sys.stdin)['edges'] if e.get('to_kind')=='auth'])"
+```
+
+**Expect** two edges and only two:
+
+```
+{'from': 'journal.Moderate', 'to': 'auth', 'to_kind': 'auth', 'kind': 'resource', 'verb': 'read'}
+{'from': 'journal.SetRole',  'to': 'auth', 'to_kind': 'auth', 'kind': 'resource', 'verb': 'write'}
+```
+
+The read earns `roles/identitytoolkit.viewer`, the write earns
+`roles/identitytoolkit.admin`, and a service that calls neither earns
+neither. `tako deploy --plan` prints them in the security summary.
+
+## 15. The contract holds on both backends
+
+From the repo root:
+
+```
+go test ./pkg/backends/conformance -backend=local -run TestUsers
+go test ./pkg/backends/gcp -run "Account|Grant|Clear|Roles|Lookup|Create|Permission"
+```
+
+The first is the shared contract. The second is the WIRE — the
+identitytoolkit paths, and the two shapes that are invisible locally:
+`customAttributes` is a JSON string nested in the JSON body, and setting
+it replaces the whole claims blob, so a grant that did not read first
+would silently delete an app's own claims.
+
+**The cloud chapter of the conformance suite is skipped by design**:
+Identity Platform accounts are project-scoped, with no namespace to
+throw away, so running it would create and delete real accounts in
+whatever project is configured. Run it by hand against a scratch project
+when the deploy path is next walked.

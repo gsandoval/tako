@@ -1,3 +1,4 @@
+    func (*AuthHandle).Users() *UsersHandle
     func (*BucketHandle).Delete(ctx Ctx, key string) error
     func (*BucketHandle).Exists(ctx Ctx, key string) (bool, error)
     func (*BucketHandle).Get(ctx Ctx, key string) (Blob, error)
@@ -66,6 +67,17 @@
     func (*TestApp).SetSecret(name string, value string)
     func (*TestApp).SignIn(name string, roles ...RoleHandle) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
+    func (*UserQuery).Limit(n int) *UserQuery
+    func (*UserQuery).Page(cursor string) (UsersPage, error)
+    func (*UsersHandle).ByEmail(ctx Ctx, email string) (User, error)
+    func (*UsersHandle).Create(ctx Ctx, spec NewUser) (User, error)
+    func (*UsersHandle).Delete(ctx Ctx, id string) error
+    func (*UsersHandle).Disable(ctx Ctx, id string) error
+    func (*UsersHandle).Enable(ctx Ctx, id string) error
+    func (*UsersHandle).Get(ctx Ctx, id string) (User, error)
+    func (*UsersHandle).Grant(ctx Ctx, id string, role RoleHandle) error
+    func (*UsersHandle).List(ctx Ctx) *UserQuery
+    func (*UsersHandle).Revoke(ctx Ctx, id string, role RoleHandle) error
     func (Ctx).IsHTMX() bool
     func (Ctx).Log() *log/slog.Logger
     func (Ctx).MaybeUser() (User, bool)
@@ -111,6 +123,7 @@ func Environment() Env
 func Errorf(status int, format string, args ...any) error
 func Histogram(name string) *HistogramHandle
 func IsDenied(err error) bool
+func IsEmailTaken(err error) bool
 func IsNotFound(err error) bool
 func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition
 func Job[T any](name string) *JobHandle[T]
@@ -183,6 +196,7 @@ type Iter[T any] struct{}
 type JobHandle[T any] struct{}
 type LockHandle struct{}
 type Metric interface{metricSubject() metricRef}
+type NewUser struct{Email string; Password string; Name string; Roles []string}
 type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
 type PolicyHandle struct{}
 type Profile int
@@ -208,4 +222,7 @@ type Toggle int
 type TopicHandle[T any] struct{}
 type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
 type User struct{ID string; Email string; Name string; Provider string; Roles []string; EmailVerified bool}
+type UserQuery struct{}
+type UsersHandle struct{}
+type UsersPage struct{Users []User; Next string}
 type Window struct{For time.Duration; Every time.Duration}

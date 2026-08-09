@@ -100,6 +100,7 @@ func BootGCP() error {
 		return err
 	}
 	hooks.Entity = gcpb.NewEntityStore(c)
+	hooks.Users = gcpb.NewUserStore(c)
 	hooks.Bucket = gcpb.NewBucketStore(c)
 	hooks.Queue = gcpb.NewQueueStore(c)
 	hooks.Topic = gcpb.NewTopicStore(c)

@@ -106,7 +106,23 @@ derive from AppGraph edges only — nothing project-wide, nothing manual
 | worker/subscriber service | its push endpoint grants `roles/run.invoker` to the Pub/Sub push SA only |
 | service reads secret S | `roles/secretmanager.secretAccessor` on S only |
 | service A calls service B (spec §2.12) | `roles/run.invoker` on B for A's SA only |
+| service READS accounts (`auth.Users().Get/ByEmail/List`) | `roles/identitytoolkit.viewer` on the project |
+| service WRITES accounts (`Create/Grant/Revoke/Disable/Delete`) | `roles/identitytoolkit.admin` on the project |
 | every service | `roles/monitoring.metricWriter` on the project |
+
+The two account rows are split deliberately: reading the list of people
+is not the same power as minting an account and handing out a role, and
+Identity Platform has a separate predefined role for each. A service
+whose package never calls `auth.Users()` produces no such edge and gets
+neither — "this service can mint accounts" stays a property of the
+service that asked for it. Neither role is project-scopable further:
+Identity Platform's IAM is project-level, the way Datastore's is.
+
+The API these need — `identitytoolkit.googleapis.com` — is already
+enabled by the Identity Platform section below, because declaring
+`tako.Auth` is what turns sign-in on in the first place. A runtime 403
+naming it therefore means the service is running against a project tako
+did not provision, and the error text says exactly that.
 
 The last row is the one exception to edge-derivation, and it is stated
 rather than hidden: counters and histograms produce no usage edge (a

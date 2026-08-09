@@ -211,3 +211,88 @@ func TestAModeratorRetractsSomebodyElsesPost(t *testing.T) {
 		t.Errorf("the retracted post is still on the home page: %s", body)
 	}
 }
+
+// The accounts half of the desk: a moderator makes another moderator,
+// and it takes effect on a session that is already open.
+//
+// This is the whole of AB10b from an app's side — auth.Users().List to
+// show them, Grant to appoint one — and the assertion that matters is
+// the last one: bob never signs in again.
+func TestAModeratorAppointsAnotherOne(t *testing.T) {
+	srv := servePages(t)
+
+	alice := client(t, srv)
+	aliceToken := signInAs(t, alice, srv.URL, "alice", Moderator)
+	bob := freshClient(t)
+	signIn(t, bob, srv.URL, "bob") // no role
+
+	if code := get(t, bob, srv.URL+"/moderate"); code != http.StatusForbidden {
+		t.Fatalf("bob before the grant: %d, want 403", code)
+	}
+
+	// The desk lists real accounts, because a dev sign-in upserts one —
+	// in the cloud a session cannot exist without an account, and the
+	// local backend answers the same way.
+	body := getBody(t, alice, srv.URL+"/moderate")
+	if !strings.Contains(body, "bob@example.test") {
+		t.Fatalf("the desk does not list bob: %s", body)
+	}
+	id := accountID(t, body, "bob@example.test")
+
+	res, err := alice.PostForm(srv.URL+"/people/"+id+"/role", url.Values{"on": {"1"}, "_csrf": {aliceToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("granting = %d, want 303", res.StatusCode)
+	}
+
+	// No new sign-in: the grant marked bob's session, and this request
+	// is the one that refreshes it.
+	if code := get(t, bob, srv.URL+"/moderate"); code != http.StatusOK {
+		t.Fatalf("bob after the grant: %d, want 200 — the role did not land on a live session", code)
+	}
+
+	// And back again.
+	res, err = alice.PostForm(srv.URL+"/people/"+id+"/role", url.Values{"on": {"0"}, "_csrf": {aliceToken}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if code := get(t, bob, srv.URL+"/moderate"); code != http.StatusForbidden {
+		t.Fatalf("bob after the revoke: %d, want 403 — the door stayed open", code)
+	}
+}
+
+func get(t *testing.T, c *http.Client, url string) int {
+	t.Helper()
+	res, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	return res.StatusCode
+}
+
+// accountID digs the account id out of the row's form action, which is
+// the only place the page exposes it — the same way a person clicking
+// the button would.
+func accountID(t *testing.T, body, email string) string {
+	t.Helper()
+	i := strings.Index(body, email)
+	if i < 0 {
+		t.Fatalf("%s is not on the page", email)
+	}
+	rest := body[i:]
+	j := strings.Index(rest, `action="/people/`)
+	if j < 0 {
+		t.Fatalf("no role form for %s", email)
+	}
+	rest = rest[j+len(`action="/people/`):]
+	k := strings.Index(rest, "/role")
+	if k < 0 {
+		t.Fatalf("malformed role form for %s", email)
+	}
+	return rest[:k]
+}

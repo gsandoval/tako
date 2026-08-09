@@ -14,7 +14,8 @@
         "journal.Unpublish",
         "journal.Perma",
         "journal.Moderate",
-        "journal.Retract"
+        "journal.Retract",
+        "journal.SetRole"
       ],
       "profile": "default"
     }
@@ -37,7 +38,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:218 home"
+        "app.go:222 home"
       ],
       "pos": "app.go:15:2"
     },
@@ -277,6 +278,36 @@
         }
       ],
       "pos": "app.go:190:2"
+    },
+    {
+      "kind": "page",
+      "var": "journal.SetRole",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /people/{id}/role",
+      "requires_auth": true,
+      "policy_roles": [
+        "moderator"
+      ],
+      "policy": "Moderators",
+      "req_type": "SetRoleReq",
+      "req_ref": "journal.SetRoleReq",
+      "res_ref": "tako.HTML",
+      "bindings": [
+        {
+          "field": "ID",
+          "kind": "path",
+          "name": "id",
+          "type": "string"
+        },
+        {
+          "field": "On",
+          "kind": "form",
+          "name": "on",
+          "type": "string"
+        }
+      ],
+      "pos": "app.go:194:2"
     }
   ],
   "edges": [
@@ -373,6 +404,13 @@
     },
     {
       "from": "journal.Moderate",
+      "to": "auth",
+      "to_kind": "auth",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Moderate",
       "to": "posts",
       "to_kind": "entity",
       "kind": "resource",
@@ -389,6 +427,13 @@
       "from": "journal.Retract",
       "to": "posts",
       "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.SetRole",
+      "to": "auth",
+      "to_kind": "auth",
       "kind": "resource",
       "verb": "write"
     }

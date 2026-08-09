@@ -74,6 +74,9 @@ func Local(opts Options) (*App, error) {
 		Metrics:    local.NewMetricsLog(),
 	}
 	hooks.Entity = store
+	// Accounts share the entity database: one file for `tako dev`, and
+	// one thing to delete when a developer wants a clean slate.
+	hooks.Users = local.NewUserStore(store)
 	hooks.Bucket = buckets
 	hooks.Queue = dispatcher
 	hooks.Topic = dispatcher.Topics()

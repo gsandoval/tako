@@ -196,6 +196,18 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			// GCP has no per-kind Datastore IAM — the grant is
 			// project-wide, and the security summary says so.
 			add(target{TargetProject, cfg.Project}, "roles/datastore.user", member)
+		case "auth":
+			// Accounts (AB10b). The split is the point: reading the
+			// account list is not the same power as minting accounts and
+			// handing out roles, and Identity Platform has a separate
+			// role for each. A service whose package never calls
+			// auth.Users() appears in no edge here and gets neither.
+			switch e.Verb {
+			case "read":
+				add(target{TargetProject, cfg.Project}, "roles/identitytoolkit.viewer", member)
+			case "write":
+				add(target{TargetProject, cfg.Project}, "roles/identitytoolkit.admin", member)
+			}
 		case "bucket":
 			b := gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, e.To)
 			switch e.Verb {
