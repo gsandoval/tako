@@ -107,6 +107,36 @@ func init() {
 	hooks.EndSessions = EndSessions
 }
 
+// signInRefused is the exact text — product UX, pinned by tests. It
+// says nothing about WHICH half was wrong.
+const signInRefused = "that email and password do not match an account"
+
+// passwordSignIn verifies a local account's password. Declared providers
+// still apply: an app that never declared Password has no such door,
+// exactly as in the cloud, where the same declaration decides which
+// tokens tako will accept.
+func passwordSignIn(ctx context.Context, email, password string) (tako.User, error) {
+	if !slices.Contains(declaredProviders, "email") {
+		return tako.User{}, errors.New("this app does not declare tako.AuthConfig{Password: true}")
+	}
+	verifier, ok := hooks.Users.(interface {
+		VerifyPassword(context.Context, string, string) (backends.UserRecord, error)
+	})
+	if !ok {
+		return tako.User{}, errors.New("this backend cannot verify passwords")
+	}
+	rec, err := verifier.VerifyPassword(ctx, email, password)
+	if err != nil {
+		return tako.User{}, err
+	}
+	if rec.Disabled {
+		// A disabled account is refused with the same sentence: whether
+		// an address exists is not something a sign-in page tells you.
+		return tako.User{}, errors.New("account disabled")
+	}
+	return tako.User{ID: rec.ID, Email: rec.Email, Name: rec.Name, Provider: "email", Roles: rec.Roles}, nil
+}
+
 // devAccount is what `tako dev` signs in as: a real account in the local
 // store, created on first sight and updated with whatever roles were
 // ticked. The ticks ARE the local grant — there is no console to open.
@@ -314,6 +344,31 @@ func SessionHandler(providers ...string) http.Handler {
 					http.Error(w, "dev sign-in: "+err.Error(), http.StatusInternalServerError)
 					return
 				}
+			} else if email := r.PostFormValue("email"); email != "" && isLocalBackend() {
+				// AB10c: signing in with an email and a password, on a
+				// laptop.
+				//
+				// In the cloud this exchange belongs to Identity
+				// Platform — the browser posts credentials to Google and
+				// tako only ever sees the ID token that comes back. There
+				// is no Identity Platform locally, so tako verifies
+				// against the account store it owns, and this branch is
+				// LOCAL-ONLY by construction: it cannot be reached in a
+				// deployed service, which is what keeps password
+				// verification out of the production path entirely.
+				//
+				// Without it, auth.Users().Create(email, password) makes
+				// an account a laptop cannot sign in as, and the local
+				// half of the accounts contract is a stub.
+				verified, err := passwordSignIn(r.Context(), email, r.PostFormValue("password"))
+				if err != nil {
+					// One message for a wrong address and a wrong
+					// password. Which of the two it was is exactly what
+					// somebody guessing wants to learn.
+					http.Error(w, signInRefused, http.StatusUnauthorized)
+					return
+				}
+				u = verified
 			} else {
 				var body struct {
 					IDToken string `json:"idToken"`
@@ -703,7 +758,7 @@ func SignInPage(providers ...string) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if isLocalBackend() {
-			fmt.Fprintf(w, signInDevPage, next, devRoleChecks())
+			fmt.Fprintf(w, signInDevPage, next, devRoleChecks(), devPasswordForm(prov, next))
 			return
 		}
 		apiKey, authDomain, project := os.Getenv("TAKO_AUTH_APIKEY"), os.Getenv("TAKO_AUTH_DOMAIN"), os.Getenv("TAKO_PROJECT")
@@ -732,7 +787,23 @@ const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · ta
 <form method="post" action="` + routes.Session + `"><input type="hidden" name="next" value="%s">
 %s<button name="dev_user" value="alice">alice</button>
 <button name="dev_user" value="bob">bob</button>
-</form></body>`
+</form>%s</body>`
+
+// devPasswordForm is the local half of the email/password door: the same
+// exchange Identity Platform runs in the cloud, against the account
+// store tako owns here. Rendered only when the app declared the
+// provider, because a form for a door that does not exist is a lie.
+func devPasswordForm(prov map[string]bool, next string) string {
+	if !prov["email"] {
+		return ""
+	}
+	return `<hr style="margin:24px 0"><p>Or with an account (` + "`auth.Users().Create`" + `):</p>
+<form method="post" action="` + routes.Session + `" style="display:flex;flex-direction:column;gap:8px;max-width:280px">
+<input type="hidden" name="next" value="` + html.EscapeString(next) + `">
+<input name="email" type="email" placeholder="email" required>
+<input name="password" type="password" placeholder="password" required>
+<button>Sign in</button></form>`
+}
 
 // declaredRoles is the app's tako.Role set, installed by the generated
 // main. Empty means the app declared none, and the dev page shows no

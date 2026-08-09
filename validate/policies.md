@@ -237,3 +237,54 @@ Identity Platform accounts are project-scoped, with no namespace to
 throw away, so running it would create and delete real accounts in
 whatever project is configured. Run it by hand against a scratch project
 when the deploy path is next walked.
+
+---
+
+## AB10c — signing in with a password, locally
+
+## 16. The door exists only where it was declared
+
+```
+cd examples/shop && PORT=8101 tako dev
+curl -s http://localhost:8101/_tako/signin | grep -o 'name="password"'
+```
+
+**Expect** the form, because shop declares `AuthConfig{Password: true}`.
+Do the same in `examples/journal` (Google only) and **expect nothing** —
+a form for a door that does not exist is a lie.
+
+## 17. An account made from Go can use its password
+
+```
+cd examples/shop && go test -run TestAnAccountCreatedFromGoCanSignInAndOrder ./...
+```
+
+**Expect** green: `auth.Users().Create(email, password)` → form POST to
+`/_tako/api/session` → an authenticated write goes through. That is the
+gap AB10c closes; before it, the password went in and nothing could take
+it back out.
+
+By hand, against `tako dev`, the refusal half is what a laptop can show
+without seeding an account first:
+
+```
+curl -s -X POST -d "email=nobody@example.com&password=x" -w "\n%{http_code}\n" \
+  http://localhost:8101/_tako/api/session
+→ that email and password do not match an account
+→ 401
+```
+
+## 18. The refusal never says which half was wrong
+
+```
+go test ./pkg/runtime -run "Password|Disabled" 
+```
+
+**Expect** green. A wrong password, an unknown address and a **disabled**
+account answer with the same sentence and the same status — which of
+them it was is exactly what somebody guessing wants to learn.
+
+**Password verification never runs in a deployed service.** The branch
+is behind `isLocalBackend()`: in the cloud the browser posts credentials
+to Identity Platform and tako only ever sees the ID token that comes
+back.

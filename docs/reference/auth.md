@@ -233,6 +233,25 @@ with Google has none. Where it is set, Identity Platform holds it in the
 cloud and the local store holds a PBKDF2 verifier; tako never keeps a
 password.
 
+**Signing in with one, locally.** `tako dev`'s sign-in page offers an
+email/password form when the app declares `AuthConfig{Password: true}`,
+and `POST /_tako/api/session` accepts `email` + `password` as a form.
+That branch is **local-only by construction** — in the cloud the browser
+posts credentials to Identity Platform and tako only ever sees the ID
+token that comes back, so password verification never runs in a deployed
+service. Without it, `Create(email, password)` would make an account a
+laptop cannot sign in as.
+
+The refusal is one sentence for both halves:
+
+```
+that email and password do not match an account
+```
+
+A wrong password, an unknown address and a disabled account answer
+identically. Which of them it was is exactly what somebody guessing
+wants to learn.
+
 **Recovery is not here.** Password reset and email verification are
 Identity Platform's hosted flows, because they are an outbound-email
 story and tako sends no email.
@@ -384,9 +403,6 @@ identity directly.
 ## Not yet
 
 - Two providers: Google and email/password. No other OAuth providers.
-- **No local password sign-in yet** (AB10c): `tako dev` signs in through
-  the dev bar, not with an email and a password — so an account created
-  locally with a password cannot yet use it.
 - **No registration event yet** (AB10d): `auth.Registered` and
   `auth.FirstSignIn` are designed and unbuilt. A true
   Identity-Platform-side hook is not reachable at all — blocking

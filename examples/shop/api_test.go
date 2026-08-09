@@ -33,7 +33,10 @@ func serveAPI(t *testing.T) *httptest.Server {
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
-	mux.Handle("/_tako/api/session", runtime.SessionHandler())
+	// "email", as codegen emits from tako.AuthConfig{Password: true}:
+	// the declaration is what decides which doors exist, and a harness
+	// that forgot it would test a shop with no password sign-in at all.
+	mux.Handle("/_tako/api/session", runtime.SessionHandler("email"))
 	mux.Handle("GET /api/products", runtime.JSONHandler(ListProducts, nil))
 	mux.Handle("GET /api/products/{id}", runtime.JSONHandler(GetProduct, func(r *http.Request) (GetProductReq, error) {
 		return GetProductReq{ID: runtime.PathString(r, "id")}, nil
@@ -388,5 +391,68 @@ func TestSettleShardsAreDisjointAndMergeOnce(t *testing.T) {
 	rep2, _ := reports.Get(ctx, "t4")
 	if rep2.Orders != 9 || rep2.TotalCents != 900 {
 		t.Fatalf("re-run report = %+v; must not double-count", rep2)
+	}
+}
+
+// AB10c: an account made from Go can sign in with its password.
+//
+// shop is where this belongs — it is the example that declares
+// AuthConfig{Password: true}, and its whole surface is an API a client
+// posts to. Before this, auth.Users().Create(email, password) made an
+// account that could not be used on a laptop: the password went in and
+// nothing could take it back out, so the local half of the contract was
+// a stub.
+func TestAnAccountCreatedFromGoCanSignInAndOrder(t *testing.T) {
+	srv := serveAPI(t)
+
+	// Created the way an app seeds a customer, or an admin adds one.
+	// The Ctx is any of this app's — the store is the one serveAPI
+	// booted.
+	users := auth.Users()
+	made, err := users.Create(tako.NewTestApp(t).Ctx(), tako.NewUser{
+		Email: "ana@example.com", Name: "Ana", Password: "correct horse battery",
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if made.ID == "" {
+		t.Fatal("Create returned no id")
+	}
+
+	// And signs in the way a browser does: a form post, no dev bar.
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
+	res, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{
+		"email": {"ana@example.com"}, "password": {"correct horse battery"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusSeeOther {
+		t.Fatalf("sign-in = %d", res.StatusCode)
+	}
+
+	// The session is a real one: an authenticated write goes through.
+	tea, addRes := postJSON[Product](t, c, srv.URL+"/api/products", AddProductReq{Name: "tea", PriceCents: 450})
+	if addRes.StatusCode != 200 || tea.ID == "" {
+		t.Fatalf("an authenticated write = %d %+v", addRes.StatusCode, tea)
+	}
+
+	// A wrong password is refused, and says nothing about which half.
+	bad, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{
+		"email": {"ana@example.com"}, "password": {"guess"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad.Body.Close()
+	if bad.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("a wrong password = %d, want 401", bad.StatusCode)
 	}
 }
