@@ -19812,3 +19812,124 @@ GET /admin → AdminHome 🔒 Editors (editor, moderator) (app.go:118)
 `reference/auth.md` currently says, under "Not yet": *"No roles and no
 user store."* AB10 reverses it. Decision 11 is untouched — roles are not
 a CMS primitive, and an admin screen for them is still just a site.
+
+## AB10a — shipped (2026-08-09)
+
+Approved by the owner on 2026-08-09: **start with AB10a, keep AB10c in**
+(local password sign-in stays in the plan rather than being cut). One
+commit, `e635c5a`.
+
+Shipped as proposed. The surface, in full:
+
+```go
+var Moderator  = tako.Role("moderator")
+var Moderators = tako.RequireRole(Moderator)   // any-of; returns a *PolicyHandle
+
+u.Roles            // []string, off the session record
+u.HasRole(Moderator)
+
+app.SignIn("ana", Moderator)   // a test says who somebody is
+```
+
+### What the build decided that the proposal left open
+
+**Roles are collected before anything else in the analyzer pass.** A
+policy may be declared above the role it names, and `RequireRole`
+resolves its arguments at analysis time, so roles get their own loop
+ahead of the resource loop — the same "declaration order never matters"
+property every other constructor has.
+
+**`RequireRole`'s mismatch got its own rule id, `tako/role-var`.** It
+first reported as `policy-var`, whose text is about a policy that is not
+a declared var — true but confusing when the thing that is not declared
+is a role. Rule ids are UX.
+
+**The refusal names the role**: `this page needs the moderator role`, or
+`… the editor or moderator role` for any-of. A role name is not a secret,
+and "not authorized" is the message that sends somebody to ask a question
+nobody can answer.
+
+**Ticking, not granting, is the local affordance.** The dev sign-in page
+renders a checkbox per declared role (`RegisterRoles`, emitted by
+codegen). The alternative — every dev session holds every declared role
+— was rejected: it makes the refusal path unreachable in dev, which is
+the half of authorization worth walking.
+
+### Found while building
+
+**Four handlers rebuilt `tako.User` from a session record, field by
+field** (`blob.go`, `http.go`, `page.go`, `status.go`). Adding `Roles`
+meant editing four places, and the one nobody edited would have dropped
+it — a bug that does not fail, it just quietly refuses somebody at a
+door. Collapsed into `sessionRecord.user()`, with the reason in the doc
+comment.
+
+**journal's `tako.Environment()` use was retired and replaced in the same
+commit.** The `.test`-suffix escape hatch AB1 gave it is exactly what a
+role makes unnecessary, so removing it was right — but it was also AB4's
+only example demand. Its replacement is better: the refusal page tells a
+LOCAL visitor how to grant themselves the role, and says nothing of the
+kind deployed. That is what `Environment()`'s own doc comment says it is
+for, and `TestTheDevHintIsLocalOnly` pins both halves.
+
+**A stale child from the AB1 walk held the entity-store lock**, so the
+first live attempt answered `500 session store error` on every dev
+sign-in. Not a tako defect: the earlier `pkill` patterns never matched
+those processes. Checked rather than assumed — killing the parent was
+confirmed to kill the child, so `guide/local.md`'s "no orphaned binaries
+holding the entity-store lock" claim holds.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven examples green.
+
+```
+GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
+POST /moderate/{id}/retract → Retract 🔒 Moderators (moderator) (app.go:190)
+```
+
+Generated main:
+
+```go
+runtime.RegisterRoles("moderator") // tako.Role declarations; the dev sign-in page offers them
+```
+
+Analyzer golden `testdata/errors/roleshape`: four diagnostics, one per
+mistake. Scripted walk `validate/policies.md` steps 8–11, run, with the
+live transcript against `tako dev` on :8098:
+
+```
+--- dev sign-in offers the declared role ---
+name="dev_role" value="moderator"
+--- signed in WITHOUT the role ---
+session 303
+GET /moderate -> 403
+<h2>Not your desk</h2>
+needs the moderator role
+tick the role
+--- signed in WITH the role ---
+session 303
+GET /moderate -> 200
+Moderation desk
+Signed in as alice@example.test.
+```
+
+The human walk is batched per the Stage 3 amendment.
+
+### Discovered work
+
+**24. `Status.Message` is mutable in the status page's hands.** journal's
+first draft appended its dev hint to `s.Message`, which works and mixes
+the policy's words with the framework's. It became its own view field
+instead. If a second app does the same, `Status` may want to carry the
+hint rather than each app inventing one.
+
+**25. The dev sign-in page is the only local way to hold a role.** There
+is no `tako dev --as ana:moderator`, so a scripted local walk posts
+`dev_role` by hand (as `validate/policies.md` step 9 does through curl).
+Fine today; worth a flag if local role-fixtures become common.
+
+**26. AB10b's stale-session refresh has no implementation yet**, so a
+role change takes effect on next sign-in. The session record already
+carries `Roles`, and `UID` is not yet indexed — that index is AB10b's
+first line.
