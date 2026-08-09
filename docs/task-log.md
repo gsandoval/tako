@@ -19933,3 +19933,135 @@ Fine today; worth a flag if local role-fixtures become common.
 role change takes effect on next sign-in. The session record already
 carries `Roles`, and `UID` is not yet indexed — that index is AB10b's
 first line.
+
+## AB10b + AB10c — shipped (2026-08-09)
+
+The owner said "do both", AB10b first because it defines the store
+AB10c signs into. Commits `21c6af6` and `bab1a20`.
+
+Shipped as proposed. The REST shapes were checked against Google's
+reference before a line was written, because a fake server built from
+memory would have enshrined whatever was misremembered:
+`accounts:signUp` (create, with `targetProjectId` under a service-account
+credential), `projects/{p}/accounts:lookup`, `:update`, `:delete`,
+`:batchGet`, and `roles/identitytoolkit.admin` as the IAM role.
+
+### The design that changed while building
+
+**`RequirePolicy` carries a name; `Users.SetRoles` replaces wholesale.**
+The backend contract offers no add/remove, because Identity Platform
+offers none — `setCustomUserClaims` replaces the entire claims blob. A
+contract promising a finer operation would be lying about one of its
+backends. Grant and Revoke are read-modify-write ON TOP of it, in one
+place, under a lease keyed on the account.
+
+**The grant is matched on the receiver's TYPE.** `users := auth.Users()`
+puts a local variable between the declaration and the call, and the edge
+scan resolves resource VARS. Matching `*tako.UsersHandle` instead needs
+no dataflow analysis and cannot be defeated by renaming the local.
+
+### Two fidelity gaps the build found, both local-vs-cloud
+
+**A dev sign-in minted a session with no account** — which the cloud
+cannot do, because Identity Platform holds the account and issues the
+token. So `auth.Users().List()` was empty while somebody was
+demonstrably signed in, and journal's new admin screen worked deployed
+and was **inert on a laptop**. Found by walking it, not by a test. A dev
+sign-in now upserts the account, and the ticked roles are the local
+grant.
+
+**Email matching had to be case-insensitive on both.** Identity Platform
+lower-cases addresses; the local store did not, so a duplicate would
+have been refused in the cloud and accepted locally. Pinned as its own
+conformance case.
+
+### The guard that made a decision for us
+
+`TestEveryCustomMethodPostIsClassified` (P2's retry-safety guard) refused
+to let four new colon-methods through unclassified, and it was right to
+ask:
+
+- `:signUp` — **not retried.** A retry after a response tako never saw
+  makes a second account under a second id, and the duplicate-address
+  check does not catch it because the first write succeeded.
+- `:update`, `:delete` — idempotent (set-to-value; deleting twice is
+  success).
+- `:batchGet` — a POST-shaped read.
+
+### AB10c, and why it is not optional
+
+Without it `Create(email, password)` produces an account a laptop cannot
+sign in as. The branch is local-only by construction (`isLocalBackend`),
+so password verification never runs in a deployed service — in the cloud
+the browser posts credentials to Identity Platform and tako only sees
+the resulting token. PBKDF2-HMAC-SHA256 from the standard library, per
+the "no new dependency" rule.
+
+Every refusal is the same sentence — wrong password, unknown address,
+disabled account. Pinned by a test that compares the two bodies rather
+than just their statuses.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven examples green. Conformance
+`-backend=local -run TestUsers` green: create/read, email taken,
+case-insensitivity, roles round-trip, the 1000-byte ceiling, disable,
+delete, paging.
+
+**The gcp conformance chapter is skipped, deliberately and loudly.**
+Identity Platform accounts are project-scoped — there is no namespace to
+throw away — so running it would create and delete real accounts in
+whatever project is configured. The wire is covered instead by
+`pkg/backends/gcp/users_test.go` against a fake identitytoolkit, which
+pins the two shapes invisible locally: `customAttributes` is a JSON
+string nested in the JSON body, and setting it replaces the whole blob
+(the test grants a role to an account carrying `{"tenant":"acme"}` and
+asserts the tenant survives).
+
+Live walk on :8099, the whole point of the slice in four lines:
+
+```
+bob GET /moderate -> 403
+alice POST /people/u_40358fc5babc6fa2/role (on=1) -> 303
+bob GET /moderate -> 200      # same session, no re-sign-in
+bob GET /moderate -> 403      # after the revoke
+```
+
+Derived grants, from the graph rather than from a table someone
+maintains:
+
+```
+{'from': 'journal.Moderate', 'to': 'auth', 'to_kind': 'auth', 'verb': 'read'}
+{'from': 'journal.SetRole',  'to': 'auth', 'to_kind': 'auth', 'verb': 'write'}
+```
+
+Scripted walk: `validate/policies.md` steps 12–18. The human walk is
+batched per the Stage 3 amendment.
+
+### Discovered work
+
+**27. The analyzer does not catch two declared routes that Go's mux
+refuses to order.** `POST /moderate/people/{id}` beside `POST
+/moderate/{id}/retract` is a startup panic, and it was found by running
+the example's tests rather than by analysis — `tako/site-shadow` covers
+the site handler, and nothing covers route-vs-route. The app-side fix
+was to pick a different shape (`POST /people/{id}/role`), which is
+exactly the kind of decision a diagnostic should be making at build
+time. Same class as FL5.
+
+**28. shop's harness called `SessionHandler()` with no providers**, so
+its tests ran against a shop with no password door while codegen emits
+`SessionHandler("email")`. Fixed in AB10c's commit; it is AB2's finding
+for the third time, now with a security shape — a harness that forgets a
+provider tests an app whose doors differ from the deployed one's.
+
+**29. No `tako users` CLI.** Creating the first account in a deployed
+project needs a Go call from inside a service, or the Identity Platform
+console. `tako users create --role editor` is the obvious companion to
+`tako logs`, and would also give AB10d's `Registered` event a second
+producer.
+
+**30. Roles are never garbage-collected from the claims blob.** A role
+an app stops declaring stays on every account that holds it, invisible
+except through `Users.List`. Harmless today; a `tako.Role` that no
+longer exists is a name nothing will ever check.
