@@ -19458,3 +19458,148 @@ Listed because a review that only proposes is not a review:
   requirements are not enough to shape it.
 - **Pagination furniture and capability links are parked** with the
   trigger written down: a second app asking.
+
+## AB1 + AB4 — shipped (2026-08-09)
+
+Approved by the owner on 2026-08-09: **AB1 and AB4**, with AB2's wiring
+question answered ahead of time (`tako test` + `-overlay`, recorded for
+when AB2 runs) and AB3a not in this batch. Two commits, `efcedec` and
+`107ac03`.
+
+### AB4 — an app can ask where it is running (`efcedec`)
+
+`tako.Environment()` → `tako.EnvLocal` | `tako.EnvCloud`, plus
+`Env.String()`. Anything unrecognised is `EnvLocal`, which is the
+direction that costs nothing: a mistyped environment can only turn a
+local affordance **off** in production.
+
+Shipped exactly as proposed. Docs: `reference/service.md` gained a
+"Where it is running" section, `guide/local.md` a bullet with the
+sentence that keeps it honest — a fact about the deployment, never a
+feature flag.
+
+**Its example demand arrived with AB1**, as the commit said it would:
+journal's moderation door admits `tako dev`'s seeded identities locally
+and cannot in the cloud, which is the exact shape flauta reads
+`TAKO_BACKEND` for.
+
+### AB1 — authorization is declared (`107ac03`)
+
+Shipped as proposed, with three additions, each called out here rather
+than left in the diff:
+
+1. **`tako.IsDenied(err)`** — the caller-side twin of `Status.Policy`.
+   `Endpoint.Call` returns a denial as an error, and a caller has to be
+   able to tell "you may not" from "it broke" without string-matching.
+   Without it the distinction the whole task is about would exist for
+   status pages and not for callers.
+2. **`tako/unexported-policy`** — not a new concept: `tako.StatusPage`
+   has had `unexported-status` since FL11, for the same reason (the
+   generated service names it from outside the package).
+3. **`Allow` sets `RequiresAuth` in the AppGraph.** "Allow implies
+   SignIn" was going to be a doc sentence; making it a fact of the graph
+   means codegen emits the 401 gate and every existing rule that reads
+   `RequiresAuth` — `cache-signin` above all — sees a guarded route as
+   guarded.
+
+**The design decision worth the most.** The policy is evaluated by
+`Endpoint.Call`, not by the generated mount. `RequirePolicy(name)`
+carries only the NAME, for `Status.Policy`. That gives one enforcement
+point for a browser request, an in-package call, a test and a
+cross-service call, and it avoids running an app's rule twice per
+request when the rule may read the entity store.
+
+A remote hop is the deliberate exception: it does not evaluate the
+callee's policy locally, because the rule may read the callee's store
+and a caller-side verdict could be confidently wrong in both directions.
+The session rides the hop (`X-Tako-Session`) and the callee's own mount
+decides.
+
+**Found while building.** A `SignIn` route reached through
+`Endpoint.Call` with an anonymous Ctx did not refuse — it reached
+`ctx.User()` and **panicked**. Now a 401 error, pinned by
+`TestCallOnAGuardedRouteWithNoUserIsA401`.
+
+**A test that lied, caught by mutation.** The first version of
+`TestACSRFRefusalDoesNotBorrowThePolicysName` asserted the empty policy
+name on a CSRF 403 — and passed with the guard deliberately removed,
+because CSRF writes its status directly and never reaches `pageError`.
+Rewritten as `TestAnother403OnAGuardedRouteIsNotBlamedOnTheDoor`, whose
+first case is a HANDLER's own 403 on a guarded route; that one fails
+when the guard is removed:
+
+```
+--- FAIL: TestAnother403OnAGuardedRouteIsNotBlamedOnTheDoor
+    policy_test.go:140: a handler's own 403 was attributed to the policy:
+    "<html>403|policy=Editors|this draft is locked by another editor</html>"
+```
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven example modules green
+against `local`:
+
+```
+blog ok   gallery ok   hello ok   journal ok
+shop ok   shortlink ok   siren ok
+```
+
+Analyzer goldens: `testdata/errors/policyshape` (three diagnostics, one
+per mistake, exact positions), and journal's AppGraph + summary now
+carry the door:
+
+```
+GET /moderate → Moderate 🔒 Moderators (app.go:182)
+POST /moderate/{id}/retract → Retract 🔒 Moderators (app.go:183)
+```
+
+Generated mount, from `.tako/gen/journal/main.go`:
+
+```go
+mux.Handle("GET /moderate", runtime.PageHandler(journal.Moderate, nil, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
+```
+
+Scripted walk `validate/policies.md`, steps 1–2 and 4–7 run. Step 3 also
+run **live** against `tako dev` on :8097:
+
+```
+--- 1. signed out ---
+401
+<h2>Sign in first</h2>
+Back to the journal
+--- 2. signed in as alice (dev bar) ---
+303
+200
+Moderation desk
+Signed in as alice@example.test.
+```
+
+That walk is also what found journal's missing 401 heading: every other
+guarded route in the example is a POST, so until the desk existed nobody
+could arrive at a 401 by typing a URL, and the page said "Something went
+wrong" about a request that had gone exactly right.
+
+The human walk is batched per the Stage 3 amendment.
+
+### Discovered work
+
+**21. A test still writes `TAKO_BACKEND` to simulate a deploy.** AB4
+gave apps a way to READ the environment and no way to SET it under test,
+so `journal`'s refusal test does `t.Setenv("TAKO_BACKEND", "gcp")` —
+the same private string AB4 removed from app code, now only in tests.
+The proposal's gate said exactly this, so it is not a miss; it is the
+obvious next inch (a `TestApp` seam, or an exported setter guarded to
+tests). Left out of scope.
+
+**22. `Route.Allow` is same-package only.** `resolvePolicy` accepts a
+selector expression, but nothing has been built or tested for a policy
+declared in another package, and codegen would need that package's
+alias. Fine for one door per app; a shared policy across services would
+need it.
+
+**23. journal's harness gained two more hand-typed mounts.** Adding the
+desk meant re-typing `RequireAuth()` and `RequirePolicy("Moderators")`
+into `pages_test.go` to match what codegen emits — which is AB2's
+finding, demonstrated once more while AB2 waits. If the harness had
+drifted here, every moderation test would have passed against a door
+that was not there.
