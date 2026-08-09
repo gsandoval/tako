@@ -35,7 +35,7 @@ func TestTheDeskShowsEveryonesWork(t *testing.T) {
 	unpublish.Body.Close()
 
 	alice := freshClient(t)
-	signIn(t, alice, srv.URL, "alice")
+	signInAs(t, alice, srv.URL, "alice", Moderator)
 	res, err := alice.Get(srv.URL + "/moderate")
 	if err != nil {
 		t.Fatal(err)
@@ -54,16 +54,14 @@ func TestTheDeskShowsEveryonesWork(t *testing.T) {
 
 // The refusal is a PAGE, and it says the right thing.
 //
-// The identity is signed in the local way and then judged as a deploy
-// would judge it: journal's policy admits .test addresses only while
-// EnvLocal, so flipping the environment is how a test asks "and in
-// production?" without a second sign-in path.
+// Signed in, holding no role — which since AB10a is the whole of it. No
+// environment flip and no allowlist: the door wants a role, this session
+// does not have one.
 func TestAStrangerAtTheDeskGetsAPageThatSaysWhy(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
-	signIn(t, c, srv.URL, "alice") // alice@example.test, not on the allowlist
+	signIn(t, c, srv.URL, "alice") // no roles ticked
 
-	t.Setenv("TAKO_BACKEND", "gcp") // as a deploy sets it
 	res, err := c.Get(srv.URL + "/moderate")
 	if err != nil {
 		t.Fatal(err)
@@ -80,13 +78,63 @@ func TestAStrangerAtTheDeskGetsAPageThatSaysWhy(t *testing.T) {
 	if !strings.Contains(string(body), "Not your desk") {
 		t.Errorf("the refusal wears CSRF's heading: %s", body)
 	}
-	if !strings.Contains(string(body), "limited to this journal") {
-		t.Errorf("the refusal lost the policy's own words: %s", body)
+	// The refusal names the role that would have worked. "Not
+	// authorized" is the message that sends somebody to ask a question
+	// nobody can answer.
+	if !strings.Contains(string(body), "moderator") {
+		t.Errorf("the refusal does not name the role: %s", body)
 	}
 	// It is still the app's page, chrome and all — the thing a status
 	// page exists for.
 	if !strings.Contains(string(body), "Back to the journal") {
 		t.Errorf("the refusal is not the app's page: %s", body)
+	}
+	// And locally it says how to fix it. This is tako.Environment()'s
+	// whole purpose: a development affordance, never a change to the
+	// product.
+	if !strings.Contains(string(body), "tick the role") {
+		t.Errorf("the local refusal does not say how to grant yourself the role: %s", body)
+	}
+}
+
+// The same refusal, judged as a deploy judges it: no hint, because in
+// production there is no /_tako/signin checkbox to send anyone to.
+func TestTheDevHintIsLocalOnly(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	signIn(t, c, srv.URL, "alice")
+
+	t.Setenv("TAKO_BACKEND", "gcp") // as a deploy sets it
+	res, err := c.Get(srv.URL + "/moderate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+
+	if res.StatusCode != http.StatusForbidden {
+		t.Fatalf("/moderate = %d, want 403", res.StatusCode)
+	}
+	if strings.Contains(string(body), "tick the role") {
+		t.Errorf("a deployed refusal offers a local affordance: %s", body)
+	}
+	if !strings.Contains(string(body), "moderator") {
+		t.Errorf("the deployed refusal stopped naming the role: %s", body)
+	}
+}
+
+// The local way in is a checkbox, and it only exists because the app
+// declared the role.
+func TestTheDevSignInPageOffersTheDeclaredRoles(t *testing.T) {
+	srv := servePages(t)
+	res, err := client(t, srv).Get(srv.URL + "/_tako/signin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), `name="dev_role" value="moderator"`) {
+		t.Errorf("the dev sign-in page does not offer the moderator role: %s", body)
 	}
 }
 
@@ -113,9 +161,14 @@ func TestTheDeskRefusesAnAnonymousVisitorBeforeTheRule(t *testing.T) {
 func TestTheDoorHoldsOnTheCallPath(t *testing.T) {
 	app := tako.NewTestApp(t)
 
-	stranger := tako.User{ID: "s", Email: "stranger@example.com", Provider: "google"}
+	stranger := app.SignIn("sam") // signed in, no roles
 	if _, err := Retract.Call(app.Ctx(stranger), RetractReq{ID: "anything"}); !tako.IsDenied(err) {
 		t.Fatalf("a stranger's Call was not denied: %v", err)
+	}
+	// And the role is the whole difference: same call, same code path.
+	mod := app.SignIn("ana", Moderator)
+	if _, err := Retract.Call(app.Ctx(mod), RetractReq{ID: "anything"}); tako.IsDenied(err) {
+		t.Fatalf("a moderator's Call was denied: %v", err)
 	}
 	// And an anonymous Ctx is a 401 rather than the panic ctx.User()
 	// used to be.
@@ -137,7 +190,7 @@ func TestAModeratorRetractsSomebodyElsesPost(t *testing.T) {
 	id := writePosts(t, bob, srv.URL, bobToken, "Bob post")[0]
 
 	alice := freshClient(t)
-	aliceToken := signIn(t, alice, srv.URL, "alice")
+	aliceToken := signInAs(t, alice, srv.URL, "alice", Moderator)
 	res, err := alice.PostForm(srv.URL+"/moderate/"+id+"/retract", url.Values{"_csrf": {aliceToken}})
 	if err != nil {
 		t.Fatal(err)

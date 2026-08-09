@@ -48,6 +48,10 @@ func servePages(t *testing.T) *httptest.Server {
 	takoMux := http.NewServeMux()
 	takoMux.Handle("/_tako/api/session", runtime.SessionHandler())
 	takoMux.Handle("GET /_tako/signin", runtime.SignInPage("google"))
+	// The declared roles, as codegen hands them over: the dev sign-in
+	// page offers a checkbox per role, because a laptop has no Identity
+	// Platform to hold a claim.
+	runtime.RegisterRoles(Moderator.Name())
 	takoMux.Handle("POST /_tako/api/session/signout", runtime.SignOutHandler())
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
@@ -134,8 +138,20 @@ var tokenRe = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 // signIn mints a dev session (the dev bar's path — local backend) and
 // returns the SESSION-bound CSRF token from /write.
 func signIn(t *testing.T, c *http.Client, base, name string) string {
+	return signInAs(t, c, base, name)
+}
+
+// signInAs is signIn with roles, the way the dev sign-in page posts them:
+// a checkbox per declared role, so a local session holds what you ticked
+// and nothing more. Signing in with NO role is the interesting case —
+// it is the only way to walk the refusal locally.
+func signInAs(t *testing.T, c *http.Client, base, name string, roles ...tako.RoleHandle) string {
 	t.Helper()
-	res, err := c.PostForm(base+"/_tako/api/session", url.Values{"dev_user": {name}})
+	form := url.Values{"dev_user": {name}}
+	for _, r := range roles {
+		form.Add("dev_role", r.Name())
+	}
+	res, err := c.PostForm(base+"/_tako/api/session", form)
 	if err != nil {
 		t.Fatal(err)
 	}

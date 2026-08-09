@@ -16,6 +16,23 @@ type AppGraph struct {
 	Handlers []Handler `json:"handlers"`
 	// Edges are resource-usage and service-call edges.
 	Edges []Edge `json:"edges"`
+	// Roles are the declared tako.Role names, in source order, deduped.
+	// The generated main hands them to the runtime so the dev sign-in
+	// page can offer them: there is no Identity Platform on a laptop to
+	// hold a claim, so locally a role is something you tick.
+	Roles []string `json:"roles,omitempty"`
+}
+
+// appendUnique adds s to out unless it is already there. Roles are
+// deduped because two packages may name the same one, and the dev page
+// should offer it once.
+func appendUnique(out []string, s string) []string {
+	for _, have := range out {
+		if have == s {
+			return out
+		}
+	}
+	return append(out, s)
 }
 
 // Service is one deployable unit. Within a package, API/Page/Cron handlers
@@ -234,6 +251,9 @@ type Handler struct {
 	// construction and "Allow implies SignIn" is a fact of the graph
 	// rather than a sentence in a doc comment.
 	RequiresAuth bool `json:"requires_auth,omitempty"`
+	// PolicyRoles are the roles a RequireRole policy admits, for the
+	// summary line; nil when the policy has a hand-written body.
+	PolicyRoles []string `json:"policy_roles,omitempty"`
 	// Policy is the declared tako.Policy var this route is behind
 	// (Route.Allow), as generated code references it within the
 	// handler's package — "Editors". Empty means the route is open to

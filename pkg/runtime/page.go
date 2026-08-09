@@ -328,7 +328,8 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		ctx := &requestCtx{Context: rctx, log: requestLogger(r, reqID),
 			isHTMX: r.Header.Get("HX-Request") == "true"}
 		if session != nil {
-			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
+			u := session.user()
+			ctx.user = &u
 			rctx = context.WithValue(rctx, sessionUserKey{}, ctx.user)
 			ctx.Context = rctx
 		}

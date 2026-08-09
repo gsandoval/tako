@@ -42,15 +42,29 @@ import "errors"
 // record, and it belongs in the handler that loaded it. Splitting them is
 // what keeps one policy reusable across 50 routes.
 func Policy(fn func(Ctx, User) error) *PolicyHandle {
-	return &PolicyHandle{pkg: pkgOf(fn), fn: fn}
+	return &PolicyHandle{fn: fn}
 }
 
 // PolicyHandle is a declared authorization rule, the value tako.Policy
 // returns. Assign it to an exported package-level var; routes name it in
 // Route.Allow.
 type PolicyHandle struct {
-	pkg string
-	fn  func(Ctx, User) error
+	fn func(Ctx, User) error
+	// roles is set by RequireRole and read by nothing at runtime: the
+	// rule is already in fn. It is here so a policy built from roles can
+	// SAY so — the analyzer prints the names beside the door, and a
+	// reader of `tako gen graph` learns which role opens it without
+	// opening the source.
+	roles []string
+}
+
+// Roles are the role names a RequireRole policy admits, in declaration
+// order; nil for a policy with a hand-written body.
+func (p *PolicyHandle) Roles() []string {
+	if p == nil {
+		return nil
+	}
+	return append([]string(nil), p.roles...)
 }
 
 // Check evaluates the policy. The runtime and Endpoint.Call are the

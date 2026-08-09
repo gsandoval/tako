@@ -103,3 +103,62 @@ go test . -run TestEnv ./...           # from the repo root
 **Expect** `EnvLocal` with `TAKO_BACKEND` unset, `EnvCloud` with `gcp`,
 and `EnvLocal` for anything unrecognised — a mistyped environment can
 only turn a local affordance off in production, never on.
+
+---
+
+## AB10a — roles
+
+Roles extend the same walk. Run from `examples/journal`.
+
+## 8. The role is in the declaration, and in the graph
+
+```
+go run ../../cmd/tako gen graph
+```
+
+**Expect** the door to name its key, not just itself:
+
+```
+GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
+```
+
+## 9. The local way in is a checkbox
+
+```
+PORT=8098 tako dev
+```
+
+Open `http://localhost:8098/_tako/signin`. **Expect** a `roles` fieldset
+with one checkbox per declared `tako.Role`.
+
+Ticking is deliberate. A local session that carried every declared role
+would make the refusal path unreachable in dev, which is the half of
+authorization worth walking.
+
+1. Sign in as alice **without** ticking moderator → `/moderate` is
+   **403**, headed "Not your desk", saying *this page needs the
+   moderator role*, plus the local-only line telling you how to grant
+   yourself one.
+2. Sign in again **with** moderator ticked → **200**, the desk.
+
+## 10. The hint is local only
+
+```
+go test -run TestTheDevHintIsLocalOnly ./...
+```
+
+**Expect** green: with `TAKO_BACKEND=gcp` the same refusal keeps naming
+the role and drops the "tick the role" line, because in production there
+is no checkbox to send anyone to.
+
+## 11. A role that cannot work is refused at build time
+
+From the repo root:
+
+```
+go test ./pkg/analyzer -run TestErrors/roleshape
+```
+
+**Expect** four diagnostics: `tako/const-role`, `tako/unexported-role`,
+`tako/empty-role` (a door with no key refuses everyone, silently), and
+`tako/role-var`.

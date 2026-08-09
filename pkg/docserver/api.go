@@ -398,6 +398,9 @@ var symbolPage = map[string]string{
 	"PolicyHandle": "auth.md",
 	"Deny":         "auth.md",
 	"IsDenied":     "auth.md",
+	"Role":         "auth.md",
+	"RoleHandle":   "auth.md",
+	"RequireRole":  "auth.md",
 	"NewTestApp":   "testing.md",
 	"TestApp":      "testing.md",
 }

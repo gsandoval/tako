@@ -10,6 +10,7 @@
   {{ else }}
     <p>Nothing you did — we've logged it and we're looking.</p>
   {{ end }}
+  {{ if .DevHint }}<p class="devhint">{{ .DevHint }}</p>{{ end }}
   {{ if .RequestID }}<p class="reqid">Request {{ .RequestID }}</p>{{ end }}
   <p><a href="/">Back to the journal</a> — {{ .Total }} published posts.</p>
 </article>

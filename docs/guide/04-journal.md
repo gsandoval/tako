@@ -98,17 +98,23 @@ asks a different question — "who may see everyone else's drafts" — and
 that one belongs to the route:
 
 ```go
-var Moderators = tako.Policy(moderator)
+var Moderator  = tako.Role("moderator")
+var Moderators = tako.RequireRole(Moderator)
 
 Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
 Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
 ```
 
-`moderator` returns `nil` to admit and `tako.Deny(msg)` to refuse; any
-other error means it could not decide, and answers 500 rather than
-handing a visitor an internal message. `retract` then contains no
-authorization at all — the door is the declaration, and the handler is
-about the act.
+`retract` then contains no authorization at all — the door is the
+declaration, and the handler is about the act. For a rule roles cannot
+express, `tako.Policy(fn)` takes a body: return `nil` to admit,
+`tako.Deny(msg)` to refuse, and any other error to say it could not
+decide, which answers 500 rather than handing a visitor an internal
+message.
+
+Locally the role is a checkbox on `/_tako/signin` — there is no Identity
+Platform on a laptop to hold a claim, and ticking it is deliberate so
+you can also sign in WITHOUT it and see the refusal.
 
 Two things follow that are easy to miss. `tako gen graph` now prints
 `GET /moderate → Moderate 🔒 Moderators`, so "which routes can a

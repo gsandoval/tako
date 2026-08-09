@@ -116,12 +116,25 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	workersByQueue := map[string]*Handler{} // queue name → its worker
 	jobVars := map[types.Object]string{}    // job var object → job name
 	policyVars := map[types.Object]string{} // policy var object → var name
+	roleVars := map[types.Object]string{}   // role var object → role name
+	policyRoles := map[string][]string{}    // policy var name → roles it admits
 	jobsByName := map[string]*Handler{}     // job name → its handler
 	for _, pkg := range pkgs {
 		if pkg.Module != nil && graph.Module == "" {
 			graph.Module = pkg.Module.Path
 		}
 		decls := declsOf(pkg)
+		// Roles before everything, because RequireRole resolves them and
+		// a policy may be declared above the role it names.
+		for _, d := range decls {
+			if d.ctor != "Role" {
+				continue
+			}
+			if role, ok := extractRole(cfg.Dir, pkg, d.name, d.call, &errs); ok {
+				roleVars[pkg.TypesInfo.Defs[d.name]] = role
+				graph.Roles = appendUnique(graph.Roles, role)
+			}
+		}
 		// Resources first, so handler bindings resolve regardless of
 		// declaration order within the package.
 		for _, d := range decls {
@@ -202,6 +215,14 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if extractPolicy(cfg.Dir, pkg, d.name, &errs) {
 					policyVars[pkg.TypesInfo.Defs[d.name]] = d.name.Name
 				}
+			case "RequireRole":
+				// The same record, built from roles instead of a body —
+				// so it is the same kind of door, and the graph can also
+				// say which key opens it.
+				if extractPolicy(cfg.Dir, pkg, d.name, &errs) {
+					policyVars[pkg.TypesInfo.Defs[d.name]] = d.name.Name
+					policyRoles[d.name.Name] = resolveRequireRole(cfg.Dir, pkg, d.name.Name, d.call, roleVars, &errs)
+				}
 			case "StatusPage":
 				if r := extractStatusPage(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					if prior, exists := statusOfPackage[pkg.PkgPath]; exists {
@@ -249,13 +270,13 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		for _, d := range decls {
 			switch d.ctor {
 			case "API":
-				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, policyVars, &errs); h != nil {
+				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, policyVars, policyRoles, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Page":
-				if h := extractPage(cfg.Dir, pkg, d.name, d.call, policyVars, &errs); h != nil {
+				if h := extractPage(cfg.Dir, pkg, d.name, d.call, policyVars, policyRoles, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
 					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var

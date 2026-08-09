@@ -40,6 +40,7 @@
     func (*LockHandle).Do(ctx Ctx, fn func(Ctx) error) error
     func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
     func (*PolicyHandle).Check(ctx Ctx, u User) error
+    func (*PolicyHandle).Roles() []string
     func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
     func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
     func (*RequestMsHandle).Count() Metric
@@ -63,7 +64,7 @@
     func (*TestApp).DrainQueues()
     func (*TestApp).HTMX(as ...User) Ctx
     func (*TestApp).SetSecret(name string, value string)
-    func (*TestApp).SignIn(name string) User
+    func (*TestApp).SignIn(name string, roles ...RoleHandle) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
     func (Ctx).IsHTMX() bool
     func (Ctx).Log() *log/slog.Logger
@@ -76,8 +77,10 @@
     func (EntityTx[T any]).Put(entity T) error
     func (Env).String() string
     func (PutPolicy).Headers() map[string]string
+    func (RoleHandle).Name() string
     func (StatusHandle).Declared() bool
     func (StatusHandle).Render(ctx Ctx, s Status) (HTML, error)
+    func (User).HasRole(role RoleHandle) bool
     func (context.Context).Deadline() (deadline time.Time, ok bool)
     func (context.Context).Done() <-chan struct{}
     func (context.Context).Err() error
@@ -129,6 +132,8 @@ func RequestMs(t Target) *RequestMsHandle
 func Requests(t Target) *RequestsHandle
 func RequestsErroring(t Target, fraction float64, w ...Window) Condition
 func RequestsSlow(t Target, d time.Duration, quantile float64, w ...Window) Condition
+func RequireRole(roles ...RoleHandle) *PolicyHandle
+func Role(name string) RoleHandle
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler
 func Secret(name string) *SecretHandle
 func Service(cfg ...ServiceConfig) *ServiceHandle
@@ -186,6 +191,7 @@ type QueueHandle[T any] struct{}
 type QueueWatch struct{DeadLetters bool; For time.Duration}
 type RequestMsHandle struct{}
 type RequestsHandle struct{}
+type RoleHandle struct{}
 type Route struct{SignIn bool; Allow *PolicyHandle; Private bool; MaxAge time.Duration}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
@@ -201,5 +207,5 @@ type TestApp struct{}
 type Toggle int
 type TopicHandle[T any] struct{}
 type Traffic struct{Timeout time.Duration; SessionAffinity Toggle; HTTP2 Toggle}
-type User struct{ID string; Email string; Name string; Provider string; EmailVerified bool}
+type User struct{ID string; Email string; Name string; Provider string; Roles []string; EmailVerified bool}
 type Window struct{For time.Duration; Every time.Duration}

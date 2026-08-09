@@ -114,8 +114,18 @@ type TestApp struct {
 // SignIn returns a stub identity for name — identity injection for
 // tests, not auth enforcement (sign-in middleware arrives with the
 // auth feature).
-func (a *TestApp) SignIn(name string) User {
-	return User{ID: name, Email: name + "@example.test", Name: name}
+//
+// Roles ride along, so a test says who somebody IS in the same breath
+// as their name:
+//
+//	editor := app.SignIn("ana", Editor)
+//	stranger := app.SignIn("sam")   // signed in, and behind every door
+func (a *TestApp) SignIn(name string, roles ...RoleHandle) User {
+	u := User{ID: name, Email: name + "@example.test", Name: name}
+	for _, r := range roles {
+		u.Roles = append(u.Roles, r.Name())
+	}
+	return u
 }
 
 // Ctx returns a request context bound to this app's backends,

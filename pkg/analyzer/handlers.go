@@ -37,18 +37,19 @@ func bindableList(kind string) string {
 // extractAPI validates one tako.API declaration and returns its AppGraph
 // entry. It appends every rule violation it finds to errs and returns nil
 // when any occurred.
-func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
-	return extractRoute("API", dir, pkg, name, call, policyVars, errs)
+func extractAPI(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, roleNames map[string][]string, errs *ErrorList) *Handler {
+	return extractRoute("API", dir, pkg, name, call, policyVars, roleNames, errs)
 }
 
 // extractPage validates one tako.Page declaration — the same route +
 // tagged-Req shape as API, except pages receive browser forms, never
 // JSON bodies, and render HTML (the signature enforces the result).
-func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
-	return extractRoute("Page", dir, pkg, name, call, policyVars, errs)
+func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, roleNames map[string][]string, errs *ErrorList) *Handler {
+	return extractRoute("Page", dir, pkg, name, call, policyVars, roleNames, errs)
 }
 
-func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, errs *ErrorList) *Handler {
+func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, roleNames map[string][]string, errs *ErrorList) *Handler {
+	var policyRoles []string
 	if name.Name == "_" || len(call.Args) < 2 {
 		return nil
 	}
@@ -103,6 +104,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	if e, set := fieldOf(cfg, "Allow"); set {
 		if p, ok := resolvePolicy(dir, pkg, name.Name, e, policyVars, errs); ok {
 			policy = p
+			policyRoles = roleNames[p]
 		} else {
 			bad = true
 		}
@@ -274,6 +276,7 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		ResBlob:      resIsBlob(pkg, call.Args[1]),
 		RequiresAuth: requiresAuth,
 		Policy:       policy,
+		PolicyRoles:  policyRoles,
 		Private:      private,
 		MaxAge:       maxAge,
 		Pos:          relPos(dir, pkg.Fset, name.Pos()),

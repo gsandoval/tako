@@ -6,7 +6,6 @@
 package journal
 
 import (
-	"strings"
 	"time"
 
 	"github.com/gsandoval/tako"
@@ -36,6 +35,16 @@ var (
 	auth = tako.Auth(tako.AuthConfig{Google: true})
 )
 
+// Moderator is the role the desk is behind. Declared, so the name is
+// read at analysis time: `tako gen graph` prints it beside the route,
+// and `tako dev`'s sign-in page offers it as something to tick.
+//
+// In the cloud it is an Identity Platform custom claim, granted with
+// auth.Users().Grant. On a laptop there is no Identity Platform, so it
+// lives on the local user record and the dev page is how you pick it up.
+// Either way this file only ever knows the NAME.
+var Moderator = tako.Role("moderator")
+
 // Moderators is the journal's one DOOR: who, among the people who signed
 // in, may use the moderation desk.
 //
@@ -49,33 +58,13 @@ var (
 // the post (see publish and rename). A policy answers "who may reach
 // this route" — keeping the two apart is what lets one policy serve
 // every route behind the same door.
-var Moderators = tako.Policy(moderator)
-
-// moderators is the allowlist. A real app reads this from its config
-// seam; the shape is the same either way — a rule tako never sees.
-var moderators = []string{"editor@example.com"}
-
-func moderator(ctx tako.Ctx, u tako.User) error {
-	// The local way in. `tako dev` mints identities under .test, and
-	// without this the moderation desk would be unreachable on a laptop:
-	// sign in, get turned away, every time.
-	//
-	// Two guards, both needed. tako.Environment() keeps the affordance
-	// out of production, and .test is IANA-reserved — it can never be
-	// delegated, so no real account can present one. Neither half alone
-	// would do: an environment check by itself admits any address a
-	// deploy misconfiguration lets through, and a suffix check by itself
-	// is a door left open in the cloud.
-	if tako.Environment() == tako.EnvLocal && strings.HasSuffix(u.Email, ".test") {
-		return nil
-	}
-	for _, m := range moderators {
-		if u.Email == m {
-			return nil
-		}
-	}
-	return tako.Deny("the moderation desk is limited to this journal's moderators — ask one of them to retract a post for you")
-}
+//
+// It used to be an email allowlist with a local escape hatch keyed on
+// tako.Environment() and the reserved .test suffix. A role retires both:
+// nobody maintains a list of addresses in the source, and the local way
+// in is ticking a box rather than a rule that has to be right about two
+// things at once.
+var Moderators = tako.RequireRole(Moderator)
 
 // Status is the page tako renders for every response it produces
 // itself: a mistyped URL, a handler's tako.NotFound(), an expired CSRF
@@ -97,6 +86,11 @@ type StatusView struct {
 	Detail    string
 	RequestID string
 	Total     int64
+	// DevHint is the one thing a status page can say on a laptop that
+	// would be nonsense in production: how to give yourself the role you
+	// were just refused for. tako.Environment() is what makes it safe to
+	// write — a development affordance, never a change to the product.
+	DevHint string
 }
 
 var statusHeadings = map[int]string{
@@ -124,8 +118,15 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 	// empty for every status tako answers on its own account. Guessing
 	// from the code alone would greet a reader who is simply not a
 	// moderator with "That form expired".
+	hint := ""
 	if s.Policy != "" {
 		heading = "Not your desk"
+		// The refused visitor on a laptop is nearly always the developer,
+		// and the answer is one they can act on. In the cloud there is no
+		// such answer, so there is no such line.
+		if tako.Environment() == tako.EnvLocal {
+			hint = "Running locally: sign in again at /_tako/signin and tick the role."
+		}
 	}
 	// The count the masthead shows on every other page. A 404 that
 	// drops the site's chrome is the thing this exists to prevent.
@@ -135,7 +136,7 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 	}
 	return site.Render(ctx, "status.html", StatusView{
 		Code: s.Code, Heading: heading, Detail: s.Message,
-		RequestID: s.RequestID, Total: total,
+		RequestID: s.RequestID, Total: total, DevHint: hint,
 	})
 }
 

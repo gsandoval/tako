@@ -48,6 +48,15 @@ type User struct {
 	// app declared in tako.AuthConfig — this says which one it was, for
 	// an app that declares more than one and treats them differently.
 	Provider string
+	// Roles are the declared roles this identity carries: an Identity
+	// Platform custom claim in the cloud, the local user record on a
+	// laptop. Read them with HasRole, or put a whole route behind one
+	// with Route{Allow: tako.RequireRole(Editor)}.
+	//
+	// They are what the SESSION was minted with. A role granted or
+	// revoked since then marks the session stale and is picked up on the
+	// next request — see reference/auth.md.
+	Roles []string
 	// EmailVerified is the provider's claim about the address.
 	//
 	// It matters when an app authorizes BY EMAIL, which is the obvious

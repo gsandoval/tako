@@ -1,0 +1,4 @@
+app.go:12:24: tako.Role takes a string constant — the role name is read at analysis time so a route's door can be named in the graph; got a call expression (tako/const-role)
+app.go:17:5: role moderator must be exported — the generated service names it from outside the package; rename it Moderator (tako/unexported-role)
+app.go:20:14: Nobody = tako.RequireRole() needs at least one role — a door with no key refuses everyone, and does it silently (tako/empty-role)
+app.go:23:29: Desk names a role that is not a declared var in this package — write `var Editor = tako.Role("editor")` and pass Editor; a call expression cannot be printed beside the door or offered by the dev sign-in page (tako/role-var)

@@ -147,6 +147,57 @@ deliberately so: the callee evaluates its own policy, because the rule
 may read the callee's entity store. Callers can test the verdict with
 `tako.IsDenied(err)`.
 
+### Roles
+
+A role is a NAME an identity carries into the request, and the only
+thing tako knows about it. Declare it, then put a door behind it:
+
+```go
+var Moderator  = tako.Role("moderator")
+var Moderators = tako.RequireRole(Moderator)          // any-of, if you pass several
+
+var Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
+```
+
+`RequireRole` returns an ordinary policy, so it goes exactly where a
+hand-written one goes and is enforced at the same point. A rule that
+needs two roles at once, or a role plus something else, is a
+`tako.Policy` with a body — this is the shorthand, not the ceiling.
+
+Elsewhere, ask the user:
+
+```go
+if ctx.User().HasRole(Moderator) { … }   // for the one extra button
+```
+
+The refusal names the role, because a role name is not a secret and
+"not authorized" sends somebody to ask a question nobody can answer:
+
+```
+this page needs the moderator role
+```
+
+**Where roles live.** In the cloud, an Identity Platform **custom
+claim** — so they arrive in the ID token and tako reads them at sign-in.
+On a laptop there is no Identity Platform, so they live on the local
+user record and `tako dev`'s sign-in page offers a checkbox per declared
+role. Ticking is deliberate: a local session that carried every role
+would make the refusal path — the half of authorization worth walking —
+unreachable in dev.
+
+**They are what the session was minted with.** `tako.User.Roles` comes
+off the session record, so a role granted or revoked elsewhere is not
+picked up mid-session. Granting through `auth.Users()` marks that user's
+sessions stale and the next request refreshes them (AB10b, not yet
+built); until then, a role change takes effect on next sign-in.
+
+The name must be a string constant and the var must be exported — it is
+read at analysis time, so `tako gen graph` can print it beside the door:
+
+```
+GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
+```
+
 ### Telling your 403 from tako's
 
 Several things answer 403 on a guarded route: your policy, a stale CSRF
@@ -248,6 +299,10 @@ identity directly.
 - `app.go:28:11: Internal sets both Allow and Private … (tako/policy-private)`
   — a private route is reached by another service with no session, so
   every call would be refused.
+- `app.go:12:24: tako.Role takes a string constant … (tako/const-role)`,
+  `role moderator must be exported … (tako/unexported-role)`,
+  `Nobody = tako.RequireRole() needs at least one role — a door with no
+  key refuses everyone, and does it silently (tako/empty-role)`.
 - `400 POST {"idToken": …} (the Identity Platform sign-in result)` —
   `/_tako/api/session` got a body without an ID token.
 - `401 the ID token did not verify: token is for a different project`
@@ -260,11 +315,18 @@ identity directly.
 ## Not yet
 
 - Two providers: Google and email/password. No other OAuth providers.
-- No roles and no user store. `tako.Policy` is the seam authorization
-  hangs on; who is an editor, and how that list is edited, stays the
-  app's — tako never learns what a role is.
-- No custom claims. Per-record rules (ownership) remain the handler's
-  code; journal's owner check is the pattern.
+- **No user store yet.** Roles can be enforced (`tako.Role`,
+  `RequireRole`) and read; granting one from Go — `auth.Users().Create`,
+  `.Grant` — is AB10b, and today a role is set in the Identity Platform
+  console or ticked on the dev sign-in page.
+- **No local password sign-in yet** (AB10c): `tako dev` signs in through
+  the dev bar, not with an email and a password.
+- **No registration event yet** (AB10d): `auth.Registered` and
+  `auth.FirstSignIn` are designed and unbuilt. A true
+  Identity-Platform-side hook is not reachable at all — blocking
+  functions are Gen1 Cloud Functions only, and tako runs on Cloud Run.
+- Per-record rules (ownership) remain the handler's code; journal's
+  owner check is the pattern.
 - No session cache: every authenticated request pays the entity Get.
 - No account-creation UI for the email provider; the framework page
   signs in existing users only.

@@ -69,6 +69,10 @@ func HandlerLine(h Handler) string {
 	// used to be invisible because it lived in the handler's body.
 	if h.Policy != "" {
 		lock = " 🔒 " + h.Policy
+		// And which key opens it, when the door was built from roles.
+		if len(h.PolicyRoles) > 0 {
+			lock += " (" + strings.Join(h.PolicyRoles, ", ") + ")"
+		}
 	}
 	switch h.Kind {
 	case "job":

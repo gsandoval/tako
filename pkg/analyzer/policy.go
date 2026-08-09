@@ -72,3 +72,79 @@ func resolvePolicy(dir string, pkg *packages.Package, route string, arg ast.Expr
 	})
 	return "", false
 }
+
+// --- roles (AB10a) ------------------------------------------------------
+
+// extractRole validates one tako.Role declaration and returns the role
+// name. Two rules, and both are about a name that has to survive leaving
+// the package: it is read at analysis time (so it can be printed beside
+// the door in the graph and handed to the dev sign-in page), and the
+// generated service references the var.
+func extractRole(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) (string, bool) {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return "", false
+	}
+	role, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Role takes a string constant — the role name is read at analysis time so a route's door can be named in the graph; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-role",
+		})
+		return "", false
+	}
+	if !name.IsExported() {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, name.Pos()),
+			Msg: fmt.Sprintf("role %s must be exported — the generated service names it from outside the package; rename it %s",
+				name.Name, strings.ToUpper(name.Name[:1])+name.Name[1:]),
+			Rule: "unexported-role",
+		})
+	}
+	return role, true
+}
+
+// resolveRequireRole reads the roles out of a `tako.RequireRole(Editor,
+// Moderator)` declaration, so the graph can print them beside the policy
+// that admits them.
+//
+// A RequireRole with no roles is refused: it is a door with no key, which
+// admits nobody and looks exactly like a rule that is merely strict —
+// nothing fails, nobody gets in, and the log says the request was refused
+// as designed.
+func resolveRequireRole(dir string, pkg *packages.Package, varName string, call *ast.CallExpr,
+	roleVars map[types.Object]string, errs *ErrorList) []string {
+
+	if len(call.Args) == 0 {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Pos()),
+			Msg: fmt.Sprintf("%s = tako.RequireRole() needs at least one role — a door with no key refuses everyone, and does it silently",
+				varName),
+			Rule: "empty-role",
+		})
+		return nil
+	}
+	var out []string
+	for _, arg := range call.Args {
+		var obj types.Object
+		switch e := arg.(type) {
+		case *ast.Ident:
+			obj = pkg.TypesInfo.Uses[e]
+		case *ast.SelectorExpr:
+			obj = pkg.TypesInfo.Uses[e.Sel]
+		}
+		role, ok := roleVars[obj]
+		if !ok {
+			*errs = append(*errs, &Error{
+				Pos: relPos(dir, pkg.Fset, arg.Pos()),
+				Msg: fmt.Sprintf("%s names a role that is not a declared var in this package — write `var Editor = tako.Role(\"editor\")` and pass Editor; %s cannot be printed beside the door or offered by the dev sign-in page",
+					varName, describeExpr(arg)),
+				Rule: "role-var",
+			})
+			continue
+		}
+		out = append(out, role)
+	}
+	return out
+}

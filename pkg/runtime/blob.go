@@ -35,7 +35,8 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		}
 
 		if session != nil {
-			ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
+			u := session.user()
+			ctx.user = &u
 		}
 		var req Req
 		if decode != nil {

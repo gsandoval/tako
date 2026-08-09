@@ -14,6 +14,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"os"
@@ -44,13 +45,21 @@ const (
 const authRequired = "sign in to continue"
 
 type sessionRecord struct {
-	ID      string    `json:"id"`
-	UID     string    `json:"uid"`
-	Email   string    `json:"email"`
-	Name    string    `json:"name"`
-	CSRF    string    `json:"csrf"`
-	Created time.Time `json:"created"`
-	Expires time.Time `json:"expires"`
+	ID    string `json:"id"`
+	UID   string `json:"uid"`
+	Email string `json:"email"`
+	Name  string `json:"name"`
+	// Roles are the roles the identity held when this session was
+	// minted. They are stored rather than re-read per request: the
+	// session lookup already happens, and asking Identity Platform for
+	// a user's claims on every request would put an admin API call on
+	// the hot path. A grant or revoke marks the session stale instead
+	// (AB10b), and the next request refreshes exactly one of them.
+	Roles    []string  `json:"roles,omitempty"`
+	Provider string    `json:"provider,omitempty"`
+	CSRF     string    `json:"csrf"`
+	Created  time.Time `json:"created"`
+	Expires  time.Time `json:"expires"`
 }
 
 func randomHex(n int) string {
@@ -65,19 +74,35 @@ func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 		return nil, errors.New("tako: sessions need the entity backend — Boot wires it")
 	}
 	rec := &sessionRecord{
-		ID:      randomHex(16),
-		UID:     u.ID,
-		Email:   u.Email,
-		Name:    u.Name,
-		CSRF:    randomHex(16),
-		Created: time.Now().UTC(),
-		Expires: time.Now().UTC().Add(sessionTTL),
+		ID:       randomHex(16),
+		UID:      u.ID,
+		Email:    u.Email,
+		Name:     u.Name,
+		Roles:    u.Roles,
+		Provider: u.Provider,
+		CSRF:     randomHex(16),
+		Created:  time.Now().UTC(),
+		Expires:  time.Now().UTC().Add(sessionTTL),
 	}
 	doc, err := json.Marshal(rec)
 	if err != nil {
 		return nil, err
 	}
 	return rec, hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+}
+
+// user is the identity a session record stands for. It exists because
+// four handlers built this struct field by field, and the fifth field
+// (Roles) would have been dropped by whichever one nobody edited —
+// a bug that does not fail, it just quietly refuses somebody at a door.
+func (s *sessionRecord) user() tako.User {
+	if s == nil {
+		return tako.User{}
+	}
+	return tako.User{
+		ID: s.UID, Email: s.Email, Name: s.Name,
+		Roles: s.Roles, Provider: s.Provider,
+	}
 }
 
 // loadSession resolves the request's session record, treating expired
@@ -142,7 +167,14 @@ func SessionHandler(providers ...string) http.Handler {
 		case http.MethodPost:
 			var u tako.User
 			if name := r.PostFormValue("dev_user"); name != "" && isLocalBackend() {
-				u = tako.User{ID: name, Email: name + "@example.test", Name: name}
+				// Roles ride the dev sign-in because there is no
+				// Identity Platform on a laptop to hold a claim. Ticking
+				// them is deliberate rather than automatic: a local
+				// session that silently held every declared role would
+				// make the refusal path — the half of authorization
+				// worth walking — unreachable in dev.
+				u = tako.User{ID: name, Email: name + "@example.test", Name: name,
+					Provider: "email", Roles: r.PostForm["dev_role"]}
 			} else {
 				var body struct {
 					IDToken string `json:"idToken"`
@@ -314,6 +346,13 @@ type idTokenClaims struct {
 	Firebase      struct {
 		SignInProvider string `json:"sign_in_provider"`
 	} `json:"firebase"`
+	// Roles is tako's custom claim, set through auth.Users().Grant.
+	// Identity Platform puts custom claims at the top level of the ID
+	// token, so this is read exactly like email or name — and like
+	// them, it is whatever the token says: a role granted since the
+	// token was issued is not in it, which is what the stale-session
+	// refresh exists for.
+	Roles []string `json:"roles"`
 }
 
 // providerNames maps Identity Platform's sign_in_provider onto the
@@ -350,6 +389,7 @@ func userFromClaims(claims idTokenClaims, declared []string) (tako.User, error) 
 	return tako.User{
 		ID: claims.Sub, Email: claims.Email, Name: claims.Name,
 		Provider: provider, EmailVerified: claims.EmailVerified,
+		Roles: claims.Roles,
 	}, nil
 }
 
@@ -524,7 +564,7 @@ func SignInPage(providers ...string) http.Handler {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if isLocalBackend() {
-			fmt.Fprintf(w, signInDevPage, next)
+			fmt.Fprintf(w, signInDevPage, next, devRoleChecks())
 			return
 		}
 		apiKey, authDomain, project := os.Getenv("TAKO_AUTH_APIKEY"), os.Getenv("TAKO_AUTH_DOMAIN"), os.Getenv("TAKO_PROJECT")
@@ -551,9 +591,34 @@ const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · ta
 <h1>Sign in (dev)</h1>
 <p>Local sessions are dev-minted — no GCP involved. Pick a user:</p>
 <form method="post" action="` + routes.Session + `"><input type="hidden" name="next" value="%s">
-<button name="dev_user" value="alice">alice</button>
+%s<button name="dev_user" value="alice">alice</button>
 <button name="dev_user" value="bob">bob</button>
 </form></body>`
+
+// declaredRoles is the app's tako.Role set, installed by the generated
+// main. Empty means the app declared none, and the dev page shows no
+// role picker at all rather than an empty fieldset.
+var declaredRoles []string
+
+// RegisterRoles hands the runtime the roles this app declared, so the
+// dev sign-in page can offer them. Generated mains call it; there is no
+// cloud equivalent, because in the cloud a role is a claim Identity
+// Platform holds.
+func RegisterRoles(roles ...string) { declaredRoles = roles }
+
+func devRoleChecks() string {
+	if len(declaredRoles) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(`<fieldset style="border:1px solid #ccc;margin:0 0 16px"><legend>roles</legend>`)
+	for _, role := range declaredRoles {
+		fmt.Fprintf(&b, `<label style="margin-right:12px"><input type="checkbox" name="dev_role" value="%s"> %s</label>`,
+			html.EscapeString(role), html.EscapeString(role))
+	}
+	b.WriteString(`</fieldset>`)
+	return b.String()
+}
 
 // The cloud page runs the standard Identity Platform browser flow via
 // the Firebase Auth compat SDK (gstatic). One POST of the resulting ID

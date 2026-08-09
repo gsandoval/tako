@@ -58,6 +58,15 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	return written, nil
 }
 
+// quotedList renders strings as a Go argument list: "a", "b".
+func quotedList(items []string) string {
+	out := make([]string, len(items))
+	for i, s := range items {
+		out[i] = fmt.Sprintf("%q", s)
+	}
+	return strings.Join(out, ", ")
+}
+
 // providerArgs renders the declared providers as SignInPage arguments.
 func providerArgs(g *analyzer.AppGraph) string {
 	for _, r := range g.Resources {
@@ -343,6 +352,14 @@ import (
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SessionHandler(%s))\n", routes.PatternSession, providerArgs(g))
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignOutHandler())\n", routes.PatternSignOut)
 			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignInPage(%s))\n", routes.PatternSignIn, providerArgs(g))
+			// The declared roles, for the dev sign-in page. There is no
+			// Identity Platform on a laptop to hold a custom claim, so
+			// locally a role is something you tick before signing in —
+			// deliberately, because a local session that carried every
+			// role would make the refusal path unreachable in dev.
+			if len(g.Roles) > 0 {
+				fmt.Fprintf(&b, "\truntime.RegisterRoles(%s) // tako.Role declarations; the dev sign-in page offers them\n", quotedList(g.Roles))
+			}
 		}
 		if hasBucket(g, svc) {
 			b.WriteString("\n\t// Signed upload/download URLs land here (SignedPut/SignedGet).\n")

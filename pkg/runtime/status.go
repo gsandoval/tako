@@ -168,7 +168,8 @@ func statusCtx(r *http.Request) tako.Ctx {
 		isHTMX:  r.Header.Get("HX-Request") == "true",
 	}
 	if session != nil {
-		ctx.user = &tako.User{ID: session.UID, Email: session.Email, Name: session.Name}
+		u := session.user()
+		ctx.user = &u
 	}
 	return ctx
 }
