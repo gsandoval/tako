@@ -1,10 +1,51 @@
 package runtime
 
 import (
+	"io"
 	"net/http"
+	"os"
 
 	"github.com/gsandoval/tako/internal/routes"
 )
+
+// devNonce is the value `tako dev` wrote into this process's
+// environment before starting it. Empty everywhere else — a deployed
+// service has no dev loop to have set it — which is what keeps the
+// endpoint below from existing in production.
+var devNonce = os.Getenv("TAKO_DEV_NONCE")
+
+// answerDevReady identifies this process to the dev loop that started
+// it, and reports whether it answered.
+//
+// The dev loop cannot learn this from a TCP dial. A dial to a port
+// another process already holds succeeds, and succeeds fast, so the
+// probe that was meant to mean "my app is up" meant "something is up" —
+// and `tako dev` printed `ready` about a stranger's server while its own
+// child was exiting with an address-in-use error. Two tako apps on one
+// machine is the normal case for anyone working on tako and an app
+// together, and the app then answers with the OTHER one's pages, which
+// reads as a broken version of the app you meant to run.
+//
+// The nonce is what makes the answer proof rather than evidence: a
+// second tako dev on the same port answers this path too, with a
+// different value.
+// isDevProbe reports whether this request is the dev loop identifying
+// its child — the one request a tako service answers that no client
+// made and no log should carry.
+func isDevProbe(r *http.Request) bool {
+	return devNonce != "" && r.URL.Path == routes.DevReady
+}
+
+func answerDevReady(w http.ResponseWriter, r *http.Request) bool {
+	if !isDevProbe(r) {
+		return false
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	_, _ = io.WriteString(w, devNonce)
+	return true
+}
 
 // Reserved answers tako's own URL namespace before the app's router is
 // consulted.
@@ -35,6 +76,12 @@ import (
 // than a handler that silently never runs.
 func Reserved(framework, app http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Answered here rather than mounted on the framework mux: the
+		// mux is generated code in users' repositories, and a dev-loop
+		// affordance is not worth a line in it.
+		if answerDevReady(w, r) {
+			return
+		}
 		if routes.IsReserved(r.URL.Path) {
 			framework.ServeHTTP(w, r)
 			return

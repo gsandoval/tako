@@ -2,10 +2,13 @@ package devserver
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
-	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/build"
 	"github.com/gsandoval/tako/pkg/codegen"
@@ -58,8 +62,15 @@ func Run(ctx context.Context, opts Options) error {
 
 	fmt.Fprintf(s.out(), "tako dev · %s\n\n", filepath.Base(dir))
 	if err := s.cycle(true); err != nil {
-		// First cycle failed: nothing is serving yet, but stay up and
-		// watch — fixing the file should bring the app up.
+		// A start failure is not an edit away from working: no file in
+		// this directory frees a port. Watching would leave a dev loop
+		// running that can never come up, so it exits and says why.
+		var foreign *foreignListenerError
+		if errors.As(err, &foreign) || errors.Is(err, errExited) {
+			return err
+		}
+		// Anything else: nothing is serving yet, but stay up and watch —
+		// fixing the file should bring the app up.
 		s.printFailure(err)
 	}
 
@@ -107,6 +118,10 @@ type session struct {
 	buildOuts []string
 	// guard is the write end of the running child's stdin leash.
 	guard *os.File
+	// nonce identifies the running child to waitReady. Fresh per start.
+	nonce string
+	// exited closes when the running child has been reaped.
+	exited chan struct{}
 }
 
 // ownWrite reports whether path sits under a build-output dir.
@@ -205,7 +220,11 @@ func (s *session) cycle(first bool) error {
 	if err := s.startApp(filepath.Join(s.dir, bin)); err != nil {
 		return err
 	}
-	if err := waitReady(s.opts.Port, 5*time.Second); err != nil {
+	if err := waitReady(s.opts.Port, s.nonce, s.exited, 5*time.Second); err != nil {
+		// No `ready` line above this: the last thing the terminal says
+		// has to be the truth, and a success line followed by a failure
+		// reads as noise after a success.
+		s.stopApp()
 		return err
 	}
 
@@ -221,7 +240,15 @@ func (s *session) cycle(first bool) error {
 func (s *session) startApp(bin string) error {
 	cmd := exec.Command(bin)
 	cmd.Dir = s.dir
-	cmd.Env = append(os.Environ(), "PORT="+s.opts.Port, "TAKO_DEV_GUARD=1")
+	// A fresh nonce per start: it is how waitReady tells this child from
+	// anything else already answering on the port, so reusing one across
+	// restarts would let a previous child vouch for the current one.
+	nonce, err := newNonce()
+	if err != nil {
+		return err
+	}
+	s.nonce = nonce
+	cmd.Env = append(os.Environ(), "PORT="+s.opts.Port, "TAKO_DEV_GUARD=1", "TAKO_DEV_NONCE="+nonce)
 	if s.opts.ChaosSeed != 0 {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("TAKO_CHAOS=%d", s.opts.ChaosSeed))
 	}
@@ -234,6 +261,7 @@ func (s *session) startApp(bin string) error {
 	if err != nil {
 		return err
 	}
+	s.exited = make(chan struct{})
 	cmd.Stdin = guardR
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -248,6 +276,17 @@ func (s *session) startApp(bin string) error {
 	}
 	s.guard = guardW
 	s.app = cmd
+	// ONE waiter for the child, here, so that "it exited" is a fact
+	// anyone can observe by receiving on the channel. waitReady watches
+	// it to stop waiting the moment a start fails — before this, a child
+	// that died at once still cost the full readiness timeout — and
+	// stopApp waits on it instead of reaping the process itself, because
+	// two callers of Wait on one process is a race.
+	exited := s.exited
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
 	return nil
 }
 
@@ -256,7 +295,10 @@ func (s *session) stopApp() {
 		return
 	}
 	_ = s.app.Process.Kill()
-	_, _ = s.app.Process.Wait()
+	if s.exited != nil {
+		<-s.exited // the Wait goroutine started in startApp reaps it
+		s.exited = nil
+	}
 	if s.guard != nil {
 		s.guard.Close()
 		s.guard = nil
@@ -265,6 +307,17 @@ func (s *session) stopApp() {
 }
 
 func (s *session) printFailure(err error) {
+	// A start failure is not an analysis failure, and calling it one
+	// sends the reader to the wrong file.
+	var foreign *foreignListenerError
+	switch {
+	case errors.As(err, &foreign):
+		fmt.Fprintf(s.out(), "\n✗ %s\n", err)
+		return
+	case errors.Is(err, errExited):
+		fmt.Fprintf(s.out(), "\n✗ the service exited during startup — its own error is above\n")
+		return
+	}
 	suffix := ""
 	if s.app != nil {
 		suffix = " — still serving last good build"
@@ -339,17 +392,90 @@ func drain(watcher *fsnotify.Watcher, window time.Duration) {
 	}
 }
 
-func waitReady(port string, timeout time.Duration) error {
+// waitReady blocks until the child answers with ITS OWN nonce, the
+// child exits, or the timeout runs out.
+//
+// The identity check is the whole of it. A TCP dial only reports that
+// the port is answered, not by whom, so when another process already
+// held the port the old probe succeeded immediately and `tako dev`
+// printed `ready` — about a stranger's server, while its own child was
+// dying with an address-in-use error a line later. The browser then got
+// the other app's pages, which reads as a broken version of the app you
+// meant to run rather than as a port collision. So the question this
+// asks is not "is anything listening" but "is what is listening mine".
+func waitReady(port, nonce string, exited <-chan struct{}, timeout time.Duration) error {
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	url := "http://127.0.0.1:" + port + routes.DevReady
 	deadline := time.Now().Add(timeout)
+	foreign := false
 	for time.Now().Before(deadline) {
-		conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 100*time.Millisecond)
-		if err == nil {
-			conn.Close()
+		select {
+		case <-exited:
+			// The child is gone; it printed its own reason on the way
+			// out (runtime.Serve names an address-in-use collision and
+			// what to do about it). Waiting the rest of the timeout for
+			// a process that no longer exists tells nobody anything.
+			return errExited
+		default:
+		}
+		switch got, err := probe(client, url); {
+		case err != nil:
+			// Nothing listening yet, or not listening well enough to
+			// answer. Keep waiting.
+		case got == nonce:
 			return nil
+		default:
+			// Someone answered, and it is not this child. Say so as
+			// soon as it is known rather than at the deadline.
+			foreign = true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	if foreign {
+		return &foreignListenerError{port: port}
+	}
 	return fmt.Errorf("service did not start listening on :%s within %s", port, timeout)
+}
+
+// errExited says the child died while we waited. It carries no text of
+// its own: the child has already explained itself on stderr.
+var errExited = errors.New("the service exited during startup")
+
+// foreignListenerError is a port collision seen from the dev loop's
+// side, named as the thing it actually is.
+type foreignListenerError struct{ port string }
+
+func (e *foreignListenerError) Error() string {
+	return fmt.Sprintf("port %s is answering, but not with this app — another process has it.\n"+
+		"Set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :%s`)", e.port, e.port)
+}
+
+// probe asks the running child to identify itself. A non-200, or a body
+// that is not a nonce, is "not mine" rather than an error.
+func probe(client *http.Client, url string) (string, error) {
+	res, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", nil
+	}
+	body, err := io.ReadAll(io.LimitReader(res.Body, 128))
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+// newNonce mints the per-start identity. It only has to be
+// unguessable-enough to not collide with a concurrent dev loop's.
+func newNonce() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }
 
 // appService picks the one PUBLIC app service — the one tako dev

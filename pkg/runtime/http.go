@@ -190,6 +190,13 @@ func Serve(h http.Handler) {
 // and tako writes the route because tako is the only one that knows it.
 func logRequests(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The dev loop's readiness probe is tako talking to itself, once
+		// per start. Counting it would put a request nobody made in the
+		// user's console and a sample nobody served in request_ms.
+		if isDevProbe(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		// The route label is refinable: a dispatcher serving a wildcard

@@ -10,3 +10,4 @@ Push	POST /_tako/api/push
 Signed	/_tako/api/signed/
 Cron	POST /_tako/api/cron/{cron}
 SignIn	GET /_tako/signin
+dev-only	GET /_tako/z/dev

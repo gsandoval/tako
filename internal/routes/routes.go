@@ -102,6 +102,17 @@ const (
 	// person looks at rather than a program posts to, which is why it
 	// sits at the namespace root and not in API.
 	SignIn = Prefix + "signin"
+	// DevReady is how `tako dev` establishes that the port it just
+	// probed is answered by the child IT started, rather than by
+	// whatever else was already listening. The response is a per-run
+	// nonce the dev loop puts in the child's environment.
+	//
+	// It is not a mount: no mux registers it, and a deployed service
+	// answers it 404 like anything else under Z, because the nonce is
+	// only ever set by `tako dev`. It is listed in the lock all the same
+	// — the point of the lock is that a new URL is reviewed, and a URL
+	// that answers under some condition is still a URL.
+	DevReady = Z + "dev"
 )
 
 // The mux patterns codegen writes, method and all. They are spelled here
@@ -159,5 +170,8 @@ func Lock() string {
 	for _, m := range All {
 		b.WriteString(m.Name + "\t" + m.Pattern + "\n")
 	}
+	// Not a mount, and marked as one thing it is not: this answers only
+	// under `tako dev`. It is here so that adding it was reviewed.
+	b.WriteString("dev-only\tGET " + DevReady + "\n")
 	return b.String()
 }

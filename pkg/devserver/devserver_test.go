@@ -7,10 +7,17 @@ package devserver
 // the manual gate scripts; it needs a real toolchain and a real port.
 
 import (
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -165,4 +172,116 @@ func TestIndentKeepsEveryLine(t *testing.T) {
 	if strings.HasSuffix(got, "\n") {
 		t.Error("indent left a trailing newline, which doubles the blank line after it")
 	}
+}
+
+// --- FL16: the readiness probe proves it reached THIS child ----------
+//
+// The process half of the loop stays on the manual gates, but the
+// probe is not the process half: it is a decision about an HTTP
+// response, and it can be held to a real listener without a toolchain.
+
+// A stranger on the port is not readiness.
+//
+// This is the defect FL16 fixed, and it is worth stating as a test
+// because the old probe passed it in the worst way: a TCP dial to a
+// port another process holds SUCCEEDS, so `tako dev` printed `ready`
+// about someone else's server while its own child was exiting with an
+// address-in-use error. The browser then answered from the other app.
+func TestWaitReadyRefusesAListenerThatIsNotOurs(t *testing.T) {
+	// A foreign server that answers everything, including the dev path
+	// — a second tako dev is exactly this, with a different nonce.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, "some other tako app")
+	}))
+	defer srv.Close()
+
+	err := waitReady(portOf(t, srv), "our-nonce", make(chan struct{}), 300*time.Millisecond)
+	var foreign *foreignListenerError
+	if !errors.As(err, &foreign) {
+		t.Fatalf("waitReady = %v, want a foreign-listener error", err)
+	}
+	// The text has to name the port, the fix and the command: this is
+	// read by someone whose app appears to be broken.
+	for _, want := range []string{"not with this app", "PORT=", "lsof -i :"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error text is missing %q:\n%s", want, err)
+		}
+	}
+}
+
+// Our own child, answering with its nonce, IS readiness.
+func TestWaitReadyAcceptsOurOwnChild(t *testing.T) {
+	const nonce = "3f1c0b9a"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != routes.DevReady {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, nonce)
+	}))
+	defer srv.Close()
+
+	if err := waitReady(portOf(t, srv), nonce, make(chan struct{}), 2*time.Second); err != nil {
+		t.Fatalf("waitReady = %v, want nil", err)
+	}
+}
+
+// A child that dies during startup ends the wait at once.
+//
+// Before FL16 nothing watched the process, so a service that failed
+// immediately still cost the full five-second timeout before the loop
+// said anything — five seconds of a terminal that looks like it is
+// working.
+func TestWaitReadyStopsWhenTheChildExits(t *testing.T) {
+	exited := make(chan struct{})
+	close(exited)
+
+	start := time.Now()
+	// Port 1 is not in use and not usable: nothing will ever answer, so
+	// only the exit signal can end this.
+	err := waitReady("1", "our-nonce", exited, 5*time.Second)
+	if !errors.Is(err, errExited) {
+		t.Fatalf("waitReady = %v, want errExited", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("waited %s for a child already gone; want it to end at once", elapsed)
+	}
+}
+
+// Nothing listening at all is still a timeout, and says so — the case
+// where the app is genuinely slow or genuinely broken.
+func TestWaitReadyTimesOutWhenNothingAnswers(t *testing.T) {
+	err := waitReady("1", "our-nonce", make(chan struct{}), 100*time.Millisecond)
+	var foreign *foreignListenerError
+	if errors.As(err, &foreign) || errors.Is(err, errExited) {
+		t.Fatalf("waitReady = %v, want a plain timeout", err)
+	}
+	if !strings.Contains(err.Error(), "did not start listening") {
+		t.Errorf("timeout text = %q", err)
+	}
+}
+
+// Two starts must not share an identity: a nonce that repeated would
+// let the PREVIOUS child vouch for the current one across a restart.
+func TestNoncesDiffer(t *testing.T) {
+	a, err := newNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := newNonce()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a == b || a == "" {
+		t.Fatalf("nonces %q and %q", a, b)
+	}
+}
+
+func portOf(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u.Port()
 }
