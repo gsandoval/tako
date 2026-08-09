@@ -188,6 +188,13 @@ var (
 	// route.
 	Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
 	Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+	// Who appoints the FIRST moderator? Nobody can, from inside the
+	// desk — it is behind the role it hands out. So the first person
+	// ever to sign in gets it, and after that the desk is the only way
+	// in. A real answer to a real bootstrap problem, and the smallest
+	// honest use of an account event.
+	OnFirstSignIn = tako.Subscribe(auth.FirstSignIn, appointFounder)
+
 	// Making another moderator. This is the whole of "user admin" in
 	// this example, and it is deliberately behind the same door: the
 	// people who can retract a post are the people who can hand that out.
@@ -437,6 +444,27 @@ func moderate(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
 	return site.Render(ctx, "moderate.html", ModerateView{
 		Posts: list, People: people, Who: ctx.User().Email,
 	})
+}
+
+// appointFounder gives the moderator role to the first person tako ever
+// mints a session for.
+//
+// Idempotent on purpose: auth.FirstSignIn is delivered at least once, so
+// this can run twice for the same person, and the check it makes —
+// "does anybody hold this role yet" — answers no only once regardless.
+func appointFounder(ctx tako.Ctx, u tako.User) error {
+	users := auth.Users()
+	page, err := users.List(ctx).Limit(200).Page("")
+	if err != nil {
+		return err
+	}
+	for _, existing := range page.Users {
+		if existing.HasRole(Moderator) {
+			return nil // the site already has one
+		}
+	}
+	ctx.Log().Info("appointing the founding moderator", "email", u.Email)
+	return users.Grant(ctx, u.ID, Moderator)
 }
 
 // SetRoleReq is the toggle: which account, and whether they should hold

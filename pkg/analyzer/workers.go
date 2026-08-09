@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/tools/go/packages"
 
+	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/schedule"
 )
 
@@ -231,6 +232,19 @@ func resolveEventSource(pkg *packages.Package, arg ast.Expr, topicVars, bucketVa
 				if bucket, ok := bucketVars[pkg.TypesInfo.Uses[x]]; ok {
 					return bucket + ".Uploaded", "bucket", true
 				}
+			}
+		}
+		// … or an account event: <authVar>.Registered / .FirstSignIn.
+		// Matched on the FIELD's type rather than on a var map, because
+		// the auth var is usually unexported and the field is what
+		// carries the source name.
+		if tv, ok := pkg.TypesInfo.Types[e]; ok && tv.Type != nil &&
+			tv.Type.String() == "github.com/gsandoval/tako.AuthEvent" {
+			switch e.Sel.Name {
+			case "Registered":
+				return hooks.AuthRegisteredSource, "auth", true
+			case "FirstSignIn":
+				return hooks.AuthFirstSignInSource, "auth", true
 			}
 		}
 	}

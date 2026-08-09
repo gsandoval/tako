@@ -288,3 +288,63 @@ them it was is exactly what somebody guessing wants to learn.
 is behind `isLocalBackend()`: in the cloud the browser posts credentials
 to Identity Platform and tako only ever sees the ID token that comes
 back.
+
+---
+
+## AB10d — the two account events
+
+## 19. The first person to arrive owns the site
+
+```
+cd examples/journal && rm -rf .tako/data && PORT=8102 tako dev
+```
+
+A fresh store, so nobody has ever signed in. Sign in as **alice**,
+ticking nothing, and open `/moderate` → **200**.
+
+She was never granted anything by hand: `auth.FirstSignIn` fired,
+journal's `appointFounder` saw that the site had no moderator, and gave
+her the role. It is the answer to a real bootstrap problem — the desk
+that hands out the role is behind the role.
+
+Sign in as **bob** → `/moderate` is **403**. The rule fires for
+everybody's first sign-in and does nothing after the first appointment,
+which is what makes it safe to leave in.
+
+The dev log says so out loud:
+
+```
+appointing the founding moderator subscriber=OnFirstSignIn email=alice@example.test
+```
+
+## 20. Creating an account announces it
+
+```
+cd examples/shop && go test -run TestAnAccountCreatedFromGoCanSignInAndOrder ./...
+```
+
+**Expect** green. `auth.Users().Create` publishes `auth.Registered`;
+shop's subscriber opens a customer record with 500 credits; `/api/me`
+answers with them. Nothing in the create path knows the shop has
+customers.
+
+## 21. Both are ordinary events
+
+```
+go run ../../cmd/tako gen graph          # from examples/journal
+```
+
+**Expect** the subscriber to read like every other one:
+
+```
+subscriber OnFirstSignIn ← auth tako-auth-first-signin (app.go:196)
+```
+
+Same `tako.Subscribe`, same topic underneath, same at-least-once
+delivery — so a handler must be idempotent, and for a Google sign-up
+both events fire within a second of each other.
+
+**What no walk can show** is the event that does not exist: an account
+created in the Identity Platform console and never used announces
+nothing. Blocking functions and Firebase Auth triggers are Gen1 Cloud
+Functions only, and tako provisions no functions.

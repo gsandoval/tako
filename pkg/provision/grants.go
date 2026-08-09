@@ -2,6 +2,7 @@ package provision
 
 import (
 	"fmt"
+	"github.com/gsandoval/tako/internal/hooks"
 	"sort"
 	"strings"
 
@@ -52,6 +53,12 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	for _, h := range g.Handlers {
 		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
 			events[strings.TrimSuffix(h.Binding, ".Uploaded")] = true
+		}
+		// An account-event topic exists as soon as something subscribes,
+		// and the service that publishes to it is the app service — the
+		// one that owns auth.Users() and the session endpoint.
+		if h.Kind == "subscribe" && h.BindingKind == "auth" {
+			ensure(target{TargetTopic, cfg.Name(h.Binding)})
 		}
 	}
 	for _, r := range g.Resources {
@@ -114,6 +121,36 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		}
 		for svc := range routeServices {
 			add(target{TargetProject, cfg.Project}, "roles/datastore.user", "serviceAccount:"+cfg.SAEmail(svc))
+		}
+		// Account events (AB10d): whoever can announce one needs to be
+		// able to publish it. FirstSignIn is announced by the session
+		// endpoint, so every route-serving service; Registered is
+		// announced by auth.Users().Create, so the services that write
+		// accounts — the same edge that earns them identitytoolkit.admin.
+		handlerSvc := map[string]string{}
+		for _, h := range g.Handlers {
+			handlerSvc[h.Var] = h.Service
+		}
+		writers := map[string]bool{}
+		for _, e := range g.Edges {
+			if e.ToKind == "auth" && e.Verb == "write" {
+				if svc, ok := handlerSvc[e.From]; ok {
+					writers[svc] = true
+				}
+			}
+		}
+		for _, h := range g.Handlers {
+			if h.Kind != "subscribe" || h.BindingKind != "auth" {
+				continue
+			}
+			topic := target{TargetTopic, cfg.Name(h.Binding)}
+			publishers := routeServices
+			if h.Binding == hooks.AuthRegisteredSource {
+				publishers = writers
+			}
+			for svc := range publishers {
+				add(topic, "roles/pubsub.publisher", "serviceAccount:"+cfg.SAEmail(svc))
+			}
 		}
 	}
 	for _, svc := range g.Services {

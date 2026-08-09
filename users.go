@@ -2,6 +2,7 @@ package tako
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -88,7 +89,35 @@ func (h *UsersHandle) Create(ctx Ctx, spec NewUser) (User, error) {
 	if err != nil {
 		return User{}, mapUserErr(err)
 	}
-	return userFromRecord(rec), nil
+	u := userFromRecord(rec)
+	// The account exists; announcing it is a separate concern and a
+	// failure to announce is not a failure to create. Publishing after
+	// the write is what makes that true — and a subscriber that must not
+	// miss one is why this goes to a topic rather than to a callback.
+	publishAuthEvent(ctx, authRegisteredSource, u)
+	return u, nil
+}
+
+// publishAuthEvent announces one of the two account moments. It is
+// best-effort by design: nothing an app does in a subscriber should be
+// able to fail the act that triggered it, and the delivery guarantees
+// past this point are the topic's ordinary ones (retry, dead-letter).
+//
+// A publish that fails is logged, not returned. The alternative — a
+// Create that reports failure after creating the account — is worse in
+// every direction, because the caller's obvious response is to retry
+// and make a second one.
+func publishAuthEvent(ctx Ctx, source string, u User) {
+	if hooks.Topic == nil {
+		return // unwired (bare test): nothing subscribes either
+	}
+	raw, err := json.Marshal(u)
+	if err == nil {
+		err = hooks.Topic.Publish(ctx, source, raw)
+	}
+	if err != nil {
+		ctx.Log().Error("tako: announcing an account event failed", "source", source, "user", u.ID, "err", err)
+	}
 }
 
 // Get returns the account with this id; tako.IsNotFound reports absence.

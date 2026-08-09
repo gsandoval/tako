@@ -18,6 +18,14 @@
         "journal.SetRole"
       ],
       "profile": "default"
+    },
+    {
+      "name": "journal-onfirstsignin",
+      "package": "journal",
+      "handlers": [
+        "journal.OnFirstSignIn"
+      ],
+      "profile": "default"
     }
   ],
   "resources": [
@@ -38,7 +46,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:222 home"
+        "app.go:229 home"
       ],
       "pos": "app.go:15:2"
     },
@@ -280,6 +288,15 @@
       "pos": "app.go:190:2"
     },
     {
+      "kind": "subscribe",
+      "var": "journal.OnFirstSignIn",
+      "package": "journal",
+      "service": "journal-onfirstsignin",
+      "binding": "tako-auth-first-signin",
+      "binding_kind": "auth",
+      "pos": "app.go:196:2"
+    },
+    {
       "kind": "page",
       "var": "journal.SetRole",
       "package": "journal",
@@ -307,7 +324,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:194:2"
+      "pos": "app.go:201:2"
     }
   ],
   "edges": [
@@ -427,6 +444,20 @@
       "from": "journal.Retract",
       "to": "posts",
       "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.OnFirstSignIn",
+      "to": "auth",
+      "to_kind": "auth",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.OnFirstSignIn",
+      "to": "auth",
+      "to_kind": "auth",
       "kind": "resource",
       "verb": "write"
     },

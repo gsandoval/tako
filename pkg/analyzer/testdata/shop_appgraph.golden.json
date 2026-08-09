@@ -34,6 +34,14 @@
       "singleton": true
     },
     {
+      "name": "shop-onregistered",
+      "package": "shop",
+      "handlers": [
+        "shop.OnRegistered"
+      ],
+      "profile": "default"
+    },
+    {
       "name": "billing",
       "package": "shop/billing",
       "handlers": [
@@ -69,7 +77,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:184 listOrders"
+        "app.go:218 listOrders"
       ],
       "pos": "app.go:27:2"
     },
@@ -122,11 +130,19 @@
     },
     {
       "kind": "entity",
+      "name": "customers",
+      "var": "shop.customers",
+      "package": "shop",
+      "type": "Customer",
+      "pos": "app.go:123:5"
+    },
+    {
+      "kind": "entity",
       "name": "settle-shards",
       "var": "shop.shardReports",
       "package": "shop",
       "type": "ShardReport",
-      "pos": "app.go:211:5"
+      "pos": "app.go:245:5"
     }
   ],
   "handlers": [
@@ -237,6 +253,15 @@
       "pos": "app.go:102:2"
     },
     {
+      "kind": "subscribe",
+      "var": "shop.OnRegistered",
+      "package": "shop",
+      "service": "shop-onregistered",
+      "binding": "tako-auth-registered",
+      "binding_kind": "auth",
+      "pos": "app.go:109:2"
+    },
+    {
       "kind": "api",
       "var": "billing.Charge",
       "package": "shop/billing",
@@ -307,6 +332,13 @@
       "verb": "run"
     },
     {
+      "from": "shop.Me",
+      "to": "customers",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
       "from": "shop.Settle",
       "to": "orders",
       "to_kind": "entity",
@@ -351,6 +383,20 @@
     {
       "from": "shop.Invoicer",
       "to": "sequences",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "shop.OnRegistered",
+      "to": "customers",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "shop.OnRegistered",
+      "to": "customers",
       "to_kind": "entity",
       "kind": "resource",
       "verb": "write"

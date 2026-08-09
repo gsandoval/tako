@@ -100,7 +100,41 @@ var (
 
 	Settle   = tako.Runner(settle, runSettle, tako.RunnerConfig{Parallel: 4})
 	Invoicer = tako.Singleton(assignInvoices)
+
+	// A shop needs somewhere to hang an address and an order history,
+	// and the moment to create it is the moment the account exists.
+	// auth.Registered fires when THIS app created it — which is what
+	// auth.Users().Create above does — so the record is there before the
+	// customer's first request, without every handler checking.
+	OnRegistered = tako.Subscribe(auth.Registered, openAccount)
 )
+
+// Customer is the shop's own record of a person, keyed by the account
+// id. Identity Platform holds who they are; this holds what the shop
+// knows about them.
+type Customer struct {
+	ID      string    `entity:"id" json:"id"`
+	Email   string    `json:"email"`
+	Name    string    `json:"name"`
+	Joined  time.Time `json:"joined"`
+	Credits int       `json:"credits"`
+}
+
+var customers = tako.Entity[Customer]("customers")
+
+// openAccount creates the shop-side record. Idempotent, because an event
+// is delivered at least once: writing the same record twice is the same
+// record, and the welcome credit is not doubled.
+func openAccount(ctx tako.Ctx, u tako.User) error {
+	if _, err := customers.Get(ctx, u.ID); err == nil {
+		return nil
+	} else if !tako.IsNotFound(err) {
+		return err
+	}
+	return customers.Put(ctx, Customer{
+		ID: u.ID, Email: u.Email, Name: u.Name, Joined: time.Now(), Credits: 500,
+	})
+}
 
 func listProducts(ctx tako.Ctx, _ struct{}) ([]Product, error) {
 	list, err := products.Query(ctx).All()
@@ -332,15 +366,30 @@ func invoiceSweep(ctx tako.Ctx) (int, error) {
 type MeRes struct {
 	SignedIn bool   `json:"signedIn"`
 	Name     string `json:"name"`
+	// Credits comes off the shop's OWN record of this person, which
+	// auth.Registered opened when the account was created. It is how the
+	// browser can tell that the two halves — the identity and the
+	// customer — found each other.
+	Credits int `json:"credits"`
 }
 
 func me(ctx tako.Ctx, _ struct{}) (MeRes, error) {
-	if u, ok := ctx.MaybeUser(); ok {
-		name := u.Name
-		if name == "" {
-			name = u.Email
-		}
-		return MeRes{SignedIn: true, Name: name}, nil
+	u, ok := ctx.MaybeUser()
+	if !ok {
+		return MeRes{}, nil
 	}
-	return MeRes{}, nil
+	name := u.Name
+	if name == "" {
+		name = u.Email
+	}
+	res := MeRes{SignedIn: true, Name: name}
+	// Absent is not an error: an account that predates the customer
+	// record — or one made outside this app, which auth.Registered
+	// cannot see — is still a signed-in person.
+	if c, err := customers.Get(ctx, u.ID); err == nil {
+		res.Credits = c.Credits
+	} else if !tako.IsNotFound(err) {
+		return MeRes{}, err
+	}
+	return res, nil
 }

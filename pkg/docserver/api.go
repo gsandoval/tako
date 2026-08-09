@@ -404,6 +404,7 @@ var symbolPage = map[string]string{
 	"UsersPage":    "auth.md",
 	"UserQuery":    "auth.md",
 	"IsEmailTaken": "auth.md",
+	"AuthEvent":    "auth.md",
 	"RoleHandle":   "auth.md",
 	"RequireRole":  "auth.md",
 	"NewTestApp":   "testing.md",

@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"slices"
@@ -135,6 +136,48 @@ func passwordSignIn(ctx context.Context, email, password string) (tako.User, err
 		return tako.User{}, errors.New("account disabled")
 	}
 	return tako.User{ID: rec.ID, Email: rec.Email, Name: rec.Name, Provider: "email", Roles: rec.Roles}, nil
+}
+
+// seenKind marks identities tako has minted a session for. One tiny
+// record per person, ever.
+//
+// This is what makes auth.FirstSignIn honest without an Identity
+// Platform hook: tako cannot observe a registration, but it can observe
+// the first session IT issues, and that is what the event is named for.
+// The cost is one entity read per sign-in — not per request — beside the
+// session write that is already happening.
+const seenKind = "_tako_seen"
+
+// announceFirstSignIn publishes auth.FirstSignIn the first time an
+// identity appears, and never again.
+//
+// The marker is written BEFORE the publish. A crash between them loses
+// the announcement rather than repeating it forever, which is the right
+// way round: a subscriber that misses one is a gap somebody notices,
+// while a loop that re-announces on every sign-in is a bug that looks
+// like a feature until the welcome emails pile up.
+func announceFirstSignIn(ctx context.Context, u tako.User) {
+	if hooks.Entity == nil || hooks.Topic == nil || u.ID == "" {
+		return
+	}
+	seen, err := hooks.Entity.Exists(ctx, seenKind, u.ID)
+	if err != nil || seen {
+		return
+	}
+	doc, err := json.Marshal(map[string]string{"uid": u.ID, "email": u.Email})
+	if err != nil {
+		return
+	}
+	if err := hooks.Entity.Put(ctx, seenKind, u.ID, doc); err != nil {
+		return
+	}
+	raw, err := json.Marshal(u)
+	if err != nil {
+		return
+	}
+	if err := hooks.Topic.Publish(ctx, hooks.AuthFirstSignInSource, raw); err != nil {
+		slog.Error("tako: announcing a first sign-in failed", "user", u.ID, "err", err)
+	}
 }
 
 // devAccount is what `tako dev` signs in as: a real account in the local
@@ -390,6 +433,11 @@ func SessionHandler(providers ...string) http.Handler {
 				http.Error(w, "session store error", http.StatusInternalServerError)
 				return
 			}
+			// The first time tako has ever seen this identity. After the
+			// session exists, so a subscriber that reads the session
+			// finds one — and best-effort, because a welcome email
+			// failing must not fail a sign-in.
+			announceFirstSignIn(r.Context(), u)
 			setSessionCookie(w, r, rec.ID, rec.Expires)
 			// The dev bar (and dev sign-in page) post plain forms:
 			// bounce to next, else back to the page.

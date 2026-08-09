@@ -52,6 +52,9 @@ func serveAPI(t *testing.T) *httptest.Server {
 		return req, err
 	}, runtime.RequireAuth()))
 	mux.Handle("GET /api/orders", runtime.JSONHandler(ListOrders, nil, runtime.RequireAuth()))
+	// Public: the browser asks who it is, and the shop answers with what
+	// it knows about them.
+	mux.Handle("GET /api/me", runtime.JSONHandler(Me, nil))
 	mux.Handle("POST /api/settle", runtime.JSONHandler(StartSettle, func(r *http.Request) (SettleReq, error) {
 		var req SettleReq
 		err := runtime.DecodeJSON(r, &req)
@@ -60,6 +63,10 @@ func serveAPI(t *testing.T) *httptest.Server {
 	// The job's local execution path, exactly as the generated main
 	// wires it.
 	runtime.RegisterJob("Settle", Settle)
+	// And the account-event subscriber, the same way. Without it the
+	// customer record is never opened here, and the harness would be
+	// testing a shop the deploy does not build.
+	runtime.RegisterSubscriber("OnRegistered", OnRegistered)
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
@@ -442,6 +449,17 @@ func TestAnAccountCreatedFromGoCanSignInAndOrder(t *testing.T) {
 	tea, addRes := postJSON[Product](t, c, srv.URL+"/api/products", AddProductReq{Name: "tea", PriceCents: 450})
 	if addRes.StatusCode != 200 || tea.ID == "" {
 		t.Fatalf("an authenticated write = %d %+v", addRes.StatusCode, tea)
+	}
+
+	// The shop-side record was opened by auth.Registered, without the
+	// create having to know about it — read back through the app's own
+	// surface, which is also how a browser would see it.
+	if err := runtime.WaitIdle(5 * time.Second); err != nil {
+		t.Fatalf("waiting for the account event: %v", err)
+	}
+	who, _ := getJSON[MeRes](t, c, srv.URL+"/api/me")
+	if !who.SignedIn || who.Credits != 500 {
+		t.Fatalf("/api/me = %+v — auth.Registered did not open the customer record", who)
 	}
 
 	// A wrong password is refused, and says nothing about which half.

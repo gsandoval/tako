@@ -55,6 +55,7 @@ export interface SettleStarted {
 export interface MeRes {
   signedIn: boolean;
   name: string;
+  credits: number;
 }
 
 /** A non-2xx response, message parsed from tako's {"error": ...} body. */

@@ -36,6 +36,17 @@ var Metrics backends.Metrics
 // boot.
 var Users backends.Users
 
+// The two account event sources (AB10d), as topic names on the wire.
+//
+// They live here because BOTH the SDK (which publishes Registered and
+// declares the sources) and pkg/runtime (which publishes FirstSignIn)
+// have to agree on them exactly, and two constants that must match are
+// one constant waiting to be edited alone.
+const (
+	AuthRegisteredSource  = "tako-auth-registered"
+	AuthFirstSignInSource = "tako-auth-first-signin"
+)
+
 // StaleSessions and EndSessions are pkg/runtime's, wired at boot.
 //
 // Sessions belong to the runtime — it mints them, reads them, and knows

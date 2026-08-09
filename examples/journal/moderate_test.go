@@ -15,8 +15,10 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako"
+	"github.com/gsandoval/tako/pkg/runtime"
 )
 
 // A moderator gets the desk, with somebody else's draft on it.
@@ -295,4 +297,51 @@ func accountID(t *testing.T, body, email string) string {
 		t.Fatalf("malformed role form for %s", email)
 	}
 	return rest[:k]
+}
+
+// AB10d: the first person ever to sign in becomes the moderator.
+//
+// Somebody has to appoint the first one, and nobody can from inside the
+// desk — it is behind the role it hands out. auth.FirstSignIn is what
+// closes that loop, and this is the test that the loop closes.
+func TestTheFirstPersonToSignInBecomesTheModerator(t *testing.T) {
+	srv := servePages(t)
+
+	// alice arrives first, ticking nothing.
+	alice := client(t, srv)
+	signIn(t, alice, srv.URL, "alice")
+	settle(t)
+
+	// The desk lets her in without her ever having been granted
+	// anything by hand.
+	if code := get(t, alice, srv.URL+"/moderate"); code != http.StatusOK {
+		t.Fatalf("the founder was refused: %d", code)
+	}
+
+	// bob arrives second and is nobody in particular — the site already
+	// has a moderator, so the rule does not fire twice.
+	bob := freshClient(t)
+	signIn(t, bob, srv.URL, "bob")
+	settle(t)
+	if code := get(t, bob, srv.URL+"/moderate"); code != http.StatusForbidden {
+		t.Fatalf("the second arrival was appointed too: %d", code)
+	}
+
+	// And signing in again does not re-fire it: the event is FIRST
+	// sign-in, not every sign-in.
+	again := freshClient(t)
+	signIn(t, again, srv.URL, "bob")
+	settle(t)
+	if code := get(t, again, srv.URL+"/moderate"); code != http.StatusForbidden {
+		t.Fatalf("a second sign-in appointed bob: %d", code)
+	}
+}
+
+// settle waits for the account event to be delivered — it rides a topic,
+// so it is asynchronous exactly like every other tako event.
+func settle(t *testing.T) {
+	t.Helper()
+	if err := runtime.WaitIdle(5 * time.Second); err != nil {
+		t.Fatalf("waiting for the account event: %v", err)
+	}
 }

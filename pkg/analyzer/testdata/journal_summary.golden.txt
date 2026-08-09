@@ -1,4 +1,4 @@
-journal: 1 service
+journal: 2 services
   service journal (package journal, profile default)
     GET / → Home (app.go:160)
     GET /p/{id} → Read (app.go:161)
@@ -10,7 +10,14 @@ journal: 1 service
     GET /{year}/{slug} → Perma (app.go:182)
     GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
     POST /moderate/{id}/retract → Retract 🔒 Moderators (moderator) (app.go:190)
-    POST /people/{id}/role → SetRole 🔒 Moderators (moderator) (app.go:194)
+    POST /people/{id}/role → SetRole 🔒 Moderators (moderator) (app.go:201)
+    entity posts (indexes: Published, Created)
+    entity moved_urls
+    site ./web
+    auth (google)
+    status status
+  service journal-onfirstsignin (package journal, profile default)
+    subscriber OnFirstSignIn ← auth tako-auth-first-signin (app.go:196)
     entity posts (indexes: Published, Created)
     entity moved_urls
     site ./web

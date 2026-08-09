@@ -167,7 +167,8 @@ func WhenBelow(m Metric, threshold float64, w Window) Condition
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 type AlertHandle struct{}
 type AuthConfig struct{Google bool; Password bool}
-type AuthHandle struct{}
+type AuthEvent struct{}
+type AuthHandle struct{Registered AuthEvent; FirstSignIn AuthEvent}
 type Blob struct{Reader io.Reader; ContentType string; Size int64}
 type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}

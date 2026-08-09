@@ -217,6 +217,23 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		jobTriggers[svc][e.To] = fmt.Sprintf("projects/%s/locations/%s/jobs/%s", cfg.Project, cfg.Region, cfg.Name(jobSvcOf[e.To]))
 	}
 
+	// Account events with subscribers get a topic each (AB10d). Unlike a
+	// bucket's, nothing outside the app publishes to them: the app
+	// service does, from auth.Users().Create and from the session
+	// endpoint, so there is no service agent to grant and no
+	// notification config to create — just the topic.
+	authEvents := map[string]bool{}
+	for _, h := range g.Handlers {
+		if h.Kind == "subscribe" && h.BindingKind == "auth" {
+			authEvents[h.Binding] = true
+		}
+	}
+	var authEventList []string
+	for e := range authEvents {
+		authEventList = append(authEventList, e)
+	}
+	sort.Strings(authEventList)
+
 	// Buckets with Uploaded subscribers get an events topic, fed by
 	// GCS's own notifications (C5): every write — through-service or
 	// signed direct — lands there without the runtime's involvement.
@@ -470,6 +487,14 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				})
 			}
 		}
+	}
+
+	for _, e := range authEventList {
+		objs = append(objs, Object{
+			Kind: KindTopic,
+			Name: cfg.Name(e),
+			Spec: map[string]any{},
+		})
 	}
 
 	// Events topics for buckets with subscribers (created with the other

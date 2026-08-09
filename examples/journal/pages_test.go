@@ -52,6 +52,10 @@ func servePages(t *testing.T) *httptest.Server {
 	// page offers a checkbox per role, because a laptop has no Identity
 	// Platform to hold a claim.
 	runtime.RegisterRoles(Moderator.Name())
+	// The account-event subscriber, as codegen registers it for local
+	// mode. Without this line the founder is never appointed here, and
+	// the harness would be testing an app the deploy does not build.
+	runtime.RegisterSubscriber("OnFirstSignIn", OnFirstSignIn)
 	takoMux.Handle("POST /_tako/api/session/signout", runtime.SignOutHandler())
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits

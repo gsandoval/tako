@@ -1,4 +1,4 @@
-shop: 4 services
+shop: 5 services
   service shop (package shop, profile default)
     GET /api/products → ListProducts (app.go:93)
     GET /api/products/{id} → GetProduct (app.go:94)
@@ -14,6 +14,7 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity customers
     entity settle-shards
   service shop-settle (package shop, profile batch)
     job Settle ← settle ×4 tasks (app.go:101)
@@ -24,6 +25,7 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity customers
     entity settle-shards
   service shop-invoicer (package shop, profile singleton)
     singleton Invoicer — exactly one everywhere (app.go:102)
@@ -34,6 +36,18 @@ shop: 4 services
     job settle
     entity reports
     entity sequences
+    entity customers
+    entity settle-shards
+  service shop-onregistered (package shop, profile default)
+    subscriber OnRegistered ← auth tako-auth-registered (app.go:109)
+    entity products
+    entity orders (indexes: Owner, Invoiced, Created)
+    site ./web/dist
+    auth (email)
+    job settle
+    entity reports
+    entity sequences
+    entity customers
     entity settle-shards
   service billing (package shop/billing, profile default)
     POST /charge → Charge (billing/billing.go:17)

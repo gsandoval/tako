@@ -286,6 +286,47 @@ Derived from what your code calls, per service:
 
 `tako deploy` prints it in the security summary like every other grant.
 
+### The two account events
+
+```go
+var (
+	OnRegistered  = tako.Subscribe(auth.Registered, openAccount)
+	OnFirstSignIn = tako.Subscribe(auth.FirstSignIn, appointFounder)
+)
+
+func openAccount(ctx tako.Ctx, u tako.User) error { … }
+```
+
+| | fires when |
+|---|---|
+| `auth.Registered` | **this app** created the account, through `auth.Users().Create` |
+| `auth.FirstSignIn` | tako minted a session for an identity it has **never seen** |
+
+They are ordinary event sources — same `tako.Subscribe`, same topic
+underneath, same at-least-once delivery, retries and dead-lettering as
+every other tako event. **Handlers must be idempotent**: an event can
+arrive twice, and for a Google sign-up both events fire within a second
+of each other.
+
+**There is no "somebody registered with Identity Platform" event**, and
+there cannot be one here. `beforeCreate` blocking functions and Firebase
+Auth create triggers are **Gen1 Cloud Functions only**, and tako
+provisions no functions. So the two events above are things tako itself
+does and can state without guessing — and the gap they leave is an
+account created in the console (or through Identity Platform's own
+client SDK) and **never used**, which nothing announces.
+
+`FirstSignIn` is backed by one tiny record per person (`_tako_seen`),
+written before the publish. A crash between the two loses the
+announcement rather than repeating it forever, which is the right way
+round: a missed welcome is a gap somebody notices, while a loop that
+re-announces on every sign-in looks like a feature until the emails pile
+up.
+
+The publish is **best-effort on both**: a subscriber failing must never
+fail the act that triggered it. A `Create` that reported failure after
+creating the account would invite a retry, and a second account.
+
 ### Telling your 403 from tako's
 
 Several things answer 403 on a guarded route: your policy, a stale CSRF
@@ -403,10 +444,11 @@ identity directly.
 ## Not yet
 
 - Two providers: Google and email/password. No other OAuth providers.
-- **No registration event yet** (AB10d): `auth.Registered` and
-  `auth.FirstSignIn` are designed and unbuilt. A true
-  Identity-Platform-side hook is not reachable at all — blocking
-  functions are Gen1 Cloud Functions only, and tako runs on Cloud Run.
+- **No event for an account created outside this app and never used.**
+  `auth.FirstSignIn` catches such a person the moment they arrive;
+  nothing catches an account nobody ever signs into. A true
+  Identity-Platform-side hook is not reachable — blocking functions are
+  Gen1 Cloud Functions only, and tako runs on Cloud Run.
 - Per-record rules (ownership) remain the handler's code; journal's
   owner check is the pattern.
 - No session cache: every authenticated request pays the entity Get.
