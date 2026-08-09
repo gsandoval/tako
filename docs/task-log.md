@@ -19603,3 +19603,212 @@ into `pages_test.go` to match what codegen emits — which is AB2's
 finding, demonstrated once more while AB2 waits. If the harness had
 drifted here, every moderation test would have passed against a door
 that was not there.
+
+## AB10 — DX proposal: roles, users, and the two registration events (2026-08-09) — AWAITING APPROVAL
+
+AB10 was parked by the abstraction review — "a user store, registration
+and roles wait for AB1; one app's requirements are not enough to shape
+it". The owner unparked it and made the five shaping decisions on
+2026-08-09. This proposal is those decisions turned into surface.
+
+**What is NOT in it**, so the boundary is on the record: flauta's
+`config.json` stays flauta's. tako never learns who an editor is. What
+it gains is the mechanism — a place for roles, a way for a route to
+demand one, an API to grant one, and an event when somebody new arrives.
+
+### The decisions (owner, 2026-08-09)
+
+1. **Roles live in Identity Platform custom claims** in the cloud. Local
+   is the same contract over a local store, because there is no
+   Identity Platform on a laptop — the choice is about the cloud source
+   of truth, not about avoiding a store.
+2. **A route demands a role through AB1's policy seam**: `tako.Role` +
+   `tako.RequireRole`, feeding `Route{Allow: …}`. No second
+   authorization mechanism.
+3. **tako owns creation and roles; recovery stays Identity Platform's.**
+   Password reset and email verification use its hosted flows. tako
+   sends no email, ever.
+4. **Both registration events**: `auth.Registered` (tako made the
+   account) and `auth.FirstSignIn` (tako met the person).
+5. **A role change marks the session stale**; the next request refreshes
+   the claims once and rewrites the session. No sign-out.
+
+### The constraint that shaped 4
+
+A true Identity-Platform-side registration hook is **not reachable from
+a Cloud-Run-only framework**. `beforeCreate` blocking functions support
+**Gen1 Cloud Functions only**, and Firebase Auth create/delete triggers
+are 1st-gen only — 2nd gen does not support auth triggers, so there is
+no Eventarc path to a Cloud Run service. tako would have to provision a
+Node function, against its own standing non-goals.
+
+So the two events are named for what tako can honestly observe. The gap
+they do not cover — an account created in the console and never used —
+is documented rather than papered over.
+
+---
+
+### The surface
+
+```go
+var (
+	auth = tako.Auth(tako.AuthConfig{Google: true, Password: true})
+
+	// Roles are declared, so a typo is an analysis error rather than a
+	// door that never opens. The string is what lands in the claim.
+	Editor    = tako.Role("editor")
+	Moderator = tako.Role("moderator")
+
+	// AB1's seam, with a constructor for the common case. Any-of.
+	Editors = tako.RequireRole(Editor, Moderator)
+)
+
+var AdminHome = tako.Page("GET /admin", adminHome, tako.Route{Allow: Editors})
+```
+
+`tako.User` gains the roles it arrived with:
+
+```go
+u := ctx.User()
+u.Roles              // []string{"editor"}
+u.HasRole(Editor)    // true
+```
+
+Managing accounts, from Go:
+
+```go
+users := auth.Users()   // a handle, like a bucket
+
+u, err := users.Create(ctx, tako.NewUser{
+	Email:    "ana@example.com",
+	Password: pw,            // optional: omit for a Google-only account
+	Name:     "Ana",
+	Roles:    []string{Editor.Name()},
+})
+
+err = users.Grant(ctx, u.ID, Moderator)
+err = users.Revoke(ctx, u.ID, Editor)
+err = users.Disable(ctx, u.ID)      // sign-in refused, record kept
+err = users.Delete(ctx, u.ID)
+
+u, err  = users.ByEmail(ctx, "ana@example.com")
+page, _ := users.List(ctx).Limit(50).Page("")
+```
+
+And the two events, exactly like a bucket's:
+
+```go
+var (
+	OnRegistered  = tako.Subscribe(auth.Registered, seedProfile)
+	OnFirstSignIn = tako.Subscribe(auth.FirstSignIn, welcome)
+)
+
+func welcome(ctx tako.Ctx, u tako.User) error { … }
+```
+
+### How the pieces actually work
+
+**Claims.** Roles ride in one custom claim, `{"roles": ["editor"]}`.
+`Grant`/`Revoke` read-modify-write, because Identity Platform's
+`setCustomUserClaims` replaces the whole blob and an app may keep claims
+of its own there. Two concurrent grants are a lost update, so the
+read-modify-write runs under a per-uid `tako.Lock` — the primitive is
+already there.
+
+**The 1000-byte cap is real** and it is the framework's job to fail
+legibly rather than let Identity Platform reject a write:
+
+```
+tako: roles for ana@example.com do not fit Identity Platform's 1000-byte custom-claims
+      limit (14 roles, 1043 bytes) — a role is a name, not a payload
+```
+
+**Staleness (decision 5), without paying a read per request.** Session
+records gain `UID` as an index and a `Stale` flag. `Grant`/`Revoke` query
+that user's sessions and set the flag — usually one write, often zero.
+The per-request session lookup already happens, so a stale session costs
+exactly one admin-API read, once, on the first request after a change;
+steady state is unchanged. A user with no live session needs nothing:
+their next sign-in mints from fresh claims anyway.
+
+**Local is the same contract.** `tako dev` and `tako test` keep users in
+the local entity store with roles on the record. `app.SignIn("alice",
+Editor)` is how a test says who somebody is. The conformance suite gets
+a `users` case, so local and gcp cannot drift — a role granted must be
+visible to the next request on both.
+
+### Cloud errors & permissions
+
+Per the standing rule for anything that touches GCP.
+
+`auth.Users()` needs `roles/identitytoolkit.admin` on the project, and
+tako derives it **from usage**, the way a bucket's grant is derived: a
+service that only reads (`Get`, `ByEmail`, `List`) gets
+`roles/identitytoolkit.viewer`; one that writes (`Create`, `Grant`,
+`Revoke`, `Disable`, `Delete`) gets the admin role. A service whose
+package never mentions `Users()` gets neither, so "this app can mint
+accounts" stays a property of the app that asked.
+
+`docs/tako-cloud-permissions.md` grows one deployer line
+(`roles/identitytoolkit.admin` to grant it onward) and one runtime row.
+
+Four failures, four different remediations:
+
+```
+403  tako: creating a user needs roles/identitytoolkit.admin on <project> for
+     <sa> — tako deploy grants it to services that declare auth.Users(); re-run
+     tako deploy if this service started using it since the last one
+
+403  tako: the Identity Platform API is not enabled on <project> — enable
+     identitytoolkit.googleapis.com (tako deploy does this; this service is
+     running against a project it did not provision)
+
+404  tako: no user with that id in <project>
+
+400  tako: <email> already has an account — Users.Create refuses to take over an
+     existing identity; use Users.ByEmail then Grant
+```
+
+### Analyzer
+
+```
+app.go:22:19: tako.Role takes a string constant — the role name is read at analysis
+              time so a route's door can be named in the graph (tako/const-role)
+app.go:24:11: tako.RequireRole needs at least one role (tako/empty-role)
+app.go:22:5:  role editor must be exported — the generated service names it from
+              outside the package; rename it Editor (tako/unexported-role)
+```
+
+`tako gen graph` prints the door with its roles, extending AB1's line:
+
+```
+GET /admin → AdminHome 🔒 Editors (editor, moderator) (app.go:118)
+```
+
+### Slices, each its own gate
+
+1. **AB10a — roles you can enforce.** `tako.Role`, `tako.RequireRole`,
+   `User.Roles`/`HasRole`, claims decoded at sign-in, roles on local dev
+   identities, `app.SignIn(name, roles…)`. No admin API yet — roles are
+   set in the console or the local store. journal's `moderators` slice
+   becomes a role. **This is the slice that pays for itself first.**
+2. **AB10b — the admin API.** `auth.Users()` and its verbs, over
+   identitytoolkit REST and the local store, with the derived grants,
+   the conformance case, the lock, and the stale-session refresh.
+3. **AB10c — local password sign-in.** `/_tako/api/session` accepts
+   email+password locally against the local store when
+   `AuthConfig{Password: true}` is declared. **Named as its own slice
+   because it is the biggest hidden cost in the whole proposal**:
+   without it, `Users.Create(email, password)` creates something a
+   laptop cannot sign in as, and the local half of the contract is a
+   stub. It is also where password hashing enters tako.
+4. **AB10d — the two events.** `auth.Registered`, `auth.FirstSignIn` as
+   `EventSource[tako.User]`, the first-sight bookkeeping behind the
+   second, and the note that a Google sign-up fires both within a
+   second — so a handler bound to both must be idempotent.
+
+### The line this crosses, deliberately
+
+`reference/auth.md` currently says, under "Not yet": *"No roles and no
+user store."* AB10 reverses it. Decision 11 is untouched — roles are not
+a CMS primitive, and an admin screen for them is still just a site.
