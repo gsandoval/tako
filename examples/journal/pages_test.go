@@ -33,9 +33,13 @@ func servePages(t *testing.T) *httptest.Server {
 	// handler's static miss — read it from the wired options.
 	siteOpts := runtime.SiteOptions{
 		Redirects: map[string]string{"/about-us": "/about"},
-		NotFound:  "404.html",
 	}
 	runtime.RegisterSiteTemplates(os.DirFS("web"), siteOpts)
+	// The declared status page, exactly as codegen registers it. journal
+	// answers every status through it since FL11 — SiteConfig.NotFound
+	// is the other spelling and this app no longer declares it, so
+	// without this line every 404 here falls back to plain text.
+	runtime.RegisterStatusPage(Status)
 	// Two muxes, exactly as codegen emits them: tako's reserved
 	// endpoints answer before the app's router is consulted. On one
 	// shared mux the session mount and Perma's wildcard below cannot
@@ -62,6 +66,11 @@ func servePages(t *testing.T) *httptest.Server {
 	}, runtime.RequireAuth()))
 	mux.Handle("POST /p/{id}/rename", runtime.PageHandler(Rename, func(r *http.Request) (RenameReq, error) {
 		return RenameReq{ID: runtime.PathString(r, "id"), Slug: runtime.FormString(r, "slug")}, nil
+	}, runtime.RequireAuth()))
+	mux.Handle("POST /p/unpublish", runtime.PageHandler(Unpublish, func(r *http.Request) (UnpublishReq, error) {
+		// FormStrings, not FormString: the field repeats, and this is
+		// the line codegen emits for a []string binding.
+		return UnpublishReq{Selected: runtime.FormStrings(r, "selected")}, nil
 	}, runtime.RequireAuth()))
 	// Harness-only: a route that ALWAYS redirects, pinning the
 	// dual-mode contract (200 + HX-Redirect under htmx).
@@ -715,10 +724,18 @@ func TestNotFoundIsTheSameUnderHTMX(t *testing.T) {
 	}
 }
 
-// A 500 keeps its plain text. Rendering the template engine to report
-// that something in this process is broken is the worst moment to
-// depend on it — and a 500 that fails to render is a 500 twice.
-func TestServerErrorsStayPlain(t *testing.T) {
+// A 500 wears the site too, and says nothing about what broke.
+//
+// This test used to assert the opposite — that a 500 stayed plain text,
+// on the reasoning that the template engine is the worst thing to
+// depend on when this process is already broken. FL11 kept the
+// reasoning and moved the guarantee: renderStatus recovers a panicking
+// or failing status page and falls back to plain text, so the engine is
+// tried and never trusted. That fallback is pinned in
+// pkg/runtime/status_test.go, where a status page that panics belongs;
+// what an EXAMPLE owes is the other half — that the declared page is
+// actually reached, and that reaching it leaks nothing.
+func TestServerErrorsWearTheSiteAndSayNothing(t *testing.T) {
 	srv := servePages(t)
 	c := client(t, srv)
 	res, err := c.Get(srv.URL + "/boom")
@@ -730,11 +747,18 @@ func TestServerErrorsStayPlain(t *testing.T) {
 	if res.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("/boom answered %d, want 500", res.StatusCode)
 	}
-	if strings.Contains(string(body), "Back to the journal") {
-		t.Error("a 500 rendered the 404 page")
+	if !strings.Contains(string(body), "Something broke") {
+		t.Errorf("a 500 did not render the app's status page:\n%s", body)
 	}
-	if strings.Contains(string(body), "<html") {
-		t.Error("a 500 went through the template engine — the one moment not to depend on it")
+	if !strings.Contains(string(body), "Back to the journal") {
+		t.Errorf("a 500 dropped the site's chrome:\n%s", body)
+	}
+	// The handler's error text is for the log, under the request id.
+	if strings.Contains(string(body), "something came apart") {
+		t.Errorf("the 500 page leaked the handler's error:\n%s", body)
+	}
+	if !strings.Contains(string(body), "Request ") {
+		t.Errorf("the 500 page carries no request id to look up:\n%s", body)
 	}
 }
 
@@ -854,4 +878,175 @@ func TestTheReservedNamespaceAnswersOnTheRealServer(t *testing.T) {
 	if strings.Contains(string(body), "<!doctype html>") {
 		t.Error("the reserved namespace answered with the site's 404 page — it should be tako's own")
 	}
+}
+
+// A checkbox group reaches the handler whole — the FL15 case.
+//
+// Every box in the home list is named "selected", which is how HTML
+// spells a set. Before []string bindings the Req struct could only
+// declare a scalar, so the handler received the FIRST ticked id and
+// nothing else: a bulk action that silently acted on one row and
+// reported success for all of them. The assertion that matters is the
+// count — two ticked, two unpublished — because one-of-two is exactly
+// what the old shape produced and it looked like success.
+func TestBulkUnpublishReceivesEveryTickedBox(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "alice")
+
+	ids := writePosts(t, c, srv.URL, token, "First", "Second", "Third")
+
+	// Two boxes ticked, one left alone.
+	res, err := c.PostForm(srv.URL+"/p/unpublish", url.Values{
+		"selected": {ids[0], ids[1]},
+		"_csrf":    {token},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 303 || res.Header.Get("Location") != "/" {
+		t.Fatalf("bulk unpublish = %d → %q, want 303 → /", res.StatusCode, res.Header.Get("Location"))
+	}
+
+	body := getBody(t, c, srv.URL+"/")
+	for _, id := range ids[:2] {
+		if strings.Contains(body, "/p/"+id) {
+			t.Errorf("post %s is still listed after being unpublished:\n%s", id, body)
+		}
+	}
+	// The unticked one is untouched — a bulk action is not a sweep.
+	if !strings.Contains(body, "/p/"+ids[2]) {
+		t.Errorf("the unticked post was unpublished too:\n%s", body)
+	}
+	if !strings.Contains(body, "Showing 1 of 1 posts") {
+		t.Errorf("want 1 published post left, got:\n%s", body)
+	}
+}
+
+// Nothing ticked sends no field at all, which is the shape a scalar
+// binding and a slice binding disagree about: "" versus nil. The
+// handler must see an empty selection, not one empty id.
+func TestBulkUnpublishWithNothingTickedChangesNothing(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "alice")
+	writePosts(t, c, srv.URL, token, "Only post")
+
+	res, err := c.PostForm(srv.URL+"/p/unpublish", url.Values{"_csrf": {token}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 303 {
+		t.Fatalf("empty bulk unpublish = %d", res.StatusCode)
+	}
+	if body := getBody(t, c, srv.URL+"/"); !strings.Contains(body, "Only post") {
+		t.Errorf("an empty selection unpublished something:\n%s", body)
+	}
+}
+
+// A ticked box for someone else's post is skipped, not obeyed. The
+// selection is a request from the browser, so ownership is checked per
+// row rather than assumed from the fact that the list rendered.
+func TestBulkUnpublishSkipsPostsTheCallerDoesNotOwn(t *testing.T) {
+	srv := servePages(t)
+	alice := client(t, srv)
+	tokenA := signIn(t, alice, srv.URL, "alice")
+	hers := writePosts(t, alice, srv.URL, tokenA, "A post of alice's")
+
+	bob := freshClient(t)
+	tokenB := signIn(t, bob, srv.URL, "bob")
+
+	res, err := bob.PostForm(srv.URL+"/p/unpublish", url.Values{
+		"selected": {hers[0]}, "_csrf": {tokenB}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 303 {
+		t.Fatalf("bulk unpublish = %d", res.StatusCode)
+	}
+	// Asserted on the id, not the title: the title round-trips through
+	// HTML escaping and an apostrophe would make this pass or fail for
+	// the wrong reason.
+	if body := getBody(t, alice, srv.URL+"/"); !strings.Contains(body, "/p/"+hers[0]) {
+		t.Errorf("bob unpublished a post he does not own:\n%s", body)
+	}
+}
+
+// The home form is the no-JS baseline: boxes are markup, the submit is
+// a submit. If the checkboxes ever become JS-built the friction this
+// closed is back, so the markup is asserted rather than assumed.
+func TestHomeListCarriesPlainCheckboxes(t *testing.T) {
+	srv := servePages(t)
+	c := client(t, srv)
+	token := signIn(t, c, srv.URL, "alice")
+	writePosts(t, c, srv.URL, token, "A post")
+
+	body := getBody(t, c, srv.URL+"/")
+	if !strings.Contains(body, `<input type="checkbox" name="selected"`) {
+		t.Errorf("home has no plain checkbox for bulk selection:\n%s", body)
+	}
+	if !strings.Contains(body, `action="/p/unpublish"`) {
+		t.Errorf("home has no plain form to submit the selection:\n%s", body)
+	}
+	// The page loads htmx for other features; what matters is that the
+	// SELECTION does not reach for it. A form with no hx- attributes
+	// submits the same with scripting off.
+	form := body[strings.Index(body, `<form method="post" action="/p/unpublish"`):]
+	form = form[:strings.Index(form, "</form>")]
+	if strings.Contains(form, "hx-") {
+		t.Errorf("the selection seam grew an htmx dependency:\n%s", form)
+	}
+}
+
+// freshClient is a client with its OWN cookie jar. client() hands back
+// the server's SHARED client, so two callers of it are one browser —
+// fine for one user, wrong for two.
+func freshClient(t *testing.T) *http.Client {
+	t.Helper()
+	jar, err := newJar()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &http.Client{
+		Jar:           jar,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+}
+
+// writePosts publishes each title and returns the ids, read from the
+// 303 the save answers with.
+func writePosts(t *testing.T, c *http.Client, base, token string, titles ...string) []string {
+	t.Helper()
+	var ids []string
+	for _, title := range titles {
+		res, err := c.PostForm(base+"/p", url.Values{
+			"title": {title}, "body": {"b"}, "_csrf": {token}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res.Body.Close()
+		loc := res.Header.Get("Location")
+		if res.StatusCode != 303 || !strings.HasPrefix(loc, "/p/") {
+			t.Fatalf("save %q = %d → %q", title, res.StatusCode, loc)
+		}
+		ids = append(ids, strings.TrimPrefix(loc, "/p/"))
+	}
+	return ids
+}
+
+func getBody(t *testing.T, c *http.Client, url string) string {
+	t.Helper()
+	res, err := c.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	body, _ := io.ReadAll(res.Body)
+	if res.StatusCode != 200 {
+		t.Fatalf("GET %s = %d", url, res.StatusCode)
+	}
+	return string(body)
 }

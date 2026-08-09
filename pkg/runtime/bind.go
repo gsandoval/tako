@@ -42,6 +42,13 @@ func QueryString(r *http.Request, name string) string {
 	return r.URL.Query().Get(name)
 }
 
+// QueryStrings returns EVERY value of the named query parameter (nil
+// when absent). A repeated parameter is one field, not a list of
+// fields, so nothing is dropped.
+func QueryStrings(r *http.Request, name string) []string {
+	return r.URL.Query()[name]
+}
+
 // QueryBool parses the named query parameter as a bool (false when absent).
 func QueryBool(r *http.Request, name string) (bool, error) {
 	return parseBool("query", name, r.URL.Query().Get(name))
@@ -91,6 +98,17 @@ func PathBool(r *http.Request, name string) (bool, error) {
 // FormString returns the named form field ("" when absent).
 func FormString(r *http.Request, name string) string {
 	return r.FormValue(name)
+}
+
+// FormStrings returns EVERY value of the named form field (nil when
+// absent). A group of checkboxes named alike is the HTML shape of
+// "select some rows"; FormString would return only the first of them.
+func FormStrings(r *http.Request, name string) []string {
+	// FormValue parses on demand; this reads r.Form directly, so it
+	// must ask for the parse itself. A parse error leaves r.Form empty,
+	// which yields nil — the same answer as a field nobody sent.
+	_ = r.ParseMultipartForm(maxMultipartMemory)
+	return r.Form[name]
 }
 
 // FormBool parses the named form field as a bool (false when absent).

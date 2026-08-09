@@ -63,7 +63,8 @@ from disagreeing.
 ```
 route "GET /greet/{name}" has path parameter {name} but GreetReq has no field tagged path:"name"
 GreetReq field Nick is tagged path:"nick" but route "GET /greet/{name}" has no {nick} parameter
-field When: query:-tagged fields must be string, bool, int, int64, or float64; got time.Time
+field When: query:-tagged fields must be string, []string, bool, int, int64, or float64; got time.Time
+field Tag: path:-tagged fields cannot be []string — a route segment is one value; a field that repeats binds with query: or form:
 GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route

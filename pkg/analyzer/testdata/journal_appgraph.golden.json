@@ -11,6 +11,7 @@
         "journal.Save",
         "journal.Publish",
         "journal.Rename",
+        "journal.Unpublish",
         "journal.Perma"
       ],
       "profile": "default"
@@ -34,7 +35,7 @@
         ]
       ],
       "composite_sources": [
-        "app.go:146 home"
+        "app.go:151 home"
       ],
       "pos": "app.go:15:2"
     },
@@ -192,6 +193,26 @@
     },
     {
       "kind": "page",
+      "var": "journal.Unpublish",
+      "package": "journal",
+      "service": "journal",
+      "route": "POST /p/unpublish",
+      "requires_auth": true,
+      "req_type": "UnpublishReq",
+      "req_ref": "journal.UnpublishReq",
+      "res_ref": "tako.HTML",
+      "bindings": [
+        {
+          "field": "Selected",
+          "kind": "form",
+          "name": "selected",
+          "type": "[]string"
+        }
+      ],
+      "pos": "app.go:111:2"
+    },
+    {
+      "kind": "page",
       "var": "journal.Perma",
       "package": "journal",
       "service": "journal",
@@ -214,7 +235,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:118:2"
+      "pos": "app.go:123:2"
     }
   ],
   "edges": [
@@ -276,6 +297,20 @@
     },
     {
       "from": "journal.Rename",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "write"
+    },
+    {
+      "from": "journal.Unpublish",
+      "to": "posts",
+      "to_kind": "entity",
+      "kind": "resource",
+      "verb": "read"
+    },
+    {
+      "from": "journal.Unpublish",
       "to": "posts",
       "to_kind": "entity",
       "kind": "resource",

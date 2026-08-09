@@ -9,7 +9,17 @@
 </form>
 {{ if not .Posts }}<p>Nothing here yet — write the first post above.</p>{{ end }}
 {{ if .Posts }}<p class="count">Showing {{ .Shown }} of {{ .Total }} posts.</p>{{ end }}
-<div id="posts">
-{{ range .Posts }}{{ template "post-card.html" . }}{{ end }}
-</div>
+<!-- Every box carries the SAME name, which is how HTML says "a set".
+     The handler binds it as []string and receives all of them; no
+     JavaScript builds this list and none is needed to submit it. -->
+<form method="post" action="/p/unpublish">
+  {{ csrf }}
+  <div id="posts">
+  {{ range .Posts }}
+    <label><input type="checkbox" name="selected" value="{{ .ID }}"></label>
+    {{ template "post-card.html" . }}
+  {{ end }}
+  </div>
+  {{ if .Posts }}<p><button>Unpublish selected</button></p>{{ end }}
+</form>
 {{ end }}

@@ -1,0 +1,1 @@
+app.go:10:2: field Tag: path:-tagged fields cannot be []string — a route segment is one value; a field that repeats binds with query: or form: (tako/bind-type)

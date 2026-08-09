@@ -14,6 +14,7 @@ func FormFloat64(r *net/http.Request, name string) (float64, error)
 func FormInt(r *net/http.Request, name string) (int, error)
 func FormInt64(r *net/http.Request, name string) (int64, error)
 func FormString(r *net/http.Request, name string) string
+func FormStrings(r *net/http.Request, name string) []string
 func JSONHandler[Req, Res any](e github.com/gsandoval/tako.Endpoint[Req, Res], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
 func NewCtx(parent context.Context) github.com/gsandoval/tako.Ctx
 func PageHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.HTML], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
@@ -28,6 +29,7 @@ func QueryFloat64(r *net/http.Request, name string) (float64, error)
 func QueryInt(r *net/http.Request, name string) (int, error)
 func QueryInt64(r *net/http.Request, name string) (int64, error)
 func QueryString(r *net/http.Request, name string) string
+func QueryStrings(r *net/http.Request, name string) []string
 func RefineRoute(r *net/http.Request, name string)
 func RegisterCron(name string, h github.com/gsandoval/tako.Handler)
 func RegisterJob(name string, h github.com/gsandoval/tako.Handler)

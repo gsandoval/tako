@@ -104,6 +104,11 @@ var (
 	Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 	Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 	Rename  = tako.Page("POST /p/{id}/rename", rename, tako.Route{SignIn: true})
+	// Bulk unpublish: the home list's checkboxes, acted on together.
+	// Declared before /p/{id}/publish is irrelevant to the mux — a
+	// literal second segment beats a wildcard — but it IS why the path
+	// is /p/unpublish rather than /p/{id}/unpublish.
+	Unpublish = tako.Page("POST /p/unpublish", unpublishSelected, tako.Route{SignIn: true})
 	// The permalink a blog actually wants, and the route that used to be
 	// unshippable: a two-segment wildcard GET beside tako.Auth is the
 	// pair Go's ServeMux cannot order, so declaring both panicked the
@@ -258,6 +263,42 @@ func rename(ctx tako.Ctx, req RenameReq) (tako.HTML, error) {
 	// not a statement that /p/<old> has permanently moved. The 301 for
 	// that lives in read, where the old slug is actually requested.
 	return tako.Redirect("/p/" + next.ID)
+}
+
+// UnpublishReq binds a CHECKBOX GROUP: every box in the home list
+// carries the same name, so the field is []string and every ticked id
+// arrives. That is the native HTML shape of "select some rows", and
+// before []string bindings it could not reach a handler at all — a
+// scalar bind returns the first value, so a bulk action would have
+// silently acted on one post and reported success for all of them.
+//
+// No JavaScript anywhere in this: the boxes are markup, the submit is a
+// submit, and the answer is a 303 back to the list.
+type UnpublishReq struct {
+	Selected []string `form:"selected"`
+}
+
+// unpublishSelected hides every selected post the caller owns. A box
+// ticked for someone else's post is skipped rather than refused: the
+// list is public, the selection is a request, and the caller's own
+// rows are what they may act on.
+func unpublishSelected(ctx tako.Ctx, req UnpublishReq) (tako.HTML, error) {
+	for _, id := range req.Selected {
+		p, err := posts.Get(ctx, id)
+		if tako.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return tako.HTML{}, err
+		}
+		if p.Owner != ctx.User().ID {
+			continue
+		}
+		if err := posts.Update(ctx, id, func(p *Post) { p.Published = false }); err != nil {
+			return tako.HTML{}, err
+		}
+	}
+	return tako.Redirect("/")
 }
 
 type PublishReq struct {

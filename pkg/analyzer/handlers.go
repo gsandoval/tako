@@ -16,11 +16,22 @@ import (
 // bindableTypes are the field types path:/query:/form: tags may bind in
 // v0.
 var bindableTypes = map[string]string{
-	"string":  "string",
-	"bool":    "bool",
-	"int":     "int",
-	"int64":   "int64",
-	"float64": "float64",
+	"string":   "string",
+	"[]string": "[]string",
+	"bool":     "bool",
+	"int":      "int",
+	"int64":    "int64",
+	"float64":  "float64",
+}
+
+// bindableList names the types a tag of this kind accepts, for the
+// error text. path: is the short list: a route segment is one value, so
+// []string is a shape the router can never produce.
+func bindableList(kind string) string {
+	if kind == "path" {
+		return "string, bool, int, int64, or float64"
+	}
+	return "string, []string, bool, int, int64, or float64"
 }
 
 // extractAPI validates one tako.API declaration and returns its AppGraph
@@ -324,11 +335,22 @@ func qualifiedSignature(pkg *packages.Package, fnExpr ast.Expr) (reqRef, resRef 
 // binding builds one Binding, checking the field's type is bindable.
 func (f field) binding(dir string, pkg *packages.Package, kind, name string, fail func(*Error)) Binding {
 	typ, ok := bindableTypes[f.typ.String()]
-	if !ok {
+	switch {
+	case !ok:
 		fail(&Error{
 			Pos: relPos(dir, pkg.Fset, f.pos),
-			Msg: fmt.Sprintf("field %s: %s:-tagged fields must be string, bool, int, int64, or float64; got %s",
-				f.name, kind, types.TypeString(f.typ, types.RelativeTo(pkg.Types))),
+			Msg: fmt.Sprintf("field %s: %s:-tagged fields must be %s; got %s",
+				f.name, kind, bindableList(kind), types.TypeString(f.typ, types.RelativeTo(pkg.Types))),
+			Rule: "bind-type",
+		})
+		typ = "string"
+	case typ == "[]string" && kind == "path":
+		// A route segment is one value by construction, so []string
+		// here is a shape the router can never produce.
+		fail(&Error{
+			Pos: relPos(dir, pkg.Fset, f.pos),
+			Msg: fmt.Sprintf("field %s: path:-tagged fields cannot be []string — a route segment is one value; a field that repeats binds with query: or form:",
+				f.name),
 			Rule: "bind-type",
 		})
 		typ = "string"

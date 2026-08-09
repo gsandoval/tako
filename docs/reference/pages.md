@@ -36,6 +36,21 @@ type SaveReq struct {
 }
 ```
 
+A field that repeats binds as `[]string`, which is what a checkbox
+group is: every box carries the same name and the handler receives all
+of them. No JavaScript assembles the list, so bulk selection keeps
+working with scripting off.
+
+```go
+type UnpublishReq struct {
+	Selected []string `form:"selected"`
+}
+```
+
+```html
+<input type="checkbox" name="selected" value="{{ .ID }}">
+```
+
 `site.Render(ctx, "post.html", p)` fills the layout's `content`
 block; `site.Fragment(ctx, "post-card.html", p)` renders the template
 alone, for htmx partials. `tako.Redirect(target)` is

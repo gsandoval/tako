@@ -456,7 +456,7 @@ func writeDecoder(b *strings.Builder, alias string, h analyzer.Handler) {
 	}
 	for _, bind := range h.Bindings {
 		helper := helperName(bind)
-		if bind.Type == "string" {
+		if infallibleBinding(bind) {
 			fmt.Fprintf(b, "\treq.%s = runtime.%s(r, %q)\n", bind.Field, helper, bind.Name)
 			continue
 		}
@@ -473,11 +473,12 @@ func helperName(b analyzer.Binding) string {
 	}
 	kind := map[string]string{"path": "Path", "query": "Query", "form": "Form"}[b.Kind]
 	typ := map[string]string{
-		"string":  "String",
-		"bool":    "Bool",
-		"int":     "Int",
-		"int64":   "Int64",
-		"float64": "Float64",
+		"string":   "String",
+		"[]string": "Strings",
+		"bool":     "Bool",
+		"int":      "Int",
+		"int64":    "Int64",
+		"float64":  "Float64",
 	}[b.Type]
 	return kind + typ
 }
@@ -572,15 +573,22 @@ func needsDecode(h analyzer.Handler) bool {
 	return h.ReqType != "" && (h.HasBody || len(h.Bindings) > 0)
 }
 
-// fallible reports whether any non-body binding can fail (string bindings
-// cannot; blob and parsed bindings can).
+// fallible reports whether any non-body binding can fail (string and
+// []string bindings cannot; blob and parsed bindings can).
 func fallible(h analyzer.Handler) bool {
 	for _, b := range h.Bindings {
-		if b.Type != "string" || b.Kind == "blob" {
+		if !infallibleBinding(b) {
 			return true
 		}
 	}
 	return false
+}
+
+// infallibleBinding reports whether a binding assigns without an error
+// check. Text arrives as text: there is nothing to parse and so nothing
+// that can fail to parse.
+func infallibleBinding(b analyzer.Binding) bool {
+	return b.Kind != "blob" && (b.Type == "string" || b.Type == "[]string")
 }
 
 func decodeName(h analyzer.Handler) string {
@@ -756,6 +764,12 @@ func remotePathExpr(path string, bindings []analyzer.Binding) (expr, queryLines 
 		var q strings.Builder
 		q.WriteString("\t\t\tqs := neturl.Values{}\n")
 		for _, b := range queryBindings {
+			if b.Type == "[]string" {
+				// Add, not Set: the whole point of the field is that it
+				// repeats, and Set would collapse it to one value.
+				fmt.Fprintf(&q, "\t\t\tfor _, v := range req.%s {\n\t\t\t\tqs.Add(%q, v)\n\t\t\t}\n", b.Field, b.Name)
+				continue
+			}
 			fmt.Fprintf(&q, "\t\t\tqs.Set(%q, fmt.Sprint(req.%s))\n", b.Name, b.Field)
 		}
 		q.WriteString("\t\t\tpath += \"?\" + qs.Encode()\n")

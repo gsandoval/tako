@@ -40,7 +40,14 @@ var (
 
 Req fields bind by tag — `path:`, `query:`, `form:` — and untagged
 fields decode from the JSON body. An empty Req struct is fine.
-`query:` fields must be string, bool, int, int64, or float64.
+`query:` and `form:` fields must be string, `[]string`, bool, int,
+int64, or float64; `path:` takes the same list without `[]string`,
+because a route segment is one value.
+
+A `[]string` field receives EVERY value of a repeated parameter — the
+shape of a checkbox group, where each box carries the same name. It is
+`nil` when the field is absent, which is what a form with nothing
+ticked sends.
 
 ```go
 // GreetReq binds {name} from the route and loud from the query string.
@@ -149,7 +156,8 @@ At analysis time, positioned and specific:
 ```
 tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route" (tako/const-route)
 route "GET /greet/{name}" has path parameter {name} but GreetReq has no field tagged path:"name" (tako/route-params)
-field When: query:-tagged fields must be string, bool, int, int64, or float64; got time.Time (tako/bind-type)
+field When: query:-tagged fields must be string, []string, bool, int, int64, or float64; got time.Time (tako/bind-type)
+field Tag: path:-tagged fields cannot be []string — a route segment is one value; a field that repeats binds with query: or form: (tako/bind-type)
 GET route "GET /search" cannot bind a JSON body, but SearchReq field Extra has no path:/query: tag (tako/body-on-get)
 tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fields (tako/blob-binding)
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
