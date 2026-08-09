@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"os"
 	"sync"
 	"time"
@@ -128,3 +129,12 @@ func attachQueueConsole(d *local.QueueDispatcher, dataDir string) {
 		}
 	})
 }
+
+// RegisterTestMux hands the runtime the handler this app's generated
+// test harness builds (AB2). The generated file's init calls it;
+// tako.NewTestApp(t).Handler() reads it back.
+//
+// It exists in pkg/runtime rather than in the SDK because the harness
+// already imports this package for every mount it makes, and because a
+// registration function is not something an app should be typing.
+func RegisterTestMux(build func() http.Handler) { hooks.TestMux = build }

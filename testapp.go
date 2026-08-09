@@ -3,6 +3,7 @@ package tako
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"strconv"
 	"testing"
@@ -126,6 +127,34 @@ func (a *TestApp) SignIn(name string, roles ...RoleHandle) User {
 		u.Roles = append(u.Roles, r.Name())
 	}
 	return u
+}
+
+// Handler is the app's real HTTP surface: every declared route with the
+// binder codegen generates for it, RequireAuth and RequirePolicy and
+// CacheFor as declared, the site handler last, the status page, and
+// tako's own /_tako/ endpoints — assembled by the SAME emitter that
+// builds the deployed service.
+//
+//	app := tako.NewTestApp(t)
+//	srv := httptest.NewServer(app.Handler())
+//	res, _ := http.Get(srv.URL + "/admin")   // 401, through YOUR status page
+//
+// Before this, asserting real HTML meant hand-writing the mounts and the
+// binders, and that mirror drifted: routes nothing drove, and mount
+// options — MaxAge, RequireAuth, RequirePolicy — that no test could see
+// at all. Fidelity here is by construction rather than by care.
+//
+// It needs the generated harness, which `tako test` maps in; plain
+// `go test` cannot see it, and this says so rather than handing back an
+// empty mux.
+func (a *TestApp) Handler() http.Handler {
+	a.tb.Helper()
+	if hooks.TestMux == nil {
+		a.tb.Fatalf("tako: app.Handler needs the generated mounts, which `go test` cannot see.\n" +
+			"      Run `tako test` (it regenerates first) — or `tako test ./pkg/...` for a subset.")
+		return nil
+	}
+	return hooks.TestMux()
 }
 
 // Ctx returns a request context bound to this app's backends,

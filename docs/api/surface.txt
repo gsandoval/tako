@@ -64,6 +64,7 @@
     func (*TestApp).Ctx(as ...User) Ctx
     func (*TestApp).DrainQueues()
     func (*TestApp).HTMX(as ...User) Ctx
+    func (*TestApp).Handler() net/http.Handler
     func (*TestApp).SetSecret(name string, value string)
     func (*TestApp).SignIn(name string, roles ...RoleHandle) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error

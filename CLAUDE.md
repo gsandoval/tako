@@ -94,11 +94,19 @@ symbol as a side effect of another task — API changes are their own task.
 ## Commands
 
 ```
-go test ./...                    # unit + golden + conformance(local)
+go test ./...                    # the framework itself: unit + golden + conformance(local)
+tako test                        # AN APP (from its dir): analyze → regenerate → go test
 go run ./cmd/tako gen graph      # print AppGraph for a target module
 go run ./cmd/tako dev            # run an example locally (from its dir)
 go test ./pkg/backends/conformance -backend=local
 ```
+
+**An app's tests run under `tako test`, not `go test`** (AB2). The
+generated test harness — the app's real mounts, so `app.Handler()` can
+serve them — is mapped in with go's `-overlay`, which plain `go test`
+does not apply. A test that reaches for `app.Handler()` under `go test`
+fails with the line telling it so. Everything else in an app still runs
+fine either way; the framework's own suite is unaffected.
 
 (gcp-backend conformance and `tako deploy` arrive in Phase E; update this list
 when they do.)

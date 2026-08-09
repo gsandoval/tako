@@ -52,11 +52,57 @@ Three things are load-bearing there:
 - **Async work is not instant.** `Resolve` publishes to a queue; the
   worker runs on the dispatcher. `DrainQueues` is the barrier.
 
+## The app's real HTTP surface
+
+`Endpoint.Call` invokes a handler. What it does not do is bind a
+request, run the mount's middleware, or render a page — so a test that
+asserts real HTML, a status code, or a redirect needs the app mounted.
+`app.Handler()` is that, and it is the surface the deployed service
+mounts:
+
+```go
+func TestTheAdminDoorIsAPage(t *testing.T) {
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())
+	defer srv.Close()
+
+	res, _ := http.Get(srv.URL + "/admin")
+	// 401 — through YOUR status page, with its nav and something to click
+}
+```
+
+Every declared route with the binder codegen generates for it, the
+`SignIn` / `Allow` / `MaxAge` options as declared, the site handler last,
+your status page, and tako's own `/_tako/` endpoints. **No dev bar** —
+that is a `tako dev` affordance, not part of the app.
+
+Fidelity is by construction: the mounts come from the same emitter that
+writes the service's `main.go`, and a codegen test asserts the two agree
+route by route and option by option. Apps used to hand-mirror this — one
+did it in 874 lines — and the mirror drifted three times in two
+milestones, once leaving four write routes that no test drove at all.
+
+**It needs `tako test`.** The harness lives in `.tako/gen/<service>/`
+with the rest of the generated code and is mapped into your package with
+go's `-overlay`, so nothing is written into your source tree. Plain
+`go test` does not apply the overlay, and `app.Handler()` says so rather
+than serving an empty mux:
+
+```
+tako: app.Handler needs the generated mounts, which `go test` cannot see.
+      Run `tako test` (it regenerates first) — or `tako test ./pkg/...` for a subset.
+```
+
+A route your app does not declare — one that exists only to pin a
+runtime contract — is not in there, by definition. Mount it yourself
+beside the real handler; journal's `serveWith` shows the shape.
+
 ### The full surface
 
 | Call | Does |
 |---|---|
 | `tako.NewTestApp(t)` | fresh backends, every worker/subscriber/job wired, cleaned up at test end |
+| `app.Handler()` | the app's real HTTP surface — the generated mounts (needs `tako test`) |
 | `app.Ctx(user…)` | a Ctx bound to this app; pass a `User` to authenticate it |
 | `app.HTMX(user…)` | the same, with `ctx.IsHTMX()` true — drives a Page down its fragment branch |
 | `app.SignIn(name)` | a stub `User{ID: name, Email: name+"@example.test"}` — identity injection, not auth enforcement |
@@ -141,9 +187,9 @@ that share a secret name across parallel apps share that value.
 
 Nothing. `NewTestApp` never authenticates, never reaches the network,
 and does not need a project. `tako test` runs analysis, refreshes
-generated code so a stale checkout can't pass, and then runs
-`go test ./...`; every example's suite is green against the local
-backends on every commit.
+generated code so a stale checkout can't pass, maps in the generated
+test harness, and then runs `go test ./...`; every example's suite is
+green against the local backends on every commit.
 
 The local/cloud agreement is held by a different mechanism: the
 [conformance suite](../../pkg/backends/conformance), which runs the

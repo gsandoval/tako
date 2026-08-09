@@ -247,7 +247,20 @@ func runTest(args []string) error {
 	}
 	fmt.Printf("  generating  %s%s\n", strings.Join(written, ", "), note)
 
-	goArgs := append([]string{"test"}, args...)
+	// The test harness (AB2): each service's generated harness is mapped
+	// into its package with go's -overlay, so a test can reach the app's
+	// real mounts without generated code entering the source tree.
+	overlay, err := writeOverlay(dir, graph)
+	if err != nil {
+		return err
+	}
+	goArgs := []string{"test"}
+	if overlay != "" {
+		goArgs = append(goArgs, "-overlay="+overlay)
+		fmt.Printf("  harness     %d package(s) — app.Handler() serves the real mounts\n",
+			len(codegen.HarnessOverlay(graph, dir)))
+	}
+	goArgs = append(goArgs, args...)
 	if len(args) == 0 {
 		goArgs = append(goArgs, "./...")
 	}
@@ -257,6 +270,32 @@ func runTest(args []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// writeOverlay writes the go -overlay file mapping every generated test
+// harness into the package it belongs to, and returns its path (empty
+// when the app has no harness to map).
+//
+// The overlay is what keeps decision 3 intact: the harness is real,
+// human-readable, and lives under .tako/gen/ with the rest of the
+// generated code — the compiler is simply told where to find it.
+func writeOverlay(dir string, graph *analyzer.AppGraph) (string, error) {
+	replace := codegen.HarnessOverlay(graph, dir)
+	if len(replace) == 0 {
+		return "", nil
+	}
+	doc := struct {
+		Replace map[string]string
+	}{Replace: replace}
+	raw, err := json.MarshalIndent(doc, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, ".tako", "gen", "overlay.json")
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		return "", err
+	}
+	return path, nil
 }
 
 // fail is how every command exits on error — one prefix, so a message

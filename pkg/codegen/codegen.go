@@ -54,8 +54,56 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 				return nil, err
 			}
 		}
+		// The test harness (AB2), beside the main it mirrors — written
+		// here rather than into the app's source tree, and mapped in by
+		// `tako test` with -overlay.
+		if h := serviceHarness(g, svc); h != nil {
+			hrel := filepath.Join(".tako", "gen", svc.Name, harnessDir, harnessFile)
+			hpath := filepath.Join(dir, hrel)
+			if err := os.MkdirAll(filepath.Dir(hpath), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(hpath, h, 0o644); err != nil {
+				return nil, err
+			}
+			written = append(written, hrel)
+		}
 	}
 	return written, nil
+}
+
+// HarnessOverlay maps each service's generated test harness into the
+// package it belongs to, in the shape `go test -overlay` expects.
+//
+// The virtual path is <package dir>/tako_harness_test.go, which is why
+// the file can declare the app's package and reach its unexported
+// symbols without ever existing in the source tree.
+func HarnessOverlay(g *analyzer.AppGraph, dir string) map[string]string {
+	out := map[string]string{}
+	for _, svc := range g.Services {
+		real := filepath.Join(dir, ".tako", "gen", svc.Name, harnessDir, harnessFile)
+		if _, err := os.Stat(real); err != nil {
+			continue
+		}
+		pkgDir, err := packageDir(dir, g.Module, svc.Package)
+		if err != nil {
+			continue
+		}
+		out[filepath.Join(pkgDir, harnessFile)] = real
+	}
+	return out
+}
+
+// packageDir resolves an import path to its directory within the module.
+func packageDir(dir, module, pkgPath string) (string, error) {
+	if pkgPath == module {
+		return dir, nil
+	}
+	rel := strings.TrimPrefix(pkgPath, module+"/")
+	if rel == pkgPath {
+		return "", fmt.Errorf("package %s is outside module %s", pkgPath, module)
+	}
+	return filepath.Join(dir, filepath.FromSlash(rel)), nil
 }
 
 // quotedList renders strings as a Go argument list: "a", "b".
@@ -384,45 +432,7 @@ import (
 		fmt.Fprintf(&b, "\truntime.RegisterSiteTemplates(siteRoot, runtime.SiteOptions{%s})\n", siteOptionsLiteral(site))
 		fmt.Fprintf(&b, "\tmux.Handle(\"/\", runtime.SiteHandler(siteRoot, runtime.SiteOptions{%s}))\n\n", siteOptionsLiteral(site))
 	}
-	var decoders []analyzer.Handler
-	for _, h := range g.Handlers {
-		// Routes only: async handlers register below, crons have no route.
-		if h.Service != svc.Name || h.Kind == "worker" || h.Kind == "subscribe" || h.Kind == "cron" {
-			continue
-		}
-		decode := "nil"
-		if needsDecode(h) {
-			decode = decodeName(h)
-			decoders = append(decoders, h)
-		}
-		wrapper := "JSONHandler"
-		if h.ResBlob {
-			wrapper = "BlobHandler"
-		}
-		if h.Kind == "page" {
-			wrapper = "PageHandler"
-		}
-		auth := ""
-		if h.RequiresAuth {
-			auth = ", runtime.RequireAuth()"
-		}
-		// The policy's NAME, not the handle: Endpoint.Call evaluates the
-		// rule (so a cross-service call cannot walk past it), and what
-		// the mount adds is the name a status page needs to tell this
-		// refusal from a stale CSRF token's.
-		if h.Policy != "" {
-			auth += fmt.Sprintf(", runtime.RequirePolicy(%q)", h.Policy)
-		}
-		// Pages and blobs read MaxAge; a JSON handler does not yet, and
-		// passing it there would generate a line that says something
-		// the runtime ignores.
-		if h.MaxAge > 0 && (h.Kind == "page" || h.ResBlob) {
-			auth += fmt.Sprintf(", runtime.CacheFor(%d)", h.MaxAge)
-		}
-		fmt.Fprintf(&b, "\t// %s\n", analyzer.HandlerLine(h))
-		fmt.Fprintf(&b, "\tmux.Handle(%q, runtime.%s(%s.%s, %s%s))\n\n",
-			muxPattern(h.Route), wrapper, alias, analyzer.ShortVar(h), decode, auth)
-	}
+	decoders := writeMounts(&b, g, svc, alias)
 
 	for _, h := range g.Handlers {
 		if h.Package != svc.Package {
@@ -470,8 +480,73 @@ import (
 
 // writeDecoder renders the static request-binding function for one
 // endpoint.
+// qual qualifies a symbol with the app package's alias. The harness
+// (AB2) is generated INTO the app package, so its alias is empty and
+// every symbol is unqualified — the one difference between the two
+// files that mount the same routes.
+func qual(alias, name string) string {
+	if alias == "" {
+		return name
+	}
+	return alias + "." + name
+}
+
+// writeMounts emits the declared routes of one service onto `mux`.
+//
+// Shared by the generated main and the generated TEST HARNESS, and that
+// sharing is the point: a harness that re-typed these lines is exactly
+// what AB2 exists to end. Apps hand-mirrored them, drifted three times
+// in two milestones, and had four write routes that no test drove
+// because nobody noticed they were never mounted.
+func writeMounts(b *strings.Builder, g *analyzer.AppGraph, svc analyzer.Service, alias string) []analyzer.Handler {
+	var decoders []analyzer.Handler
+	for _, h := range g.Handlers {
+		// Positive filter: routes only. The exclusion list this replaces
+		// missed "singleton" and "job", which serviceMain never saw
+		// (Generate routes those services elsewhere) but the harness
+		// generator does — it tried to mount a singleton as a JSON
+		// endpoint, and the generated file did not compile.
+		if h.Service != svc.Name || (h.Kind != "api" && h.Kind != "page") {
+			continue
+		}
+		decode := "nil"
+		if needsDecode(h) {
+			decode = decodeName(h)
+			decoders = append(decoders, h)
+		}
+		wrapper := "JSONHandler"
+		if h.ResBlob {
+			wrapper = "BlobHandler"
+		}
+		if h.Kind == "page" {
+			wrapper = "PageHandler"
+		}
+		opts := ""
+		if h.RequiresAuth {
+			opts = ", runtime.RequireAuth()"
+		}
+		// The policy's NAME, not the handle: Endpoint.Call evaluates the
+		// rule (so a cross-service call cannot walk past it), and what
+		// the mount adds is the name a status page needs to tell this
+		// refusal from a stale CSRF token's.
+		if h.Policy != "" {
+			opts += fmt.Sprintf(", runtime.RequirePolicy(%q)", h.Policy)
+		}
+		// Pages and blobs read MaxAge; a JSON handler does not yet, and
+		// passing it there would generate a line that says something
+		// the runtime ignores.
+		if h.MaxAge > 0 && (h.Kind == "page" || h.ResBlob) {
+			opts += fmt.Sprintf(", runtime.CacheFor(%d)", h.MaxAge)
+		}
+		fmt.Fprintf(b, "\t// %s\n", analyzer.HandlerLine(h))
+		fmt.Fprintf(b, "\tmux.Handle(%q, runtime.%s(%s, %s%s))\n\n",
+			muxPattern(h.Route), wrapper, qual(alias, analyzer.ShortVar(h)), decode, opts)
+	}
+	return decoders
+}
+
 func writeDecoder(b *strings.Builder, alias string, h analyzer.Handler) {
-	reqType := alias + "." + h.ReqType
+	reqType := qual(alias, h.ReqType)
 	fmt.Fprintf(b, "\n// %s binds %s requests to %s.\n", decodeName(h), h.Route, reqType)
 	fmt.Fprintf(b, "func %s(r *http.Request) (%s, error) {\n", decodeName(h), reqType)
 	fmt.Fprintf(b, "\tvar req %s\n", reqType)

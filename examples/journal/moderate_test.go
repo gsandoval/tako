@@ -12,13 +12,12 @@ package journal
 import (
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/gsandoval/tako"
-	"github.com/gsandoval/tako/pkg/runtime"
 )
 
 // A moderator gets the desk, with somebody else's draft on it.
@@ -305,12 +304,17 @@ func accountID(t *testing.T, body, email string) string {
 // desk — it is behind the role it hands out. auth.FirstSignIn is what
 // closes that loop, and this is the test that the loop closes.
 func TestTheFirstPersonToSignInBecomesTheModerator(t *testing.T) {
-	srv := servePages(t)
+	// This one holds the app itself, because the event is asynchronous
+	// and DrainQueues is the barrier — the same one every other tako
+	// event test uses.
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())
+	t.Cleanup(srv.Close)
 
 	// alice arrives first, ticking nothing.
-	alice := client(t, srv)
+	alice := jarClient(t)
 	signIn(t, alice, srv.URL, "alice")
-	settle(t)
+	app.DrainQueues()
 
 	// The desk lets her in without her ever having been granted
 	// anything by hand.
@@ -322,7 +326,7 @@ func TestTheFirstPersonToSignInBecomesTheModerator(t *testing.T) {
 	// has a moderator, so the rule does not fire twice.
 	bob := freshClient(t)
 	signIn(t, bob, srv.URL, "bob")
-	settle(t)
+	app.DrainQueues()
 	if code := get(t, bob, srv.URL+"/moderate"); code != http.StatusForbidden {
 		t.Fatalf("the second arrival was appointed too: %d", code)
 	}
@@ -331,17 +335,21 @@ func TestTheFirstPersonToSignInBecomesTheModerator(t *testing.T) {
 	// sign-in, not every sign-in.
 	again := freshClient(t)
 	signIn(t, again, srv.URL, "bob")
-	settle(t)
+	app.DrainQueues()
 	if code := get(t, again, srv.URL+"/moderate"); code != http.StatusForbidden {
 		t.Fatalf("a second sign-in appointed bob: %d", code)
 	}
 }
 
-// settle waits for the account event to be delivered — it rides a topic,
-// so it is asynchronous exactly like every other tako event.
-func settle(t *testing.T) {
+// jarClient is client() for a server this test made itself: a cookie
+// jar, and redirects judged rather than followed.
+func jarClient(t *testing.T) *http.Client {
 	t.Helper()
-	if err := runtime.WaitIdle(5 * time.Second); err != nil {
-		t.Fatalf("waiting for the account event: %v", err)
+	jar, err := newJar()
+	if err != nil {
+		t.Fatal(err)
 	}
+	return &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error {
+		return http.ErrUseLastResponse
+	}}
 }

@@ -6,6 +6,7 @@ package hooks
 
 import (
 	"context"
+	"net/http"
 	"sync"
 
 	"github.com/gsandoval/tako/pkg/backends"
@@ -61,6 +62,13 @@ var (
 	StaleSessions func(ctx context.Context, uid string) error
 	EndSessions   func(ctx context.Context, uid string) error
 )
+
+// TestMux builds the app's real HTTP surface for tests (AB2): the
+// generated harness registers it, tako.NewTestApp(t).Handler() reads it.
+// Nil under plain `go test`, where the overlay that carries the harness
+// was never applied — Handler() says exactly that rather than serving a
+// mux with nothing on it.
+var TestMux func() http.Handler
 
 // Lease is the wired lease backend (spec §4.4) behind tako.Lock and
 // cron singleflight; nil until boot.

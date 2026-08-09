@@ -13,7 +13,6 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -22,105 +21,66 @@ import (
 	"github.com/gsandoval/tako/pkg/runtime"
 )
 
+// servePages is the app's real HTTP surface (AB2): every declared route
+// with the binder codegen generates for it, the mount options as
+// declared, the site handler last, the status page, and tako's own
+// /_tako/ endpoints — assembled by the same emitter that builds the
+// deployed service.
+//
+// This used to be 130 lines of hand-typed mounts and binders that
+// nothing checked against codegen. It drifted three times in two
+// milestones, and RequireAuth / RequirePolicy / CacheFor were mirrored
+// by nothing at all.
 func servePages(t *testing.T) *httptest.Server {
+	return serveWith(t, nil)
+}
+
+// serveWith is servePages plus routes this app does NOT declare.
+//
+// Three tests need one: they pin runtime contracts — a handler that
+// always redirects, one that redirects permanently, one that fails —
+// and journal should not carry a /boom route so that tako can test its
+// 500 page. They ride the same origin because a session-bound CSRF
+// token is only valid there.
+//
+// Everything else about the surface is the generated one, so a route
+// the app declares can never be missing from a test: it was mounted by
+// the same emitter that mounts the deployed service.
+func serveWith(t *testing.T, extra map[string]http.Handler) *httptest.Server {
 	t.Helper()
-	if err := runtime.BootLocal(t.TempDir()); err != nil {
-		t.Fatal(err)
+	app := tako.NewTestApp(t)
+	real := app.Handler()
+	side := http.NewServeMux()
+	for pattern, h := range extra {
+		side.Handle(pattern, h)
 	}
-	// Mirrors what codegen emits from the app's tako.Site declaration.
-	// The 404 page has to be here for the same reason it is there: both
-	// halves of the feature — a handler's tako.NotFound() and the site
-	// handler's static miss — read it from the wired options.
-	siteOpts := runtime.SiteOptions{
-		Redirects: map[string]string{"/about-us": "/about"},
-	}
-	runtime.RegisterSiteTemplates(os.DirFS("web"), siteOpts)
-	// The declared status page, exactly as codegen registers it. journal
-	// answers every status through it since FL11 — SiteConfig.NotFound
-	// is the other spelling and this app no longer declares it, so
-	// without this line every 404 here falls back to plain text.
-	runtime.RegisterStatusPage(Status)
-	// Two muxes, exactly as codegen emits them: tako's reserved
-	// endpoints answer before the app's router is consulted. On one
-	// shared mux the session mount and Perma's wildcard below cannot
-	// both be registered — Go refuses to order them and panics — which
-	// is the whole of FL5.
-	takoMux := http.NewServeMux()
-	takoMux.Handle("/_tako/api/session", runtime.SessionHandler())
-	takoMux.Handle("GET /_tako/signin", runtime.SignInPage("google"))
-	// The declared roles, as codegen hands them over: the dev sign-in
-	// page offers a checkbox per role, because a laptop has no Identity
-	// Platform to hold a claim.
-	runtime.RegisterRoles(Moderator.Name())
-	// The account-event subscriber, as codegen registers it for local
-	// mode. Without this line the founder is never appointed here, and
-	// the harness would be testing an app the deploy does not build.
-	runtime.RegisterSubscriber("OnFirstSignIn", OnFirstSignIn)
-	takoMux.Handle("POST /_tako/api/session/signout", runtime.SignOutHandler())
-	mux := http.NewServeMux()
-	mux.Handle("GET /{$}", runtime.PageHandler(Home, nil)) // {$}: exact root, as codegen emits
-	mux.Handle("GET /p/{id}", runtime.PageHandler(Read, func(r *http.Request) (ReadReq, error) {
-		return ReadReq{ID: runtime.PathString(r, "id")}, nil
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, pattern := side.Handler(r); pattern != "" {
+			side.ServeHTTP(w, r)
+			return
+		}
+		real.ServeHTTP(w, r)
 	}))
-	mux.Handle("GET /write", runtime.PageHandler(Write, nil))
-	mux.Handle("POST /p", runtime.PageHandler(Save, func(r *http.Request) (SaveReq, error) {
-		return SaveReq{
-			Title: runtime.FormString(r, "title"),
-			Body:  runtime.FormString(r, "body"),
-		}, nil
-	}, runtime.RequireAuth()))
-	mux.Handle("POST /p/{id}/publish", runtime.PageHandler(Publish, func(r *http.Request) (PublishReq, error) {
-		return PublishReq{ID: runtime.PathString(r, "id")}, nil
-	}, runtime.RequireAuth()))
-	mux.Handle("POST /p/{id}/rename", runtime.PageHandler(Rename, func(r *http.Request) (RenameReq, error) {
-		return RenameReq{ID: runtime.PathString(r, "id"), Slug: runtime.FormString(r, "slug")}, nil
-	}, runtime.RequireAuth()))
-	mux.Handle("POST /p/unpublish", runtime.PageHandler(Unpublish, func(r *http.Request) (UnpublishReq, error) {
-		// FormStrings, not FormString: the field repeats, and this is
-		// the line codegen emits for a []string binding.
-		return UnpublishReq{Selected: runtime.FormStrings(r, "selected")}, nil
-	}, runtime.RequireAuth()))
-	// The moderation desk. RequirePolicy carries the NAME so the status
-	// page can tell this refusal from CSRF's; RequireAuth is there
-	// because Route.Allow implies SignIn — codegen emits both, and a
-	// harness that emitted only one would let an anonymous request reach
-	// the rule instead of the 401 gate.
-	mux.Handle("GET /moderate", runtime.PageHandler(Moderate, nil,
-		runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
-	mux.Handle("POST /moderate/{id}/retract", runtime.PageHandler(Retract, func(r *http.Request) (RetractReq, error) {
-		return RetractReq{ID: runtime.PathString(r, "id")}, nil
-	}, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
-	mux.Handle("POST /people/{id}/role", runtime.PageHandler(SetRole, func(r *http.Request) (SetRoleReq, error) {
-		return SetRoleReq{ID: runtime.PathString(r, "id"), On: runtime.FormString(r, "on")}, nil
-	}, runtime.RequireAuth(), runtime.RequirePolicy("Moderators")))
-	// Harness-only: a route that ALWAYS redirects, pinning the
-	// dual-mode contract (200 + HX-Redirect under htmx).
-	alwaysRedirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
-		return tako.Redirect("/after")
-	})
-	mux.Handle("POST /redirects", runtime.PageHandler(alwaysRedirect, nil))
-	// The same, permanently. A 301 and a 303 differ only in the status,
-	// which is exactly why nothing would notice if the wiring dropped it.
-	alwaysMoved := tako.Page("POST /moved", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
-		return tako.RedirectPermanent("/elsewhere")
-	})
-	mux.Handle("POST /moved", runtime.PageHandler(alwaysMoved, nil))
-	// Harness-only: a route that always fails, so the 500 path can be
-	// held to plain text.
-	alwaysBroken := tako.Page("GET /boom", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
-		return tako.HTML{}, errors.New("something came apart")
-	})
-	mux.Handle("GET /boom", runtime.PageHandler(alwaysBroken, nil))
-	// The site takes everything the declared routes did not, exactly as
-	// the generated main mounts it — which is what makes a mistyped URL
-	// a SITE 404 rather than the mux's bare one.
-	mux.Handle("GET /{year}/{slug}", runtime.PageHandler(Perma, func(r *http.Request) (PermaReq, error) {
-		return PermaReq{Year: runtime.PathString(r, "year"), Slug: runtime.PathString(r, "slug")}, nil
-	}))
-	mux.Handle("/", runtime.SiteHandler(os.DirFS("web"), siteOpts))
-	srv := httptest.NewServer(runtime.Reserved(takoMux, mux))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// runtimeContractRoutes are the three undeclared routes above.
+func runtimeContractRoutes() map[string]http.Handler {
+	redirect := tako.Page("POST /redirects", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return tako.Redirect("/after")
+	})
+	moved := tako.Page("POST /moved", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return tako.RedirectPermanent("/elsewhere")
+	})
+	broken := tako.Page("GET /boom", func(ctx tako.Ctx, _ struct{}) (tako.HTML, error) {
+		return tako.HTML{}, errors.New("something came apart")
+	})
+	return map[string]http.Handler{
+		"POST /redirects": runtime.PageHandler(redirect, nil),
+		"POST /moved":     runtime.PageHandler(moved, nil),
+		"GET /boom":       runtime.PageHandler(broken, nil),
+	}
 }
 
 // client returns a cookie-jarred client that does NOT follow redirects
@@ -498,7 +458,7 @@ func TestHTMXRedirectHeader(t *testing.T) {
 	// redirect; send HX-Request and the handler branches to Fragment
 	// instead. The contract is therefore pinned at the runtime level:
 	// craft an endpoint inline.
-	srv := servePages(t)
+	srv := serveWith(t, runtimeContractRoutes())
 	c := client(t, srv)
 	token := writeFlow(t, c, srv.URL)
 	res := htmxPost(t, c, srv.URL+"/redirects", url.Values{}, token)
@@ -592,7 +552,7 @@ func TestUnknownSlugStill404s(t *testing.T) {
 // and a client-side navigation is neither — a 301 htmx cannot follow
 // would be a regression dressed up as correctness.
 func TestPermanentRedirectIsStillAnHXRedirectUnderHTMX(t *testing.T) {
-	srv := servePages(t)
+	srv := serveWith(t, runtimeContractRoutes())
 	c := client(t, srv)
 	token := signIn(t, c, srv.URL, "ada")
 
@@ -611,7 +571,7 @@ func TestPermanentRedirectIsStillAnHXRedirectUnderHTMX(t *testing.T) {
 // Plain requests get the two statuses apart. They differ only in a
 // number, so nothing else in the stack would notice if they merged.
 func TestRedirectAndRedirectPermanentDifferOnPlainRequests(t *testing.T) {
-	srv := servePages(t)
+	srv := serveWith(t, runtimeContractRoutes())
 	c := client(t, srv)
 	token := signIn(t, c, srv.URL, "ada")
 
@@ -769,7 +729,7 @@ func TestNotFoundIsTheSameUnderHTMX(t *testing.T) {
 // what an EXAMPLE owes is the other half — that the declared page is
 // actually reached, and that reaching it leaks nothing.
 func TestServerErrorsWearTheSiteAndSayNothing(t *testing.T) {
-	srv := servePages(t)
+	srv := serveWith(t, runtimeContractRoutes())
 	c := client(t, srv)
 	res, err := c.Get(srv.URL + "/boom")
 	if err != nil {
