@@ -534,7 +534,7 @@ Designed and argued, waiting on a trigger rather than on time:
   deployed project in CI; it stays a per-walk human check rather than a
   test that pretends.
 
-## Stage 12 — the fourth friction review (2026-08-08) — AWAITING APPROVAL
+## Stage 12 — the fourth friction review (2026-08-08) — ALL SHIPPED
 
 **FL10–FL14 shipped between the third review and this one** and are not
 mapped here; `task-log.md` carries each one. In short: FL10 derives a
@@ -557,10 +557,12 @@ carried forward. Two things the read found before any of the entries:
   answer, which is the friction gate passing rather than stalling — the
   contrast is FL8, whose only app-side answer was renaming the module.
 
-Six entries are taken below as five tasks, one is deferred, and each
-still owes a DX proposal before implementation.
+Six entries are taken below as five tasks, one is deferred. Proposals
+are in `task-log.md` under "FL15–FL19 — DX proposals"; all five were
+approved together on 2026-08-08 and shipped the same day.
 
-**FL15 — a form may repeat a field.** `bindableTypes`
+**FL15 — a form may repeat a field. DONE 2026-08-08** (`a3753dd`).
+`bindableTypes`
 (`pkg/analyzer/handlers.go:18`) binds `string`, `bool`, `int`, `int64`,
 `float64`; anything else is `tako/bind-type` at `handlers.go:326`. So a
 group of checkboxes named alike — the native HTML shape of "select some
@@ -582,14 +584,22 @@ post-tag it is an API change against a published version.
 It also has a corpus problem: none of the five examples asks for it, so
 the standing rule says it waits. Override it the way FL8 already did —
 FL8 moved `examples/hello` to a host-shaped module path *because* the
-corpus could not reach the bug. Here a list screen with selection in
-`shop` is part of the task, not a follow-up. Gate FL15 (agent-side):
-golden for the new binding and for the unchanged `bind-type` error on a
-still-unbindable type; shop's suite green with N checkboxes named alike
-and no JS.
+corpus could not reach the bug. Here a list screen with selection is
+part of the task, not a follow-up. Gate FL15 (agent-side): golden for
+the new binding and for the unchanged `bind-type` error on a
+still-unbindable type; the example's suite green with N checkboxes
+named alike and no JS.
 
-**FL16 — the dev server's readiness probe answers for the wrong
-process.** flauta filed this as "`tako dev` says ready before it has
+**Shipped in `journal`, not `shop` as proposed.** shop is the
+SPA-plus-JSON-API showcase — no `tako.Page`, no templates — so a no-JS
+checkbox form would have meant giving it a server-rendered surface it
+deliberately does not have. journal is the pages example and already
+carries the forms, the auth and the htmx seam, so the bulk unpublish
+sits where a reader of the guide meets it.
+
+**FL16 — the readiness probe answers for the wrong process. DONE
+2026-08-08** (`1d231c3`). flauta filed this as "`tako dev` says ready
+before it has
 bound the port" and asked tako to bind before printing. **The
 diagnosis is wrong and the fix does not follow from it**: `tako dev`
 never binds — the child does. `waitReady` (`pkg/devserver/devserver.go:342`)
@@ -612,7 +622,8 @@ anyone developing tako and an app together. Gate FL16 (agent-side): a
 devserver test that holds the port with a foreign listener and asserts
 `tako dev` fails with the collision text and never prints `ready`.
 
-**FL17 — a blob response carries its headers, and so does a stylesheet.**
+**FL17 — a blob carries its headers, and so does a stylesheet. DONE
+2026-08-08** (`fc31684`).
 `BlobHandler` (`pkg/runtime/blob.go:20`) sets `Content-Type` and
 `Content-Length` (`blob.go:57-59`) and stops: no `X-Content-Type-Options`,
 no `Cache-Control`, no validator. A blob is the one response kind whose
@@ -641,7 +652,8 @@ carries, so a future writer cannot drop one silently. That table is the
 thing FL11 found missing when it counted four writers and three header
 sets.
 
-**FL18 — the dev bar behaves.** Two entries, one task, both local-only.
+**FL18 — the dev bar behaves. DONE 2026-08-08** (`3c29f50`). Two
+entries, one task, both local-only.
 The bar is a `<div>` with inline styles and no id or class
 (`pkg/runtime/session.go:438`), so an app with its own fixed bottom bar
 — flauta's admin shell, and any app-shaped surface — has nothing stable
@@ -658,7 +670,8 @@ fragment)` at `page.go:359` branches on exactly that. Gate FL18
 (agent-side): a fragment response under `tako dev` contains no bar; a
 page response contains one and it carries the id.
 
-**FL19 — `tako logs` bills its reads to the project it was given.**
+**FL19 — every call is billed to the project it was given. DONE
+2026-08-08** (`476c7a0`).
 Nothing in the tree sets a quota project or `x-goog-user-project`, so
 Logging reads meter against whatever the ADC file carries — for a fresh
 `gcloud auth application-default login` that is the project behind
@@ -684,9 +697,24 @@ and its workaround is a two-line branching root. Widening the render
 contract immediately before a version tag is the wrong order. Revisit
 after v0.1.0 if a second app asks.
 
-**Z6 impact.** FL15 before the tag; FL16–FL19 after. The friction gate
-itself is met — eight open, none blocking, none without an app-side
-answer.
+**How it went.** All five approved together (owner, 2026-08-08) and
+built in order, each on its own commit and gate. Transcripts and
+per-task detail are in `task-log.md`; the scripted walk is
+`validate/friction-4.md`. Two turned out larger than filed and one
+smaller: FL17 grew a second instance (the site handler set nosniff only
+inside an HTML-only branch, so every stylesheet went without one),
+FL16 changed shape (the filed diagnosis does not hold — tako dev never
+binds, so it is an identity check now), and FL19 shrank (the permission
+it needs is already required by the preflight, so its cloud surface is
+one Classify case rather than a design).
+
+FL15 also found the example suite red on main since FL11: journal's
+page harness never registered the status page, so every 404 in the
+example fell back to plain text. Fixed in that commit.
+
+**Z6 impact.** FL15 was the one that had to land before a tag, and it
+has. The friction gate itself is met — eight open at the review, none
+blocking, none without an app-side answer, and five now closed.
 
 ## Standing rules
 

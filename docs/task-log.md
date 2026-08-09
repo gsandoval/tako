@@ -18805,3 +18805,262 @@ security property is a claim under no test.
 entries and the file holds eight. A flauta-session job under its ADR
 0008; recorded here because tako read the file rather than the table,
 and a future review should do the same.
+
+## FL15–FL19 — shipped (2026-08-08)
+
+All five approved together and built in order, each on its own commit
+with its own gate. `validate/friction-4.md` is the scripted walk;
+transcripts below are from it, run for real.
+
+### FL15 — a form may repeat a field (`a3753dd`)
+
+`[]string` joins the bindable types for `form:` and `query:`.
+`path:` refuses it with its own text — a route segment is one value, so
+the shape is one the router can never produce. Neither `string` nor
+`[]string` can fail to parse, so `infallibleBinding` replaces an
+open-coded `b.Type != "string"` in two places, and the cross-package
+call stub uses `qs.Add` per element rather than `Set`, which would
+collapse the field it exists for.
+
+journal is the example: the home list gets checkboxes and a bulk
+unpublish, with no JavaScript in the seam.
+
+```
+$ curl -s localhost:8130/ | grep -o '<input type="checkbox" name="selected" value="[a-z0-9]*"'
+<input type="checkbox" name="selected" value="oghrahdyz7imjcwh"
+<input type="checkbox" name="selected" value="keagtp7cdwpmg6t6"
+<input type="checkbox" name="selected" value="lktxmyme4pyevihv"
+
+$ # tick two of the three
+$ curl -s -X POST --data-urlencode "selected=lktx…" --data-urlencode "selected=keag…" …
+status=303 location=http://localhost:8130/
+
+$ # before: Showing 7 of 7 posts
+$ curl -s localhost:8130/ | grep -o "Showing [0-9]* of [0-9]* posts"
+Showing 5 of 5 posts
+```
+
+Two ticked, two unpublished. **One-of-two is what the old shape
+produced**, and it looked like success — which is why the count is the
+assertion.
+
+Both refusals, on a real app rather than a fixture:
+
+```
+$ go run ../../cmd/tako gen graph
+tako: app.go:190:2: field Year: path:-tagged fields cannot be []string — a route segment is one value; a field that repeats binds with query: or form: (tako/bind-type)
+app.go:279:2: field Weird: form:-tagged fields must be string, []string, bool, int, int64, or float64; got []int (tako/bind-type)
+```
+
+The generated decode is the line the harness writes by hand:
+
+```go
+func decodeUnpublish(r *http.Request) (journal.UnpublishReq, error) {
+	var req journal.UnpublishReq
+	req.Selected = runtime.FormStrings(r, "selected")
+	return req, nil
+}
+```
+
+No `var err error`, because nothing here can fail.
+
+**Two things surfaced while wiring the example, both fixed in this
+commit because the suite was red without them.** journal's page harness
+never registered the status page FL11 added, so every 404 in the
+example fell back to plain text — the example suite has been red on
+main since FL11 and nothing said so. And `TestServerErrorsStayPlain`
+asserted the pre-FL11 rule; the reasoning survives (renderStatus
+recovers a failing status page, pinned in `pkg/runtime/status_test.go`),
+so the test now asserts the half an example owes: the declared page is
+reached, and reaching it leaks neither the handler's error nor the
+chrome.
+
+### FL16 — the readiness probe proves it reached this child (`1d231c3`)
+
+The filed entry asked tako to bind before printing `ready`. **tako dev
+never binds; the child does** — so the fix is identity, not ordering.
+The loop mints a per-start nonce, passes it as `TAKO_DEV_NONCE`, and
+accepts readiness only from a listener that answers `GET /_tako/z/dev`
+with that value.
+
+```
+$ # journal already serving on 8130
+$ cd examples/blog && PORT=8130 /tmp/tako dev
+  starting    http://localhost:8130
+  …
+tako: serve: port 8130 is already in use by another process — set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :8130`)
+tako: the service exited during startup
+exit=1
+
+$ grep -c "^ready in" /tmp/v2.log
+0
+```
+
+No `ready` line, non-zero exit, and the child's own error last. Before
+this the same run printed `ready in 590ms` and then served the OTHER
+app's pages to the browser.
+
+Two things came with it. Nothing watched the child, so a service that
+died at once still cost the full five-second timeout; `startApp` now
+owns the single `Wait` and publishes it as a channel that both
+`waitReady` and `stopApp` read. And the probe is tako talking to
+itself, so `logRequests` skips it — without that it put a request
+nobody made in the dev console and a sample nobody served in
+`request_ms`, once per start:
+
+```
+GET /_tako/z/dev → 200 (0.0ms)     ← before
+(nothing)                          ← after
+```
+
+`http.go:168` already carried the comment for this failure mode — *"a
+collision here answers requests with SOMEONE ELSE'S responses"* — which
+is what the readiness probe had been doing from the other side.
+
+### FL17 — a blob carries its headers, and so does a stylesheet (`fc31684`)
+
+The filed entry is the blob half. **The read found a second instance
+the app could not see**: `securityHeaders` is the only writer of
+nosniff, and the site handler called it inside an HTML-only branch, so
+every `.css`, `.js` and `.txt` it served went out without one — while
+`contentTypeOf`'s comment fifty lines below said *"nosniff is set —
+types must be right"*.
+
+```
+$ curl -s -i localhost:8130/assets/css/site.9f86d081.css | grep -i '^content-type\|^x-content\|^cache-control'
+Cache-Control: public, max-age=31536000, immutable
+Content-Type: text/css; charset=utf-8
+X-Content-Type-Options: nosniff        ← was absent
+
+$ curl -s -i localhost:8130/ | grep -i '^x-content\|^content-security'
+Content-Security-Policy-Report-Only: default-src 'self'
+X-Content-Type-Options: nosniff
+```
+
+CSP stays HTML-only: it describes a document's privileges and a
+stylesheet has none.
+
+`Route.MaxAge` reaches blobs. `BlobHandler` already took
+`HandlerOption` and already built a `handlerConf` — it never read
+`conf.maxAge` — and codegen gated `CacheFor` on `Kind == "page"`, so a
+blob route declaring MaxAge had it dropped on the way to the generated
+main. Both ends are wired:
+
+```go
+// gallery, generated
+mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb, runtime.CacheFor(86400)))
+```
+
+The test is **a table with one row per KIND of response** — page, page
+with MaxAge, fragment, HTML site file, non-HTML site file,
+fingerprinted asset, blob, blob with MaxAge, status page, plain-text
+status floor. Per-feature tests could not catch either gap, because
+each writer was right about the case it was written for; what was
+missing was the comparison. Verified by reverting both fixes:
+
+```
+--- FAIL: TestEveryResponseKindCarriesItsHeaders/site_file,_not_HTML
+        X-Content-Type-Options = "", want "nosniff"
+--- FAIL: TestEveryResponseKindCarriesItsHeaders/site_file,_fingerprinted
+--- FAIL: TestEveryResponseKindCarriesItsHeaders/blob
+        Cache-Control = "", want "no-cache"
+--- FAIL: TestEveryResponseKindCarriesItsHeaders/blob_with_MaxAge
+```
+
+### FL18 — the dev bar behaves (`3c29f50`)
+
+Two entries, one task. The bar could not tell a page from an htmx
+partial — a fragment has no `</body>`, so it landed at the END of
+whatever was swapped in. The runtime already knew one layer down, where
+`securityHeaders` branches on `fragment`; that signal now reaches the
+bar through a context pointer set by `WithDevBar` and refined inside
+the handler, which is the `routeLabel` pattern and for the same reason.
+
+```
+$ curl -s localhost:8130/ | grep -o 'id="tako-dev-bar"'
+id="tako-dev-bar"
+
+$ curl -s -H "HX-Request: true" -X POST -d "title=fragcheck&…" localhost:8130/p
+<article class="card">
+  <a href="/p/ljh5vzxv6n3s4xpk">fragcheck</a> <time>2026-08-08</time>
+</article>
+$ grep -c "tako-dev-bar" /tmp/frag.html
+0
+```
+
+Skipping injection must not mean skipping the body, so the fragment
+path writes its buffer through — asserted, because a middleware that
+silently swallows a response is a worse bug than the one it fixed.
+
+The id is the other half: the app that filed this resorted to finding
+"the fixed-position child of `<body>` holding a `dev_user` control",
+because inline styles are nothing to target. `#tako-dev-bar { display:
+none }` is now a supported thing to write, and `reference/auth.md` says
+so.
+
+### FL19 — calls are billed to the project they were given (`476c7a0`)
+
+**The proposal treated the permission as the hard part; it is not.**
+`serviceusage.services.use` is included in `serviceUsageViewer` (the
+preflight's enabled-API check) and in `serviceUsageAdmin` (service
+agents), so a credential that cannot set the header cannot have reached
+this code. One header in `do()`, covering every call rather than
+Logging alone.
+
+It is listed in `tako-cloud-permissions.md` anyway, with its own
+`Classify` case, because a deployer holding only the other roles would
+meet a 403 naming a service nobody asked tako to touch:
+
+```
+cannot bill API calls to p — grant: gcloud projects add-iam-policy-binding p --member user:$(gcloud config get account) --role roles/serviceusage.serviceUsageConsumer
+```
+
+The header test asserts across hosts rather than on one call — the
+header is set in `do()` for everything, so a future call site reaching
+past `do()` is how this silently comes back. Reverted to check it
+bites:
+
+```
+--- FAIL: TestEveryCallIsBilledToTheTargetProject
+    POST logging.googleapis.com/v2/entries:list billed to "", want the target project "p"
+    GET run.googleapis.com/v2/projects/p/… billed to "", want the target project "p"
+--- FAIL: TestTheQuotaProjectDenialNamesItsGrant
+```
+
+**Not validated live, by design.** The 429 needs a fresh-ADC machine
+and a real project; `validate/friction-4.md` §5 carries the steps for
+the next release-cycle walk.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven example modules green
+against `local`:
+
+```
+blog        ok      gallery     ok      hello       ok      journal     ok
+shop        ok      shortlink   ok      siren       ok
+```
+
+Scripted walk: `validate/friction-4.md`, run end to end, transcripts
+above. The human walk is batched per the Stage 3 amendment.
+
+### Discovered work
+
+**18. A JSON route's `MaxAge` is silently ignored.** `JSONHandler`
+never reads `conf.maxAge`, so `tako.Route{MaxAge: …}` on a JSON API
+route does nothing and says nothing. Same one-line shape as FL17's blob
+half; left out of scope, and codegen now carries a comment saying why
+it does not pass `CacheFor` there. `reference/api.md` states the
+current truth.
+
+**19. `client(t, srv)` in journal's harness hands back the SERVER's
+shared client**, so two callers of it are one browser with one cookie
+jar. `TestOwnershipAndRevocation` passes despite this — it never uses
+the first user after the second signs in — but it is a trap for the
+next two-user test. FL15's ownership case added `freshClient`; the
+older helper was left as it is.
+
+**20. flauta's friction log index is stale** — its table lists six open
+entries and the file holds eight (the two dated 2026-08-07 never
+reached it). A flauta-session job under its ADR 0008; recorded here
+because tako read the file rather than the table.
