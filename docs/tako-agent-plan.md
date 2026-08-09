@@ -737,7 +737,7 @@ promoted items are all in the first.
 |---|---|---|---|
 | **AB1** | **Authorization is declared, not repeated** — `Route{Allow: policy}` | `requireEditor(ctx)` at **49 call sites in 12 files**, `renderNoAccess` at 48; the same four lines opening every admin handler | **DONE 2026-08-09** (`107ac03`) |
 | **AB2** | **An app's real HTTP surface in tests** — `app.Handler()` | `harness_test.go` is **874 lines** hand-mirroring codegen's binders and mounts; `harnessguard_test.go` regexes `app.go` against it because nothing else could; four write routes were tested by nothing at all until M4-04. tako's own `examples/journal/pages_test.go` is **1,052 lines** of the same | **DONE 2026-08-09** (`2845383`) |
-| **AB3a** | **A handler can see its client** — `ctx.Client()` | the log's #1 open entry; `contact.go` caps site-wide (30/h) because per-IP is inexpressible | **promote — small** |
+| **AB3a** | **A handler can see its client** — `ctx.Client()` | the log's #1 open entry; `contact.go` caps site-wide (30/h) because per-IP is inexpressible | **DONE 2026-08-09** (`5da0324`) |
 | **AB4** | **An app can ask where it is running** — `tako.Env` | `admin.go:85` `deployed()` reads `os.Getenv("TAKO_BACKEND")`, tako's private boot switch, at 5 call sites — and `editorAllowed` **authorizes on it** | **DONE 2026-08-09** (`efcedec`) |
 | AB3b | A declared rate limit — `Route{Limit: …}` | same entry as AB3a | **designed, blocked**: honest enforcement needs a cross-instance counter, and `tako.Cache` is per-instance in-memory (`cache.go:11`) even on GCP. A backend decision, not a patch |
 | AB5 | Optimistic concurrency in the store — `UpdateIf` / `entity:"version"` | `guardedSave` (`autosave.go:33`) — a generic CAS the app had to write once and route six write paths through; a backlog entry notes a misspelled token field silently disables it | **second wave** — real, and it reshapes `EntityHandle`, so it is its own task after AB1/AB2 |
@@ -773,8 +773,19 @@ shipping if flauta were a shop, a dashboard, or a docs site instead.
 Proposals: `task-log.md`, "AB1–AB4 — DX proposals". Gate: one per task,
 per the standing rules.
 
-**Status (2026-08-09).** AB2 is done, so the only unscheduled promoted
-item is AB3a (`ctx.Client()`). AB10 is closed — roles, accounts, local
+**Status (2026-08-09).** **Every promoted item is shipped** — AB1, AB2,
+AB3a, AB4 and AB10a–d, eight slices, each with its own gate and walk.
+The review's parked and refused rows are unchanged and still argued
+above.
+
+**What the walks turned up, worst first:** `tako dev` is broken for any
+app without auth, buckets or crons — including `hello`, Gate G0's app —
+because the readiness route is mounted conditionally and the probe reads
+a 404 as a foreign listener (task-log item 35). Nothing tests it, and
+every recently-walked app declares auth. It should go before anything
+else here.
+
+AB10 is closed — roles, accounts, local
 password sign-in and the two account events, four slices and four
 gates. AB1 and AB4 are shipped and validated —
 outcome, transcripts and three discovered items in `task-log.md` under

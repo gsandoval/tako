@@ -20236,3 +20236,74 @@ them when each is next touched.
 874-line `harness_test.go` and its regex guard (`harnessguard_test.go`)
 both retire against `app.Handler()`, and its `tako test` already runs.
 That is a flauta-session job, not a tako one.
+
+## AB3a — shipped (2026-08-09), and Stage 13 closed
+
+Commit `5da0324`. The last promoted item of the abstraction review.
+
+`ctx.Client()` returns `{IP, UserAgent}` and nothing else. The IP rule is
+the whole of the care:
+
+```
+X-Forwarded-For: 1.2.3.4, 203.0.113.7, 130.211.0.1  →  203.0.113.7
+```
+
+Google's frontend APPENDS to the header rather than replacing it, so the
+left-most entry is the caller's claim about itself. tako counts from the
+right past the one hop it provisions; a list shorter than that did not
+come through those hops and is ignored in favour of the socket. Five
+cases are pinned, including a forgery split across two headers.
+
+Zero in a worker, cron, job and subscriber. Carried on all four REQUEST
+paths — page, JSON, blob, status — because a fact that depended on which
+route kind you declared would be worse than no fact.
+
+`Route{Limit: …}` stays unbuilt, now documented in `reference/api.md`
+rather than only in this log: it needs a cross-instance counter, and
+`tako.Cache` is per-instance in memory even in the cloud.
+
+shortlink's test drives the app through `app.Handler()`, which is **AB2
+paying for itself in the same session it shipped** — a header is a
+request fact, and `Endpoint.Call` has no request.
+
+### Discovered work — and one of these is serious
+
+**35. `tako dev` is broken for any app without auth, buckets or crons —
+including `hello`.**
+
+The readiness probe (FL16) GETs `/_tako/dev` and compares a per-run
+nonce. That route is only mounted when the generated main builds the
+reserved mux, and codegen builds one only when `hasAuth || hasBucket ||
+hasCron`. So `hello` and `shortlink` never mount it, the probe reads
+404, and `probe` returns `("", nil)` — which `waitReady`'s switch treats
+as **someone else's server**:
+
+```
+tako: port 8119 is answering, but not with this app — another process has it.
+Set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :8119`)
+```
+
+`lsof` shows nothing on the port. The dev loop then exits 1.
+
+Two separate faults, and both should be fixed together:
+
+1. **The route is conditional and the probe is not.** `/_tako/dev` is
+   framework surface and should be mounted by every service that serves
+   requests, exactly like the status page is registered.
+2. **`probe` collapses "not 200" into "answered with the wrong body".**
+   A 404 from a service that has not mounted the route yet, or ever, is
+   not evidence of a foreign listener — and `foreign` is sticky, so one
+   such answer during startup poisons the whole wait.
+
+It is `hello` — Gate G0's app, the first thing a new user runs. Found by
+walking AB3a rather than by any test, because every example that has
+been dev-walked recently (journal, flauta) declares auth. **Out of scope
+here and worth scheduling first**; it is a one-line codegen change plus
+a probe that distinguishes 404 from a nonce mismatch, with a devserver
+test per case.
+
+**36. The live walk had to run the built binary directly** because of 35
+— `go build ./.tako/gen/shortlink && PORT=8118 ./shortlink`. That is a
+fine fallback and it is written into `validate/policies.md` step 23, but
+it is a workaround for a tako defect and should be reverted to `tako
+dev` once 35 is fixed.
