@@ -354,6 +354,11 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 		// A page that declared no MaxAge answers no-cache, which is
 		// what every page did before Route.MaxAge existed.
 		h.Set("Cache-Control", cacheControl(conf.maxAge))
+		if fragment {
+			// The same signal, told to the one other thing that needs
+			// it: the dev bar belongs on documents, not on partials.
+			markFragment(r)
+		}
 		securityHeaders(h, fragment)
 		_, _ = w.Write(markup)
 	})

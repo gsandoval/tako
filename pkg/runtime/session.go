@@ -374,19 +374,46 @@ func WithDevBar(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		bw := &barWriter{ResponseWriter: w, req: r}
+		// A pointer in the context for the same reason routeLabel is
+		// one: the decision is made INSIDE the handler and read out
+		// here, after it has returned.
+		frag := &fragmentFlag{}
+		r = r.WithContext(context.WithValue(r.Context(), fragmentKey{}, frag))
+		bw := &barWriter{ResponseWriter: w, req: r, fragment: frag}
 		next.ServeHTTP(bw, r)
 		bw.flush()
 	})
 }
 
+// fragmentFlag records that the response in flight is a PARTIAL — an
+// htmx swap, not a document.
+//
+// The dev bar cannot tell from the outside: a fragment answers
+// text/html like a page does. So every htmx swap under tako dev used
+// to carry a copy of the bar into whatever it swapped into — in an app
+// with its own fixed bottom bar, one stacking on another on every
+// keystroke.
+type fragmentFlag struct{ is bool }
+
+type fragmentKey struct{}
+
+// markFragment says this response is a partial. Called where the
+// runtime already branches on exactly this — the same signal that
+// decides a fragment carries no CSP.
+func markFragment(r *http.Request) {
+	if f, ok := r.Context().Value(fragmentKey{}).(*fragmentFlag); ok && f != nil {
+		f.is = true
+	}
+}
+
 type barWriter struct {
 	http.ResponseWriter
-	req    *http.Request
-	buf    []byte
-	html   bool
-	probed bool
-	status int
+	req      *http.Request
+	fragment *fragmentFlag
+	buf      []byte
+	html     bool
+	probed   bool
+	status   int
 }
 
 func (b *barWriter) WriteHeader(status int) { b.status = status }
@@ -412,8 +439,14 @@ func (b *barWriter) commitHeader() {
 }
 
 func (b *barWriter) flush() {
-	if !b.html {
+	// A fragment is not a page, so there is nothing for the bar to sit
+	// at the bottom OF. Injecting into one puts a position:fixed strip
+	// inside whatever the swap replaced, once per swap.
+	if !b.html || (b.fragment != nil && b.fragment.is) {
 		b.commitHeader()
+		if len(b.buf) > 0 {
+			_, _ = b.ResponseWriter.Write(b.buf)
+		}
 		return
 	}
 	// The bar REFLECTS the session instead of listing every control:
@@ -435,7 +468,13 @@ func (b *barWriter) flush() {
 		who = "signed in as " + rec.Name
 		controls.WriteString(`<form method="post" action="` + routes.SignOut + `" style="margin:0"><button>sign out</button></form>`)
 	}
-	bar := `<div style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#eee;font:13px sans-serif;padding:6px 12px;display:flex;gap:12px;align-items:center;z-index:9999">` +
+	// The id is a CONTRACT, not decoration: an app whose own layout puts
+	// something at the bottom of the window needs a way to move or hide
+	// this, and inline styles are nothing to target. Without it the only
+	// handle is behaviour — "the fixed child of <body> holding a
+	// dev_user control" — which is a guess at something tako never
+	// promised. `#tako-dev-bar { display: none }` is now supported.
+	bar := `<div id="tako-dev-bar" style="position:fixed;bottom:0;left:0;right:0;background:#1a1a1a;color:#eee;font:13px sans-serif;padding:6px 12px;display:flex;gap:12px;align-items:center;z-index:9999">` +
 		`<span>tako dev · ` + who + `</span>` +
 		controls.String() +
 		`</div>`

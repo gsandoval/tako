@@ -100,6 +100,19 @@ the same users. Dev sessions are real session records in the local
 entity store, so sign-out and revocation behave exactly as in the
 cloud.
 
+The bar goes on **documents only** — an htmx fragment is a partial with
+nothing to sit at the bottom of, and injecting into one would put a
+fixed strip inside whatever the swap replaced. It carries
+`id="tako-dev-bar"`, which is there to be targeted: an app whose own
+layout owns the bottom of the window moves or hides it with one rule.
+
+```css
+#tako-dev-bar { display: none }       /* or: bottom: 2.5rem */
+```
+
+None of this reaches production: `WithDevBar` returns the handler
+untouched on any backend but `local`.
+
 ## Cloud
 
 `tako deploy` runs sign-in on **Identity Platform**. Most of it is
