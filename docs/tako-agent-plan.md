@@ -745,7 +745,7 @@ promoted items are all in the first.
 | AB7 | Pagination view-model | `listing.go:149-190` `pageURL`/`pageLinks`/`perPage` | **park** — every list screen wants it, but it is view furniture and decision-11-adjacent. Promote when a second app asks |
 | AB8 | Audit fields stamped by the store | `touchArticle`/`touchPage`/`touchMedia` + a test policing stray `Updated =` | **refuse, and write down why** — flauta's `stampMedia` split exists *because* an automatic stamp erased the uploader on every background write (M3-08's walk). A store that stamps what the app did not set would ship that bug to everyone |
 | AB9 | Versioned entities — snapshots, restore, prune | `revision.go` + `history.go` + `autosave.go`, ~1,000 lines | **refuse** — the framework-shaped kernel inside it is AB5; the rest (causes, throttling, pinning, drift-vs-published) is what a CMS is, and decision 11 owns that |
-| AB10 | A user store, registration, roles | there is none: identity is Identity Platform's, authorization is `config.json`'s `editors` list, and adding an editor is a code edit plus a deploy | **unparked 2026-08-09** by the owner, who made the five shaping decisions. Four slices; **AB10a** (`e635c5a`), **AB10b** (`21c6af6`) and **AB10c** (`bab1a20`) are DONE. **AB10d** (the two registration events) is proposed and unbuilt |
+| AB10 | A user store, registration, roles | there is none: identity is Identity Platform's, authorization is `config.json`'s `editors` list, and adding an editor is a code edit plus a deploy | **unparked 2026-08-09** by the owner, who made the five shaping decisions. **DONE 2026-08-09**, all four slices: **AB10a** (`e635c5a`) roles, **AB10b** (`21c6af6`) accounts, **AB10c** (`bab1a20`) local password sign-in, **AB10d** (`d4a86e2`) the two account events |
 
 **The ordering argument.** AB1 and AB2 are coupled and the coupling
 decides the order: a policy moved off the handler and onto the route is
@@ -771,7 +771,9 @@ shipping if flauta were a shop, a dashboard, or a docs site instead.
 Proposals: `task-log.md`, "AB1–AB4 — DX proposals". Gate: one per task,
 per the standing rules.
 
-**Status (2026-08-09).** AB1 and AB4 are shipped and validated —
+**Status (2026-08-09).** AB10 is closed — roles, accounts, local
+password sign-in and the two account events, four slices and four
+gates. AB1 and AB4 are shipped and validated —
 outcome, transcripts and three discovered items in `task-log.md` under
 "AB1 + AB4 — shipped". AB2 is approved in shape (the overlay wiring) and
 unbuilt; AB3a is unscheduled. AB2 got a third piece of evidence while

@@ -20065,3 +20065,85 @@ producer.
 an app stops declaring stays on every account that holds it, invisible
 except through `Users.List`. Harmless today; a `tako.Role` that no
 longer exists is a name nothing will ever check.
+
+## AB10d — shipped (2026-08-09), and AB10 closed
+
+Commit `d4a86e2`. The last of the four slices; AB10 is complete.
+
+Shipped as proposed, with the constraint stated in the proposal now
+enforced by the shape of the code: both events are things **tako itself
+does**, so neither is a guess. There is no Identity-Platform-side
+registration event and there cannot be one from Cloud Run — blocking
+functions and Firebase Auth triggers are Gen1 Cloud Functions only.
+
+### What the build decided
+
+**One constant, not two.** The source names are topic names shared by
+the SDK (which publishes `Registered`) and `pkg/runtime` (which
+publishes `FirstSignIn`). The first draft duplicated them with a comment
+explaining why that was acceptable; it was not. They live in
+`internal/hooks` now — app-invisible, single-source.
+
+**The marker is written before the publish.** `FirstSignIn` needs to
+know whether tako has seen an identity, which is one `_tako_seen` record
+per person, ever. Writing it first means a crash between the two loses
+the announcement rather than repeating it forever. That is the right way
+round, and it is a choice rather than an accident: a missed welcome is a
+gap somebody notices; a loop that re-announces on every sign-in looks
+like a feature until the emails pile up.
+
+**Both publishes are best-effort.** A subscriber must never be able to
+fail the act that triggered it. In particular, a `Create` that reported
+failure *after* creating the account would invite the caller to retry
+and make a second one.
+
+**Provisioning follows the bucket-event pattern** rather than inventing
+one: a subscribed event gets a topic, and publish is granted to whoever
+can actually publish — route-serving services for `FirstSignIn` (they
+serve the session endpoint), account-writing services for `Registered`
+(the same edge that earns `identitytoolkit.admin`).
+
+### The examples are the argument
+
+**journal: the first person ever to sign in becomes the moderator.** The
+desk that hands out the role is behind the role, so the first one cannot
+be appointed from inside the app — this is a real bootstrap problem with
+a real answer, and it is four lines. `appointFounder` is idempotent
+because an event is delivered at least once.
+
+**shop: creating an account opens a customer record** with 500 credits,
+read back through `/api/me`. Nothing in the create path knows the shop
+has customers.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven examples green. Live on
+:8102 against a deleted `.tako/data`:
+
+```
+alice (first ever, ticking nothing) → GET /moderate -> 200
+bob   (second)                      → GET /moderate -> 403
+appointing the founding moderator subscriber=OnFirstSignIn email=alice@example.test
+```
+
+The founder test was mutation-checked: removing the subscriber
+registration from the harness fails it with `the founder was refused:
+403`, so it is testing the event and not the door.
+
+Scripted walk: `validate/policies.md` steps 19–21. The human walk is
+batched per the Stage 3 amendment.
+
+### Discovered work
+
+**31. Two example harnesses were missing mounts codegen emits** — the
+subscriber registration in both, and `GET /api/me` in shop's, which had
+never been mounted at all, so nothing had ever driven it. Both found by
+writing a test that needed them. AB2's finding for the fourth and fifth
+time, and the strongest argument yet for building it.
+
+**32. A test that calls `tako.NewTestApp` twice reads two different
+stores.** `NewTestApp` rebinds the package-level backend hooks, so a
+second call inside a test that already booted a server silently points
+later reads at a fresh empty store. It cost a wrong "the record was
+never created" diagnosis here. Worth either a refusal (a second
+`NewTestApp` in one test) or a doc line.
