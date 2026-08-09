@@ -46,6 +46,12 @@ comment on the declaration says so.
 - `tako dev --chaos` injects seeded duplicate/reordered deliveries so
   at-least-once bugs surface on your laptop, reproducibly
   (`TAKO_CHAOS_SEED` replays a failure exactly).
+- `tako.Environment() == tako.EnvLocal` is how your code knows it is
+  here rather than deployed — for a seeded sign-in, a visible fixture,
+  an extra log line. It is not a feature flag: branch a development
+  **affordance** on it, never the product, or you have two products and
+  test one. Details in
+  [reference/service.md](../reference/service.md).
 
 ## Testing
 

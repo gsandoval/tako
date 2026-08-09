@@ -70,11 +70,42 @@ var MakeThumb = tako.Worker(thumbs, makeThumb,
 | `Profile` | yes | yes | no |
 | `Footprint` | yes | yes | no |
 
+## Where it is running
+
+```go
+if tako.Environment() == tako.EnvLocal {
+	v.DevUsers = devIdentities   // the local sign-in strip
+}
+```
+
+`tako.Environment()` returns `tako.EnvLocal` under `tako dev`, `tako
+test` and `go test`, and `tako.EnvCloud` in a service `tako deploy` put
+in Cloud Run. Anything it does not recognise is `EnvLocal`, so a
+mistyped environment can only turn a local affordance **off** in
+production.
+
+It is a fact about the deployment, **never a feature flag.** Use it for
+what a development affordance may do — a seeded sign-in, a visible
+fixture, an extra log line. An app that branches its *product* on this
+has two products and tests one.
+
+It is a package-level function rather than a method on `Ctx` because the
+answer is not per-request: a rule like "these seeded identities are
+admitted locally" stays pure and testable without a session, and a
+constructor can ask before any request exists.
+
+Before this existed, apps read `TAKO_BACKEND` — tako's private boot
+switch, promised to nobody — and the first app to do it used the answer
+to decide who may reach its admin. That is an authorization input, which
+is why it is surface now.
+
 ## Local
 
 Nothing. `tako dev` runs every service in one process; the declaration
 shapes what `tako deploy` provisions, not what `dev` runs. The service
 NAME does show up in `tako gen graph` and the dev banner.
+
+`tako.Environment()` is `EnvLocal` here, and in tests.
 
 ## Test it
 

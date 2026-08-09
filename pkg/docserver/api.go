@@ -282,6 +282,12 @@ var symbolPage = map[string]string{
 	"Service":       "service.md",
 	"ServiceHandle": "service.md",
 	"ServiceConfig": "service.md",
+	// Where the service is running is a fact about the deployment, so
+	// it is documented with the deployable rather than with a route.
+	"Environment": "service.md",
+	"Env":         "service.md",
+	"EnvLocal":    "service.md",
+	"EnvCloud":    "service.md",
 
 	// Data
 	"Entity":          "entity.md",

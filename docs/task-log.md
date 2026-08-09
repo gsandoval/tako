@@ -19064,3 +19064,397 @@ older helper was left as it is.
 entries and the file holds eight (the two dated 2026-08-07 never
 reached it). A flauta-session job under its ADR 0008; recorded here
 because tako read the file rather than the table.
+
+## AB1–AB4 — DX proposals: the abstraction review (2026-08-09) — AWAITING APPROVAL
+
+Four tasks from `docs/tako-agent-plan.md` Stage 13. The question the
+owner asked is not the friction question: not *what did flauta hit*, but
+*what has flauta built that a second tako app would build again*. So
+the read went at flauta's code shape (`flautas@2d23ca8`, 25,563 lines of
+Go) rather than at its friction log, and every finding below was
+verified against this tree at `5e2ca3a`.
+
+**Each ships behind its own gate.** They are presented together because
+the ordering argument only makes sense read together: AB1 and AB2 are
+coupled, and AB4 is a rider on AB1.
+
+Six more candidates were considered and **not** promoted — a store-side
+audit stamp is refused outright, because flauta's `stampMedia` split
+exists precisely to undo the bug an automatic stamp causes. The table
+with each verdict is in the plan; the reasoning is not repeated here.
+
+---
+
+### AB1 — authorization is declared, not repeated 49 times
+
+**The finding.** `requireEditor(ctx)` appears at **49 call sites across
+12 files** in flauta, `renderNoAccess` at 48. Every admin handler opens
+with the same four lines:
+
+```go
+func adminHome(ctx tako.Ctx, req AdminListReq) (tako.HTML, error) {
+	u, ok := requireEditor(ctx)
+	if !ok {
+		return renderNoAccess(ctx, u)
+	}
+	// ... the handler
+}
+```
+
+tako authenticates (`Route{SignIn: true}`, 54 of flauta's 66 routes) and
+stops there. Authorization has no seam, so it lives in handler bodies —
+which means:
+
+- **it is invisible to every tool.** `tako gen graph` cannot say which
+  routes are guarded by what; `tako deploy --plan` prints 🔒 for
+  authentication and nothing for authorization. "Which of my 66 routes
+  can a stranger reach" is not a question the framework can answer.
+- **it is enforced by care.** Nothing refuses a new admin route that
+  forgets the preamble. flauta's answer is that four of its handlers
+  delegate to shared helpers (`lifecycle`, `bulkAct`) which guard once —
+  good practice that also means the guard's presence cannot be read off
+  the handler.
+- **a refusal cannot say which refusal it is.** flauta had to invent
+  `noAccessReason` — a sentinel *string* — because tako's CSRF rejection
+  is also a 403, and a signed-in editor who trips CSRF must not be told
+  they are at the wrong door (`admin.go`, M3-12).
+
+**What ships.** A policy is a declared record like every other tako
+resource — a package-level var, a constructor, no side effects:
+
+```go
+// flauta, admin.go — the rule stays the app's, all of it
+var Editors = tako.Policy(editorAllowed)
+
+func editorAllowed(ctx tako.Ctx, u tako.User) error {
+	if !cfg.IsEditor(u.Email) {
+		return tako.Deny("that address is not on the editor list for this site")
+	}
+	if !providerAllowed(u) {
+		return tako.Deny("editors sign in with Google; this session came from a password")
+	}
+	return nil
+}
+```
+
+and a route says which door it is behind:
+
+```go
+var (
+	AdminHome        = tako.Page("GET /admin", adminHome, tako.Route{Allow: Editors})
+	AdminArticleSave = tako.Page("POST /admin/articles/{slug}", adminArticleSave, tako.Route{Allow: Editors})
+	AdminMediaUpload = tako.API("POST /admin/media/upload", adminMediaUpload, tako.Route{Allow: Editors})
+)
+```
+
+49 preambles become 49 route fields the analyzer can read, and every
+handler starts with its own work.
+
+**`Allow` implies `SignIn`.** A policy takes a `User`, so a route
+carrying one is authenticated by construction; `SignIn: true` beside it
+is redundant, not an error. `ctx.User()` is guaranteed past the policy
+exactly as it is past `SignIn`.
+
+**A policy is enforced by `Endpoint.Call` too, and that is the load-
+bearing decision.** The generated mount is not the only way into a
+handler: `Endpoint.Call` is the in-package call, the test path, and the
+cross-service RPC. If a policy were mount-only then
+
+- every test that calls `AdminSave.Call(ctx, req)` would stop seeing the
+  authorization it sees today (flauta's guard is in the body, so its
+  tests do exercise it) — a regression dressed as a feature, and
+- a **cross-service call would bypass the callee's authorization
+  entirely**, which is the one place a trust boundary is actually
+  crossed.
+
+So `Call` evaluates the policy first and returns the denial as an error
+(`tako.Errorf(403, …)`), while the mount renders it as a page through the
+app's `StatusPage`. Same rule, two audiences.
+
+This exposes an existing inconsistency: `Call` does not enforce
+`SignIn` either — a `SignIn` route called with an anonymous Ctx reaches
+`ctx.User()` and **panics**. AB1 fixes that in passing: `Call` on a
+`SignIn`-or-`Allow` route with no user returns a 401 error rather than
+panicking. Cheap, and it is the same seam.
+
+**`Status` gains one field**, which retires flauta's sentinel string:
+
+```go
+type Status struct {
+	Code      int
+	Path      string
+	RequestID string
+	Message   string
+	// Policy names the declared policy that refused this request —
+	// "Editors" — and is empty for every status tako answers on its
+	// own account, CSRF included. A 403 from your policy and a 403
+	// from a stale form are different problems with different
+	// remediations, and this is how a status page tells them apart.
+	Policy string
+}
+```
+
+**Error texts.** `tako.Deny(msg)` is the refusal constructor: it is a
+403 whose message is public by declaration, so a policy author is never
+tempted to hand `Status.Message` an internal error. A policy that returns
+a non-`Deny` error is a **500**, not a 403 — a store read that failed
+while deciding is not a decision — and the message is logged against the
+request id, never rendered:
+
+```
+tako: policy Editors: entity read failed: context deadline exceeded (request 9f3c…)
+```
+
+Analyzer, two new diagnostics with the house format:
+
+```
+app.go:118:41: Route.Allow needs a declared policy variable, not a function literal (tako/policy-var)
+app.go:118:41: Route.Allow and Route.Private cannot both be set: a policy needs a user, and an IAM-only route has none (tako/policy-private)
+```
+
+**Where the code goes.** `Policy`/`PolicyHandle`/`Deny` in a new root
+`policy.go`; `Route.Allow` in `config.go` beside `SignIn`; analyzer reads
+the var reference the way it already reads `SiteConfig.NotFound`; codegen
+emits `runtime.RequirePolicy("Editors", flauta.Editors)` as a third
+`HandlerOption` beside `RequireAuth()` and `CacheFor()`
+(`pkg/runtime/page.go:39-51`), refusing through the existing
+`writeStatus` (`page.go:257`); `Endpoint.Call` (`handlers.go:38`) gains
+the same check ahead of the transport lookup. The AppGraph gains
+`Route.Policy`, so `tako gen graph` and `--plan` print it.
+
+**The example that demands it.** `journal` — its write routes are
+owner-only and it checks ownership inside each handler today, which is
+flauta's shape at 1/10th the scale. Its `TestOwnershipAndRevocation`
+becomes a policy test, and the guide chapter gains the paragraph the
+framework was missing.
+
+**Gate (agent-side).** Golden: the two new analyzer errors at exact
+`file:line:col`; the AppGraph carrying the policy per route. Runtime: a
+policy refusal renders through the app's status page with `Policy` set,
+and CSRF's 403 with it empty. `Call`: denial as an error, and the 401
+that used to be a panic. Example suite green with `journal`'s ownership
+moved onto the route.
+
+---
+
+### AB2 — an app's real HTTP surface, in its own tests
+
+**The finding, and it is tako's, not flauta's.** Templates compile into
+the generated service, so a test that asserts real HTML has to mount the
+same handlers the generated main mounts. Nothing in tako offers that, so
+apps hand-mirror codegen:
+
+- flauta's `harness_test.go` is **874 lines** — 20 hand-written request
+  binders plus 66 `mux.Handle` lines re-typing what
+  `.tako/gen/flauta-web/main.go` already emits.
+- it drifted **three times in two milestones**: the media blob route
+  (M3-10), the status page (M3-12), and **four media write routes that
+  no test in the repo drove by any path** — found not by a failure but
+  by someone writing a guard (M4-04).
+- that guard, `harnessguard_test.go`, **regexes `app.go` against
+  `harness_test.go`**, and its own comment explains why it cannot read
+  the generated main instead: the file is gitignored and written only by
+  `tako dev`/`test`/`deploy`, so a guard that read it would silently
+  skip on a clean checkout.
+- mount **options** are mirrored by nothing at all. flauta verified this
+  by declaring `Route{MaxAge}` on a live route and watching the whole
+  suite stay green. `RequireAuth` drift is invisible the same way — and
+  after AB1, so is `RequirePolicy`.
+- **tako's own acceptance suite has the same 1,052-line file**
+  (`examples/journal/pages_test.go`), with `// {$}: exact root, as
+  codegen emits` written next to a hand-typed pattern. The framework
+  demonstrates the workaround in its own guide.
+
+**What ships.** One method, no new types:
+
+```go
+func TestTheAdminDoorIsAPage(t *testing.T) {
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())   // the generated mounts, exactly
+	defer srv.Close()
+
+	res, _ := http.Get(srv.URL + "/admin")
+	// 401 — through the app's own StatusPage, with its nav and something to click
+}
+```
+
+`app.Handler()` returns the `http.Handler` **codegen assembled**: every
+declared route with its generated binder, `RequireAuth`,
+`RequirePolicy`, `CacheFor`, the site handler last, the status page, the
+reserved `/_tako/` mux — and no dev bar. Fidelity is by construction
+rather than by a second implementation, which is the whole point: a
+harness that can disagree with codegen is the bug this closes.
+
+Everything the 874 lines do becomes those two lines, and
+`harnessguard_test.go` deletes.
+
+**How it is wired, and the one thing that needs the owner's call.**
+Generated code must stay in `.tako/gen/` (decision 3), and a `package
+main` file cannot be imported by the app's test. So `tako test` — which
+already analyzes and regenerates before running `go test`
+(`cmd/tako/main.go:206`) — generates one more file per service,
+`.tako/gen/<svc>/harness_test.go` declaring `package <app>`, and runs
+`go test -overlay` mapping it into the package directory. The file is
+real, human-readable, and lives where generated code lives; the overlay
+is what makes it visible to the compiler without writing into the source
+tree.
+
+The cost: **`go test ./...` alone cannot see it.** `CLAUDE.md` documents
+`go test ./...` as the command, and after this a test using
+`app.Handler()` fails under it:
+
+```
+tako: app.Handler needs the generated mounts, which `go test` cannot see.
+      Run `tako test` (it regenerates first) — or `tako test ./pkg/...`.
+```
+
+Two ways to go, and this is the decision to make at approval:
+
+- **(a) `tako test` becomes the documented command** — recommended. It
+  exists, it already refreshes generated code, and its output already
+  names what it regenerated. `CLAUDE.md`'s Commands block and the
+  testing reference change with it.
+- **(b) the harness is checked in** — no overlay, no new command story,
+  but generated code lands in the app's source tree and decision 3 has
+  to be widened. Cheaper today, and it makes a stale checked-in harness
+  the exact failure mode we are closing.
+
+**Gate (agent-side).** `journal`'s `pages_test.go` rewritten onto
+`app.Handler()` — the assertion is the diff: ~1,052 lines to under 200,
+with every existing test preserved and passing. A codegen golden for the
+harness file. A test that a route declared and **not** driven by the
+suite is still mounted (the four-routes bug, as a positive test). The
+unwired error text above, asserted verbatim.
+
+---
+
+### AB3a — a handler can see its client
+
+**The finding.** flauta's `docs/friction.md` has this as its #1 open
+entry, and it is the only one the owner flagged "worth asking for".
+`tako.Ctx` exposes no request, no headers, no `RemoteAddr`, so the
+contact form — the only unauthenticated write path in the product — caps
+submissions **site-wide at 30/hour** instead of per sender. flauta wrote
+the trade down rather than hiding it: one determined sender can lock the
+form for everybody.
+
+**What ships.** One method on `Ctx`, one struct:
+
+```go
+// Client is what tako can honestly say about who sent this request.
+type Client struct {
+	// IP is the caller's address as the platform reports it — the
+	// left-most entry of X-Forwarded-For behind Cloud Run, which
+	// appends rather than trusts. Empty in a worker, a cron, or a
+	// job: there is no client behind those.
+	IP string
+	// UserAgent is the raw header, unparsed.
+	UserAgent string
+}
+
+func (c Ctx) Client() Client   // on the interface, beside MaybeUser
+```
+
+Deliberately small. No country, no device class, no parsed browser —
+each of those is a guess dressed as a fact, and none has an app asking.
+`Client{}` in async handlers is the honest zero: a queue message has no
+client, and inventing the publisher's would be worse than nothing.
+
+Then flauta's own limiter becomes per-sender, in flauta, where the
+policy trade belongs.
+
+**AB3b — `Route{Limit: …}` is designed and blocked, deliberately.** A
+declared rate limit needs a counter shared across instances, and
+`tako.Cache` is per-instance in-memory even on GCP (`cache.go:11`). A
+limit of 5/hour enforced per instance is 100/hour at max=20 — a
+framework promise the framework would break, silently, in exactly the
+direction that matters. The honest options are a Datastore counter (a
+write per request, plus contention on a hot key) or Memorystore (a new
+provisioned resource and a VPC connector, which decision 8 keeps as a
+later explicit opt-in). That is a backend decision, not a patch, and it
+does not block AB3a: with `ctx.Client()` the app can implement the
+policy it wants over the store it already has.
+
+**Gate (agent-side).** Runtime: `Client()` populated from a request,
+zero in a worker/cron/job Ctx. A test that a spoofed `X-Forwarded-For`
+does not become the IP when a trusted hop is present. Conformance: the
+zero value is identical local and gcp. `hello` or `shortlink` grows a
+line that logs the client, so the guide has somewhere to show it.
+
+---
+
+### AB4 — an app can ask where it is running
+
+**The finding, and it is the one with a security edge.** `admin.go:85`:
+
+```go
+func deployed() bool { return os.Getenv("TAKO_BACKEND") == "gcp" }
+```
+
+`TAKO_BACKEND` is **tako's private boot switch** (`pkg/runtime/boot.go:30`),
+documented nowhere as app surface. flauta reads it at 5 call sites, and
+one of them is `editorAllowed`: two dev identities
+(`alice@example.test`, `bob@example.test`) are admitted to the admin
+**only when that string is not "gcp"**. An app's authorization rule
+depends on an undocumented framework env var, and three of flauta's
+tests `t.Setenv` it to simulate a deploy.
+
+Any app with a dev seam writes this function. `tako dev`'s own dev bar
+mints those identities, so the framework creates the need and then makes
+the app guess at the answer.
+
+**What ships.**
+
+```go
+// Env is where this process is running. It is a fact about the
+// deployment, never a feature flag: use it to decide what a DEV
+// affordance may do, not to change what the product is.
+type Env int
+
+const (
+	EnvLocal Env = iota   // tako dev, tako test, go test
+	EnvCloud              // deployed by tako deploy
+)
+
+func Environment() Env     // package-level: usable from a constructor
+func (e Env) String() string
+```
+
+flauta's five call sites become `tako.Environment() == tako.EnvCloud`,
+its `deployed()` deletes, and `t.Setenv("TAKO_BACKEND", "gcp")` in three
+test files becomes something a test can say out loud. The doc comment
+carries the warning that matters: an app that branches its *behaviour*
+on this has two products and tests one.
+
+**Why a function and not a `Ctx` method.** `editorAllowed` is pure and
+tested without a session; a constructor may want it too. `Ctx` already
+carries per-request facts, and this is not one.
+
+**Gate (agent-side).** `EnvLocal` under `NewTestApp` and `tako dev`,
+`EnvCloud` with `TAKO_BACKEND=gcp`, and a test pinning that an unknown
+value is `EnvLocal` rather than a third state. Docs: `reference/service.md`
+gains the paragraph, and the guide's local chapter says the sentence
+about not branching the product on it.
+
+---
+
+### What is NOT in this proposal
+
+Listed because a review that only proposes is not a review:
+
+- **A store-side audit stamp is refused.** flauta's `touchMedia` /
+  `stampMedia` split exists because an automatic stamp erased the
+  uploader on every background write — every processed image in the
+  library came out attributed to nobody (M3-08's walk). A store that
+  stamps fields the app did not set would ship that bug to every app.
+- **Versioned entities are refused.** The framework-shaped kernel inside
+  flauta's ~1,000 lines of revision code is optimistic concurrency
+  (AB5); the rest is what a CMS is, and decision 11 owns that.
+- **A user store, registration and roles wait for AB1.** flauta has no
+  user record at all — identity is Identity Platform's, authorization is
+  a `config.json` list, and adding an editor is a code edit plus a
+  deploy. That is the ask behind "registering users", and the enforcement
+  seam has to exist before the store is worth designing. One app's
+  requirements are not enough to shape it.
+- **Pagination furniture and capability links are parked** with the
+  trigger written down: a second app asking.

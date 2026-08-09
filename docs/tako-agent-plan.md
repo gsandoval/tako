@@ -716,6 +716,61 @@ example fell back to plain text. Fixed in that commit.
 has. The friction gate itself is met — eight open at the review, none
 blocking, none without an app-side answer, and five now closed.
 
+## Stage 13 — the abstraction review (2026-08-09) — AWAITING APPROVAL
+
+**Where this comes from.** The owner asked a different question from the
+four friction reviews: not "what did flauta hit" but "what has flauta
+*built* that a second tako app would build again". So this read went at
+flauta's 25,563 lines of Go (`flautas@2d23ca8`) looking for **shape
+repeated by construction**, and checked each candidate against this tree
+(`5e2ca3a`) and against settled decision 11 — *no admin/CMS primitives;
+an admin site is just a site.*
+
+The distinction that decides every row below: a construct is
+framework-shaped when it is about **how a tako app is wired** (routes,
+identity, stores, tests, environment) and app-shaped when it is about
+**what a CMS is** (sections, revisions, publish states, media libraries).
+Decision 11 bars the second list, and this review sustains it — the four
+promoted items are all in the first.
+
+| # | The construct | Evidence in flauta | Verdict |
+|---|---|---|---|
+| **AB1** | **Authorization is declared, not repeated** — `Route{Allow: policy}` | `requireEditor(ctx)` at **49 call sites in 12 files**, `renderNoAccess` at 48; the same four lines opening every admin handler | **promote — highest value** |
+| **AB2** | **An app's real HTTP surface in tests** — `app.Handler()` | `harness_test.go` is **874 lines** hand-mirroring codegen's binders and mounts; `harnessguard_test.go` regexes `app.go` against it because nothing else could; four write routes were tested by nothing at all until M4-04. tako's own `examples/journal/pages_test.go` is **1,052 lines** of the same | **promote — largest cost sink** |
+| **AB3a** | **A handler can see its client** — `ctx.Client()` | the log's #1 open entry; `contact.go` caps site-wide (30/h) because per-IP is inexpressible | **promote — small** |
+| **AB4** | **An app can ask where it is running** — `tako.Env` | `admin.go:85` `deployed()` reads `os.Getenv("TAKO_BACKEND")`, tako's private boot switch, at 5 call sites — and `editorAllowed` **authorizes on it** | **promote — small, safety** |
+| AB3b | A declared rate limit — `Route{Limit: …}` | same entry as AB3a | **designed, blocked**: honest enforcement needs a cross-instance counter, and `tako.Cache` is per-instance in-memory (`cache.go:11`) even on GCP. A backend decision, not a patch |
+| AB5 | Optimistic concurrency in the store — `UpdateIf` / `entity:"version"` | `guardedSave` (`autosave.go:33`) — a generic CAS the app had to write once and route six write paths through; a backlog entry notes a misspelled token field silently disables it | **second wave** — real, and it reshapes `EntityHandle`, so it is its own task after AB1/AB2 |
+| AB6 | Capability links — signed share URLs | `share.go`: mint/rotate/revoke/expire, ~100 lines | **park** — flauta needs revocation, so a stateless signed link does not cover it and a stored one is 100 lines it already understands. One app asking |
+| AB7 | Pagination view-model | `listing.go:149-190` `pageURL`/`pageLinks`/`perPage` | **park** — every list screen wants it, but it is view furniture and decision-11-adjacent. Promote when a second app asks |
+| AB8 | Audit fields stamped by the store | `touchArticle`/`touchPage`/`touchMedia` + a test policing stray `Updated =` | **refuse, and write down why** — flauta's `stampMedia` split exists *because* an automatic stamp erased the uploader on every background write (M3-08's walk). A store that stamps what the app did not set would ship that bug to everyone |
+| AB9 | Versioned entities — snapshots, restore, prune | `revision.go` + `history.go` + `autosave.go`, ~1,000 lines | **refuse** — the framework-shaped kernel inside it is AB5; the rest (causes, throttling, pinning, drift-vs-published) is what a CMS is, and decision 11 owns that |
+| AB10 | A user store, registration, roles | there is none: identity is Identity Platform's, authorization is `config.json`'s `editors` list, and adding an editor is a code edit plus a deploy | **AB1 is its floor** — do not build a user store before the enforcement seam exists. Revisit after AB1 with a second app's requirements in hand |
+
+**The ordering argument.** AB1 and AB2 are coupled and the coupling
+decides the order: a policy moved off the handler and onto the route is
+only enforced where the route is mounted, so **AB1 without AB2 would make
+authorization invisible to the fast test path**. AB1's proposal answers
+that inside AB1 — declared policies are enforced by `Endpoint.Call` as
+well as by the mount, because a policy is about the caller's identity and
+a cross-service call is exactly where a trust boundary is crossed — but
+AB2 is what lets an app assert the *whole* refusal (status, page, nav)
+rather than an error value.
+
+AB4 rides with AB1: the reason flauta authorizes on a private env var is
+that `editorAllowed` admits dev identities locally and must not deployed.
+That check is authorization, and it is currently reading a string tako
+never promised.
+
+**What this review deliberately does not propose.** Nothing that would
+make tako a CMS. No sections, no publish states, no media library, no
+editor screens, no revision store. Decision 11 was re-read against every
+row above and it holds: the four promoted constructs would each be worth
+shipping if flauta were a shop, a dashboard, or a docs site instead.
+
+Proposals: `task-log.md`, "AB1–AB4 — DX proposals". Gate: one per task,
+per the standing rules.
+
 ## Standing rules
 
 - **No gate skipping, no gate batching.** One feature, one gate. If the human

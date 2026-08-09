@@ -73,6 +73,7 @@
     func (EntityTx[T any]).Delete(id string) error
     func (EntityTx[T any]).Get(id string) (T, error)
     func (EntityTx[T any]).Put(entity T) error
+    func (Env).String() string
     func (PutPolicy).Headers() map[string]string
     func (StatusHandle).Declared() bool
     func (StatusHandle).Render(ctx Ctx, s Status) (HTML, error)
@@ -80,6 +81,8 @@
     func (context.Context).Done() <-chan struct{}
     func (context.Context).Err() error
     func (context.Context).Value(key any) any
+const EnvCloud Env
+const EnvLocal Env
 const ProfileBatch Profile
 const ProfileDefault Profile
 const ProfileLatency Profile
@@ -99,6 +102,7 @@ func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
 func CronFailed(cron Handler, times int, w ...Window) Condition
 func CronMissed(cron Handler, w ...Window) Condition
 func Entity[T any](name string) *EntityHandle[T]
+func Environment() Env
 func Errorf(status int, format string, args ...any) error
 func Histogram(name string) *HistogramHandle
 func IsNotFound(err error) bool
@@ -160,6 +164,7 @@ type EntityHandle[T any] struct{}
 type EntityPage[T any] struct{Items []T; Cursor string; More bool}
 type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
+type Env int
 type EventSource[T any] interface{eventSource(T); sourceName() string}
 type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; CPUAlwaysOn Toggle; StartupBoost Toggle}
 type HTML struct{}
