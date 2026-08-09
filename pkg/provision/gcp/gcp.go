@@ -223,6 +223,26 @@ func (c *Client) do(ctx context.Context, method, url string, in, out any) error 
 		if in != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
+		// Bill this call to the project tako was GIVEN, not to whatever
+		// project minted the credentials.
+		//
+		// Application Default Credentials from `gcloud auth
+		// application-default login` carry no quota project, so Google
+		// falls back to the project behind gcloud's own shared OAuth
+		// client — shared with every gcloud user on earth, and
+		// rate-limited accordingly. Reads are where that bites: a first
+		// `tako logs` after a deploy met HTTP 429 for a consumer that
+		// was not the target project, while `gcloud logging read`
+		// against the same project worked, because gcloud bills its own
+		// reads correctly. tako is told --project for everything else it
+		// does here; this is that same answer, in the header Google
+		// reads it from.
+		//
+		// It costs a permission — serviceusage.services.use on the
+		// target — which the deployer already needs for the preflight's
+		// enabled-API check and for provisioning service agents. A
+		// credential that cannot set this cannot have reached this code.
+		req.Header.Set("X-Goog-User-Project", c.Project)
 		res, err := c.HC.Do(req)
 		if err == nil {
 			raw, _ := io.ReadAll(res.Body)
@@ -328,6 +348,14 @@ func Classify(err error, project, verb, role string) error {
 	case ae.Status == http.StatusForbidden && (ae.Reason == "SERVICE_DISABLED" || strings.Contains(ae.Message, "API has not been used") || strings.Contains(ae.Message, "it is disabled")):
 		api := apiFromMessage(ae)
 		return fmt.Errorf("the %s API is disabled on %s — enable it: gcloud services enable %s --project %s", api, project, api, project)
+	case ae.Status == http.StatusForbidden && strings.Contains(ae.Message, "serviceusage.services.use"):
+		// Every call tako makes names the target project as the quota
+		// project, so reads are metered against it rather than against
+		// gcloud's shared OAuth client. That needs one permission, and
+		// this is what its absence looks like — worth its own text,
+		// because the denial names a service nobody asked tako to touch
+		// and reads like a bug in tako rather than a missing grant.
+		return fmt.Errorf("cannot bill API calls to %s — grant: gcloud projects add-iam-policy-binding %s --member user:$(gcloud config get account) --role roles/serviceusage.serviceUsageConsumer", project, project)
 	case ae.Status == http.StatusForbidden && strings.Contains(strings.ToLower(ae.Message), "policy"):
 		return fmt.Errorf("%s denied by your organization's policy — tako will not try to work around it (see docs/tako-cloud-permissions.md): %s", verb, ae.Message)
 	case ae.Status == http.StatusForbidden:

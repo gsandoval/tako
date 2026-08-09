@@ -66,6 +66,24 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/cloudscheduler.admin` | crons (C-async) |
 | `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
 | `roles/monitoring.notificationChannelEditor` | `tako.AlertEmail`/`AlertWebhook`/`AlertTopic` channels (Y1) |
+| `roles/serviceusage.serviceUsageConsumer` | bill tako's API calls to the target project, not to gcloud's shared client (FL19) |
+
+**On that last one.** Every call tako makes names `--project` as the
+quota project (`X-Goog-User-Project`). Without it, Application Default
+Credentials from `gcloud auth application-default login` carry no quota
+project at all, so Google meters the call against the project behind
+gcloud's own shared OAuth client — shared with every gcloud user on
+earth, and rate-limited accordingly. The first `tako logs` after a
+deploy met HTTP 429 for a consumer that was not the target project,
+while `gcloud logging read` against the same project worked, because
+gcloud bills its own reads correctly.
+
+Most deployers already have this: `serviceusage.services.use` is
+included in `serviceUsageViewer` (the preflight's enabled-API check)
+and in `serviceUsageAdmin` (service agents). It is listed separately
+because a deployer holding only the table's other roles would meet a
+403 naming a service nobody asked tako to touch; `Classify` gives that
+one its own text and the grant to run.
 
 Each C-task's preflight checks only the subset that task touches; the
 full bundle exists so a user can grant once and never think about it

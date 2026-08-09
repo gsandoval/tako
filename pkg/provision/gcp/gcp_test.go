@@ -39,6 +39,16 @@ func TestClassifyTaxonomy(t *testing.T) {
 			[]string{"you lack permission to create the run service", "add-iam-policy-binding my-proj", "--role roles/run.admin"},
 		},
 		{
+			// The one denial the quota-project header can introduce. It
+			// names a service nobody asked tako to touch, so without
+			// its own case it reads as a bug in tako rather than a
+			// grant the deployer is missing.
+			"cannot bill to the target project",
+			&apiError{Status: http.StatusForbidden,
+				Message: "Permission 'serviceusage.services.use' denied on resource '//cloudresourcemanager.googleapis.com/projects/my-proj'."},
+			[]string{"cannot bill API calls to my-proj", "roles/serviceusage.serviceUsageConsumer"},
+		},
+		{
 			"bad project",
 			&apiError{Status: http.StatusNotFound, Message: "Project 'my-proj' not found or deleted."},
 			[]string{`project "my-proj" not found`, "check the id"},

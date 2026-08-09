@@ -110,8 +110,9 @@ layout owns the bottom of the window moves or hides it with one rule.
 #tako-dev-bar { display: none }       /* or: bottom: 2.5rem */
 ```
 
-None of this reaches production: `WithDevBar` returns the handler
-untouched on any backend but `local`.
+None of this reaches production: the bar is injected only under the
+local backend, so a deployed service never renders it and the rule
+above is dead CSS in the cloud.
 
 ## Cloud
 

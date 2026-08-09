@@ -18497,3 +18497,311 @@ and the runtime, assigned at boot. It is the one structure in the tree
 a newcomer will find surprising, and it is load-bearing: it is how the
 SDK calls into a runtime it cannot import. Unpicking it is a design
 task, not a cleanup, and it stays on the fence's far side.
+
+## FL15–FL19 — DX proposals: the fourth friction review (2026-08-08) — AWAITING APPROVAL
+
+Five tasks from `docs/tako-agent-plan.md` Stage 12. Presented together
+because the owner asked for all of them; **each still ships behind its
+own gate**, and FL15 is the only one whose surface a v0.1.0 would
+freeze. Every finding below was re-verified against this tree at
+`7a40353` before it was written up.
+
+---
+
+### FL15 — a form may repeat a field
+
+**The finding holds.** `bindableTypes` (`pkg/analyzer/handlers.go:18`)
+holds exactly five entries; anything else fails `tako/bind-type` at
+`handlers.go:326`. `FormString` is `r.FormValue(name)`
+(`pkg/runtime/bind.go:92`), which returns the **first** value of a
+repeated field. So a group of checkboxes named alike — the native HTML
+shape of "select some rows" — loses N-1 of its values before the app
+runs, silently.
+
+**What ships.** `[]string` becomes bindable for `form:` and `query:`:
+
+```go
+type BulkArchive struct {
+	Selected []string `form:"selected"`
+	Reason   string   `form:"reason"`
+}
+```
+
+```html
+<input type="checkbox" name="selected" value="hello-world">
+<input type="checkbox" name="selected" value="second-post">
+```
+
+Two runtime helpers beside the existing ten:
+
+```go
+// FormStrings returns every value of the named form field (nil when
+// absent). A repeated field is the HTML shape of "select some rows".
+func FormStrings(r *http.Request, name string) []string {
+	_ = r.ParseForm()
+	return r.Form[name]
+}
+
+// QueryStrings returns every value of the named query parameter.
+func QueryStrings(r *http.Request, name string) []string {
+	return r.URL.Query()[name]
+}
+```
+
+Codegen needs one line: `helperName` (`pkg/codegen/codegen.go:469`)
+gains `"[]string": "Strings"`, and the emitter's existing
+`bind.Type == "string"` fast path — the one that assigns without an
+`err` check — extends to `[]string`, because neither can fail to parse.
+
+**`path:` does not get it.** A route segment is one value by
+construction; offering `[]string` there would be a shape the router can
+never produce.
+
+**Absent is `nil`, not empty.** A checkbox group with nothing ticked
+sends no field at all, so `nil` is the honest answer and `len(x) == 0`
+is the test either way.
+
+**The error text is unchanged.** A still-unbindable type keeps saying
+what it says today, with the list grown by one:
+
+```
+app.go:31:2: field Tags: form:-tagged fields must be string, []string, bool, int, int64, or float64; got []int (tako/bind-type)
+```
+
+**The example that demands it.** None of the five does today, which is
+why this task carries one: `shop` gains a bulk action on its product
+list — N checkboxes named alike, a submit, no JavaScript. That is the
+FL8 move, where the corpus was fixed rather than the note.
+
+**Why this one is pre-tag.** It changes what a Req struct may declare.
+Before v0.1.0 that is the v0 surface; after it, it is an API change
+against a published version.
+
+**Gate FL15 (agent-side).** Analyzer golden for the new binding and for
+the unchanged `bind-type` error on `[]int`; a codegen golden showing the
+emitted decode line; `shop`'s suite green with two boxes ticked, one
+ticked, and none; conformance untouched.
+
+---
+
+### FL16 — the dev server's readiness probe answers for the wrong process
+
+**The filed diagnosis is wrong, and the correction is the task.**
+flauta asked tako to "bind the listener before printing ready". `tako
+dev` never binds — the child does. `waitReady`
+(`pkg/devserver/devserver.go:342`) dials `127.0.0.1:PORT` and returns
+`nil` the instant **anything** accepts:
+
+```go
+conn, err := net.DialTimeout("tcp", "127.0.0.1:"+port, 100*time.Millisecond)
+if err == nil {
+	conn.Close()
+	return nil
+}
+```
+
+With a stale example holding 8080, that dial succeeds against the
+stranger, `ready in 590ms` (`devserver.go:214`) is printed truthfully
+about someone else's server, and the child's own good error arrives
+afterwards from `pkg/runtime/http.go:171`. The ordering flauta reported
+is a symptom; the probe is the defect.
+
+**tako had already written this down.** `http.go:168`:
+
+> A collision here answers requests with SOMEONE ELSE'S responses —
+> mysterious 404s. Name the fix.
+
+The readiness probe is that collision, from the other side.
+
+**What ships.** The probe proves it reached *this* child. `runtime.Serve`
+already answers under `/_tako/`; the dev server passes a per-run nonce
+in the child's environment (`TAKO_DEV_NONCE`), the runtime answers
+`GET /_tako/z/dev` with it under a local backend only, and `waitReady`
+accepts only a matching body. A foreign listener answers 404, the wrong
+body, or nothing — all three are "not mine".
+
+The child is also watched while waiting, so an exit during startup ends
+the wait immediately instead of at the 5s deadline.
+
+```
+$ tako dev
+  GET  /                      home
+  GET  /{year}/{slug}         post
+tako: port 8080 is answering, but not with this app — another process
+has it. Set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :8080`)
+```
+
+No `ready` line precedes it. The text names the distinction that
+matters: the port is not merely busy, it is busy with something that
+will answer your browser.
+
+**Not in scope.** Picking a free port automatically. A dev server that
+silently moves is a dev server whose URL you cannot predict, and every
+bookmark and OAuth redirect an app has is written against one port.
+
+**Gate FL16 (agent-side).** A devserver test that holds the port with a
+foreign listener and asserts the collision text, a non-zero exit, and
+that `ready` never appears; a second that kills the child mid-start and
+asserts the wait ends on the exit rather than the timeout.
+
+---
+
+### FL17 — a blob carries its headers, and so does a stylesheet
+
+**The finding holds, and the read found a second instance flauta could
+not see.** `BlobHandler` (`pkg/runtime/blob.go:20`) writes
+`Content-Type` and `Content-Length` (`blob.go:57-59`) and stops: no
+`X-Content-Type-Options`, no `Cache-Control`, no validator. A blob is
+the one response kind whose bytes came from outside the program.
+
+The second instance: `securityHeaders` (`pkg/runtime/status.go:141`) is
+the **only** writer of nosniff in the tree, and the site handler calls
+it inside an HTML-only branch (`pkg/runtime/site.go:174-176`):
+
+```go
+if strings.HasPrefix(ctype, "text/html") {
+	securityHeaders(h, false)
+}
+```
+
+Every `.css`, `.js` and `.svg` the site serves therefore goes out
+without nosniff — while `contentTypeOf`, fifty lines below, carries the
+comment *"nosniff is set — types must be right"* (`site.go:229-232`).
+An invariant asserted about exactly the files that do not hold it.
+
+**What ships.**
+
+1. `securityHeaders(h, false)` moves out of the HTML-only branch; every
+   file the site serves carries nosniff, and CSP/Referrer-Policy stay
+   HTML-only where they belong.
+2. `BlobHandler` sets nosniff unconditionally.
+3. `Route.MaxAge` reaches blob endpoints. **`BlobHandler` already takes
+   `...HandlerOption` and already builds a `handlerConf`** (`blob.go:21-24`)
+   — it simply never reads `conf.maxAge`. So this is `h.Set("Cache-Control",
+   cacheControl(conf.maxAge))` beside the Content-Type, sharing FL12's
+   renderer (`page.go:422`).
+
+```go
+var media = tako.API(tako.Route{
+	Method: "GET", Path: "/media/{key}", MaxAge: 86400,
+}, serveMedia)
+```
+
+**Freshness stays opt-in.** A blob route that declares no `MaxAge` gets
+`no-cache`, which is what every blob answers today by omission — so
+replace-in-place keeps working for apps that never asked for caching,
+and the ones that do ask get the header the version-in-URL pattern
+needs.
+
+**Gate FL17 (agent-side).** One table test, one row per response kind —
+page, fragment, HTML site file, non-HTML site file, blob, status,
+redirect — asserting the exact header set each carries. FL11 found four
+writers and three header sets by counting them by hand; this is the
+test that makes a fourth set impossible to add silently. Plus
+`gallery`'s photo endpoint declaring `MaxAge` and asserting it round
+trips.
+
+---
+
+### FL18 — the dev bar behaves
+
+Two friction entries, one task, both local-only and both invisible in
+production.
+
+**The findings hold.** The bar is built at `pkg/runtime/session.go:438`
+as a `<div style="position:fixed;bottom:0;…">` — inline styles, no id,
+no class. And `barWriter.flush` (`session.go:414`) branches on
+`b.html` alone, never on whether the response is a fragment, so an htmx
+swap carries a copy of the bar into whatever it swapped into.
+
+flauta's workaround is the tell: it finds the fixed-position child of
+`<body>` holding a `[name="dev_user"]` control, because there is
+nothing stable to target and an inline-style substring match would be a
+guess at something tako never promised.
+
+**What ships.**
+
+```html
+<div id="tako-dev-bar" style="position:fixed;bottom:0;…">
+```
+
+and injection is skipped for fragments. The runtime already knows one
+layer down — `securityHeaders(h, fragment)` at `page.go:359` branches
+on exactly that signal — so this is threading a bool that already
+exists, not a new concept.
+
+**An app may hide it, and that is supported.** `#tako-dev-bar
+{ display: none }` is now a thing an app can write and rely on, which
+is the whole ask: any app with its own fixed bottom bar hits this, and
+every one of them would otherwise guess at the same selector.
+
+**Not in scope.** A per-route opt-out. An id costs one attribute and
+covers the case; a route-level toggle is a declaration surface for a
+dev-only affordance, which is the wrong trade before a tag.
+
+**Gate FL18 (agent-side).** Under `tako dev`: a page response contains
+exactly one bar and it carries the id; a fragment response contains
+none; a non-HTML response is untouched. `shop`'s htmx suite green.
+
+---
+
+### FL19 — `tako logs` bills its reads to the project it was given
+
+**The finding holds.** Nothing in the tree sets a quota project:
+`Client.do` (`pkg/provision/gcp/gcp.go:205`) sets `Content-Type` and
+nothing else, so every Google API call is metered against whatever the
+ADC file carries. For a fresh `gcloud auth application-default login`
+that is the project behind gcloud's own shared OAuth client — shared
+with every gcloud user on earth, and rate-limited accordingly. flauta
+met HTTP 429 on its first deploy while `gcloud logging read` against
+the same project worked, because gcloud bills its own reads correctly.
+
+**The permission objection does not apply here, which makes this
+smaller than the plan entry assumed.** `x-goog-user-project` requires
+`serviceusage.services.use` on the target — and tako's deployer already
+requires `roles/serviceusage.serviceUsageViewer` for the preflight
+(`preflight.go:116`) and `serviceUsageAdmin` for service agents
+(`identity.go:41`). Both include it. A credential that cannot set the
+header cannot have reached this code path.
+
+**What ships.** One line in `do`, so it covers every API tako calls
+rather than Logging alone:
+
+```go
+// Bill this call to the project tako was given, not to whatever
+// project minted the ADC credentials — gcloud's default is a shared
+// OAuth client, and Logging reads against it are rate-limited across
+// every gcloud user on earth.
+req.Header.Set("x-goog-user-project", c.Project)
+```
+
+Plus one classification so the failure, if it ever comes, is not a bare
+403: `Classify` learns the `serviceusage.services.use` denial and names
+`roles/serviceusage.serviceUsageConsumer` as the remedy, in the same
+shape as the four already there.
+
+**Gate FL19 (agent-side).** `fake_test.go` asserts the header on a
+representative call from each host; a 403 carrying the serviceusage
+denial renders the classified text. Live confirmation belongs to the
+next release-cycle walk — the 429 needs a real fresh-ADC machine, which
+is exactly what a first-deploy walk is.
+
+---
+
+### What this asks for
+
+Approval to build FL15–FL19 as specified. They are independent: any
+subset can proceed. If only one does, make it FL15 — the other four
+are as fixable after a tag as before it.
+
+### Discovered work
+
+**16. `contentTypeOf`'s comment outlived its invariant**
+(`pkg/runtime/site.go:229-232`). FL17 makes the comment true rather
+than deleting it, but the class is worth a sweep: a comment asserting a
+security property is a claim under no test.
+
+**17. flauta's friction log index is stale** — its table lists six open
+entries and the file holds eight. A flauta-session job under its ADR
+0008; recorded here because tako read the file rather than the table,
+and a future review should do the same.

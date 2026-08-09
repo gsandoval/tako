@@ -36,6 +36,7 @@ type call struct {
 	Host   string
 	Path   string
 	Body   map[string]any
+	Quota  string // X-Goog-User-Project, the project this call is billed to
 }
 
 func newFakeAPI(t *testing.T) *fakeAPI {
@@ -45,7 +46,7 @@ func newFakeAPI(t *testing.T) *fakeAPI {
 		host, path, _ := strings.Cut(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
-		f.mu.calls = append(f.mu.calls, call{r.Method, host, "/" + path, body})
+		f.mu.calls = append(f.mu.calls, call{r.Method, host, "/" + path, body, r.Header.Get("X-Goog-User-Project")})
 
 		key := host + "/" + path
 		status := 200
@@ -536,4 +537,67 @@ func TestEveryCustomMethodPostIsClassified(t *testing.T) {
 		}
 	}
 	t.Logf("classified %d custom methods", len(seen))
+}
+
+// FL19: every call names the project it should be billed to.
+//
+// Application Default Credentials from `gcloud auth application-default
+// login` carry no quota project, so without this header Google meters
+// the call against the project behind gcloud's shared OAuth client —
+// shared with every gcloud user on earth. Reads are where it shows: a
+// first `tako logs` after a deploy answered HTTP 429 for a consumer
+// that was not the target project, while `gcloud logging read` against
+// the same project worked, because gcloud bills its own reads
+// correctly.
+//
+// Asserted across HOSTS rather than on one call, because the header is
+// set in do() for everything: a future call site that reached past do()
+// would be the way this silently comes back.
+func TestEveryCallIsBilledToTheTargetProject(t *testing.T) {
+	f := newFakeAPI(t)
+	c := f.client()
+	ctx := context.Background()
+
+	// One read and one write, at different hosts, through the paths a
+	// deploy actually takes.
+	if _, err := c.Logs(ctx, []string{"web"}, time.Hour, 10); err != nil {
+		t.Fatalf("logs: %v", err)
+	}
+	var out map[string]any
+	if err := c.do(ctx, http.MethodGet, c.url(runHost, "/v2/projects/p/locations/us-central1/services"), nil, &out); err != nil {
+		t.Fatalf("run list: %v", err)
+	}
+
+	if len(f.mu.calls) < 2 {
+		t.Fatalf("expected at least 2 calls, got %+v", f.mu.calls)
+	}
+	for _, got := range f.mu.calls {
+		if got.Quota != "p" {
+			t.Errorf("%s %s%s billed to %q, want the target project %q",
+				got.Method, got.Host, got.Path, got.Quota, "p")
+		}
+	}
+}
+
+// A 403 on the permission the header needs says what to grant. The
+// denial names a service nobody asked tako to touch, so unclassified it
+// reads as a bug in tako rather than a missing role.
+func TestTheQuotaProjectDenialNamesItsGrant(t *testing.T) {
+	f := newFakeAPI(t)
+	f.code[loggingHost] = http.StatusForbidden
+	f.reply[loggingHost] = map[string]any{"error": map[string]any{
+		"code":    403,
+		"message": "Permission 'serviceusage.services.use' denied on resource '//cloudresourcemanager.googleapis.com/projects/p'.",
+		"status":  "PERMISSION_DENIED",
+	}}
+
+	_, err := f.client().Logs(context.Background(), nil, time.Hour, 10)
+	if err == nil {
+		t.Fatal("a 403 answered as success")
+	}
+	for _, want := range []string{"cannot bill API calls to p", "serviceUsageConsumer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q\n  missing %q", err, want)
+		}
+	}
 }
