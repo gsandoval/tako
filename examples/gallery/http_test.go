@@ -48,6 +48,12 @@ func serve(t *testing.T) *httptest.Server {
 		req.ID = runtime.PathString(r, "id")
 		return req, nil
 	}))
+	// CacheFor mirrors what codegen emits for Thumb's Route{MaxAge}.
+	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(Thumb, func(r *http.Request) (ThumbReq, error) {
+		var req ThumbReq
+		req.ID = runtime.PathString(r, "id")
+		return req, nil
+	}, runtime.CacheFor(int((24 * time.Hour).Seconds()))))
 	mux.Handle("GET /api/objects", runtime.JSONHandler(Objects, nil))
 	mux.Handle("GET /api/photos", runtime.JSONHandler(List, func(r *http.Request) (ListReq, error) {
 		return ListReq{Cursor: runtime.QueryString(r, "cursor")}, nil
@@ -172,11 +178,40 @@ func TestUploadDownloadRoundtrip(t *testing.T) {
 	if imgCT := img.Header.Get("Content-Type"); imgCT != "image/png" {
 		t.Fatalf("content type = %q", imgCT)
 	}
+	// These bytes were uploaded by someone else and are handed back
+	// under a type this app recorded, so the browser must not go
+	// looking for a better answer than the one it was given.
+	if got := img.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("served image nosniff = %q", got)
+	}
+	// The original declares no MaxAge, so it answers no-cache — the
+	// posture every blob had before Route.MaxAge reached them.
+	if got := img.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("image cache-control = %q, want no-cache", got)
+	}
 
 	// Objects lists the original and (after the worker drains) its thumb —
 	// a real resized PNG now, not a copy.
 	if err := runtime.WaitIdle(10 * time.Second); err != nil {
 		t.Fatal(err)
+	}
+
+	// The thumbnail DOES declare MaxAge, and the header is the half the
+	// app cannot build itself: derived from bytes that never change,
+	// requested once per photo per scroll.
+	thumbRes, err := srv.Client().Get(srv.URL + "/api/photos/" + p.ID + "/thumb")
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumbRes.Body.Close()
+	if thumbRes.StatusCode != 200 {
+		t.Fatalf("thumb = %d", thumbRes.StatusCode)
+	}
+	if got := thumbRes.Header.Get("Cache-Control"); got != "public, max-age=86400" {
+		t.Fatalf("thumb cache-control = %q, want public, max-age=86400", got)
+	}
+	if got := thumbRes.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("thumb nosniff = %q", got)
 	}
 	objRes, err := srv.Client().Get(srv.URL + "/api/objects")
 	if err != nil {

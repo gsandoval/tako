@@ -54,10 +54,22 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		if ct == "" {
 			ct = "application/octet-stream"
 		}
-		w.Header().Set("Content-Type", ct)
+		h := w.Header()
+		h.Set("Content-Type", ct)
 		if blob.Size >= 0 {
-			w.Header().Set("Content-Length", strconv.FormatInt(blob.Size, 10))
+			h.Set("Content-Length", strconv.FormatInt(blob.Size, 10))
 		}
+		// A blob is the one response whose BYTES came from outside the
+		// program — an upload, usually, stored and handed back. That
+		// makes the declared type a claim about someone else's data,
+		// and nosniff is what stops a browser from going looking for a
+		// better answer than the one it was given.
+		h.Set("X-Content-Type-Options", "nosniff")
+		// Route.MaxAge, the same field pages read. A blob route that
+		// declares none answers no-cache, which is what every blob
+		// answered by omission before this — so nothing starts being
+		// cached that was not asked to be.
+		h.Set("Cache-Control", cacheControl(conf.maxAge))
 		if blob.Reader != nil {
 			_, _ = io.Copy(w, blob.Reader)
 			if c, ok := blob.Reader.(io.Closer); ok {

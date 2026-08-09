@@ -389,7 +389,10 @@ import (
 		if h.RequiresAuth {
 			auth = ", runtime.RequireAuth()"
 		}
-		if h.MaxAge > 0 && h.Kind == "page" {
+		// Pages and blobs read MaxAge; a JSON handler does not yet, and
+		// passing it there would generate a line that says something
+		// the runtime ignores.
+		if h.MaxAge > 0 && (h.Kind == "page" || h.ResBlob) {
 			auth += fmt.Sprintf(", runtime.CacheFor(%d)", h.MaxAge)
 		}
 		fmt.Fprintf(&b, "\t// %s\n", analyzer.HandlerLine(h))

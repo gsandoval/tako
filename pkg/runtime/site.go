@@ -171,6 +171,14 @@ func (s *siteServer) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	ctype := contentTypeOf(p)
 	h.Set("Content-Type", ctype)
+	// nosniff on EVERY file, not only the HTML ones. contentTypeOf maps
+	// a fixed table of extensions and this header is what makes that
+	// mapping binding — a browser that sniffs past a declared type is
+	// exactly what the table exists to prevent, and a stylesheet or a
+	// script is as worth pinning as a document. CSP and Referrer-Policy
+	// stay HTML-only: they describe a document's privileges, and a
+	// stylesheet has none.
+	h.Set("X-Content-Type-Options", "nosniff")
 	if strings.HasPrefix(ctype, "text/html") {
 		securityHeaders(h, false)
 	}
@@ -224,9 +232,15 @@ func (s *siteServer) etag(p string, file fs.File) (string, error) {
 	return tag, nil
 }
 
-// contentTypeOf maps the common web extensions; the stdlib mime table
-// covers the rest via http.ServeContent-style sniffing being avoided
-// (nosniff is set — types must be right).
+// contentTypeOf maps the common web extensions. Every response this
+// file writes carries nosniff, so the browser takes the answer given
+// here and does not go looking for a better one — which makes this
+// table binding rather than advisory, and a wrong row a served file
+// the browser refuses rather than one it guesses about.
+//
+// That was not true until FL17: nosniff was set only on the HTML
+// branch, so this comment described an invariant the code did not
+// hold for the .css and .js it mostly serves.
 func contentTypeOf(p string) string {
 	switch strings.ToLower(path.Ext(p)) {
 	case ".html", ".htm":

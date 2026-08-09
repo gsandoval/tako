@@ -35,6 +35,29 @@ func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 }
 ```
 
+### The headers a blob answers with
+
+`Content-Type` from the blob, `Content-Length` when the size is known,
+and `X-Content-Type-Options: nosniff` always — a blob is the one
+response whose bytes came from outside the program, so the declared
+type is a claim about someone else's data and the browser must not go
+looking past it.
+
+Caching is opt-in per route, the same `MaxAge` a page declares. Without
+it a blob answers `no-cache`:
+
+```go
+// Derived from bytes that never change, and requested once per photo
+// per scroll — so it says how long a shared cache may keep it.
+var Thumb = tako.API("GET /api/photos/{id}/thumb", thumb,
+    tako.Route{MaxAge: 24 * time.Hour})
+```
+
+Pair a long `MaxAge` with a URL that changes when the bytes do. If a
+stored object is ever replaced **in place** under a URL that stays the
+same, leave `MaxAge` off: the failure is a stale image under a
+published page, with no error anywhere to notice.
+
 For large files, skip the service entirely: `SignedPut` returns a URL
 the browser PUTs to directly — no 32MB request cap, no proxying —
 constrained by `PutPolicy.MaxSize` and `PutPolicy.ContentType` (trailing wildcard

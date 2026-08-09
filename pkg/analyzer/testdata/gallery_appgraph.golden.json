@@ -92,9 +92,9 @@
         ]
       ],
       "composite_sources": [
-        "app.go:384 readyPhotos",
-        "app.go:404 readyPage",
-        "app.go:404 readyPage"
+        "app.go:389 readyPhotos",
+        "app.go:409 readyPage",
+        "app.go:409 readyPage"
       ],
       "pos": "app.go:22:2"
     },
@@ -183,7 +183,7 @@
       "package": "gallery",
       "channel_kind": "email",
       "target": "ops@example.com",
-      "pos": "app.go:113:2"
+      "pos": "app.go:118:2"
     },
     {
       "kind": "alert",
@@ -205,7 +205,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:116:2"
+      "pos": "app.go:121:2"
     },
     {
       "kind": "alert",
@@ -224,7 +224,7 @@
       "channels": [
         "gallery.oncall"
       ],
-      "pos": "app.go:121:2"
+      "pos": "app.go:126:2"
     }
   ],
   "handlers": [
@@ -310,6 +310,7 @@
       "package": "gallery",
       "service": "gallery",
       "route": "GET /api/photos/{id}/thumb",
+      "max_age": 86400,
       "req_type": "ThumbReq",
       "req_ref": "gallery.ThumbReq",
       "res_ref": "tako.Blob",
@@ -322,7 +323,7 @@
         }
       ],
       "res_blob": true,
-      "pos": "app.go:74:2"
+      "pos": "app.go:79:2"
     },
     {
       "kind": "api",
@@ -341,7 +342,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:75:2"
+      "pos": "app.go:80:2"
     },
     {
       "kind": "api",
@@ -351,7 +352,7 @@
       "route": "GET /api/objects",
       "req_ref": "struct{}",
       "res_ref": "[]tako.ObjectInfo",
-      "pos": "app.go:76:2"
+      "pos": "app.go:81:2"
     },
     {
       "kind": "api",
@@ -361,7 +362,7 @@
       "route": "POST /api/reindex",
       "req_ref": "struct{}",
       "res_ref": "gallery.ReindexRes",
-      "pos": "app.go:77:2"
+      "pos": "app.go:82:2"
     },
     {
       "kind": "api",
@@ -371,7 +372,7 @@
       "route": "GET /api/reindex/runs",
       "req_ref": "struct{}",
       "res_ref": "[]gallery.ReindexRun",
-      "pos": "app.go:78:2"
+      "pos": "app.go:83:2"
     },
     {
       "kind": "api",
@@ -408,7 +409,7 @@
           "type": "string"
         }
       ],
-      "pos": "app.go:87:2"
+      "pos": "app.go:92:2"
     },
     {
       "kind": "subscribe",
@@ -417,7 +418,7 @@
       "service": "gallery-onuploaded",
       "binding": "photos.Uploaded",
       "binding_kind": "bucket",
-      "pos": "app.go:91:2"
+      "pos": "app.go:96:2"
     },
     {
       "kind": "worker",
@@ -431,7 +432,7 @@
         "max_instances": 5
       },
       "binding": "thumbnails",
-      "pos": "app.go:95:2"
+      "pos": "app.go:100:2"
     },
     {
       "kind": "subscribe",
@@ -440,7 +441,7 @@
       "service": "gallery-notifyowner",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:100:2"
+      "pos": "app.go:105:2"
     },
     {
       "kind": "subscribe",
@@ -449,7 +450,7 @@
       "service": "gallery-warmfeed",
       "binding": "photo-ready",
       "binding_kind": "topic",
-      "pos": "app.go:101:2"
+      "pos": "app.go:106:2"
     },
     {
       "kind": "cron",
@@ -458,7 +459,7 @@
       "service": "gallery",
       "schedule": "every 24h",
       "singleflight": true,
-      "pos": "app.go:102:2"
+      "pos": "app.go:107:2"
     }
   ],
   "edges": [

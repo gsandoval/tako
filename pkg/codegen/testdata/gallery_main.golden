@@ -45,37 +45,37 @@ func main() {
 	// GET /api/photos/{id}/image → Image (app.go:73)
 	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(gallery.Image, decodeImage))
 
-	// GET /api/photos/{id}/thumb → Thumb (app.go:74)
-	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb))
+	// GET /api/photos/{id}/thumb → Thumb (app.go:79)
+	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(gallery.Thumb, decodeThumb, runtime.CacheFor(86400)))
 
-	// GET /api/photos → List (app.go:75)
+	// GET /api/photos → List (app.go:80)
 	mux.Handle("GET /api/photos", runtime.JSONHandler(gallery.List, decodeList))
 
-	// GET /api/objects → Objects (app.go:76)
+	// GET /api/objects → Objects (app.go:81)
 	mux.Handle("GET /api/objects", runtime.JSONHandler(gallery.Objects, nil))
 
-	// POST /api/reindex → Reindex (app.go:77)
+	// POST /api/reindex → Reindex (app.go:82)
 	mux.Handle("POST /api/reindex", runtime.JSONHandler(gallery.Reindex, nil))
 
-	// GET /api/reindex/runs → ReindexRuns (app.go:78)
+	// GET /api/reindex/runs → ReindexRuns (app.go:83)
 	mux.Handle("GET /api/reindex/runs", runtime.JSONHandler(gallery.ReindexRuns, nil))
 
-	// GET /{owner}/{album}/{photo}/{size} → Permalink (app.go:87)
+	// GET /{owner}/{album}/{photo}/{size} → Permalink (app.go:92)
 	mux.Handle("GET /{owner}/{album}/{photo}/{size}", runtime.JSONHandler(gallery.Permalink, decodePermalink))
 
-	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:91) — local mode runs the subscriber in-process
+	// subscriber OnUploaded ← bucket photos.Uploaded (app.go:96) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("OnUploaded", gallery.OnUploaded)
 
-	// worker MakeThumb ← queue thumbnails (app.go:95) — local mode runs the worker in-process
+	// worker MakeThumb ← queue thumbnails (app.go:100) — local mode runs the worker in-process
 	runtime.RegisterWorker("MakeThumb", gallery.MakeThumb)
 
-	// subscriber NotifyOwner ← topic photo-ready (app.go:100) — local mode runs the subscriber in-process
+	// subscriber NotifyOwner ← topic photo-ready (app.go:105) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("NotifyOwner", gallery.NotifyOwner)
 
-	// subscriber WarmFeed ← topic photo-ready (app.go:101) — local mode runs the subscriber in-process
+	// subscriber WarmFeed ← topic photo-ready (app.go:106) — local mode runs the subscriber in-process
 	runtime.RegisterSubscriber("WarmFeed", gallery.WarmFeed)
 
-	// cron Cleanup — every 24h (singleflight) (app.go:102) — runs in this service on its schedule
+	// cron Cleanup — every 24h (singleflight) (app.go:107) — runs in this service on its schedule
 	runtime.RegisterCron("Cleanup", gallery.Cleanup)
 
 	runtime.Serve(runtime.Reserved(takoMux, mux))

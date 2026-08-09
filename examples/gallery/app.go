@@ -71,7 +71,12 @@ var (
 	StartUpload = tako.API("POST /api/uploads", startUpload)
 	Download    = tako.API("GET /api/photos/{id}/download", download)
 	Image       = tako.API("GET /api/photos/{id}/image", serveImage)
-	Thumb       = tako.API("GET /api/photos/{id}/thumb", thumb)
+	// A thumbnail is derived from bytes that never change, keyed by the
+	// photo's id, so it is the most cacheable thing this app serves —
+	// and the feed asks for one per photo per scroll. MaxAge on a blob
+	// route is the same field a page declares (FL12, FL17); without it
+	// every thumbnail is refetched in full, forever.
+	Thumb       = tako.API("GET /api/photos/{id}/thumb", thumb, tako.Route{MaxAge: 24 * time.Hour})
 	List        = tako.API("GET /api/photos", list)
 	Objects     = tako.API("GET /api/objects", objects)
 	Reindex     = tako.API("POST /api/reindex", reindex)

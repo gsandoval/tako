@@ -191,7 +191,11 @@ func siteHandler() *httptest.Server {
 ```
 
 Assert the header contract: `Cache-Control: no-cache` plus ETag on
-HTML, `public, max-age=31536000, immutable` on fingerprinted assets.
+HTML, `public, max-age=31536000, immutable` on fingerprinted assets,
+and `X-Content-Type-Options: nosniff` on **every** file — a stylesheet
+and a script are as worth pinning to their declared type as a
+document. CSP and `Referrer-Policy` stay on HTML only: they describe a
+document's privileges, and a stylesheet has none.
 
 ## Errors you'll meet
 
