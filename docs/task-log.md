@@ -20225,8 +20225,9 @@ Stage 3 amendment.
 
 ### Discovered work
 
-**33. Only journal was converted.** gallery, shop, shortlink, siren and
-blog still hand-mount their harnesses and still pass — the change is
+**33. CLOSED by the rollout (`5400cfc`). Only journal was converted.**
+gallery, shop, shortlink, siren and blog still hand-mounted their
+harnesses and still passed — the change is
 opt-in per app, which is right for shipping it, and leaves five examples
 demonstrating the workaround in a repo that now has the answer. Convert
 them when each is next touched.
@@ -20400,3 +20401,73 @@ Scripted walk: `validate/devloop.md`.
 directly**, a workaround for 35 that is no longer needed. Left as-is
 because the step also proves the generated service works when run by
 hand, which is worth keeping; it should gain a `tako dev` variant.
+
+## AB2 rollout — every example (2026-08-09)
+
+Commit `5400cfc`, closing item 33. gallery, shop, blog and hello join
+journal on `app.Handler()`; siren has no HTTP tests and shortlink
+already used it. **155 lines of hand-mirrored mounts and binders
+deleted.**
+
+### What the mirror was hiding
+
+Two more instances of the drift AB2 was built for, found by converting:
+
+- **gallery's harness never mounted `POST /api/reindex` or
+  `GET /api/reindex/runs`** — declared, deployed, driven by no test.
+- **shop's never mounted `GET /api/me`**, and called `SessionHandler()`
+  with no providers, so its tests ran against a shop with **no password
+  door** while the deployed one has one. (Half of that was already noted
+  as item 28; the missing route was not.)
+
+### Two defects in AB2 itself
+
+Both invisible until an app with **buckets** and an app with **jobs**
+went through the door, which is the argument for rolling a change like
+this out rather than shipping it once against one example:
+
+1. **`SignedURLHandler` read `booted`** — the app `runtime.BootLocal`
+   sets — so under `app.Handler()` it answered the gcp phase-pointer
+   501. Worse, with another test's `BootLocal` earlier in the same run
+   it verified against THAT app's signing key and answered `invalid
+   signature`. It resolves the signer and bucket store off the wired
+   backends now.
+2. **`runtime.WaitIdle` was a no-op** when `NewTestApp` booted the app:
+   it returned nil immediately, so three tests believed they had a
+   barrier and had none. It waits on the wired dispatcher now, and with
+   nothing local wired it returns an error naming `app.DrainQueues()`
+   rather than quietly succeeding.
+
+The second is the more dangerous shape and the one worth remembering: a
+barrier that silently does not wait leaves a test passing most of the
+time.
+
+### What stays hand-mounted, deliberately
+
+gallery's two `http.NotFoundHandler()` mounts (a runtime-contract test
+that a bucket's signed endpoint and a four-segment wildcard can share a
+service on separate muxes), journal's three undeclared routes through
+`serveWith`, and gallery's dead-letter suites — which boot their own dir
+because they glob it, and therefore register their own async handlers.
+
+### One difference worth stating
+
+`NewTestApp` does not read `.env`; `BootLocal` does. gallery's harness
+now calls `app.SetSecret("notifier-key", …)`, which is what the panic
+text already told people to do. That is the right default — a test says
+what it depends on — but it is a real conversion step for any app whose
+handlers read a secret.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven examples green under `tako
+test`. Scripted walk: `validate/harness.md` steps 7–8.
+
+### Discovered work
+
+**38. `runtime.BootLocal` and `tako.NewTestApp` are two boots with
+different behaviour**, and an app can now meet both in one package: the
+first reads `.env` and sets `runtime.booted`, the second does neither.
+Two fixes went in for symptoms of it today (the signer, the barrier).
+Worth a look at whether `NewTestApp` should simply set `booted` too, or
+whether `booted` should stop existing.
