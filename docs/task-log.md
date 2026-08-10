@@ -20039,8 +20039,8 @@ batched per the Stage 3 amendment.
 
 ### Discovered work
 
-**27. The analyzer does not catch two declared routes that Go's mux
-refuses to order.** `POST /moderate/people/{id}` beside `POST
+**27. FIXED (`cf7ee64`). The analyzer did not catch two declared routes
+that Go's mux refuses to order.** `POST /moderate/people/{id}` beside `POST
 /moderate/{id}/retract` is a startup panic, and it was found by running
 the example's tests rather than by analysis — `tako/site-shadow` covers
 the site handler, and nothing covers route-vs-route. The app-side fix
@@ -20267,8 +20267,8 @@ request fact, and `Endpoint.Call` has no request.
 
 ### Discovered work — and one of these is serious
 
-**35. `tako dev` is broken for any app without auth, buckets or crons —
-including `hello`.**
+**35. FIXED (`cf7ee64`). `tako dev` was broken for any app without auth,
+buckets or crons — including `hello`.**
 
 The readiness probe (FL16) GETs `/_tako/dev` and compares a per-run
 nonce. That route is only mounted when the generated main builds the
@@ -20318,8 +20318,85 @@ here and worth scheduling first**; it is a one-line codegen change plus
 a probe that distinguishes 404 from a nonce mismatch, with a devserver
 test per case.
 
-**36. The live walk had to run the built binary directly** because of 35
+**36. CLOSED by 35's fix — the live walk had to run the built binary
+directly** because of it
 — `go build ./.tako/gen/shortlink && PORT=8118 ./shortlink`. That is a
 fine fallback and it is written into `validate/policies.md` step 23, but
 it is a workaround for a tako defect and should be reverted to `tako
 dev` once 35 is fixed.
+
+## 35 and 27 — fixed (2026-08-09)
+
+Commit `cf7ee64`. Both were found by walking rather than by testing, and
+both are now tested.
+
+### 35 — the dev loop kept killing its own child
+
+Two faults compounding, and only fixing both is a fix:
+
+1. **The readiness answer lived in `runtime.Reserved`**, which codegen
+   wraps only around a service declaring auth, a bucket or a cron.
+   `hello`'s main is `runtime.Serve(mux)`, so the child could not
+   identify itself **on any path**. It is answered by `Serve` now: being
+   able to say "I am the child you started" is a property of serving,
+   not of what the app declared.
+2. **`waitReady` read a 404 as proof of a stranger** — and `probe`
+   folded every non-200 into the same empty string, so the three
+   distinguishable cases were one. Now: 200 with another nonce is
+   another dev loop, reported at once; a 404 colours the timeout message
+   and never outranks the child's exit, which is what a real collision
+   actually looks like.
+
+The error text changed for the weaker case, because the old one could
+not be followed: it said to free the port, and tako had already released
+it, so `lsof` came back empty.
+
+**A correction to this log's own evidence.** The transcript filed with
+item 35 curled `/_tako/dev`; the route is `/_tako/z/dev`, so that column
+would have read 404 whatever the child did. The finding never rested on
+it — `answerDevReady` was unreachable without `Reserved`, which
+`hello`'s main does not call — and the before/after is the proof:
+`tako dev` on `hello` failed, and now prints `ready in 905ms` and
+serves. The entry has been corrected rather than quietly improved.
+
+### 27 — the router's refusals are analysis errors
+
+The check **registers the declared patterns on a real
+`http.ServeMux`** and turns the panic into a diagnostic, rather than
+restating Go's precedence rules. A reimplementation would be a second
+rulebook to keep in step with the standard library's, and the two would
+disagree exactly once, quietly, years from now.
+
+`muxPattern` moved to `analyzer.MuxPattern` so the string that is
+checked is the string that is mounted — checking one and mounting
+another is a check of nothing.
+
+The fixture reports the exact pair that panicked while AB10b's
+moderation screen was being written, and stays silent on
+`GET /admin/new` beside `GET /admin/{slug}` — a literal beats a
+wildcard, and refusing that would break the trick every app uses.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root; all seven examples green under `tako
+test`. New tests: a bare service answers the probe
+(`pkg/runtime/reserved_test.go`), the three probe verdicts and the
+child's-exit precedence (`pkg/devserver/devserver_test.go`), and the
+analyzer golden `testdata/errors/routeconflict`.
+
+Live: `tako dev` on `hello`, which could not run at all this morning.
+
+```
+ready in 905ms — watching (backends: local, in-process)
+GET /hello        → 200
+GET /_tako/z/dev  → 200  deed38ccec635bdedeb83afcd68ad7b3
+```
+
+Scripted walk: `validate/devloop.md`.
+
+### Discovered work
+
+**37. `validate/policies.md` step 23 still runs the built binary
+directly**, a workaround for 35 that is no longer needed. Left as-is
+because the step also proves the generated service works when run by
+hand, which is worth keeping; it should gain a `tako dev` variant.
