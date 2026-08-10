@@ -20471,3 +20471,34 @@ first reads `.env` and sets `runtime.booted`, the second does neither.
 Two fixes went in for symptoms of it today (the signer, the barrier).
 Worth a look at whether `NewTestApp` should simply set `booted` too, or
 whether `booted` should stop existing.
+
+## Audit after the AB2 rollout (2026-08-09)
+
+Asked what was missing, and the answer was four things a passing suite
+does not catch — three of them user-facing text, one an ergonomics
+regression. Fixed in `f0d1e4a`; recorded because "the tests are green"
+was true the whole time.
+
+- **`tako dev` printed the generated test harness** in the line above
+  `ready`. A run command should not mention test artifacts.
+- **The freshness note said "regenerated: harness was stale"** — it
+  derived the service name from the changed file's parent directory,
+  and the harness sits one level deeper than the main.
+- **Stale comments**: shop kept its old "mirrors the generated main"
+  line above the new one; journal's file header still described a
+  harness that mirrors codegen "like gallery's http_test.go" — pointing
+  at a file that had also just changed.
+- **Stale guide text**: blog's chapter said tests register templates
+  straight from `site/static` so `go test` needs no Hugo. The site is
+  the declared one now, and the command is `tako test`.
+
+### Discovered work
+
+**39. shop's harness reads a gitignored build output.** The generated
+harness mounts the declared site, and shop's is `./web/dist` — an
+esbuild artifact that `.gitignore` excludes. Verified harmless today
+(moved `dist` away and shop's suite still passes, because its tests are
+API-only), but it is silent: the first page-rendering test someone adds
+to shop will fail on a fresh clone for a reason that has nothing to do
+with their test. Either `tako test` should run the site Build the way
+`tako dev` does, or the harness should say what it did not find.
