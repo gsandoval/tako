@@ -131,3 +131,43 @@ was a real difference between the tested app and the deployed one:
 The last two are the argument for rolling this out rather than shipping
 it once: both were defects in AB2 itself, and both were invisible until
 an app with buckets and an app with jobs went through the door.
+
+---
+
+## 9. A fresh clone has the site the harness mounts
+
+The harness mounts the DECLARED site directory. For a site with
+`SiteConfig.Build` that directory is a build output, and every example
+that has one gitignores it — so this is the state of a clone that has
+never run anything.
+
+```
+cd examples/blog && rm -rf site/public && tako test -count=1
+cd examples/shop && rm -rf web/dist   && tako test -count=1
+```
+
+**Expect** a `⛅ site …` line before `generating`, and green. Before
+this, blog failed with `the site has no templates/ directory` — a
+message about the checkout dressed as a broken app.
+
+**Expect also** that the message, when it is genuinely right, names no
+path the app does not have: it says `templates/layout.html inside the
+declared site directory`, not `web/templates/layout.html`.
+
+---
+
+## 10. A request through the harness is counted
+
+`app.Handler()` serves through the same middleware the deployed service
+does, and that middleware records `requests` and `request_ms`. It read a
+copy of the metrics backend that only `runtime.BootLocal` filled in, so
+under `NewTestApp` every request through the harness recorded into nil.
+
+```
+go test ./pkg/runtime -run RecordsRequests -v
+```
+
+**Expect** both `TestALocalBootRecordsRequests` and
+`TestATestAppBootRecordsRequests` green. They boot each way that can be
+booted and then make a real request, which is the only shape a future
+boot path cannot pass by accident.

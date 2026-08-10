@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/build"
 	"github.com/gsandoval/tako/pkg/codegen"
 	"github.com/gsandoval/tako/pkg/devserver"
 )
@@ -24,7 +25,8 @@ const usage = `tako — a Go framework over Google Cloud Run
 Local — nothing outside this directory is touched:
   tako dev [--chaos]   run the app locally with reload (--chaos: seeded
                        duplicate/reordered deliveries)
-  tako test [args]     analyze, refresh generated code, then go test ./...
+  tako test [args]     analyze, refresh generated code and site builds,
+                       then go test ./...
   tako gen graph [--json | --mermaid]
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
@@ -216,6 +218,21 @@ func runTest(args []string) error {
 	}
 	summary := devserver.CountLine(graph)
 	fmt.Printf("  analyzing   %s\n", summary)
+
+	// The frontend build, exactly as `tako dev` and `tako deploy` run it.
+	//
+	// The generated harness mounts the DECLARED site directory, and a
+	// declared site with a WithBuild is a build OUTPUT — gitignored, in
+	// every example that has one. So a fresh clone had no site under a
+	// test, and blog's page tests failed with "the site has no templates/
+	// directory": a real failure, about the checkout, wearing the costume
+	// of a broken app. Tests run against the site the app actually
+	// serves, which means building it here too.
+	if err := build.Sites(dir, graph, func(format string, args ...any) {
+		fmt.Printf("  "+format+"\n", args...)
+	}); err != nil {
+		return err
+	}
 
 	prior := map[string][]byte{}
 	for _, svc := range graph.Services {

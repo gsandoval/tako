@@ -52,7 +52,6 @@ func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
 func Serve(h net/http.Handler)
 func SessionHandler(providers ...string) net/http.Handler
 func SetQueueRate(queue string, perSec int)
-func SetRequestMetrics(m github.com/gsandoval/tako/pkg/backends.Metrics)
 func SignInPage(providers ...string) net/http.Handler
 func SignOutHandler() net/http.Handler
 func SignedURLHandler() net/http.Handler

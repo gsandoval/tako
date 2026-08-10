@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/gsandoval/tako/internal/hooks"
 )
 
 type recordedMetrics struct {
@@ -29,8 +31,12 @@ func (m *recordedMetrics) Observe(_ context.Context, name string, labels map[str
 func serveThrough(t *testing.T, mux *http.ServeMux, method, path string) *recordedMetrics {
 	t.Helper()
 	m := &recordedMetrics{}
-	SetRequestMetrics(m)
-	t.Cleanup(func() { SetRequestMetrics(nil) })
+	// The sink is the WIRED metrics backend, so a test that wants to see
+	// what was recorded wires its own — the same seam a boot uses, which
+	// is what keeps "nothing wired it" from being invisible here.
+	prior := hooks.Metrics
+	hooks.Metrics = m
+	t.Cleanup(func() { hooks.Metrics = prior })
 	rec := httptest.NewRecorder()
 	logRequests(mux).ServeHTTP(rec, httptest.NewRequest(method, path, nil))
 	return m
@@ -100,7 +106,9 @@ func TestStatusIsBucketedIntoClasses(t *testing.T) {
 // Recording must never be why a handler fails: an unwired sink is the
 // normal state in tests and in any embedding that skips boot.
 func TestRecordingWithNoSinkIsSafe(t *testing.T) {
-	SetRequestMetrics(nil)
+	prior := hooks.Metrics
+	hooks.Metrics = nil
+	t.Cleanup(func() { hooks.Metrics = prior })
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /x", func(w http.ResponseWriter, r *http.Request) {})
 	rec := httptest.NewRecorder()

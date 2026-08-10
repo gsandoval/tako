@@ -9,7 +9,8 @@ confirmation ladder, flag resolution, errors, and honest limits.
 ```
 tako dev [--chaos]       run the app locally with reload (--chaos: seeded
                          duplicate/reordered deliveries)
-tako test [args]         analyze, refresh generated code, then go test ./...
+tako test [args]         analyze, refresh generated code and site builds,
+                         then go test ./...
 tako gen graph [--json | --mermaid]
 tako gen client ts [--out <path>]
 tako alerts [name] [--env prod]
@@ -34,7 +35,11 @@ flag — a flag that must always be passed is a flag that should not
 exist. It listens on `127.0.0.1` only.
 
 `tako test` never runs against stale generated code — it regenerates
-first and calls out drift (`regenerated: shop was stale`). Bare
+first and calls out drift (`regenerated: shop was stale`). It runs
+declared site builds first too, for the same reason: the harness
+mounts the declared site directory, and for a site with
+`SiteConfig.Build` that directory is a build output nobody commits.
+Bare
 `tako gen` prints the gen namespace (one line per generator), not the
 full usage.
 

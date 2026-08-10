@@ -773,27 +773,27 @@ shipping if flauta were a shop, a dashboard, or a docs site instead.
 Proposals: `task-log.md`, "AB1–AB4 — DX proposals". Gate: one per task,
 per the standing rules.
 
-**Status (2026-08-09).** **Every promoted item is shipped** — AB1, AB2,
+**Status (2026-08-10).** **Every promoted item is shipped** — AB1, AB2,
 AB3a, AB4 and AB10a–d, eight slices, each with its own gate and walk.
-The review's parked and refused rows are unchanged and still argued
-above.
+AB10 is closed: roles, accounts, local password sign-in and the two
+account events. The review's parked and refused rows are unchanged and
+still argued above.
 
-**What the walks turned up, worst first:** `tako dev` is broken for any
-app without auth, buckets or crons — including `hello`, Gate G0's app —
-because the readiness route is mounted conditionally and the probe reads
-a 404 as a foreign listener (task-log item 35). Nothing tests it, and
-every recently-walked app declares auth. It should go before anything
-else here.
+**What the walks turned up is fixed.** `tako dev` was broken for any app
+without auth, buckets or crons — including `hello`, Gate G0's app —
+because the readiness route was mounted conditionally and the probe read
+a 404 as a foreign listener (item 35, fixed with item 27, the
+route-conflict analyzer rule). AB2 then rolled through every example,
+which is what turned the rest up.
 
-AB10 is closed — roles, accounts, local
-password sign-in and the two account events, four slices and four
-gates. AB1 and AB4 are shipped and validated —
-outcome, transcripts and three discovered items in `task-log.md` under
-"AB1 + AB4 — shipped". AB2 is approved in shape (the overlay wiring) and
-unbuilt; AB3a is unscheduled. AB2 got a third piece of evidence while
-AB1 was built: the moderation desk's two mounts had to be hand-typed
-into journal's harness to match codegen, and a drift there would have
-passed every moderation test against a door that was not mounted.
+**Everything AB2 found has been closed** (`task-log.md`, "39 and 38"):
+the tested app and the deployed one differed in the signed-URL endpoint,
+in a queue barrier that silently did not wait, and in a metrics sink
+that every harness request recorded into nil — all three the same cause,
+a second notion of "which local app is live", now removed. `tako test`
+also runs declared site builds, because the harness mounts the declared
+site directory and blog's page tests failed on any clone that had never
+built one.
 
 ## Standing rules
 

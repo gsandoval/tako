@@ -100,7 +100,10 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 
 	entries, err := fs.ReadDir(fsys, "templates")
 	if err != nil {
-		siteSetupError = errors.New("the site has no templates/ directory — site.Render needs web/templates/layout.html plus one file per page")
+		// Not "web/templates/…": the site directory is whatever tako.Site
+		// was given, and naming a path this app may not have sends the
+		// reader looking for the wrong thing.
+		siteSetupError = errors.New("the site has no templates/ directory — site.Render needs templates/layout.html inside the declared site directory, plus one file per page")
 		return
 	}
 	// layout.html is OPTIONAL: a site whose shell comes from a static

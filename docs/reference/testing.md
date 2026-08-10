@@ -186,10 +186,12 @@ that share a secret name across parallel apps share that value.
 ## Cloud
 
 Nothing. `NewTestApp` never authenticates, never reaches the network,
-and does not need a project. `tako test` runs analysis, refreshes
-generated code so a stale checkout can't pass, maps in the generated
-test harness, and then runs `go test ./...`; every example's suite is
-green against the local backends on every commit.
+and does not need a project. `tako test` runs analysis, runs any
+declared site build (`SiteConfig.Build`) so the site under test is the
+site that ships, refreshes generated code so a stale checkout can't
+pass, maps in the generated test harness, and then runs `go test
+./...`; every example's suite is green against the local backends on
+every commit.
 
 The local/cloud agreement is held by a different mechanism: the
 [conformance suite](../../pkg/backends/conformance), which runs the

@@ -20472,6 +20472,9 @@ Two fixes went in for symptoms of it today (the signer, the barrier).
 Worth a look at whether `NewTestApp` should simply set `booted` too, or
 whether `booted` should stop existing.
 
+*(Fixed below — there was a third symptom still live: the request
+metrics sink.)*
+
 ## Audit after the AB2 rollout (2026-08-09)
 
 Asked what was missing, and the answer was four things a passing suite
@@ -20502,3 +20505,149 @@ API-only), but it is silent: the first page-rendering test someone adds
 to shop will fail on a fresh clone for a reason that has nothing to do
 with their test. Either `tako test` should run the site Build the way
 `tako dev` does, or the harness should say what it did not find.
+
+*(Fixed below — and it was not latent: blog's page tests already failed
+on a fresh clone.)*
+
+## 39 and 38 — the two boots, and the site nobody built (2026-08-10)
+
+Both filed items, both about the same thing from different ends: a
+second copy of something the app already has one of. 39 is a site
+directory that only some commands produce; 38 is a "which local app is
+live" that only some boots set.
+
+### 39 — the site under test is the site that ships
+
+**It was not latent.** The item said shop's risk was theoretical
+because its tests are API-only. blog's are not:
+
+```
+$ cd examples/blog && mv site/public /tmp/blog-public-backup && tako test
+tako test · blog
+  analyzing   1 service, 2 endpoints, 1 site
+  generating  .tako/gen/blog/main.go
+  harness     1 package(s) — app.Handler() serves the real mounts
+  go test -overlay=…/blog/.tako/gen/overlay.json ./...
+ERROR page error req=ea89cd err="the site has no templates/ directory —
+  site.Render needs web/templates/layout.html plus one file per page"
+--- FAIL: TestIslandRoundTrip (0.01s)
+    comments_test.go:70: fragment = 500, csrf input present = false
+--- FAIL: TestCSRFAndPathJudgments (0.01s)
+FAIL	blog	0.343s
+```
+
+So the repo had an example whose suite passed only because the working
+copy had been built at some point. That is the "green the whole time"
+failure the last audit was about, one layer down.
+
+**Shipped: `tako test` runs declared site builds**, exactly as `tako
+dev` and `tako deploy` do. The tested app is the app that ships, which
+is AB2's whole premise; a harness that mounts a directory no test
+command produces was AB2 half-applied.
+
+```
+$ cd examples/blog && rm -rf site/public && tako test -count=1
+tako test · blog
+  analyzing   1 service, 2 endpoints, 1 site
+  ⛅ site      cd site && hugo --minify → site/public (7 files)
+  generating  .tako/gen/blog/main.go
+  harness     1 package(s) — app.Handler() serves the real mounts
+ok  	blog	0.295s
+
+$ cd examples/shop && rm -rf web/dist && tako test -count=1
+  ⛅ site      cd web && npx --yes esbuild … → web/dist (2 files)
+ok  	shop	1.464s
+```
+
+**The guard, because this is a four-call-sites problem.** `runDeploy`,
+`runBuild`, `session.cycle` and now `runTest` each have to remember —
+and `tako test` is proof that "each one remembers" does not hold.
+`cmd/tako/site_build_test.go` reads all four and fails if one stops
+calling `build.Sites`. Mutation-checked by deleting the call:
+
+```
+--- FAIL: TestEveryCommandThatAssemblesTheAppBuildsItsSites
+    site_build_test.go:40: runTest (main.go) never calls build.Sites —
+    an app whose site is generated serves an empty one there, and a
+    fresh clone has no site at all
+```
+
+**The error text that sent people to the wrong place.** The message
+above names `web/templates/layout.html`. blog's site is `site/public`;
+there is no `web/` anywhere in it. Now it says `templates/layout.html
+inside the declared site directory` — the FS reaching
+`RegisterSiteTemplates` is an embed in the deployed service, so there
+is no real path to print, and a made-up one is worse than none.
+
+### 38 — one live app, not two
+
+`runtime.booted` was set only by `BootLocal`, and read as though it
+meant "the local app that is running". `tako.NewTestApp` boots through
+the same `internal/boot` and sets nothing there, so under the harness
+that variable is either nil or points at a DIFFERENT app — and it was
+preferred over the wired backends when both existed.
+
+Three defects came from it. Two were found in the AB2 rollout (the
+signer, the barrier) and fixed one at a time, at their call sites. The
+third was still live and is the reason to fix the cause instead:
+
+**Every request through `app.Handler()` recorded into a nil metrics
+sink.** `SetRequestMetrics` was a second copy of `hooks.Metrics` that
+each boot path had to remember to make. The slice originally shipped
+with the call missing everywhere — fixed by adding it twice, once per
+boot path, plus a test that read the source to check both. Then
+`NewTestApp` arrived as a third boot, knew nothing about it, and the
+harness served into nil again. Same defect, same cause, one slice
+later; the source-reading test could not see it, because it only knew
+about the two boots that existed when it was written.
+
+**Shipped:**
+
+- The duplicate is gone. `recordRequest` reads `hooks.Metrics` — one
+  wiring, read where it is used, so there is no call for a fourth boot
+  path to forget. `SetRequestMetrics` is removed from `pkg/runtime`'s
+  surface (runtime lock updated; codegen never emitted it).
+- `booted` → `owned`, documented as what it actually is: the app THIS
+  package opened, kept so a second `BootLocal` can close the first. Not
+  "the app that is running".
+- `WaitIdle` and `SetQueueRate` resolve through one `localQueue()` —
+  the wired dispatcher, and only that.
+- The source-reading test is replaced by two that BOOT: `BootLocal` and
+  `tako.NewTestApp`, each followed by a real request through the
+  middleware, asserted against the wired backend's own `OnMetric`. A
+  test that injects its own dependency can never notice a missing
+  injection; these cannot be passed by accident by a boot path that
+  does not exist yet. `BootGCP` cannot be booted, so its wiring is
+  still read from source — now for `hooks.Metrics = `, the assignment
+  that actually matters.
+
+Mutation-checked by restoring the old shape (a package var filled at
+`BootLocal` time):
+
+```
+--- FAIL: TestATestAppBootRecordsRequests
+    boot_metrics_test.go:45: requests never reached the wired sink —
+    the per-endpoint alerts over it are dead
+    boot_metrics_test.go:45: request_ms never reached the wired sink —
+```
+
+`TestALocalBootRecordsRequests` stayed green under that mutation, which
+is exactly the asymmetry that let the defect live.
+
+### What did NOT change, deliberately
+
+- **`NewTestApp` still does not read `.env`.** A test says what it
+  depends on (`app.SetSecret`). That difference is a feature and is
+  documented as one.
+- **`hooks.CronSkipped` is still local-boot only.** It is a console
+  line for `tako dev`; silence in a test is not a fidelity gap.
+- **Rate limits still do not apply under `NewTestApp`.** `SetQueueRate`
+  is emitted only into generated mains, never the harness, and tests
+  exercise the retry contract rather than production pacing.
+
+### Gate (agent-side)
+
+`go test ./...` green at the root. All seven examples green under `tako
+test`, including blog and shop with their site outputs deleted first.
+Scripted walk: `validate/harness.md` steps 9–10, both added here and
+run.

@@ -17,7 +17,18 @@ import (
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
-var booted *boot.App
+// owned is the local app THIS package booted, kept for exactly one
+// reason: a second BootLocal has to close the first one's store.
+//
+// It is NOT "the app that is running". tako.NewTestApp boots through
+// internal/boot too and sets nothing here, so a package that meets both
+// boots has one of them invisible to this variable — and every question
+// about the LIVE backends is answered by the wired hooks instead. Three
+// defects came from getting that backwards: the signed-URL endpoint
+// verified against the wrong app's key, WaitIdle waited on a dispatcher
+// no longer wired (a barrier that silently did not wait), and the
+// request metrics sink stayed nil under NewTestApp.
+var owned *boot.App
 
 // metricsFlush is how often buffered metrics ship. Cloud Monitoring
 // accepts one point per series per 10s, and a minute is the granularity
@@ -123,11 +134,6 @@ func BootGCP() error {
 		// recordings the final in-flight requests made.
 		hooks.OnShutdown(metrics.Close)
 	}
-	// The per-endpoint metrics the middleware records go to the same sink
-	// a handler's own tako.Count would. Wiring it here rather than inside
-	// http.go is what makes "every service exports requests and
-	// request_ms" true of deployed services and not only of tests.
-	SetRequestMetrics(hooks.Metrics)
 	// Leases are objects in the framework bucket — the real §4.4
 	// mechanism, shared with the deploy lease.
 	hooks.Lease = gcpb.NewLeaseStore(c)
@@ -156,9 +162,9 @@ func BootGCP() error {
 // directly with a temp dir until tako.NewTestApp lands (F7); calling it
 // again closes the previously booted store first.
 func BootLocal(dir string) error {
-	if booted != nil {
-		_ = booted.Close()
-		booted = nil
+	if owned != nil {
+		_ = owned.Close()
+		owned = nil
 	}
 	// Signed URLs point back at this service's own /_tako/signed/
 	// endpoint; the signing key persists under dir so URLs survive
@@ -192,9 +198,8 @@ func BootLocal(dir string) error {
 		attachChaosConsole(app.Dispatcher)
 		fmt.Printf("☢ chaos: enabled (seed %d) — deliveries may duplicate, reorder, redeliver\n", seed)
 	}
-	booted = app
+	owned = app
 	hooks.CronSkipped = narrateCronSkip
-	SetRequestMetrics(hooks.Metrics)
 	return nil
 }
 
@@ -225,31 +230,37 @@ func checkSecrets() error {
 	return nil
 }
 
+// localQueue is the wired dispatcher when the wired queue is a local
+// one — the single answer to "which local app is live", used by
+// everything here that acts on it.
+func localQueue() (*local.QueueDispatcher, bool) {
+	d, ok := hooks.Queue.(*local.QueueDispatcher)
+	return d, ok
+}
+
 // WaitIdle blocks until local queues drain (every published message has
 // acked or dead-lettered).
 //
-// It waits on whichever dispatcher is WIRED, not on the one this package
-// happened to boot. Reading `booted` alone made it a no-op under
-// tako.NewTestApp — it returned nil immediately, so a test that thought
-// it had a barrier had none and asserted against work that had not
-// happened yet. A barrier that silently does not wait is worse than no
-// barrier, because the test still passes most of the time.
+// It waits on whichever dispatcher is WIRED, and only on that one.
+// Preferring `owned` made it a no-op under tako.NewTestApp — it returned
+// nil immediately, so a test that thought it had a barrier had none and
+// asserted against work that had not happened yet. A barrier that
+// silently does not wait is worse than no barrier, because the test
+// still passes most of the time.
 //
 // With nothing local wired at all it says so rather than returning nil:
 // on gcp there are no local queues to drain, and a test asking for this
 // there is asking the wrong question.
 func WaitIdle(timeout time.Duration) error {
-	if booted != nil {
-		return booted.Dispatcher.WaitIdle(timeout)
+	d, ok := localQueue()
+	if !ok {
+		return errors.New("tako: WaitIdle has no local dispatcher to wait on — it is for local runs and tests; with tako.NewTestApp use app.DrainQueues()")
 	}
-	if d, ok := hooks.Queue.(*local.QueueDispatcher); ok {
-		return d.WaitIdle(timeout)
-	}
-	return errors.New("tako: WaitIdle has no local dispatcher to wait on — it is for local runs and tests; with tako.NewTestApp use app.DrainQueues()")
+	return d.WaitIdle(timeout)
 }
 
 // SignedURLHandler serves the local signed-URL endpoint
-// (/_tako/signed/<token>) against the booted backends. Generated mains
+// (/_tako/signed/<token>) against the wired backends. Generated mains
 // mount it when the app declares a bucket — on every backend, so on
 // gcp (no local boot) it serves the C5 phase pointer instead of
 // panicking: signBlob-backed signed URLs are C5's slice, and the
@@ -258,7 +269,7 @@ func SignedURLHandler() http.Handler {
 	// Resolved per request, off the WIRED backends rather than off the
 	// app this package happens to have booted.
 	//
-	// It used to read `booted`, which only runtime.BootLocal sets — so
+	// It used to read `owned`, which only runtime.BootLocal sets — so
 	// under tako.NewTestApp (which boots through internal/boot) the
 	// endpoint answered the gcp phase-pointer 501, or, if another test
 	// had called BootLocal first, verified against THAT app's signing
@@ -278,10 +289,10 @@ func SignedURLHandler() http.Handler {
 
 // SetQueueRate mirrors a WithRateLimit queue's dispatch cap onto the
 // local dispatcher (T3). In the cloud the cap lives in the Cloud Tasks
-// queue itself, so this is a no-op when nothing local is booted.
+// queue itself, so this is a no-op when nothing local is wired.
 func SetQueueRate(queue string, perSec int) {
-	if booted != nil {
-		booted.Dispatcher.SetRate(queue, perSec)
+	if d, ok := localQueue(); ok {
+		d.SetRate(queue, perSec)
 	}
 }
 

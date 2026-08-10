@@ -414,8 +414,10 @@ func TestSignedUploadPipeline(t *testing.T) {
 		t.Fatalf("signed put = %d %s", status, body)
 	}
 
-	// The app's barrier, not runtime.WaitIdle: that one waits on the app
-	// runtime.BootLocal booted, and NewTestApp booted this one.
+	// The app's own barrier. runtime.WaitIdle waits on whichever
+	// dispatcher is wired, so it would work here too — but a test says
+	// "wait for MY app", and app.DrainQueues is the only spelling that
+	// cannot mean a different one.
 	app.DrainQueues()
 	ctx := runtime.NewCtx(t.Context())
 	p, err := photoStore.Get(ctx, ticket.Photo.ID)

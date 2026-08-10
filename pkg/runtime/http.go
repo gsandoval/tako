@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gsandoval/tako/pkg/backends"
 	"io"
 	"net/http"
 	"os"
@@ -17,6 +16,7 @@ import (
 	"time"
 
 	tako "github.com/gsandoval/tako"
+	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/metrics"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
@@ -228,13 +228,6 @@ const (
 	LatencyMetric  = metrics.RequestMsName
 )
 
-// requestMetrics is the sink, wired by boot. Nil in tests that do not
-// care, because recording must never be the reason a handler fails.
-var requestMetrics backends.Metrics
-
-// SetRequestMetrics wires the per-endpoint sink.
-func SetRequestMetrics(m backends.Metrics) { requestMetrics = m }
-
 // recordRequest counts the request and times it, labelled by the ROUTE
 // PATTERN rather than the path.
 //
@@ -243,8 +236,19 @@ func SetRequestMetrics(m backends.Metrics) { requestMetrics = m }
 // would be one series per photo and would bankrupt the metric. Go 1.22's
 // ServeMux reports the matched pattern, so this is the framework's own
 // knowledge rather than a guess.
+// The sink is whichever metrics backend is WIRED, read per request. It
+// used to be a second copy of it, injected by a SetRequestMetrics call
+// each boot path had to remember — and the slice shipped with the call
+// missing, so every deployed request recorded into nil. That was fixed by
+// adding the call twice; then tako.NewTestApp arrived, booted the
+// backends without it, and the harness served requests into nil again.
+// A duplicate that every new boot path must re-copy is the defect, so
+// there is no duplicate now: one wiring, read where it is used. Nil
+// before any boot, because recording must never be the reason a handler
+// fails.
 func recordRequest(r *http.Request, rl *routeLabel, status int, took time.Duration) {
-	if requestMetrics == nil {
+	sink := hooks.Metrics
+	if sink == nil {
 		return
 	}
 	route := r.Pattern
@@ -260,8 +264,8 @@ func recordRequest(r *http.Request, rl *routeLabel, status int, took time.Durati
 		metrics.LabelRoute:  route,
 		metrics.LabelStatus: metrics.StatusClass(status),
 	}
-	requestMetrics.Add(r.Context(), RequestsMetric, labels, 1)
-	requestMetrics.Observe(r.Context(), LatencyMetric,
+	sink.Add(r.Context(), RequestsMetric, labels, 1)
+	sink.Observe(r.Context(), LatencyMetric,
 		map[string]string{metrics.LabelRoute: route}, float64(took.Milliseconds()))
 }
 

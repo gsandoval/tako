@@ -46,9 +46,11 @@ with everything else.
 
 Fragment templates live in `site/static/templates/` — Hugo copies
 them into `public/templates/`, and `templates/` is the one subtree a
-tako Site never serves raw. One build feeds both worlds: the site the
-tests serve is the declared one, read from `site/static` — so `tako
-test` never needs Hugo installed.
+tako Site never serves raw. One build feeds both worlds, and the site
+the tests serve is the declared one: `site/public`, Hugo's output. So
+`tako test` runs Hugo first, the same way `tako dev` and `tako deploy`
+do — the site under test is the site that ships, and a checkout that
+has never built (`site/public` is gitignored) is not a failing test.
 
 A site without `templates/layout.html` is fine — the shell belongs
 to Hugo. Only `site.Render` (full pages) needs a layout, and it says
