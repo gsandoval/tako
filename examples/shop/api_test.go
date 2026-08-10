@@ -27,47 +27,20 @@ import (
 
 // serveAPI mirrors the generated main: session routes + JSONHandler
 // per endpoint, decode functions written the way codegen writes them.
+// serveAPI is the app's real HTTP surface (AB2): every declared route
+// with the binder codegen generates for it, the session endpoint from
+// the app's own tako.Auth declaration, and the job's local execution
+// path — all of it assembled by the emitter that builds the deployed
+// service.
+//
+// The hand-mirrored version it replaced had already drifted twice: it
+// mounted no GET /api/me at all, and it called SessionHandler() with no
+// providers, so shop's tests ran against a shop with no password door
+// while the deployed one has one.
 func serveAPI(t *testing.T) *httptest.Server {
 	t.Helper()
-	if err := runtime.BootLocal(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	mux := http.NewServeMux()
-	// "email", as codegen emits from tako.AuthConfig{Password: true}:
-	// the declaration is what decides which doors exist, and a harness
-	// that forgot it would test a shop with no password sign-in at all.
-	mux.Handle("/_tako/api/session", runtime.SessionHandler("email"))
-	mux.Handle("GET /api/products", runtime.JSONHandler(ListProducts, nil))
-	mux.Handle("GET /api/products/{id}", runtime.JSONHandler(GetProduct, func(r *http.Request) (GetProductReq, error) {
-		return GetProductReq{ID: runtime.PathString(r, "id")}, nil
-	}))
-	mux.Handle("POST /api/products", runtime.JSONHandler(AddProduct, func(r *http.Request) (AddProductReq, error) {
-		var req AddProductReq
-		err := runtime.DecodeJSON(r, &req)
-		return req, err
-	}, runtime.RequireAuth()))
-	mux.Handle("POST /api/orders", runtime.JSONHandler(PlaceOrder, func(r *http.Request) (PlaceOrderReq, error) {
-		var req PlaceOrderReq
-		err := runtime.DecodeJSON(r, &req)
-		return req, err
-	}, runtime.RequireAuth()))
-	mux.Handle("GET /api/orders", runtime.JSONHandler(ListOrders, nil, runtime.RequireAuth()))
-	// Public: the browser asks who it is, and the shop answers with what
-	// it knows about them.
-	mux.Handle("GET /api/me", runtime.JSONHandler(Me, nil))
-	mux.Handle("POST /api/settle", runtime.JSONHandler(StartSettle, func(r *http.Request) (SettleReq, error) {
-		var req SettleReq
-		err := runtime.DecodeJSON(r, &req)
-		return req, err
-	}, runtime.RequireAuth()))
-	// The job's local execution path, exactly as the generated main
-	// wires it.
-	runtime.RegisterJob("Settle", Settle)
-	// And the account-event subscriber, the same way. Without it the
-	// customer record is never opened here, and the harness would be
-	// testing a shop the deploy does not build.
-	runtime.RegisterSubscriber("OnRegistered", OnRegistered)
-	srv := httptest.NewServer(mux)
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }

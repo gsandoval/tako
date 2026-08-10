@@ -25,70 +25,32 @@ import (
 	"github.com/gsandoval/tako/pkg/runtime"
 )
 
-// serve mirrors the generated main: BootLocal (which reads .env in this
-// dir), async registration, the routes, and the signed endpoint.
-func serve(t *testing.T) *httptest.Server {
+// serve is the app's real HTTP surface (AB2): the generated mounts, the
+// generated binders, the signed-URL endpoint, and every declared route.
+//
+// It replaced 60 lines that hand-mirrored codegen — and the mirror was
+// already two routes short: POST /api/reindex and GET /api/reindex/runs
+// were declared, deployed, and driven by no test here, because nobody
+// noticed they had never been added.
+//
+// The app comes back with the server because async work needs a
+// barrier, and under NewTestApp that barrier is the app's.
+func serve(t *testing.T) (*tako.TestApp, *httptest.Server) {
 	t.Helper()
-	if err := runtime.BootLocal(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	registerHandlers(t)
-	mux := http.NewServeMux()
-	mux.Handle("POST /api/photos", runtime.JSONHandler(Upload, func(r *http.Request) (UploadReq, error) {
-		var req UploadReq
-		var err error
-		req.Caption = runtime.FormString(r, "caption")
-		if req.Img, err = runtime.FormBlob(r, "img"); err != nil {
-			return req, err
-		}
-		return req, nil
-	}))
-	mux.Handle("GET /api/photos/{id}/image", runtime.BlobHandler(Image, func(r *http.Request) (ImageReq, error) {
-		var req ImageReq
-		req.ID = runtime.PathString(r, "id")
-		return req, nil
-	}))
-	// CacheFor mirrors what codegen emits for Thumb's Route{MaxAge}.
-	mux.Handle("GET /api/photos/{id}/thumb", runtime.BlobHandler(Thumb, func(r *http.Request) (ThumbReq, error) {
-		var req ThumbReq
-		req.ID = runtime.PathString(r, "id")
-		return req, nil
-	}, runtime.CacheFor(int((24 * time.Hour).Seconds()))))
-	mux.Handle("GET /api/objects", runtime.JSONHandler(Objects, nil))
-	mux.Handle("GET /api/photos", runtime.JSONHandler(List, func(r *http.Request) (ListReq, error) {
-		return ListReq{Cursor: runtime.QueryString(r, "cursor")}, nil
-	}))
-	mux.Handle("POST /api/uploads", runtime.JSONHandler(StartUpload, func(r *http.Request) (StartUploadReq, error) {
-		var req StartUploadReq
-		if err := runtime.DecodeJSON(r, &req); err != nil {
-			return req, err
-		}
-		return req, nil
-	}))
-	mux.Handle("GET /api/photos/{id}/download", runtime.JSONHandler(Download, func(r *http.Request) (DownloadReq, error) {
-		var req DownloadReq
-		req.ID = runtime.PathString(r, "id")
-		return req, nil
-	}))
-	mux.Handle("GET /{owner}/{album}/{photo}/{size}", runtime.JSONHandler(Permalink, func(r *http.Request) (PermalinkReq, error) {
-		return PermalinkReq{
-			Owner: runtime.PathString(r, "owner"),
-			Album: runtime.PathString(r, "album"),
-			Photo: runtime.PathString(r, "photo"),
-			Size:  runtime.PathString(r, "size"),
-		}, nil
-	}))
-	// Two muxes, as codegen emits them. The signed-URL mount and the
-	// permalink above cannot share one: a method-less subtree beside a
-	// four-segment wildcard is the pair Go refuses to order.
-	takoMux := http.NewServeMux()
-	takoMux.Handle("/_tako/api/signed/", runtime.SignedURLHandler())
-	srv := httptest.NewServer(runtime.Reserved(takoMux, mux))
+	app := tako.NewTestApp(t)
+	// BootLocal read .env; NewTestApp does not, deliberately — a test
+	// says what it depends on. NotifyOwner reads this one, and the
+	// subscriber runs on the same app.
+	app.SetSecret("notifier-key", "nk_test_123")
+	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
-	return srv
+	return app, srv
 }
 
-// registerHandlers mirrors the generated main's async + cron wiring.
+// registerHandlers is the async wiring for the tests below that boot
+// their OWN data dir — the dead-letter suites, which glob the directory
+// and therefore have to know it. tako.NewTestApp wires async handlers
+// itself, so serve() above needs none of this; these do.
 func registerHandlers(t *testing.T) {
 	t.Helper()
 	runtime.RegisterSubscriber("OnUploaded", OnUploaded)
@@ -144,7 +106,7 @@ func multipartBody(t *testing.T, caption, filename string, content []byte, conte
 }
 
 func TestUploadDownloadRoundtrip(t *testing.T) {
-	srv := serve(t)
+	app, srv := serve(t)
 	src := pngBytes(t)
 
 	body, ct := multipartBody(t, "cat", "cat.png", src, "image/png")
@@ -192,9 +154,7 @@ func TestUploadDownloadRoundtrip(t *testing.T) {
 
 	// Objects lists the original and (after the worker drains) its thumb —
 	// a real resized PNG now, not a copy.
-	if err := runtime.WaitIdle(10 * time.Second); err != nil {
-		t.Fatal(err)
-	}
+	app.DrainQueues()
 
 	// The thumbnail DOES declare MaxAge, and the header is the half the
 	// app cannot build itself: derived from bytes that never change,
@@ -229,7 +189,7 @@ func TestUploadDownloadRoundtrip(t *testing.T) {
 }
 
 func TestMissingImageIs404(t *testing.T) {
-	srv := serve(t)
+	_, srv := serve(t)
 	res, err := srv.Client().Get(srv.URL + "/api/photos/nope/image")
 	if err != nil {
 		t.Fatal(err)
@@ -242,7 +202,7 @@ func TestMissingImageIs404(t *testing.T) {
 }
 
 func TestMissingUploadFieldIs400(t *testing.T) {
-	srv := serve(t)
+	_, srv := serve(t)
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 	_ = w.WriteField("caption", "cat")
@@ -428,7 +388,7 @@ func TestFanOutIndependence(t *testing.T) {
 // unchanged off the signed upload, and back out through a signed
 // download of the exact original bytes.
 func TestSignedUploadPipeline(t *testing.T) {
-	srv := serve(t)
+	app, srv := serve(t)
 	src := pngBytes(t)
 
 	res, err := srv.Client().Post(srv.URL+"/api/uploads", "application/json",
@@ -454,9 +414,9 @@ func TestSignedUploadPipeline(t *testing.T) {
 		t.Fatalf("signed put = %d %s", status, body)
 	}
 
-	if err := runtime.WaitIdle(10 * time.Second); err != nil {
-		t.Fatal(err)
-	}
+	// The app's barrier, not runtime.WaitIdle: that one waits on the app
+	// runtime.BootLocal booted, and NewTestApp booted this one.
+	app.DrainQueues()
 	ctx := runtime.NewCtx(t.Context())
 	p, err := photoStore.Get(ctx, ticket.Photo.ID)
 	if err != nil || !p.Ready {
@@ -483,7 +443,7 @@ func TestSignedUploadPipeline(t *testing.T) {
 // TestSignedUploadRejections: every constraint is enforced at upload
 // time with its exact text.
 func TestSignedUploadRejections(t *testing.T) {
-	srv := serve(t)
+	_, srv := serve(t)
 	ctx := runtime.NewCtx(t.Context())
 
 	guarded := tako.PutPolicy{ContentType: "image/*", MaxSize: 16}
@@ -608,7 +568,7 @@ func TestSignedUploadRejections(t *testing.T) {
 // its ABSENCE is how a client learns there is no next page — the same
 // question the server answered, asked without a second round trip.
 func TestFeedCursorRoundTripsOverHTTP(t *testing.T) {
-	srv := serve(t)
+	_, srv := serve(t)
 	c := srv.Client()
 
 	const total = 25 // more than one page of 20
@@ -727,7 +687,7 @@ func TestABucketAndAWildcardRouteCanBeMountedTogether(t *testing.T) {
 // owner's — so the route is real rather than a shape declared to prove
 // a point.
 func TestThePermalinkResolvesAPhotoForItsOwner(t *testing.T) {
-	srv := serve(t)
+	_, srv := serve(t)
 	ctx := runtime.NewCtx(t.Context())
 	if err := photoStore.Put(ctx, Photo{ID: "p1", Owner: "alice", Caption: "a cat", Ready: true}); err != nil {
 		t.Fatal(err)

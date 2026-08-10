@@ -83,3 +83,51 @@ contracts (a redirect, a permanent redirect, a handler that fails). They
 ride the same origin because a session-bound CSRF token is only valid
 there. An app should not carry a `/boom` route so that tako can test its
 500 page, and the harness will not invent one.
+
+---
+
+## 7. Every example, through the same door
+
+```
+for d in examples/*/; do (cd $d && tako test ./...); done
+```
+
+**Expect** all seven green. Six now build their HTTP surface with
+`app.Handler()`; siren has no HTTP tests, and shortlink uses it in the
+one test that needs a request.
+
+What is left hand-mounted is deliberate and worth keeping:
+
+- `gallery/http_test.go` mounts two `http.NotFoundHandler()`s to prove a
+  bucket's signed endpoint and a four-segment wildcard route can live on
+  separate muxes — a runtime-contract test, not a mirror of codegen.
+- `journal/pages_test.go` mounts three routes the app does not declare
+  (a redirect, a permanent redirect, a handler that fails), through
+  `serveWith`.
+- gallery's dead-letter tests still call `runtime.BootLocal` with a dir
+  they glob, and register the async handlers themselves. They are about
+  the filesystem, so they need to know the directory.
+
+## 8. What the rollout found
+
+Converting is how you learn what the mirror was hiding. Each of these
+was a real difference between the tested app and the deployed one:
+
+- **gallery's harness never mounted `POST /api/reindex` or
+  `GET /api/reindex/runs`.** Declared, deployed, driven by no test.
+- **shop's harness never mounted `GET /api/me`**, and called
+  `SessionHandler()` with no providers — so its tests ran against a shop
+  with no password door while the deployed one has one.
+- **`SignedURLHandler` served a 501 under `app.Handler()`**: it read the
+  app `runtime.BootLocal` had set, and `NewTestApp` boots another way.
+  With another test's BootLocal in the same run it was worse — it
+  verified against that app's signing key and answered "invalid
+  signature". Fixed by resolving the signer off the wired backends.
+- **`runtime.WaitIdle` was a no-op under `NewTestApp`** — it returned
+  nil immediately, so three tests believed they had a barrier and had
+  none. Fixed the same way; with nothing local wired it now says so
+  instead of returning nil.
+
+The last two are the argument for rolling this out rather than shipping
+it once: both were defects in AB2 itself, and both were invisible until
+an app with buckets and an app with jobs went through the door.

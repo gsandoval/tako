@@ -3,9 +3,9 @@ package blog
 // The S2 contract: a Hugo-generated site whose only dynamic surface is
 // an htmx island — the fragment renders WITH form and CSRF, posting
 // re-renders the island under htmx and 303s back to the static page
-// without JS, and only site-local post paths are accepted. The harness
-// mirrors the generated main; templates come from site/static (the
-// same files Hugo copies into public/), so no Hugo run is needed here.
+// without JS, and only site-local post paths are accepted. The surface
+// is the generated one (AB2); templates come from the declared site dir,
+// the same files Hugo copies into public/, so no Hugo run is needed.
 
 import (
 	"io"
@@ -13,32 +13,21 @@ import (
 	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"testing"
 
-	"github.com/gsandoval/tako/pkg/runtime"
+	"github.com/gsandoval/tako"
 )
 
+// serveFrags is the app's real HTTP surface (AB2), including the site
+// this example is mostly about: blog's pages are fragments swapped into
+// a statically generated site, and the generated harness mounts the site
+// handler last exactly as the deployed service does.
 func serveFrags(t *testing.T) *httptest.Server {
 	t.Helper()
-	if err := runtime.BootLocal(t.TempDir()); err != nil {
-		t.Fatal(err)
-	}
-	runtime.RegisterSiteTemplates(os.DirFS("site/static"), runtime.SiteOptions{})
-	mux := http.NewServeMux()
-	mux.Handle("GET /frag/comments", runtime.PageHandler(Comments, func(r *http.Request) (ListReq, error) {
-		return ListReq{Post: runtime.QueryString(r, "post")}, nil
-	}))
-	mux.Handle("POST /frag/comments", runtime.PageHandler(AddComment, func(r *http.Request) (AddReq, error) {
-		return AddReq{
-			Post: runtime.FormString(r, "post"),
-			Name: runtime.FormString(r, "name"),
-			Body: runtime.FormString(r, "body"),
-		}, nil
-	}))
-	srv := httptest.NewServer(mux)
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }

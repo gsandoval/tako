@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -225,13 +226,26 @@ func checkSecrets() error {
 }
 
 // WaitIdle blocks until local queues drain (every published message has
-// acked or dead-lettered). Test plumbing until tako.NewTestApp's
-// DrainQueues lands in F7.
+// acked or dead-lettered).
+//
+// It waits on whichever dispatcher is WIRED, not on the one this package
+// happened to boot. Reading `booted` alone made it a no-op under
+// tako.NewTestApp — it returned nil immediately, so a test that thought
+// it had a barrier had none and asserted against work that had not
+// happened yet. A barrier that silently does not wait is worse than no
+// barrier, because the test still passes most of the time.
+//
+// With nothing local wired at all it says so rather than returning nil:
+// on gcp there are no local queues to drain, and a test asking for this
+// there is asking the wrong question.
 func WaitIdle(timeout time.Duration) error {
-	if booted == nil {
-		return nil
+	if booted != nil {
+		return booted.Dispatcher.WaitIdle(timeout)
 	}
-	return booted.Dispatcher.WaitIdle(timeout)
+	if d, ok := hooks.Queue.(*local.QueueDispatcher); ok {
+		return d.WaitIdle(timeout)
+	}
+	return errors.New("tako: WaitIdle has no local dispatcher to wait on — it is for local runs and tests; with tako.NewTestApp use app.DrainQueues()")
 }
 
 // SignedURLHandler serves the local signed-URL endpoint
@@ -241,12 +255,25 @@ func WaitIdle(timeout time.Duration) error {
 // panicking: signBlob-backed signed URLs are C5's slice, and the
 // Signer constructors error the same way.
 func SignedURLHandler() http.Handler {
-	if booted == nil {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	// Resolved per request, off the WIRED backends rather than off the
+	// app this package happens to have booted.
+	//
+	// It used to read `booted`, which only runtime.BootLocal sets — so
+	// under tako.NewTestApp (which boots through internal/boot) the
+	// endpoint answered the gcp phase-pointer 501, or, if another test
+	// had called BootLocal first, verified against THAT app's signing
+	// key and answered "invalid signature". Neither is a thing the
+	// deployed service does, which makes it exactly the kind of
+	// difference app.Handler() exists to remove.
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		signer, sok := hooks.Signer.(*local.URLSigner)
+		store, bok := hooks.Bucket.(*local.BucketStore)
+		if !sok || !bok {
 			http.Error(w, "tako: signed URLs on the gcp backend arrive with C5 — SignedPut/SignedGet error until then", http.StatusNotImplemented)
-		})
-	}
-	return local.SignedURLEndpoint(booted.Signer, booted.Buckets)
+			return
+		}
+		local.SignedURLEndpoint(signer, store).ServeHTTP(w, r)
+	})
 }
 
 // SetQueueRate mirrors a WithRateLimit queue's dispatch cap onto the

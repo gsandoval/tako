@@ -11,30 +11,17 @@ import (
 	"github.com/gsandoval/tako/pkg/runtime"
 )
 
-// serve mirrors the generated service's mux, including the generated
-// decode logic, so tests exercise the HTTP surface a client sees.
-// (tako.NewTestApp replaces this plumbing in F7.)
+// serve is the app's real HTTP surface (AB2): the generated mounts and
+// the generated binders, so these tests exercise exactly what a client
+// meets — including the query-parse error path, which is the binder's
+// and not the handler's.
+//
+// The comment this replaces said "tako.NewTestApp replaces this plumbing
+// in F7". F7 gave the app its backends; this is the other half.
 func serve(t *testing.T) *httptest.Server {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.Handle("GET /hello", runtime.JSONHandler(Hello, nil))
-	mux.Handle("GET /greet/{name}", runtime.JSONHandler(Greet, func(r *http.Request) (GreetReq, error) {
-		var req GreetReq
-		var err error
-		req.Name = runtime.PathString(r, "name")
-		if req.Loud, err = runtime.QueryBool(r, "loud"); err != nil {
-			return req, err
-		}
-		return req, nil
-	}))
-	mux.Handle("POST /echo", runtime.JSONHandler(Echo, func(r *http.Request) (EchoReq, error) {
-		var req EchoReq
-		if err := runtime.DecodeJSON(r, &req); err != nil {
-			return req, err
-		}
-		return req, nil
-	}))
-	srv := httptest.NewServer(mux)
+	app := tako.NewTestApp(t)
+	srv := httptest.NewServer(app.Handler())
 	t.Cleanup(srv.Close)
 	return srv
 }
