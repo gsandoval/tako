@@ -418,21 +418,34 @@ func waitReady(port, nonce string, exited <-chan struct{}, timeout time.Duration
 			return errExited
 		default:
 		}
-		switch got, err := probe(client, url); {
+		switch status, got, err := probe(client, url); {
 		case err != nil:
 			// Nothing listening yet, or not listening well enough to
 			// answer. Keep waiting.
-		case got == nonce:
+		case status == http.StatusOK && got == nonce:
 			return nil
+		case status == http.StatusOK:
+			// A tako service answered with somebody else's nonce: a
+			// second dev loop on this port. That is proof, so say it now.
+			return &foreignListenerError{port: port}
 		default:
-			// Someone answered, and it is not this child. Say so as
-			// soon as it is known rather than at the deadline.
+			// SOMETHING answered, but not with an identity — a 404, a
+			// redirect, a 500. That is not proof of a stranger, and
+			// treating it as proof is what made `tako dev` kill its own
+			// child: a service with no reserved mux answered 404 here
+			// and was declared foreign while it was serving the app
+			// perfectly (item 35).
+			//
+			// The child's own exit is the reliable signal for a real
+			// collision — it fails to bind and says so — and that is
+			// checked at the top of this loop. So this only colours the
+			// message if we run out of time.
 			foreign = true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	if foreign {
-		return &foreignListenerError{port: port}
+		return &unidentifiedListenerError{port: port, timeout: timeout}
 	}
 	return fmt.Errorf("service did not start listening on :%s within %s", port, timeout)
 }
@@ -446,26 +459,46 @@ var errExited = errors.New("the service exited during startup")
 type foreignListenerError struct{ port string }
 
 func (e *foreignListenerError) Error() string {
-	return fmt.Sprintf("port %s is answering, but not with this app — another process has it.\n"+
-		"Set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :%s`)", e.port, e.port)
+	return fmt.Sprintf("port %s is answering as ANOTHER tako dev — two dev loops, one port.\n"+
+		"Set PORT (e.g. PORT=8090 tako dev) or stop the other one", e.port)
+}
+
+// unidentifiedListenerError is the weaker claim, and the honest one:
+// something answered and never identified itself, and the child never
+// said it was ready either.
+//
+// It is deliberately not the same sentence as a collision. The old one
+// told people to free a port that tako itself had just released, so
+// `lsof` came back empty and the advice could not be followed.
+type unidentifiedListenerError struct {
+	port    string
+	timeout time.Duration
+}
+
+func (e *unidentifiedListenerError) Error() string {
+	return fmt.Sprintf("port %s answered within %s, but never identified itself as this app.\n"+
+		"Something else may hold it (`lsof -i :%s`), or this service is built from stale\n"+
+		"generated code — `tako dev` regenerates, so a plain `go run` of an old binary can do this",
+		e.port, e.timeout, e.port)
 }
 
 // probe asks the running child to identify itself. A non-200, or a body
 // that is not a nonce, is "not mine" rather than an error.
-func probe(client *http.Client, url string) (string, error) {
+// probe returns the status and body of one identity check. The STATUS
+// is returned rather than folded away, because "404, no such route" and
+// "200, the wrong nonce" are different facts and only the second one is
+// evidence of another dev loop.
+func probe(client *http.Client, url string) (int, string, error) {
 	res, err := client.Get(url)
 	if err != nil {
-		return "", err
+		return 0, "", err
 	}
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return "", nil
-	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, 128))
 	if err != nil {
-		return "", err
+		return res.StatusCode, "", err
 	}
-	return string(body), nil
+	return res.StatusCode, string(body), nil
 }
 
 // newNonce mints the per-start identity. It only has to be

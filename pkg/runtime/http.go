@@ -125,7 +125,11 @@ func Serve(h http.Handler) {
 	// never speaks TLS itself, and h2c is not a downgrade from "real"
 	// HTTP/2: it is the only shape the frontend-to-container hop has,
 	// and that hop is encrypted by Google's infrastructure regardless.
-	handler := h2c.NewHandler(track(&live, logRequests(h)), &http2.Server{})
+	// The dev-loop identity probe wraps EVERYTHING, because it is a fact
+	// about this process rather than about what the app declared: a
+	// service with no auth, no bucket and no cron is still the child
+	// `tako dev` just started, and it has to be able to say so.
+	handler := h2c.NewHandler(track(&live, logRequests(devReadyFirst(h))), &http2.Server{})
 	srv := &http.Server{Addr: ":" + port, Handler: handler}
 
 	// signalled is when SIGTERM landed — the moment Cloud Run's 10s clock

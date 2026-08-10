@@ -200,12 +200,58 @@ func TestWaitReadyRefusesAListenerThatIsNotOurs(t *testing.T) {
 	if !errors.As(err, &foreign) {
 		t.Fatalf("waitReady = %v, want a foreign-listener error", err)
 	}
-	// The text has to name the port, the fix and the command: this is
-	// read by someone whose app appears to be broken.
-	for _, want := range []string{"not with this app", "PORT=", "lsof -i :"} {
+	// The text has to name the port and the fix: this is read by someone
+	// whose app appears to be broken.
+	for _, want := range []string{"ANOTHER tako dev", "PORT="} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error text is missing %q:\n%s", want, err)
 		}
+	}
+}
+
+// Item 35, as a test: a listener that answers the app but 404s the
+// identity path is NOT proof of a stranger.
+//
+// It was read as one, and the consequence was the worst kind: `tako dev`
+// killed its own healthy child. Every service answers the probe now
+// (Serve wraps it, not Reserved), so a 404 means something tako did not
+// start — worth a message, never worth a verdict before the child has
+// had its say.
+func TestAListenerThat404sTheProbeIsNotDeclaredForeign(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r) // a service with no dev route, or any other server
+	}))
+	defer srv.Close()
+
+	err := waitReady(portOf(t, srv), "our-nonce", make(chan struct{}), 200*time.Millisecond)
+
+	var foreign *foreignListenerError
+	if errors.As(err, &foreign) {
+		t.Fatalf("a 404 was called a collision: %v", err)
+	}
+	var unidentified *unidentifiedListenerError
+	if !errors.As(err, &unidentified) {
+		t.Fatalf("waitReady = %v, want an unidentified-listener error", err)
+	}
+	// And it must not repeat the advice that could not be followed:
+	// the old text sent people to free a port tako had already released.
+	if strings.Contains(err.Error(), "another process has it") {
+		t.Errorf("the weaker case still claims a collision:\n%s", err)
+	}
+}
+
+// The child exiting outranks anything the probe saw. A real collision
+// IS the child failing to bind, and it explains itself on the way out.
+func TestTheChildsExitOutranksTheProbe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	exited := make(chan struct{})
+	close(exited)
+	if err := waitReady(portOf(t, srv), "our-nonce", exited, time.Second); !errors.Is(err, errExited) {
+		t.Fatalf("waitReady = %v, want errExited", err)
 	}
 }
 

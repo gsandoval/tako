@@ -36,6 +36,18 @@ func isDevProbe(r *http.Request) bool {
 	return devNonce != "" && r.URL.Path == routes.DevReady
 }
 
+// devReadyFirst answers the dev loop's identity probe ahead of the app.
+// Serve wraps every service with it; outside `tako dev` the nonce is
+// empty and this is one string comparison per request.
+func devReadyFirst(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if answerDevReady(w, r) {
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func answerDevReady(w http.ResponseWriter, r *http.Request) bool {
 	if !isDevProbe(r) {
 		return false
@@ -76,12 +88,12 @@ func answerDevReady(w http.ResponseWriter, r *http.Request) bool {
 // than a handler that silently never runs.
 func Reserved(framework, app http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Answered here rather than mounted on the framework mux: the
-		// mux is generated code in users' repositories, and a dev-loop
-		// affordance is not worth a line in it.
-		if answerDevReady(w, r) {
-			return
-		}
+		// The dev probe used to be answered HERE, and that was the bug:
+		// Reserved is only wrapped around a service that declares auth,
+		// a bucket or a cron, so `hello` and `shortlink` never answered
+		// it — the dev loop read the 404 as a stranger's server and
+		// killed its own healthy child. It lives in Serve now, which
+		// every service calls.
 		if routes.IsReserved(r.URL.Path) {
 			framework.ServeHTTP(w, r)
 			return

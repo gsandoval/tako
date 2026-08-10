@@ -20283,24 +20283,23 @@ Set PORT (e.g. PORT=8090 tako dev) or free it (`lsof -i :8119`)
 ```
 
 **Measured, watching the port through a start** (`hello`, PORT=8120):
+the listener throughout is **tako's OWN CHILD**, up and serving
+`/hello` with 200 — and at t=6s it is gone, because `tako dev` killed
+the healthy service it had just started.
 
-```
-t=1s  listener=[]              /_tako/dev=000  /hello=000
-t=2s  listener=[hello 55319]   /_tako/dev=404  /hello=200
-t=5s  listener=[hello 55319]   /_tako/dev=404  /hello=200
-t=6s  listener=[]              /_tako/dev=000  /hello=000
-```
-
-**The listener is tako's OWN CHILD**, up and serving the app's routes
-with 200. The probe reads 404 on `/_tako/dev`, calls it a stranger, and
-`tako dev` kills the healthy service it just started.
+*(An earlier version of this entry pasted a probe column taken against
+`/_tako/dev`. The readiness path is `/_tako/z/dev`, so that column would
+have read 404 whatever the child did and proved nothing. The finding
+does not rest on it: the child could not answer the probe on ANY path,
+because `answerDevReady` was only reachable through `runtime.Reserved`
+and `hello`'s generated main is `runtime.Serve(mux)` — no Reserved. What
+proves it is the before and after: `tako dev` on `hello` failed, and
+after the fix it prints `ready in 905ms` and serves.)*
 
 That also makes the error actively misleading: it tells you to free the
 port, and by the time you run `lsof` the child is dead and the port is
 empty — so the advice cannot be followed and the evidence contradicts
-the message. (An earlier note in this log cited that empty `lsof` as if
-it proved nothing had ever listened; it proved only that the child had
-already been killed.)
+the message.
 
 Two separate faults, and both should be fixed together:
 

@@ -19,7 +19,25 @@ func TestDevReadyAnswersOnlyWithANonce(t *testing.T) {
 		w.WriteHeader(http.StatusTeapot) // "the app ran", distinctly
 	})
 	framework := http.NewServeMux()
-	h := Reserved(framework, app)
+	// devReadyFirst is what Serve wraps every service with; Reserved is
+	// only there for a service that declares auth, a bucket or a cron.
+	// Both layers are in play here because a route inside /_tako/ must
+	// still reach the framework mux rather than the app.
+	h := devReadyFirst(Reserved(framework, app))
+
+	// The regression this file did not have: a service with NO reserved
+	// mux — no auth, no bucket, no cron, which is `hello` — still has to
+	// answer the probe. It did not, so `tako dev` read the 404 as a
+	// stranger holding the port and killed its own healthy child.
+	t.Run("a service with no framework mux still answers", func(t *testing.T) {
+		defer swapNonce(t, "abc123")()
+		bare := devReadyFirst(app) // Serve's wrapping, and nothing else
+		rec := httptest.NewRecorder()
+		bare.ServeHTTP(rec, httptest.NewRequest("GET", routes.DevReady, nil))
+		if rec.Code != http.StatusOK || rec.Body.String() != "abc123" {
+			t.Fatalf("dev probe on a bare service = %d %q, want 200 abc123", rec.Code, rec.Body)
+		}
+	})
 
 	t.Run("deployed: no nonce, no endpoint", func(t *testing.T) {
 		defer swapNonce(t, "")()
