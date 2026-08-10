@@ -716,7 +716,7 @@ example fell back to plain text. Fixed in that commit.
 has. The friction gate itself is met — eight open at the review, none
 blocking, none without an app-side answer, and five now closed.
 
-## Stage 13 — the abstraction review (2026-08-09) — AWAITING APPROVAL
+## Stage 13 — the abstraction review (2026-08-09) — ALL SHIPPED
 
 **Where this comes from.** The owner asked a different question from the
 four friction reviews: not "what did flauta hit" but "what has flauta

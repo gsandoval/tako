@@ -19597,7 +19597,7 @@ declared in another package, and codegen would need that package's
 alias. Fine for one door per app; a shared policy across services would
 need it.
 
-**23. journal's harness gained two more hand-typed mounts.** Adding the
+**23. CLOSED by AB2 (`2845383`) — journal's harness gained two more hand-typed mounts.** Adding the
 desk meant re-typing `RequireAuth()` and `RequirePolicy("Moderators")`
 into `pages_test.go` to match what codegen emits — which is AB2's
 finding, demonstrated once more while AB2 waits. If the harness had
@@ -19929,10 +19929,9 @@ is no `tako dev --as ana:moderator`, so a scripted local walk posts
 `dev_role` by hand (as `validate/policies.md` step 9 does through curl).
 Fine today; worth a flag if local role-fixtures become common.
 
-**26. AB10b's stale-session refresh has no implementation yet**, so a
-role change takes effect on next sign-in. The session record already
-carries `Roles`, and `UID` is not yet indexed — that index is AB10b's
-first line.
+**26. CLOSED by AB10b (`21c6af6`) — the stale-session refresh.** Written
+while AB10a was the only slice built; AB10b shipped it, and a role change
+now lands on the next request.
 
 ## AB10b + AB10c — shipped (2026-08-09)
 
@@ -20135,7 +20134,7 @@ batched per the Stage 3 amendment.
 
 ### Discovered work
 
-**31. Two example harnesses were missing mounts codegen emits** — the
+**31. ADDRESSED by AB2 (`2845383`) for journal; still true for the other five examples (see 33). Two example harnesses were missing mounts codegen emits** — the
 subscriber registration in both, and `GET /api/me` in shop's, which had
 never been mounted at all, so nothing had ever driven it. Both found by
 writing a test that needed them. AB2's finding for the fourth and fifth
