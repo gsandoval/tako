@@ -20651,3 +20651,384 @@ is exactly the asymmetry that let the defect live.
 test`, including blog and shop with their site outputs deleted first.
 Scripted walk: `validate/harness.md` steps 9–10, both added here and
 run.
+
+---
+
+## SC1 — DX proposal: `tako users`, the account you cannot make without writing code (2026-08-10) — AWAITING APPROVAL
+
+First of a scaffolding series the owner opened on 2026-08-10 (SC2 `tako
+setup`, SC3 `tako new`, SC4 `tako secrets`, SC5 `BootGCPWith` are named
+but not proposed). SC1 goes first because it is the only one that closes
+a **local annoyance and a cloud hole with one build**.
+
+### The evidence
+
+- **Local.** `docs/guide/local.md` tells you, in prose, to make an
+  account with `auth.Users().Create` — so a one-off `main.go`, a test,
+  or a dev-only branch on `tako.Environment()`. The dev bar offers two
+  hardcoded names (`session.go:740`), which is enough until the app
+  declares `Password: true` or a policy that needs a role.
+- **Cloud.** There is no bootstrap path at all. Deploy an app whose
+  admin door is `Route{Allow: Editors}` and the first editor can only
+  be created by code you write, deploy, run once, and delete.
+- **The surface already shipped.** AB10 built `auth.Users()` —
+  Create/Get/ByEmail/List/Grant/Revoke/Disable/Enable/Delete — over a
+  contract (`backends.Users`) that both backends implement and the
+  conformance suite already governs. This is a door onto it, not a
+  feature under it.
+
+### The boundary — why this is not the admin scaffold (decision 11)
+
+The implementation plan records that "no feature without an example
+demanding it" once killed an admin scaffold, and decision 11 bars
+admin/CMS primitives. Both hold here:
+
+- **The app gains nothing.** No new exported SDK symbol, no template, no
+  route, no generated code. `tako.UsersHandle` is unchanged.
+- **The operator gains a door** onto a surface that already exists, the
+  way `tako dlq` is a door onto queues rather than a queue feature.
+
+If this proposal ever needs to add a symbol to the root package to
+work, that is the signal it has crossed the line — and it does not (see
+D3).
+
+---
+
+### The surface
+
+```
+tako users list   [--role R]
+tako users show   <email|id>
+tako users create <email> [--name N] [--password] [--role R]...
+tako users grant  <email|id> <role>
+tako users revoke <email|id> <role>
+tako users disable|enable <email|id>
+tako users delete <email|id>
+```
+
+**Local** — the common case, the one in the dev loop:
+
+```
+$ tako users create ana@example.com --name Ana --role editor
+tako users · local · .tako/data
+  created  usr_01J8ZK4M  ana@example.com  Ana  [editor]
+  no password set — this account signs in with Google; --password sets one
+```
+
+```
+$ tako users list
+tako users · local · .tako/data
+  ID            EMAIL              NAME   ROLES              STATE
+  usr_01J8ZK4M  ana@example.com    Ana    editor
+  usr_01J8ZK7Q  bruno@example.com  Bruno  editor, moderator  disabled
+  2 accounts
+```
+
+```
+$ tako users grant ana@example.com moderator
+tako users · local · .tako/data
+  granted  moderator to ana@example.com  [editor, moderator]
+  1 live session marked stale — it picks the role up on its next request
+```
+
+That last line is the point of the whole design. A role change is
+invisible machinery — the roles a request sees come off the session,
+minted before the change — and the transcript says both that it
+happened and *when it lands*, instead of leaving the operator to
+wonder why the admin page is still 403.
+
+```
+$ tako users disable bruno@example.com
+tako users · local · .tako/data
+  disabled  bruno@example.com — sign-in refused, record kept
+  2 sessions ended
+```
+
+**Cloud** — the same command, the target on line one:
+
+```
+$ tako users create ops@acme.com --password --role admin --project acme-prod-4821
+tako users · cloud · acme-prod-4821 / prod
+  password: ········
+  created  Xk3nQ82mVd  ops@acme.com  [admin]
+  auth.Registered published — welcomeMail will run
+```
+
+**The ladder** (`tako --help`: friction scales with irreversibility).
+Deleting a local account is disposable — `.tako/data` is the reset
+story, and the guide says so. Deleting a cloud account is a person who
+cannot sign in again:
+
+```
+$ tako users delete bruno@example.com --project acme-prod-4821
+tako users · cloud · acme-prod-4821 / prod
+  bruno@example.com  Bruno  [editor, moderator]
+  this is permanent: the account is gone, and anything your app keyed on
+  its id is orphaned. tako users disable keeps the record.
+  type the email to confirm: bruno@example.com
+  deleted  Xk3nQ82mVd  2 sessions ended
+```
+
+---
+
+### The three decisions this needs
+
+**D1 — the cloud target is never inferred.** No `--project` on the
+command line means local. Not `GOOGLE_CLOUD_PROJECT`, not `gcloud
+config`. `--env` without `--project` is refused:
+
+```
+tako: --env names a cloud environment but no project was given
+      add --project <id>, or drop --env to work on .tako/data
+```
+
+**This deviates from the shared rule** the usage text states — "Cloud
+commands resolve --project (else GOOGLE_CLOUD_PROJECT, else gcloud
+config) … identically" — and that text must gain the exception or
+become false. The reason for the exception: every other cloud command
+reads, or converges the project toward what the code already says.
+This one writes a person. A `GOOGLE_CLOUD_PROJECT` left in a shell
+turns `tako users create` into a real account in a real project, and a
+dev fixture named `test@test.test` in prod is not something a later
+deploy corrects. `env.go` already argues this for `--env` on destroy:
+a silent reinterpretation is unforgivable on the paths where it is.
+
+**D2 — a role that the app does not declare is refused.**
+
+```
+$ tako users grant ana@example.com moderatr
+tako: "moderatr" is not a role this app declares
+      declared: editor, moderator (tako.Role)
+      did you mean moderator?
+```
+
+`AppGraph.Roles` already exists — the analyzer collects it so the dev
+sign-in page can offer roles to tick. Granting an undeclared role is
+not an error the store can catch: it writes a claim that every policy
+ignores, so the operator sees success and the user still cannot get in.
+**No `--force`.** An escape hatch on a check whose entire value is
+catching a typo defeats the check.
+
+**D3 — the CLI calls the SDK, never the store.**
+
+```go
+// wire the hooks for the chosen target, then:
+ctx := runtime.NewCtx(context.Background())
+err := (&tako.UsersHandle{}).Grant(ctx, id, tako.Role(name))
+```
+
+Both pieces are already exported (`runtime.NewCtx`, and `UsersHandle`
+is an empty struct that reads the wired hooks). Nothing new is needed.
+
+This is item 38's lesson, one day old. "Write the account, then mark
+its sessions stale, under a lease keyed on the account" is
+orchestration that lives in `users.go` today; a second copy in the CLI
+is a duplicate every future change must be copied into, and the copy
+that gets missed is a role that never lands or a disabled user still
+signed in for a week. Reusing the path means the lease, the stale
+marking, the session ending and the `auth.Registered` publish all come
+for free, and stay correct by construction.
+
+**One consequence, stated rather than discovered.** The publish is real
+in the cloud and absent locally: `hooks.Topic` is unwired in a CLI that
+is not the app, so `publishAuthEvent` no-ops. So `tako users create`
+fires the app's registration subscriber against a project and does not
+on a laptop. The graph knows whether there is a subscriber to miss, so
+the line is printed only when there is one:
+
+```
+  auth.Registered not published — this is the CLI, not the app; run
+  tako dev if you need welcomeMail to see this account
+```
+
+---
+
+### Cloud errors & permissions
+
+**A finding this proposal surfaces.** `docs/tako-cloud-permissions.md`
+puts `identitytoolkit.viewer`/`identitytoolkit.admin` in the Layer 2
+table (runtime, derived per service) and nowhere in Layer 1. So an
+operator holding the full documented deployer bundle runs `tako users
+create --project` and gets a 403. **Proposed: add
+`roles/identitytoolkit.admin` to the Layer 1 bundle**, on the honest
+justification that a principal who can `tako deploy` can already deploy
+code that mints accounts — the grant adds no power, it removes a
+detour. That is a permissions-model change and it is named here rather
+than patched at the call site, per the working rules.
+
+Four failures, four different problems, four different remediations:
+
+```
+tako: identitytoolkit.googleapis.com is disabled on acme-prod-4821 — this
+      app's sign-in has never been deployed there. Run tako deploy (it
+      initializes Identity Platform), or enable the API alone:
+        gcloud services enable identitytoolkit.googleapis.com --project acme-prod-4821
+```
+```
+tako: you lack identitytoolkit.admin on acme-prod-4821 — grant it once:
+        gcloud projects add-iam-policy-binding acme-prod-4821 \
+          --member user:$(gcloud config get account) --role roles/identitytoolkit.admin
+```
+```
+tako: Identity Platform is not initialized on acme-prod-4821 — tako deploy
+      initializes it when the app declares tako.Auth. Deploy once, then re-run.
+```
+```
+tako: not authenticated to Google Cloud — run:
+        gcloud auth application-default login
+```
+
+Also required and already in the bundle: `roles/datastore.owner`
+(sessions live in Datastore, so stale-marking and ending need it) and
+`serviceusage.serviceUsageConsumer` (FL19 — tako bills its calls to the
+target project).
+
+**Preflight order.** Everything the graph can answer runs before any
+credential is touched: no `tako.Auth` declared, an undeclared role, a
+malformed email. A typo costs no round trip and no 403.
+
+```
+tako: this app declares no tako.Auth — accounts exist because an app has a
+      sign-in door. Add tako.Auth(...) and the accounts follow.
+```
+
+---
+
+### Non-goals
+
+- **No password reset, no email verification.** AB10 decision 3:
+  Identity Platform's hosted flows own recovery, and tako sends no email.
+- **No `tako sessions`.** `disable` ends them, which is the operational
+  need; a command for listing them waits for an example that wants it.
+- **No bulk import/export, no CSV.** One account at a time is the
+  bootstrap story; a fixture set is a test's job.
+- **No account creation during `tako deploy`.** A deploy converges code;
+  a person is not derived from code.
+- **No `--force` on D2**, and no way to address a project tako has not
+  provisioned (v0 non-goal: shared multi-tenant projects).
+
+### Test plan (test-first)
+
+1. **Golden transcripts and every error text** in `cmd/tako` — exact
+   strings, the way analyzer errors are tested. Error text is product UX.
+2. **Conformance, first.** The `Users` contract has per-method cases;
+   this adds cases for the *compound* acts the CLI depends on — a grant
+   marks live sessions stale, a disable ends them — at the contract
+   level, so `local` and `gcp` cannot answer differently.
+3. **The D3 guard, mechanical**: `cmd/tako/users.go` must not import
+   `pkg/backends`. If the CLI ever reaches past the SDK to the store,
+   that is the failure, and it fails here rather than as a role that
+   quietly never landed.
+4. **`validate/users.md`** — the scripted walk, including one cloud run
+   against a real project, transcript pasted into this log.
+
+### The one question I could not decide
+
+**D1's deviation.** The alternative is to keep the shared resolution
+rule intact and pay for it with a typed confirmation on every cloud
+write, not just delete. That is more consistent and more annoying. I
+recommend D1 as written — the inconsistency is one sentence in the
+usage text, and it buys "this command cannot address prod by accident."
+
+### Gate
+
+Stopping here. No code written; nothing in this proposal exists yet.
+
+---
+
+## SC1 — shipped (2026-08-10)
+
+Owner approved D1 on 2026-08-10 ("D1 approved, go ahead and implement
+it"); D2 and D3 were recommendations rather than open questions and
+shipped as proposed.
+
+`cmd/tako/users.go` (the command), `cmd/tako/usersboot.go` (the wiring),
+`cmd/tako/users_test.go`, `validate/users.md`. No new exported SDK
+symbol — the point of D3, and the thing that keeps this clear of
+decision 11.
+
+### The three decisions, as built
+
+**D1 — the target is never inferred.** `--project` on the command line
+or nothing. `--env` alone is refused with the reason, and `tako --help`
+and `reference/cli.md` both carry the exception rather than leaving a
+false "every cloud command resolves identically".
+
+**D2 — an undeclared role is refused**, with the declared set and a
+did-you-mean bounded at two edits (a hint naming something unrelated is
+worse than no hint). No `--force`.
+
+**D3 — the command calls the SDK and never the store.** `runtime.NewCtx`
++ `&tako.UsersHandle{}`, both already exported; nothing new was needed.
+
+### What the walk actually proved
+
+The end-to-end run is in `validate/users.md` §5, and it is the one that
+mattered: bob signs in to journal (403 on `/moderate`, behind
+`RequireRole(Moderator)`), a `tako users grant` from the terminal, and
+**bob's original session cookie gets 200** — no re-sign-in. That is the
+SDK's stale-marking reaching a live session through the CLI, which is
+the whole argument for D3 stated as a transcript.
+
+§6 is the other half: an account created by `tako users create
+--password` signs in through shop's real door, and the uid in the
+sign-in response is the id the CLI printed.
+
+### Mutation proofs
+
+Each guard was broken and watched to fail:
+
+| Mutation | Guard that caught it |
+|---|---|
+| restore the ordinary `GOOGLE_CLOUD_PROJECT` fallback | `TestNoProjectMeansLocalEvenWithAProjectInTheEnvironment` — "a dev fixture would land in production" |
+| import `internal/hooks` and call `hooks.Users.SetRoles` | `TestTheUsersCommandNeverReachesPastTheSDK` |
+| wire the accounts but not the entity store | `TestWiringTheAccountsAlsoWiresWhatSessionsNeed` — "a role change would never reach a live session, and nothing would say so" |
+
+The third is the one worth keeping: it is the exact shape where the
+command works, prints success, and silently leaves every signed-in
+browser on the old role.
+
+### Deviations from the approved proposal
+
+1. **No session counts.** The proposal's transcript said "1 live session
+   marked stale" and "2 sessions ended". `Grant`/`Disable` return only
+   an error, and adding a count would re-shape an exported SDK symbol as
+   a side effect of another task. The lines keep the part that carries
+   the meaning — WHEN the change lands, and that nobody is signed out —
+   and drop the arithmetic.
+2. **No STATE column in `list`.** `tako.User` carries no `Disabled`
+   field (`userFromRecord` does not copy it), so the SDK cannot report
+   it and reaching past the SDK for it would break D3. Filed below.
+3. **`golang.org/x/term` added** as a direct dependency, for reading a
+   password with echo off. Piped input still works (`printf 'pw' |
+   tako users create … --password`), so nothing here needs a TTY.
+
+### What SC1 found, and did not fix
+
+- **`tako dev` holds `.tako/data`.** bbolt takes an exclusive lock, so
+  `tako users` cannot run beside a dev server — the single most natural
+  workflow ("dev is up, I need a user"). The command now says the
+  likely thing (`tako dev` holds it) instead of the store's guess about
+  an orphaned process, but the limitation is real and filed.
+- **A false alarm, chased down rather than assumed.** The first walk had
+  alice holding `moderator` with no role ticked, which looked like the
+  dev sign-in silently granting everything — contradicting its own doc
+  comment. It is journal's own
+  `OnFirstSignIn = tako.Subscribe(auth.FirstSignIn, appointFounder)`.
+  Nothing is broken; noted because the reproduction is in the log.
+
+### Discovered work (not done — see the standing list)
+
+- **40. `tako.User` cannot report a disabled account.** `Disable` works
+  and `list` cannot show its effect. An SDK change, so its own task.
+- **41. `tako users` cannot run while `tako dev` does.** A read-only
+  bolt open would cover `list`/`show`; the writes need a seam into the
+  running process. Its own task.
+- **42. The dev bar offers alice and bob only.** With `tako users` able
+  to make accounts, the bar could offer the accounts that exist.
+
+### Gate (agent-side)
+
+`go vet ./...` and `go test ./...` green at the root. All seven examples
+green under `tako test`. Scripted walk: `validate/users.md`, every step
+run, transcripts pasted there rather than paraphrased.

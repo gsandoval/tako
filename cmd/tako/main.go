@@ -46,6 +46,12 @@ Local — nothing outside this directory is touched:
                        daemon); --push CROSSES THE LINE below: uploads
                        to <repo>/<service> on Artifact Registry
 
+Accounts — local unless you type a project:
+  tako users list|show|create|grant|revoke|disable|enable|delete
+                       the people your sign-in door admits. Works on
+                       .tako/data by default; --project <id> [--env]
+                       works on a deployed app's Identity Platform
+
 Cloud, read-only:
   tako logs [service] [--since 15m]
   tako metrics <search> [--limit 20]
@@ -86,6 +92,13 @@ The confirmation ladder — friction scales with irreversibility:
 Cloud commands resolve --project (else GOOGLE_CLOUD_PROJECT, else gcloud
 config), --region (else TAKO_REGION, else us-central1), and --env
 (default prod) identically; --flag value and --flag=value both work.
+
+tako users is the one exception, and deliberately: it never infers a
+project from the environment or from gcloud config. Every other cloud
+command reads, or converges a project toward what your code already
+says. That one writes people, and a project left in a shell is how a
+dev fixture lands in production — so the cloud is somewhere it goes
+only when you type --project.
 `
 
 func main() {
@@ -108,6 +121,10 @@ func main() {
 		}
 	case "test":
 		if err := runTest(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "users":
+		if err := runUsers(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "build":

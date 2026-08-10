@@ -67,8 +67,20 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
 | `roles/monitoring.notificationChannelEditor` | `tako.AlertEmail`/`AlertWebhook`/`AlertTopic` channels (Y1) |
 | `roles/serviceusage.serviceUsageConsumer` | bill tako's API calls to the target project, not to gcloud's shared client (FL19) |
+| `roles/identitytoolkit.admin` | `tako users` against a project: create the first admin, hand out roles (SC1) |
 
-**On that last one.** Every call tako makes names `--project` as the
+**On the accounts row.** It appears in Layer 2 as well, derived per
+service, and that is not a duplicate: there it is a property of a
+service whose code calls `auth.Users()`, and here it is a property of
+the human. `tako users --project` is the only bootstrap path to a first
+admin — before it existed the answer was "write a program, deploy it,
+run it once, delete it" — and a deployer who can `tako deploy` can
+already deploy code that mints accounts. The grant adds no power the
+principal lacks; it removes a detour. It is the only Layer 1 role that
+is not needed for a deploy, so a CI principal that never runs
+`tako users` can leave it out.
+
+**On the quota one.** Every call tako makes names `--project` as the
 quota project (`X-Goog-User-Project`). Without it, Application Default
 Credentials from `gcloud auth application-default login` carry no quota
 project at all, so Google meters the call against the project behind

@@ -48,9 +48,17 @@ comment on the declaration says so.
   (`TAKO_CHAOS_SEED` replays a failure exactly).
 - Signing in locally: the dev bar's test users, or — when the app
   declares `AuthConfig{Password: true}` — an email and password against
-  an account you made with `auth.Users().Create`. A dev sign-in creates
-  a real local account, because in the cloud a session cannot exist
-  without one.
+  an account you made with `tako users create ana@example.com
+  --password`. A dev sign-in creates a real local account, because in
+  the cloud a session cannot exist without one.
+- **The accounts are a command, not a program you have to write.**
+  `tako users list|show|create|grant|revoke|disable|enable|delete`
+  works on `.tako/data` — the same accounts `tako dev` signs in — and
+  on a deployed app's Identity Platform when you add `--project`. A
+  grant reaches sessions that are already signed in: the role lands on
+  their next request, nobody is signed out. One catch: `tako dev` holds
+  `.tako/data` while it runs, so stop it first (the command says so if
+  you forget).
 - `tako.Environment() == tako.EnvLocal` is how your code knows it is
   here rather than deployed — for a seeded sign-in, a visible fixture,
   an extra log line. It is not a feature flag: branch a development

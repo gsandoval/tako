@@ -223,6 +223,44 @@ page, err := users.List(ctx).Limit(50).Page("")   // page.Next is the cursor
 | cloud | Identity Platform accounts; roles are a custom claim |
 | local | the same contract over the local store, in the same bbolt file `tako dev` already keeps |
 
+### The same thing, from a terminal: `tako users`
+
+An operator should not have to write, deploy and delete a program to
+make the first admin. `tako users` is a door onto exactly the surface
+above — it calls `auth.Users()` and nothing under it:
+
+```
+tako users list                      every account and its roles
+tako users show   ana@example.com
+tako users create ana@example.com --name Ana --password --role editor
+tako users grant  ana@example.com moderator
+tako users revoke ana@example.com moderator
+tako users disable ana@example.com   sign-in refused, record kept
+tako users delete  ana@example.com   permanent
+```
+
+**Local unless you type a project.** No `--project` means `.tako/data`,
+the accounts `tako dev` signs in. `--project <id> [--env <env>]` works
+on the deployed app's Identity Platform. Alone among the cloud
+commands, this one never reads `GOOGLE_CLOUD_PROJECT` or gcloud config:
+it writes people, and a project left over in a shell is how a dev
+fixture lands in production.
+
+**A role you have not declared is refused**, with the declared ones and
+a did-you-mean. Granting a role no policy reads writes a claim nothing
+reads — the store accepts it, the operator sees success, and the person
+still cannot get in.
+
+**A grant reaches sessions that already exist.** The role lands on the
+next request and nobody is signed out, because the command goes through
+`auth.Users()` and inherits its stale-marking. `disable` ends the
+sessions outright, for the same reason it does from Go.
+
+Two things to know: `tako dev` holds `.tako/data` while it runs, so stop
+it first (the command says so if you forget); and against a project you
+need `roles/identitytoolkit.admin`, which the refusal prints as a
+ready-to-paste grant.
+
 **An address is one account.** `Create` over an existing one is refused
 with an error `tako.IsEmailTaken(err)` recognises, because the remedy is
 different from every other failure: look it up and grant it what it

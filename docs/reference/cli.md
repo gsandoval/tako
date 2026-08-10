@@ -50,6 +50,29 @@ Registry. Held as acceptable because the flag name carries it — and
 help sits `build` at the boundary line with the consequence spelled
 out.
 
+## Accounts — local unless you type a project
+
+```
+tako users list                       every account and its roles
+tako users show   <email|id>
+tako users create <email> [--name N] [--password] [--role R]...
+tako users grant|revoke <email|id> <role>
+tako users disable|enable <email|id>  sign-in refused / allowed, record kept
+tako users delete <email|id>          permanent
+```
+
+A door onto `auth.Users()` — the same surface an app calls, so a grant
+marks live sessions stale and a disable ends them, exactly as from Go.
+Works on `.tako/data` (the accounts `tako dev` signs in) unless
+`--project <id> [--env <env>]` sends it at a deployed app's Identity
+Platform. A role the app does not declare is refused with the declared
+set and a did-you-mean; deleting against a project asks you to type the
+email, and deleting locally does not (`.tako/data` is the reset story).
+
+`tako dev` holds `.tako/data` while it runs — stop it first. Against a
+project you need `roles/identitytoolkit.admin`; the refusal prints the
+grant.
+
 ## Cloud, read-only
 
 ```
@@ -141,6 +164,14 @@ parser:
   touch only their own slice)
 
 `--flag value` and `--flag=value` both work, everywhere.
+
+**`tako users` is the one exception, deliberately.** It reads `--project`
+and `--env` from the command line and nowhere else — no
+`GOOGLE_CLOUD_PROJECT`, no gcloud config. Every other cloud command
+reads, or converges a project toward what your code already says, so a
+wrong guess is fixed by re-running. That one writes people, and an
+inherited project is how a dev fixture lands in production. `--env`
+without `--project` is refused rather than silently meaning "local".
 
 ## Errors you'll meet
 
