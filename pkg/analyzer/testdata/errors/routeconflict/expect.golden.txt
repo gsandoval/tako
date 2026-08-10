@@ -1,0 +1,1 @@
+app.go:15:2: SetRole cannot be mounted beside a route this service already declares: POST /moderate/{id}/retract — Go's router refuses a pair where neither pattern is more specific, and the service panics at startup. Make one of them narrower (a literal segment beats a wildcard) or move one to a different path (tako/route-conflict)

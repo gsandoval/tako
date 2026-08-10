@@ -476,6 +476,10 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		}
 	}
 	errs = append(errs, edgeErrs...)
+	// Two routes Go's mux cannot order are a service that panics at
+	// startup. Checked last, because it needs every handler placed in
+	// its service first.
+	checkRouteConflicts(graph, &errs)
 	// Call CYCLES need no rule: a service cycle is an import cycle
 	// (calling b.Step requires importing b; package = service), which
 	// Go itself refuses before analysis ever runs.

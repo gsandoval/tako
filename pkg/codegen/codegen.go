@@ -622,12 +622,11 @@ func hasResources(g *analyzer.AppGraph, svc analyzer.Service) bool {
 // "GET /" means THE home page, but to the mux "GET /" is the method
 // catch-all — it would swallow every GET (assets, templates/) away
 // from the site. "{$}" is the mux's exact-root marker.
-func muxPattern(route string) string {
-	if strings.HasSuffix(route, " /") {
-		return route + "{$}"
-	}
-	return route
-}
+// muxPattern is analyzer.MuxPattern: the route as it is registered.
+// One function, because the conflict check and the mount have to be
+// looking at the same string — checking one and mounting another is a
+// check of nothing.
+func muxPattern(route string) string { return analyzer.MuxPattern(route) }
 
 // siteOptionsLiteral renders the SiteOptions struct fields for the
 // generated mount — readable, like everything in this file.

@@ -196,7 +196,18 @@ tako.Blob field Img needs a form:"…" tag — blobs bind from multipart form fi
 GET route "GET /b" cannot receive an upload — requests with tako.Blob fields need a non-GET route (tako/blob-binding)
 tako.Route must be written as a literal with constant fields — configuration is read at analysis time, not run time; got variable "cfg" (tako/config-literal)
 route "GET /_tako/sneaky" is inside /_tako/, which tako reserves for the endpoints it injects (session, sign-in, cron, signed URLs, push) — the framework answers that namespace before this app's routes, so Sneaky would never run; choose a path outside it (tako/reserved-prefix)
+SetRole cannot be mounted beside a route this service already declares: POST /moderate/{id}/retract — Go's router refuses a pair where neither pattern is more specific, and the service panics at startup. Make one of them narrower (a literal segment beats a wildcard) or move one to a different path (tako/route-conflict)
 ```
+
+The last one is worth a sentence, because the *absence* of it is the
+common case people rely on. Go orders `GET /admin/new` ahead of
+`GET /admin/{slug}` — a literal beats a wildcard, which is the trick
+every app uses for a "new" page. What it refuses is a pair where neither
+wins: `POST /moderate/{id}/retract` and `POST /moderate/people/{id}` both
+match `/moderate/people/retract`. That refusal is a **panic at startup**,
+so before this rule it was found by running the service. The check
+registers your routes on a real `http.ServeMux` and reports what it
+says, so tako and the router can never disagree about what conflicts.
 
 On the wire: bad input is a 400 — `{"error":"body: invalid JSON"}`,
 `{"error":"query \"loud\": \"banana\" is not a bool"}`; `NotFound()`
