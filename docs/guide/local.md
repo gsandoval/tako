@@ -64,5 +64,8 @@ comment on the declaration says so.
 test: `app.Ctx(app.SignIn("alice"))` for identities,
 `Endpoint.Call` to invoke handlers, `app.DrainQueues()` to settle
 async work (jobs included), `app.AdvanceCron(Cleanup)` to fire a cron,
-`app.Chaos()` for delivery chaos. `tako test` regenerates stale code
-first, then runs `go test ./...`.
+`app.Chaos()` for delivery chaos, and `app.Handler()` for the app's
+real HTTP surface. `tako test` regenerates stale code, maps in the
+generated test harness, and runs `go test ./...` — an app's tests want
+`tako test` rather than `go test`, because the overlay carrying that
+harness is what `go test` does not apply.

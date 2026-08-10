@@ -72,6 +72,22 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	return written, nil
 }
 
+// Mains filters a Generate result down to the service mains.
+//
+// The harness is generated code like the rest, but it is TEST code, and
+// a run command's most-read line should not list it: `tako dev` printed
+// `.tako/gen/journal/harness/tako_harness_test.go` beside the service it
+// was about to start, which is noise in the loop people watch all day.
+func Mains(written []string) []string {
+	out := make([]string, 0, len(written))
+	for _, rel := range written {
+		if filepath.Base(rel) == "main.go" {
+			out = append(out, rel)
+		}
+	}
+	return out
+}
+
 // HarnessOverlay maps each service's generated test harness into the
 // package it belongs to, in the shape `go test -overlay` expects.
 //

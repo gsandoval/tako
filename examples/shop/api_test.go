@@ -25,8 +25,6 @@ import (
 	"github.com/gsandoval/tako/pkg/runtime"
 )
 
-// serveAPI mirrors the generated main: session routes + JSONHandler
-// per endpoint, decode functions written the way codegen writes them.
 // serveAPI is the app's real HTTP surface (AB2): every declared route
 // with the binder codegen generates for it, the session endpoint from
 // the app's own tako.Auth declaration, and the job's local execution

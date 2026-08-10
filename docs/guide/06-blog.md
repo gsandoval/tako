@@ -46,9 +46,9 @@ with everything else.
 
 Fragment templates live in `site/static/templates/` — Hugo copies
 them into `public/templates/`, and `templates/` is the one subtree a
-tako Site never serves raw. One build feeds both worlds; tests
-register the same files straight from `site/static`, so `go test`
-never needs Hugo installed.
+tako Site never serves raw. One build feeds both worlds: the site the
+tests serve is the declared one, read from `site/static` — so `tako
+test` never needs Hugo installed.
 
 A site without `templates/layout.html` is fine — the shell belongs
 to Hugo. Only `site.Render` (full pages) needs a layout, and it says

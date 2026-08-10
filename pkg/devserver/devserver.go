@@ -180,7 +180,9 @@ func (s *session) cycle(first bool) error {
 		return err
 	}
 	if first {
-		fmt.Fprintf(s.out(), "  generating  %s\n", strings.Join(written, ", "))
+		// Mains only: the test harness is generated here too, and a dev
+		// loop is not the place to mention it.
+		fmt.Fprintf(s.out(), "  generating  %s\n", strings.Join(codegen.Mains(written), ", "))
 	}
 
 	bin := filepath.Join(".tako", "bin", svc.Name)

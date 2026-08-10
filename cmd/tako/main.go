@@ -230,8 +230,13 @@ func runTest(args []string) error {
 	}
 	// The freshness check: tests always run against regenerated code, and
 	// a drifted checkout is called out rather than silently used.
+	//
+	// Mains only, and by SERVICE name. The harness lives one directory
+	// deeper, so taking the parent directory named it "harness" — the
+	// note read "regenerated: harness was stale", which is not a thing
+	// anybody has.
 	var refreshed []string
-	for _, rel := range written {
+	for _, rel := range codegen.Mains(written) {
 		svc := filepath.Base(filepath.Dir(rel))
 		now, err := os.ReadFile(filepath.Join(dir, rel))
 		if err != nil {
@@ -245,7 +250,7 @@ func runTest(args []string) error {
 	if len(refreshed) > 0 {
 		note = fmt.Sprintf(" (regenerated: %s was stale)", strings.Join(refreshed, ", "))
 	}
-	fmt.Printf("  generating  %s%s\n", strings.Join(written, ", "), note)
+	fmt.Printf("  generating  %s%s\n", strings.Join(codegen.Mains(written), ", "), note)
 
 	// The test harness (AB2): each service's generated harness is mapped
 	// into its package with go's -overlay, so a test can reach the app's

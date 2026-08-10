@@ -1,9 +1,11 @@
 package journal
 
 // The W2 contract: server-rendered pages, browser-form binding,
-// automatic CSRF, POST-redirect-GET, and pre-W4 escaping. The harness
-// mirrors the generated main (runtime handlers + site templates), like
-// gallery's http_test.go.
+// automatic CSRF, POST-redirect-GET, and pre-W4 escaping.
+//
+// The surface is the generated one — tako.NewTestApp(t).Handler() — so
+// these tests drive the mounts, binders and mount options the deployed
+// service has, rather than a hand-written mirror of them (AB2).
 
 import (
 	"errors"
