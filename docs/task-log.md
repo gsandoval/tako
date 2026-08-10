@@ -21032,3 +21032,294 @@ browser on the old role.
 `go vet ./...` and `go test ./...` green at the root. All seven examples
 green under `tako test`. Scripted walk: `validate/users.md`, every step
 run, transcripts pasted there rather than paraphrased.
+
+---
+
+## SC2 — DX proposal: `tako setup`, the block the doc admits it should be (2026-08-10) — AWAITING APPROVAL
+
+Second of the scaffolding series. SC1 shipped 2026-08-10.
+
+### The evidence, and the correction it forces
+
+I proposed SC2 as "turn the documented block into a command", implying
+tako cannot tell you what is missing. **That was wrong, and the code is
+better than I credited.** `gcp.Preflight` (preflight.go:71) already:
+
+- computes the APIs and permissions THIS app's graph needs (`Needs`),
+  not a generic list;
+- checks each API's enabled state, and every permission through
+  `testIamPermissions`;
+- checks that declared secrets exist, that a Datastore database exists,
+  that each custom domain is verified, that the region supports
+  mappings;
+- prints an exact, copy-pasteable remediation for every gap;
+- and `Classify` gives 401, 403-API-disabled, 403-permission,
+  403-org-policy and 404-project five different texts.
+
+So detection is done, and done well. What does not exist is **doing
+any of it**. `docs/tako-cloud-permissions.md` says of its own setup
+block: *"later `tako deploy` will print exactly this when preflight
+finds gaps; until then it's the documented block."* Half of that
+shipped — the printing. Nobody applies it.
+
+The gap is therefore narrower and sharper than I said: a first-time
+user copies eleven `gcloud services enable` arguments and fourteen
+`add-iam-policy-binding` lines out of a markdown table by hand, and
+gets them wrong one at a time, each mistake costing a full preflight
+round trip.
+
+### What SC2 is
+
+`tako setup --project <id>` — **apply the setup, converge, and be
+honest about the remainder.** It plans, prompts, enables, grants,
+creates the Datastore database, and then prints exactly what tako
+cannot do, with the commands or console links for each.
+
+It is stateless and idempotent, like everything else here: re-running
+skips what is already true and says so. There is no state file and no
+"setup completed" marker.
+
+---
+
+### The surface
+
+```
+tako setup [--project <id>] [--env prod] [--member <principal>]
+           [--plan] [--minimal] [--yes]
+```
+
+**The normal run**, from an app directory:
+
+```
+$ tako setup --project acme-prod-4821
+tako setup · acme-prod-4821
+  granting to  user:memo@example.com
+  app          shop · 6 services, entities, queues, a cron, 1 secret
+
+  APIs — 4 to enable, 7 already on
+    + artifactregistry.googleapis.com    push images
+    + cloudscheduler.googleapis.com      crons
+    + cloudtasks.googleapis.com          rate-limited and delayed queues
+    + identitytoolkit.googleapis.com     sign-in
+
+  Roles for user:memo@example.com — 5 to grant, 9 already held
+    + roles/run.admin                    create and update services
+    + roles/iam.serviceAccountAdmin      one identity per service
+    + roles/pubsub.admin                 topics and subscriptions
+    + roles/cloudscheduler.admin         crons
+    + roles/identitytoolkit.admin        tako users — NOT needed to deploy
+
+  Datastore
+    + a datastore-mode database in us-central1
+      the location is permanent: a database cannot be moved later
+
+  apply? [y/N] y
+  ✓ enabled  4 APIs
+  ✓ granted  5 roles
+  ✓ created  the Datastore database
+
+Still yours — tako cannot do these:
+  · the Google sign-in provider: Google exposes no public API for
+    creating external OAuth clients
+      https://console.firebase.google.com/project/acme-prod-4821/authentication/providers
+      → Google → Enable (pick a support email) → Save
+  · a value for the secret shop declares
+      printf '<value>' | gcloud secrets create prod-stripe-key --data-file=- --project acme-prod-4821
+
+Next: tako deploy --project acme-prod-4821
+```
+
+**Re-running** says the useful thing rather than nothing:
+
+```
+$ tako setup --project acme-prod-4821
+tako setup · acme-prod-4821
+  granting to  user:memo@example.com
+  nothing to do — 11 APIs on, 14 roles held, the database exists
+
+Still yours — tako cannot do these:
+  · the Google sign-in provider …
+```
+
+**The failure that matters most.** Granting yourself the permission to
+grant is the one thing nobody can bootstrap, so setup must be excellent
+at handing the job over:
+
+```
+$ tako setup --project acme-prod-4821
+tako setup · acme-prod-4821
+  granting to  user:intern@example.com
+tako: you cannot change IAM on acme-prod-4821 — setup needs
+      resourcemanager.projects.setIamPolicy, which comes with
+      roles/owner or roles/resourcemanager.projectIamAdmin. Granting
+      yourself the permission to grant is the one step nobody can
+      bootstrap, so it is somebody else's to run.
+
+      Send them this — it is the whole of it:
+
+        gcloud services enable artifactregistry.googleapis.com \
+          cloudscheduler.googleapis.com cloudtasks.googleapis.com \
+          identitytoolkit.googleapis.com --project acme-prod-4821
+
+        for R in run.admin iam.serviceAccountAdmin pubsub.admin \
+                 cloudscheduler.admin identitytoolkit.admin; do
+          gcloud projects add-iam-policy-binding acme-prod-4821 \
+            --member user:intern@example.com --role roles/$R
+        done
+
+      Then re-run tako setup to finish (it will skip what is done).
+```
+
+**CI**, granting to a service account rather than to you:
+
+```
+tako setup --project acme-prod-4821 \
+  --member serviceAccount:deploy@acme-prod-4821.iam.gserviceaccount.com --yes
+```
+
+`--plan` stops after the plan, exactly like `tako deploy --plan`.
+
+---
+
+### The four decisions this needs
+
+**D1 — the full Layer 1 bundle by default, not the graph's subset.**
+`--minimal` grants only what this app's graph needs.
+
+The permissions doc's own reasoning: *"Each C-task's preflight checks
+only the subset that task touches; the full bundle exists so a user can
+grant once and never think about it again."* Granting the subset makes
+`tako setup` something you re-run in the middle of a feature — you add
+your first `tako.Cron` and the next deploy fails on a missing role.
+Layer 2's derived least privilege is about the RUNTIME, where the
+principal is a machine and the blast radius is a service; Layer 1 is a
+human on a dedicated project.
+
+`identitytoolkit.admin` is annotated in the plan as not needed to
+deploy, because it is the one role a CI principal can decline.
+
+**D2 — standard target resolution, NOT SC1's exception.** `--project`
+→ `GOOGLE_CLOUD_PROJECT` → gcloud config, like every other cloud
+command.
+
+Stated because I just shipped the opposite one week's work ago and the
+asymmetry needs a reason rather than a mood. SC1 writes a person into a
+project and no later run corrects it. This one converges project
+configuration: every effect is additive, revocable, and re-derivable,
+the plan names the project in the first line, and there is a y/N before
+anything happens. Consistency wins where the danger does not.
+
+**D3 — apply what it can, print what it cannot, always.** Two kinds of
+"cannot": no permission (hand it over, above), and genuinely impossible
+(the Google provider, domain ownership, DNS, secret VALUES). Both end
+in a block someone can act on. Setup never half-applies silently and
+never claims to have finished something it skipped.
+
+**D4 — setup creates the Datastore database.** It is the one create
+here whose consequence outlives the command: a Firestore/Datastore
+database's location cannot be changed afterward. So the plan names the
+location and says permanent, and `--yes` covers it — creation, not
+destruction, is rung 2 of the ladder. **This is the one I am least
+sure about** and it is called out again below.
+
+---
+
+### Cloud errors & permissions
+
+**What setup itself needs**, beyond what it grants:
+
+| Permission | Why |
+|---|---|
+| `serviceusage.services.enable` | turn APIs on (`roles/serviceusage.serviceUsageAdmin`, or owner) |
+| `resourcemanager.projects.setIamPolicy` | grant the bundle (`roles/resourcemanager.projectIamAdmin`, or owner) |
+| `datastore.databases.create` | the database (`roles/datastore.owner`, already in the bundle) |
+
+In practice: **the person who created the project**. That is the honest
+persona, and the partial-power path above is what everyone else gets.
+
+Failure texts, each distinct because each has a different remedy:
+
+```
+tako: you cannot enable APIs on acme-prod-4821 — setup needs
+      serviceusage.services.enable (roles/serviceusage.serviceUsageAdmin,
+      or roles/owner). [hand-over block]
+```
+```
+tako: project "acme-prod-482" not found (or you have no access) — check the id
+```
+```
+tako: enabling artifactregistry.googleapis.com is blocked by your
+      organization's policy — tako will not try to work around it
+      (see docs/tako-cloud-permissions.md): <the policy's own message>
+```
+```
+tako: acme-prod-4821 has no billing account — Cloud Run, Artifact Registry
+      and Datastore all refuse without one. Link one in the console, then
+      re-run: https://console.cloud.google.com/billing/linkedaccount?project=acme-prod-4821
+```
+```
+tako: cannot authenticate to Google Cloud — run:
+        gcloud auth application-default login
+```
+
+`Classify` already produces four of these shapes; setup reuses it
+rather than growing a second classifier. **Billing is new** — it is
+the commonest first-project failure and currently surfaces as an
+opaque 403 from whichever API is touched first.
+
+**Ordering.** APIs before roles before the database: a grant against a
+project whose API is off fails confusingly, and the database needs
+Datastore enabled. Setup stops at the first failure rather than
+pressing on, because the later steps' errors would be consequences of
+the earlier one.
+
+---
+
+### Non-goals
+
+- **Creating the project.** Billing accounts, org membership and quota
+  are the user's relationship with Google, not tako's.
+- **Org policy.** Doctrine, and unchanged: tako reports, never
+  circumvents.
+- **Service-account KEYS.** ADC only. Setup will not mint a downloadable
+  credential, for CI or anyone.
+- **Secret values.** SC4's territory, and the value is the user's data.
+- **Domains, DNS, the Google provider.** Impossible or genuinely
+  interactive; setup names them and stops.
+- **`tako setup --revoke`.** Taking roles off a human is not tako's
+  call, and the confirmation ladder has no rung that makes it one.
+- **A "setup completed" marker.** Stateless reconciliation, decision 4.
+
+### Test plan (test-first)
+
+1. **The bundle is tested against the doc.** A guard parses the Layer 1
+   table in `docs/tako-cloud-permissions.md` and asserts it matches the
+   bundle in code. The table has been the source of truth for a year;
+   the moment code owns it, one of the two starts lying.
+2. **Fake-server tests** over `pkg/provision/gcp`'s existing
+   `fake_test.go` harness: plan output golden, apply issues exactly the
+   expected calls, and **a re-run issues none** (idempotence is the
+   property, not a nice-to-have).
+3. **Every refusal above**, exact text, including the hand-over block —
+   it is the output a blocked user reads most carefully.
+4. **`--plan` mutates nothing**: the fake server fails the test if any
+   non-GET arrives.
+5. **`validate/setup.md`**, run against a REAL fresh project, transcript
+   pasted into this log. This one cannot be validated any other way: a
+   fake server cannot tell me the block is right.
+
+### The two questions I want ruled on
+
+1. **D1's default.** Full bundle (grant once, never think again) versus
+   the graph's subset (least privilege, re-run as the app grows). I
+   recommend the full bundle with `--minimal` as the opt-in, because
+   the failure mode of the subset lands mid-feature.
+2. **D4.** Should `--yes` cover creating the Datastore database, given
+   its location is permanent? I lean yes — it is a create, and the
+   ladder reserves typed confirmation for destruction — but a permanent
+   choice made by a flag in CI is the kind of thing that is obvious
+   only in hindsight.
+
+### Gate
+
+Stopping here. No code written.
