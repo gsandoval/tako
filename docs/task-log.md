@@ -22421,3 +22421,189 @@ Content-Security-Policy: default-src 'self'; script-src 'none'; object-src 'none
 reports. Making it enforcing would break user templates carrying inline
 script or style; that is a product decision with a migration story and
 needs its own DX proposal. Recorded as discovered work.
+
+---
+
+## CR7b — DX proposal: env separation that is parseable, not just checked (2026-08-11) — AWAITING APPROVAL
+
+### A correction to the recommendation that produced this task
+
+I proposed this as "the fix, before the tag, because after v0.1.0 it is a
+migration". Working the algebra to write the proposal weakened the
+premise, so it goes first.
+
+The shipped CR7 check (`checkCollisions`) refuses two DECLARED names that
+become one physical name in some environment. I described that as partial.
+It is not:
+
+> Two declarations `a` and `b` collide iff `e1-a == e2-b` for some pair of
+> environments. Take `|a| < |b|`. Both are suffixes of the same string, so
+> `a` is a suffix of `b`; the character before it is the separator, so `b`
+> ends with `-a`. Both are declared, so the shipped scan — which tests
+> every declared name against every other declared name's `-`-suffix —
+> already refuses it. The prod case (`a == e2-b`) is the same statement
+> with `e1` empty.
+
+So for declared-versus-declared, under the one-app-one-project doctrine
+(`RepoName`'s comment, `desired.go:56`), **the shipped check is complete**.
+What it does not cover is narrower than I implied:
+
+1. **Declared versus DERIVED, across environments.** A bucket `photos`
+   publishes on `photos-uploaded` in prod. An app deployed `--env photos`
+   declaring a topic `uploaded` produces the same name. Requires an
+   environment named after a bucket.
+2. **Declared versus a SERVICE-derived name.** `<service>-dead`,
+   `<name>-sa`, `<queue>-tako`. A declared queue named
+   `gallery-makethumb-dead` collides with that worker's dead-letter topic.
+
+Both are reachable and neither is likely. So this is no longer "fix the
+hole"; it is a judgment about whether env separation should be
+**parseable** rather than merely **checked**, and it is worth deciding
+before a tag only because the rename is free today and is not free after.
+
+### What the user sees
+
+**Physical names gain a double hyphen, in non-prod environments only.**
+
+```
+                      today            proposed
+prod    topic orders  orders           orders          (unchanged)
+staging topic orders  staging-orders   staging--orders
+pr-42   bucket photos p-app-pr-42-photos  p-app-pr-42--photos
+staging service api   staging-api      staging--api
+staging secret key    staging-key      staging--key
+```
+
+**Prod does not move.** `Prefixed` returns the base name unchanged for
+`DefaultEnv`, so every name in a production deployment — flauta's
+included — is byte-identical before and after. The blast radius is
+preview and staging environments, which are the ones built to be torn
+down.
+
+**Two declaration rules tighten**, and they are what makes the separator
+safe rather than merely different: a `--` in either half would make the
+split ambiguous again.
+
+```
+app.go:12:19: tako.Topic name "order--placed" cannot contain "--" — a double
+              hyphen separates the environment from the name (staging--orders),
+              so a name carrying one could not be told from an environment
+              (tako/resource-name)
+
+$ tako deploy --env pr--42
+--env "pr--42" cannot contain "--"
+
+    a double hyphen separates the environment from the resource name
+    (staging--orders), so an environment carrying one could not be told
+    from the name beside it. Try --env pr-42.
+```
+
+Neither costs anything today: no example, and no environment anyone has
+deployed, uses `--`.
+
+**Operators get something they did not have.** `staging-orders` does not
+say whether the environment is `staging` or the topic is called that.
+`staging--orders` does, in the console, in `gcloud` output, and in a
+billing export — none of which have the graph to ask.
+
+### The migration, and the one thing it must not do automatically
+
+Renaming means the old resources become orphans. `tako prune` already
+deletes labelled stateless orphans (topics, subscriptions, services,
+indexes, SAs) and holds data behind `--data`, so the machinery exists.
+What it must not do is pretend a rename moves anything:
+
+- **Buckets** — the objects do not move. A renamed bucket is a new, empty
+  bucket, and the old one keeps the data until somebody says otherwise.
+- **Secrets** — the VALUE does not move, and tako has never created one.
+  A renamed secret has no version, so every service resolving it refuses
+  to boot. This is the sharp edge of the whole change.
+- **Queues and topics** — messages in flight at the moment of the deploy
+  are in the old topic and are not redelivered from the new one.
+
+So the proposed story is **rebuild, not migrate**, and only for non-prod:
+
+```
+$ tako deploy --env staging
+tako deploy · my-project (staging)
+
+  ⚠ environment separation changed in v0.1.0
+
+    Names in this environment now separate the env with "--":
+      staging-orders   →  staging--orders     topic
+      staging-api      →  staging--api        run service
+      staging-key      →  staging--key        secret
+      …14 more
+
+    This deploy CREATES the new ones. It does not move anything into
+    them: a bucket's objects, a secret's value and any message in
+    flight stay where they are.
+
+    Non-prod environments are meant to be rebuilt, and that is the
+    supported path:
+      tako destroy --env staging     (types the app name; deletes data)
+      tako deploy  --env staging
+      tako secrets set <name> --project my-project --env staging
+
+    prod is unaffected — its names never carried a prefix.
+
+  continue and create the new names? [y/N]
+```
+
+The prompt is rung two of the ladder: recoverable, y/N, `--yes`
+pre-answers it in CI. It is not rung three, because this deploy destroys
+nothing — the old resources are still there, and removing them is
+`prune`'s or `destroy`'s act with their own confirmations.
+
+### Options
+
+| | What | Cost | Buys |
+|---|---|---|---|
+| **A** | `--` separator, prod unchanged (**proposed**) | every non-prod name; two new declaration rules; one release note | parseable names; both residual collision classes gone |
+| **B** | `--` everywhere, including prod | every name in every deployment, flauta's included | one rule with no special case |
+| **C** | Extend the shipped check to derived names; no rename | ~40 lines, no migration, no release note | the two residual classes refused, names unchanged |
+| **D** | Nothing further | zero | — |
+
+**B** is rejected: it renames production to remove a special case that is
+already documented and tested, and `DefaultEnv`-goes-unprefixed is what
+SC4's secret naming is built on.
+
+**D** is defensible now that the declared-versus-declared case is proved
+complete, and would be my answer if a tag were not imminent.
+
+### My recommendation, and it is not the one I gave you
+
+**C now, A only if you want parseable names.**
+
+The argument I made an hour ago — "fix the hole before it becomes a
+migration" — does not survive the algebra above: the hole in the
+realistic case is already closed. What A actually buys is that an
+operator can read an environment out of a resource name, which is a real
+but ordinary benefit, and it costs every non-prod name plus a release
+note on the first tag tako has ever had.
+
+C closes both residual classes for about forty lines and no migration at
+all. It leaves names unparseable, which is a papercut nobody has reported
+in a repo whose rule is *no feature without an example demanding it.*
+
+If parseable names are worth a rename to you, A is the moment — the cost
+is genuinely zero today and genuinely not zero after the tag. I would
+rather you make that call knowing the collision argument no longer
+carries it.
+
+### Scope, either way
+
+- No change to Datastore: env isolation there is the namespace, not a
+  prefix, and namespaces do not concatenate.
+- No `tako migrate`. Decision 12, and one app has ever needed this.
+- `SAName`'s 6–30 char IAM window and `CheckNames`' 63-char bucket cap
+  both already exist and both already guard; the separator adds one byte.
+
+### Gate
+
+Goldens for the two analyzer rules; `pkg/provision` name tests; a
+conformance run; one full deploy/destroy cycle on `tako-test-01` under
+`--env staging` proving the new names and that prod's are untouched;
+transcripts in this log.
+
+**Stopping here for approval — nothing is implemented.**
