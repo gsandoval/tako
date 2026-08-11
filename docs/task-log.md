@@ -22629,3 +22629,79 @@ does not need re-deriving.
   CR7b option A (a `--` separator, prod unaffected) and it gets more
   expensive after v0.1.0, when a rename stops being free. Owner declined
   2026-08-11, knowingly.
+
+---
+
+## Z6 — v0.1.0 tagged and pushed (2026-08-11)
+
+`origin` is `github.com/gsandoval/tako`; main fast-forwarded 54 commits
+(`7a40353..199e43a`) and **v0.1.0** is an annotated tag on `199e43a`.
+
+### The fresh-project cycle, and the one thing it could not prove
+
+The gate asks for a cycle against the PUBLISHED module path. The
+repository is **private**, so `proxy.golang.org` and `sum.golang.org`
+cannot see the tag, and a stranger's `tako new` fails on verification
+before it reaches git:
+
+```
+$ tako new z6new
+tako: could not resolve github.com/gsandoval/tako v0.1.0 — check your network or
+      go mod tidy said:
+      go: downloading github.com/gsandoval/tako v0.1.0
+        verifying module: reading https://sum.golang.org/lookup/…@v0.1.0: 404 Not Found
+        fatal: could not read Username for 'https://github.com'
+```
+
+Owner's ruling (2026-08-11): **stay private, validate the private path**
+— which proves the tag is well-formed without publishing anything. With
+`GOPRIVATE` set (bypassing both the proxy and the checksum database), the
+whole cycle runs:
+
+```
+$ GOPRIVATE='github.com/gsandoval/*' tako new z6priv
+tako new · z6priv
+  + z6priv/.gitignore
+  + z6priv/go.mod
+  + z6priv/z6priv.go
+
+  tako v0.1.0
+
+Next:
+  cd z6priv && tako dev
+
+$ cat z6priv/go.mod
+require github.com/gsandoval/tako v0.1.0        ← a tag, not a pseudo-version
+
+$ curl localhost:8126/hello      {"message":"Hello from Tako!"}
+$ curl localhost:8126/greet/ada  {"message":"Hello, ada!"}
+$ curl -o/dev/null -w '%{http_code}' localhost:8126/greet/nobody   404
+
+$ GOPRIVATE='github.com/gsandoval/*' tako new z6site --kind site
+$ curl localhost:8127/ | grep h1
+  <h1>Hello from Tako!</h1>
+```
+
+Both kinds scaffold, resolve against the tag, generate, build, boot and
+serve — no `--replace` anywhere.
+
+**Item 46 is closed on the half that was tako's.** The binary now stamps
+`v0.1.0` (`released()` accepts it, the pseudo-version path is not taken)
+and the scaffold pins it. What remains is not a tako defect: a module in
+a private repository needs `GOPRIVATE` and repository access, whoever
+publishes it.
+
+- **48. `tako new`'s resolution failure blames the network for a PRIVATE
+  module.** `unresolvedTako`'s non-dev branch says "check your network or
+  GOPROXY", which is right for a public module that would not fetch and
+  wrong for the state this repo is in: the 404 is `sum.golang.org` saying
+  it has never heard of a private path, and the fix is `GOPRIVATE`, not a
+  retry. Worth a third branch if tako stays private past the first
+  outside user; moot the day the repository goes public.
+
+### Z6 status
+
+**Tagged and validated as far as private allows.** The public
+fresh-project cycle — the gate's literal wording — remains unrun, and
+will stay unrun until the repository is public. That is a visibility
+decision, not an engineering one.
