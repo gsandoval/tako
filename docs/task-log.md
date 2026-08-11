@@ -22607,3 +22607,25 @@ conformance run; one full deploy/destroy cycle on `tako-test-01` under
 transcripts in this log.
 
 **Stopping here for approval — nothing is implemented.**
+
+### CR7b — verdict: leave it (owner, 2026-08-11)
+
+Option **D**. No rename, and not the forty-line extension either: the
+declared-versus-declared case is proved closed by the shipped check, and
+the two residual classes are not worth code in a repo whose rule is *no
+feature without an example demanding it.* Recorded rather than fixed —
+if an app ever meets one, the proposal above is written and the argument
+does not need re-deriving.
+
+- **47. Env separation is checked, not parseable, and two derived-name
+  collision classes stay open.** `Prefixed` is `env + "-" + base`. The
+  shipped `checkCollisions` refuses every collision between two DECLARED
+  names (proof in CR7b). Still reachable, and unrefused: a declared name
+  colliding across environments with a name tako DERIVES —
+  `<bucket>-uploaded`, `<service>-dead`, `<name>-sa`, `<queue>-tako`.
+  Both need an environment named after one of the app's own resources.
+  Also, `staging-orders` does not say whether the env is `staging`, which
+  costs an operator reading the console or a billing export. The fix is
+  CR7b option A (a `--` separator, prod unaffected) and it gets more
+  expensive after v0.1.0, when a rename stops being free. Owner declined
+  2026-08-11, knowingly.
