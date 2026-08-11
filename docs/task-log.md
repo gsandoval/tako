@@ -21835,8 +21835,12 @@ project we had, not the project a user starts with.
 - **The hand-over block in the wild**, which needs a principal WITHOUT
   `setIamPolicy`; the owner's account is not one. Its text and its
   discrimination are unit-tested.
-- **The from-zero apply past the billing wall.** tako-test-04 has no
-  billing account, so nothing further can be enabled there.
+- **The from-zero apply past the billing wall.** tako-test-04 had no
+  billing account; the owner chose to delete the project rather than
+  link one (2026-08-10). Everything up to that wall is proven live, and
+  the sequence past it is covered by the fake. Redoing it live needs a
+  billed project, and would be confirmation rather than discovery — the
+  defects that path found are fixed and tested.
 - **Item 44 is closed by the fix above**: the fresh-project path enables
   cloudresourcemanager and then immediately needs it for an IAM read,
   which is exactly the propagation window. `WaitForAPIs` is called there
