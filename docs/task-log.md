@@ -22705,3 +22705,126 @@ publishes it.
 fresh-project cycle — the gate's literal wording — remains unrun, and
 will stay unrun until the repository is public. That is a visibility
 decision, not an engineering one.
+
+---
+
+## CR2 + CR3 — live validation on tako-test-01 (2026-08-11)
+
+The two CR fixes with cloud surface had only fake-API and unit coverage.
+This is the live walk. `examples/shortlink` (one public service, three
+Pub/Sub-driven workers), deployed, exercised, flipped, re-deployed,
+destroyed.
+
+### CR3 — the push endpoint authenticates, and real deliveries still arrive
+
+The deploy injects the pair the worker verifies against:
+
+```
+$ gcloud run services describe shortlink-countclick --format='…env…'
+{'name': 'TAKO_PUSH_INVOKER',  'value': 'shortlink-countclick-sa@tako-test-01.iam.gserviceaccount.com'}
+{'name': 'TAKO_PUSH_AUDIENCE', 'value': 'https://shortlink-countclick-119764066724.us-central1.run.app'}
+```
+
+and the subscription Google delivers with carries exactly those:
+
+```
+$ gcloud pubsub subscriptions describe shortlink-countclick
+endpoint: https://shortlink-countclick-119764066724.us-central1.run.app/_tako/api/push
+oidc:
+  audience:            https://shortlink-countclick-119764066724.us-central1.run.app
+  serviceAccountEmail: shortlink-countclick-sa@tako-test-01.iam.gserviceaccount.com
+```
+
+Five resolves, five clicks, counted exactly once each through real
+Pub/Sub push with the new check in the path:
+
+```
+$ curl .../api/links/cr3      → hits 5      (3 + 2 resolves, no double count)
+$ gcloud run services logs read shortlink-countclick
+  21:44:29 POST 204 …/_tako/api/push
+  21:44:30 POST 204 …/_tako/api/push
+```
+
+**The scare, and what it actually was.** The first deliveries after a
+fresh deploy answered 403, and the pipeline looked broken:
+
+```
+  21:42:19 POST 403 …/_tako/api/push   ×3
+  21:42:32 POST 403 …/_tako/api/push   ×2
+```
+
+Not the new check — Cloud Run's front door, before the container. The
+worker's `run.invoker` grant had been written seconds earlier and had
+not propagated; Pub/Sub retried with backoff and every message acked
+once it had (`204` from 21:43:05 on, and hits reached exactly 5). The
+same propagation pacing C4's walk recorded. Verified by reading the live
+policy, which held the binding throughout.
+
+**It cost twenty minutes to establish that, which is a finding of its
+own:** `verifyPushCaller` writes its refusal to the RESPONSE and nothing
+to the log, so a rejected delivery is invisible to `tako logs` — the
+operator sees a 403 in the request log and cannot tell tako's refusal
+from the platform's. Recorded as **49**.
+
+### CR2 — private actually closes, and the rest of the policy survives
+
+Before: the service public, plus a foreign binding deliberately added by
+hand — the half the old blind `setIamPolicy` destroyed on every deploy.
+
+```
+$ gcloud run services get-iam-policy shortlink
+- members: [allUsers]                  role: roles/run.invoker
+- members: [user:darchitect@gmail.com] role: roles/run.viewer     ← foreign
+```
+
+`Route{Private: true}` on shortlink's three routes, then `tako deploy`:
+
+```
+$ gcloud run services get-iam-policy shortlink
+- members: [user:darchitect@gmail.com] role: roles/run.viewer     ← survived
+                                                                  ← allUsers GONE
+```
+
+Both halves, against a real policy: the binding this used to be unable
+to remove is removed, and the binding it used to remove without being
+asked is untouched.
+
+The ingress really closes — under 40 seconds for the revocation to
+propagate:
+
+```
+$ curl -o/dev/null -w '%{http_code}' https://shortlink-…-uc.a.run.app/api/links
+200      (immediately after the deploy — authz still cached)
+403      (t+20s)
+```
+
+And it CONVERGES, which is the symptom that used to persist forever:
+
+```
+$ tako deploy --project tako-test-01 --yes
+      skip    run service shortlink
+    0 creates, 0 updates, 45 skips, 0 orphans
+```
+
+### Teardown
+
+`tako destroy` (typed app name) removed all four services, six topics,
+subscriptions, queues, indexes, four SAs, the repo, 8 entities and the
+framework bucket. `gcloud run services list`, `pubsub topics list` and
+the tako SAs are all empty; only the project's own pre-existing
+identities remain. `examples/shortlink/app.go` restored, tree clean, its
+suite green.
+
+- **49. A refused delivery is invisible in the logs.** `verifyPushCaller`
+  and `CronDispatch` both answer the caller and log nothing, so an
+  operator watching `tako logs` sees only the platform's request line and
+  cannot tell "tako rejected this token" from "Cloud Run rejected this
+  caller" — which are different problems with different fixes (a stale
+  audience after a URL change versus a missing grant). Both should log
+  the refusal at WARN with the reason. Found by spending twenty minutes
+  on exactly that ambiguity during CR2/CR3's own validation.
+
+### Verdict
+
+**CR2 and CR3 hold in the cloud.** Agent-side validation complete; the
+human row for the CR series is still unwritten.
