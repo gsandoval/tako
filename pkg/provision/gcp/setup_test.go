@@ -89,11 +89,19 @@ func (f *setupServer) client() *Client {
 	return &Client{HC: f.srv.Client(), Project: "p", Region: "us-central1", Base: f.srv.URL}
 }
 
+// warmProject is a project whose IAM is READABLE: cloudresourcemanager
+// on, everything else off. Role planning is only meaningful there —
+// with that API off there is nothing to ask, which is its own test
+// (TestABrandNewProjectPlansTheAPIThatMakesIAMReadable).
+func warmProject() map[string]bool {
+	return map[string]bool{crmHost: true}
+}
+
 // A project with nothing on and nothing granted: the plan is everything
 // the graph needs, and the ROLES are only the ones this graph demands —
 // the owner's ruling (2026-08-10) that setup grants the tighter set.
 func TestThePlanIsWhatThisGraphNeedsAndNoMore(t *testing.T) {
-	f := newSetupServer(t, map[string]bool{}, nil)
+	f := newSetupServer(t, warmProject(), nil)
 	plain, err := f.client().PlanSetup(context.Background(), Needs{}, "user:a@b.c", true)
 	if err != nil {
 		t.Fatal(err)
@@ -122,7 +130,7 @@ func TestThePlanIsWhatThisGraphNeedsAndNoMore(t *testing.T) {
 // Planning reads. A --plan run that mutated would be the worst kind of
 // surprise, so the fake fails the test rather than the assertion.
 func TestPlanningMutatesNothing(t *testing.T) {
-	f := newSetupServer(t, map[string]bool{}, nil)
+	f := newSetupServer(t, warmProject(), nil)
 	if _, err := f.client().PlanSetup(context.Background(), Needs{Datastore: true}, "user:a@b.c", true); err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +147,7 @@ func TestPlanningMutatesNothing(t *testing.T) {
 // re-run as the app grows (the tighter-set ruling makes that the normal
 // case), so idempotence is the property, not a nicety.
 func TestASecondRunHasNothingToDo(t *testing.T) {
-	f := newSetupServer(t, map[string]bool{}, nil)
+	f := newSetupServer(t, warmProject(), nil)
 	ctx := context.Background()
 	needs := Needs{PubSub: true}
 
@@ -172,7 +180,7 @@ func TestASecondRunHasNothingToDo(t *testing.T) {
 // grant the service account nothing at all, silently.
 func TestGrantingToAnotherPrincipalReadsThePolicyNotTheCaller(t *testing.T) {
 	// The caller holds everything; the service account holds nothing.
-	f := newSetupServer(t, map[string]bool{}, []string{
+	f := newSetupServer(t, warmProject(), []string{
 		"run.services.create", "run.services.update", "run.services.setIamPolicy",
 		"iam.serviceAccounts.create", "iam.serviceAccounts.actAs",
 		"artifactregistry.repositories.create", "storage.buckets.create",
@@ -193,7 +201,7 @@ func TestGrantingToAnotherPrincipalReadsThePolicyNotTheCaller(t *testing.T) {
 // bindings alone: the policy is a document written whole, so a careless
 // write removes other people.
 func TestApplyingKeepsBindingsItDidNotComeFor(t *testing.T) {
-	f := newSetupServer(t, map[string]bool{}, nil)
+	f := newSetupServer(t, warmProject(), nil)
 	f.policy["roles/viewer"] = []string{"user:someone@else.com"}
 	ctx := context.Background()
 	plan, err := f.client().PlanSetup(ctx, Needs{}, "user:a@b.c", false)
