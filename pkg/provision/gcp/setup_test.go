@@ -219,3 +219,50 @@ func has(list []string, want string) bool {
 	}
 	return false
 }
+
+// A brand new project has serviceusage on and cloudresourcemanager OFF.
+// Every IAM read goes through the latter, so setup — the command whose
+// whole job is preparing a project — could not prepare one: it asked
+// about permissions, got "the cloudresourcemanager API is disabled", and
+// stopped. Found by running against a fresh project (2026-08-10).
+func TestABrandNewProjectPlansTheAPIThatMakesIAMReadable(t *testing.T) {
+	// Exactly what GCP gives you: serviceusage and datastore on, and
+	// nothing else tako needs.
+	f := newSetupServer(t, map[string]bool{"datastore.googleapis.com": true}, nil)
+	plan, err := f.client().PlanSetup(context.Background(), Needs{}, "user:a@b.c", true)
+	if err != nil {
+		t.Fatalf("a fresh project must be plannable, not an error: %v", err)
+	}
+	if !has(plan.EnableAPIs, "cloudresourcemanager.googleapis.com") {
+		t.Errorf("cloudresourcemanager is not in the plan (%v) — without it no IAM policy can "+
+			"be read or written, so every derived runtime grant and the ProjectNumber "+
+			"lookup fail", plan.EnableAPIs)
+	}
+	if !plan.PermissionsUnknown {
+		t.Error("the roles were reported as known while the API every IAM read needs is off")
+	}
+	if plan.Empty() {
+		t.Error("a plan that cannot check permissions is not an empty plan — there is an API " +
+			"to turn on before anything can be known")
+	}
+}
+
+// The first failure a project with no billing account produces, and it
+// arrives as a 400 from serviceusage naming services the user never
+// mentioned. Without its own text it reads like a tako bug.
+func TestNoBillingAccountSaysSo(t *testing.T) {
+	err := Classify(&apiError{
+		Status: 400,
+		API:    "serviceusage.googleapis.com",
+		Message: "Billing account for project '498246572877' is not found. Billing must be " +
+			"enabled for activation of service(s) 'run.googleapis.com' to proceed.",
+	}, "tako-test-04", "enable APIs", "roles/serviceusage.serviceUsageAdmin")
+	for _, want := range []string{
+		"tako-test-04 has no billing account",
+		"https://console.cloud.google.com/billing/linkedaccount?project=tako-test-04",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("billing refusal missing %q:\n%s", want, err)
+		}
+	}
+}

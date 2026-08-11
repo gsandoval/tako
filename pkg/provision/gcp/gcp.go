@@ -371,6 +371,18 @@ func Classify(err error, project, verb, role string) error {
 	case ae.Status == http.StatusForbidden && (ae.Reason == "SERVICE_DISABLED" || strings.Contains(ae.Message, "API has not been used") || strings.Contains(ae.Message, "it is disabled")):
 		api := apiFromMessage(ae)
 		return fmt.Errorf("the %s API is disabled on %s — enable it: gcloud services enable %s --project %s", api, project, api, project)
+	case strings.Contains(ae.Message, "Billing must be enabled") || strings.Contains(ae.Message, "Billing account for project"):
+		// A project with no billing account refuses to enable Cloud Run,
+		// Artifact Registry and Datastore — and says so as a 400 naming
+		// services the user never mentioned. It is the first failure a
+		// brand new project produces, and without its own text it reads
+		// like a tako bug or a permissions problem. (Found by running
+		// setup against a fresh project, SC2 2026-08-10.)
+		return fmt.Errorf("%s has no billing account — Cloud Run, Artifact Registry and\n"+
+			"      Datastore all refuse without one, and every failure after this would\n"+
+			"      name something else. Link one, then re-run:\n"+
+			"        https://console.cloud.google.com/billing/linkedaccount?project=%s",
+			project, project)
 	case ae.Status == http.StatusForbidden && strings.Contains(ae.Message, "serviceusage.services.use"):
 		// Every call tako makes names the target project as the quota
 		// project, so reads are metered against it rather than against

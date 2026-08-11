@@ -11,11 +11,20 @@ import (
 )
 
 // preflightAPIs are the services every deploy touches.
+//
+// cloudresourcemanager is in here for a reason worth stating: a BRAND
+// NEW project does not have it, and without it nothing can read or
+// write an IAM policy — so every derived runtime grant fails, and so
+// does the ProjectNumber lookup the deploy needs for deterministic Run
+// URLs. It was missing until a fresh project was tried (SC2, 2026-08-10)
+// and `tako setup` — the command whose whole job is preparing a project
+// — could not prepare one.
 var preflightAPIs = []string{
 	runHost,
 	iamHost,
 	artifactHost,
 	storageHost,
+	crmHost,
 }
 
 // Perm is a required permission and the narrowest role that grants it.

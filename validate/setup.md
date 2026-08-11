@@ -223,6 +223,77 @@ started: `policy restored: True`, 13 bindings before and after.
 This run also found a cosmetic defect (a doubled blank line before
 `--plan: nothing was changed`), now fixed.
 
+## 6b. A brand-new project — tako-test-04 (2026-08-10)
+
+Owner asked for a fresh project, and it found two defects nothing else
+could have. `tako-test-04` was created empty, with no billing account.
+
+**Finding 1: setup could not prepare a project.** A new project has
+`serviceusage` enabled and `cloudresourcemanager` NOT. Every IAM read
+goes through the latter, so setup asked about permissions and died:
+
+```
+tako: the cloudresourcemanager.googleapis.com API is disabled on tako-test-04
+      — enable it: gcloud services enable cloudresourcemanager.googleapis.com …
+```
+
+True, unhelpful, and the end of the command whose whole job is fixing
+exactly that. `cloudresourcemanager` was missing from `preflightAPIs`
+altogether — so **`tako deploy` would also have failed on a fresh
+project**, at the `ProjectNumber` lookup and at every derived runtime
+grant.
+
+Fixed: it is a required API now, and a plan that cannot read IAM says so
+rather than failing.
+
+```
+  APIs — 5 to enable, 1 already on
+    + run.googleapis.com
+    + iam.googleapis.com
+    + artifactregistry.googleapis.com
+    + cloudresourcemanager.googleapis.com
+    + cloudbilling.googleapis.com
+
+  Roles for user:… — not knowable yet
+    cloudresourcemanager is off, and every IAM read goes through it.
+    It is enabled above; the roles are worked out and granted after.
+```
+
+The apply enables them, waits for propagation, then re-plans and grants
+in the same approved run — rather than telling the user to type the
+command again.
+
+**Finding 2: a billing failure was dressed as a permissions problem.**
+With billing unlinked, `batchEnable` fails with a 400 naming services
+the user never mentioned:
+
+```
+Billing account for project '4982…' is not found. Billing must be enabled
+for activation of service(s) 'artifactregistry.googleapis.com,run.…'
+```
+
+`handOver` matched any error mentioning "enable APIs", so setup printed
+the whole "somebody else must grant you permission" block — whose
+commands would fail identically. It told the user to go and ask a
+colleague for a permission they already had.
+
+Fixed on both sides. The billing failure gets its own text, from the real
+API error rather than only from the pre-check (which could not fire,
+because `cloudbilling` is itself disabled on a new project — the same
+chicken-and-egg):
+
+```
+tako: tako-test-04 has no billing account — Cloud Run, Artifact Registry and
+      Datastore all refuse without one, and every failure after this would
+      name something else. Link one, then re-run:
+        https://console.cloud.google.com/billing/linkedaccount?project=tako-test-04
+```
+
+And `handOver` now fires only on `you lack permission to`. Regression
+tests for both: `TestABrandNewProjectPlansTheAPIThatMakesIAMReadable`,
+`TestNoBillingAccountSaysSo`,
+`TestTheHandOverBlockIsOnlyForAPermissionDenial`.
+
 ## 6a. STILL NOT PROVEN
 
 - **The hand-over block.** It needs a principal without

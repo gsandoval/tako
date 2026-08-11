@@ -37,13 +37,23 @@ type SetupPlan struct {
 	// HeldAPIs and HeldRoles are counts for the "already done" line —
 	// the difference between "nothing to do" and "nothing happened".
 	HeldAPIs, HeldRoles int
+	// PermissionsUnknown is set when the roles could not be checked at
+	// all, because cloudresourcemanager — the API every IAM read goes
+	// through — is itself disabled. That is the state of a brand new
+	// project, and it is reported rather than guessed at: the plan says
+	// the API comes first and the roles are worked out after it is on.
+	PermissionsUnknown bool
 	// Reasons maps each granted role to the permission that demanded it,
 	// so the plan can say why rather than only what.
 	Reasons map[string]string
 }
 
-// Empty reports a converged project.
-func (p SetupPlan) Empty() bool { return len(p.EnableAPIs) == 0 && len(p.GrantRoles) == 0 }
+// Empty reports a converged project. A plan that could not check
+// permissions is never empty: there is at least an API to turn on
+// before anything can be known.
+func (p SetupPlan) Empty() bool {
+	return len(p.EnableAPIs) == 0 && len(p.GrantRoles) == 0 && !p.PermissionsUnknown
+}
 
 // PlanSetup reads the project and works out the difference between what
 // this graph needs and what is already true. It mutates nothing.
@@ -54,6 +64,10 @@ func (p SetupPlan) Empty() bool { return len(p.EnableAPIs) == 0 && len(p.GrantRo
 // policy instead.
 func (c *Client) PlanSetup(ctx context.Context, needs Needs, principal string, self bool) (SetupPlan, error) {
 	apis, perms := Requirements(needs)
+	// cloudbilling is setup's own: without it the billing check cannot
+	// answer, and "no billing account" is the failure that makes every
+	// later error name the wrong thing.
+	apis = append(apis, billingHost)
 	plan := SetupPlan{Principal: principal, Reasons: map[string]string{}}
 
 	for _, api := range apis {
@@ -69,6 +83,18 @@ func (c *Client) PlanSetup(ctx context.Context, needs Needs, principal string, s
 			continue
 		}
 		plan.EnableAPIs = append(plan.EnableAPIs, api)
+	}
+
+	// Every IAM read goes through cloudresourcemanager, and a brand new
+	// project does not have it. Asking anyway produces "the
+	// cloudresourcemanager API is disabled" — true, unhelpful, and the
+	// end of a command whose job is to fix exactly that. So the roles
+	// wait for the API, and the plan says so.
+	for _, api := range plan.EnableAPIs {
+		if api == crmHost {
+			plan.PermissionsUnknown = true
+			return plan, nil
+		}
 	}
 
 	// testIamPermissions answers for the CALLER, which is right when
@@ -288,12 +314,12 @@ func short(apis []string) []string {
 	return out
 }
 
-// waitForAPIs re-reads each service until it reports ENABLED. batchEnable
+// WaitForAPIs re-reads each service until it reports ENABLED. batchEnable
 // returns before the change is visible everywhere, and a grant issued
 // into that window fails with a message about the API rather than the
 // timing — the same propagation lag the deploy already tolerates for
 // IAM and Secret Manager.
-func (c *Client) waitForAPIs(ctx context.Context, apis []string, within time.Duration) {
+func (c *Client) WaitForAPIs(ctx context.Context, apis []string, within time.Duration) {
 	deadline := time.Now().Add(within)
 	for _, api := range apis {
 		for time.Now().Before(deadline) {

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/devserver"
@@ -106,10 +107,24 @@ func runSetup(args []string) error {
 	if !t.yes && !confirmed("  apply? [y/N] ") {
 		return errAborted
 	}
-	if err := client.ApplySetup(ctx, plan, func(format string, args ...any) {
-		fmt.Printf("  ✓ "+format+"\n", args...)
-	}); err != nil {
+	say := func(format string, args ...any) { fmt.Printf("  ✓ "+format+"\n", args...) }
+	if err := client.ApplySetup(ctx, plan, say); err != nil {
 		return handOver(err, t.project, principal, plan)
+	}
+	// A brand new project could not be asked about its own IAM until
+	// cloudresourcemanager was on — which just happened. Re-planning now
+	// finishes the job in the run the user already approved, rather than
+	// telling them to type the same command again.
+	if plan.PermissionsUnknown {
+		client.WaitForAPIs(ctx, plan.EnableAPIs, 90*time.Second)
+		roles, err := client.PlanSetup(ctx, needs, principal, self)
+		if err != nil {
+			return err
+		}
+		if err := client.ApplySetup(ctx, roles, say); err != nil {
+			return handOver(err, t.project, principal, roles)
+		}
+		remainder = setupRemainder(ctx, client, t, graph, needs)
 	}
 	printRemainder(remainder, t)
 	fmt.Printf("\nNext: tako deploy --project %s\n", t.project)
@@ -128,6 +143,11 @@ func printSetupPlan(plan gcp.SetupPlan) {
 		for _, role := range plan.GrantRoles {
 			fmt.Printf("    + %-40s %s\n", role, plan.Reasons[role])
 		}
+	}
+	if plan.PermissionsUnknown {
+		fmt.Printf("\n  Roles for %s — not knowable yet\n", plan.Principal)
+		fmt.Println("    cloudresourcemanager is off, and every IAM read goes through it.")
+		fmt.Println("    It is enabled above; the roles are worked out and granted after.")
 	}
 	if !plan.Empty() {
 		fmt.Println()
@@ -181,7 +201,12 @@ func printRemainder(remainder []string, t target) {
 // thing they cannot do — so the answer is the complete set of commands
 // for whoever can, and nothing else.
 func handOver(err error, project, principal string, plan gcp.SetupPlan) error {
-	if !strings.Contains(err.Error(), "IAM policy") && !strings.Contains(err.Error(), "enable APIs") {
+	// ONLY a permission denial. This used to match any failure that
+	// mentioned enabling APIs, and a brand new project's first error is
+	// "no billing account" — so setup answered a billing problem with a
+	// block of commands that would fail the same way, telling the user
+	// to go and ask a colleague for a permission they already had.
+	if !strings.Contains(err.Error(), "you lack permission to") {
 		return err
 	}
 	var b strings.Builder

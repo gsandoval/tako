@@ -21786,13 +21786,61 @@ Cleanup: six bindings removed, the service account deleted, the policy
 diffed back to identical with where it started (13 bindings, `policy
 restored: True`). `tako-test-01` is as it was found.
 
+### A brand-new project found two defects (tako-test-04, 2026-08-10)
+
+The owner asked for a fresh project. It was the highest-yield hour of
+the whole slice.
+
+**1. `tako setup` could not prepare a project — and `tako deploy` would
+have failed too.** A new GCP project has `serviceusage` on and
+`cloudresourcemanager` OFF. Every IAM read goes through the latter, so
+setup asked about permissions and died citing a disabled API — the
+command whose whole job is fixing that. Worse, `cloudresourcemanager`
+was missing from `preflightAPIs` entirely, so a first deploy would have
+failed at the `ProjectNumber` lookup and at every derived runtime grant.
+Nobody had noticed because every project we had ever tested was already
+warm.
+
+Fixed: it is a required API, and `PlanSetup` reports
+`PermissionsUnknown` instead of failing when IAM cannot be read. The
+apply enables, waits for propagation (which is what `WaitForAPIs` was
+written for — item 44 answered), then re-plans and grants inside the
+same approved run.
+
+**2. A billing failure was dressed as a permissions hand-over.** With
+no billing account, `batchEnable` returns a 400 naming services the user
+never mentioned. `handOver` matched any error mentioning "enable APIs",
+so setup printed the full "somebody else must grant you permission"
+block — whose commands fail identically. It sent the reader to a
+colleague for a permission they already had, about a problem that
+colleague could not fix either.
+
+Fixed on both sides: billing gets its own text in `Classify` (triggered
+by the real API error, since the pre-check cannot fire — `cloudbilling`
+is itself disabled on a new project, the same chicken-and-egg), and
+`handOver` now requires `you lack permission to`.
+
+Regression tests for all of it:
+`TestABrandNewProjectPlansTheAPIThatMakesIAMReadable`,
+`TestNoBillingAccountSaysSo`,
+`TestTheHandOverBlockIsOnlyForAPermissionDenial`.
+
+**The lesson worth keeping:** every earlier validation ran against a
+project that was already set up, so the one state `tako setup` exists to
+handle was the one state never tested. A fake server modelled the
+project we had, not the project a user starts with.
+
 **Still unproven**, and honestly so:
 
-- **The hand-over block**, which needs a principal WITHOUT
-  `setIamPolicy`; the owner's account is not one.
-- **The billing refusal**, which needs a project with no billing.
-- **Item 44**: the one enabled API was not immediately followed by a
-  grant, so the propagation window was never exercised.
+- **The hand-over block in the wild**, which needs a principal WITHOUT
+  `setIamPolicy`; the owner's account is not one. Its text and its
+  discrimination are unit-tested.
+- **The from-zero apply past the billing wall.** tako-test-04 has no
+  billing account, so nothing further can be enabled there.
+- **Item 44 is closed by the fix above**: the fresh-project path enables
+  cloudresourcemanager and then immediately needs it for an IAM read,
+  which is exactly the propagation window. `WaitForAPIs` is called there
+  and is no longer dead code.
 
 ### Discovered work
 
