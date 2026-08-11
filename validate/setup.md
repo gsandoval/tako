@@ -1,8 +1,9 @@
 # validate/setup.md — SC2 (`tako setup`, `tako datastore create`)
 
 **Read 6a first if you are deciding whether this is done.** The live
-path ran against `tako-test-01` on 2026-08-10; one piece of it — the
-IAM write — is still unproven.
+path ran against `tako-test-01` on 2026-08-10, including the IAM write.
+Three things remain unproven, each needing a condition this project
+does not have.
 
 ## 1. What SC2 is, and is not
 
@@ -163,18 +164,67 @@ holds everything:
 
 `0 already held` is the proof. Had this used `testIamPermissions` — which
 answers for the caller — it would have said "6 already held, nothing to
-do", granted the service account nothing, and printed success. The
-service account was deleted afterward.
+do", granted the service account nothing, and printed success.
+
+**The write itself**, authorized by the owner and run against the same
+account:
+
+```
+  apply? [y/N] y
+  ✓ granted  6 role(s) to serviceAccount:tako-sc2-probe@tako-test-01.iam.gserviceaccount.com
+```
+
+Verified against `gcloud projects get-iam-policy`, before and after:
+
+```
+roles the probe now holds:
+    roles/artifactregistry.admin
+    roles/iam.serviceAccountAdmin
+    roles/iam.serviceAccountUser
+    roles/resourcemanager.projectIamAdmin
+    roles/run.admin
+    roles/storage.admin
+
+changes to anything NOT the probe:
+    none
+
+bindings before/after: 13 / 19
+```
+
+`changes to anything NOT the probe: none` is the important line. An IAM
+policy is a document written whole, so the read-modify-write either
+preserves every other principal or quietly removes people;
+`TestApplyingKeepsBindingsItDidNotComeFor` asserts it against a fake and
+this proves it against a real policy with 13 existing bindings.
+
+**Re-running granted nothing** (`nothing to do — 4 API(s) on, 6 role(s)
+held`), so the grant path is idempotent too.
+
+**And the ruling's consequence, live.** The same principal, planned
+against gallery instead of hello:
+
+```
+  Roles for serviceAccount:tako-sc2-probe@… — 5 to grant, 6 already held
+    + roles/datastore.indexAdmin               datastore.indexes.create
+    + roles/cloudscheduler.admin               cloudscheduler.jobs.create
+    + roles/pubsub.admin                       pubsub.topics.create
+    + roles/secretmanager.viewer               secretmanager.secrets.get
+    + roles/secretmanager.admin                secretmanager.secrets.setIamPolicy
+```
+
+Six held from the smaller app, five more for the larger one. That is
+"setup is a command you re-run as the app grows" doing exactly what the
+tighter-set ruling intended, incrementally, against a real policy.
+
+**Cleanup.** All six bindings removed, the service account deleted, and
+the project's policy diffed back to byte-identical with where it
+started: `policy restored: True`, 13 bindings before and after.
 
 This run also found a cosmetic defect (a doubled blank line before
 `--plan: nothing was changed`), now fixed.
 
 ## 6a. STILL NOT PROVEN
 
-- **The IAM write.** `setIamPolicy` was blocked by this environment's
-  permission classifier, so the grant path is proven up to the point of
-  writing and no further. The read side of it — `getIamPolicy`,
-  `rolesHeldBy` — did run.
 - **The hand-over block.** It needs a principal without
   `setIamPolicy`, which the owner's account is not.
 - **The billing refusal**, which needs a project without billing.

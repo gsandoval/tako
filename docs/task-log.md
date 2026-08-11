@@ -21767,12 +21767,27 @@ Owner supplied `tako-test-01` the same day. Full transcripts in
 It also turned up a cosmetic defect no fake would have: a doubled blank
 line before `--plan: nothing was changed`. Fixed.
 
+**The IAM write, authorized and run.** `✓ granted 6 role(s)`, verified
+against `gcloud projects get-iam-policy` before and after: all six
+landed on the probe, and `changes to anything NOT the probe: none`
+across 13 existing bindings. That last line is the one that mattered —
+an IAM policy is a document written whole, so the read-modify-write
+either preserves every other principal or quietly removes people.
+`TestApplyingKeepsBindingsItDidNotComeFor` asserts it against a fake;
+this proves it against a real policy. Re-running granted nothing.
+
+**And the ruling's consequence, live.** The same principal planned
+against gallery rather than hello: `5 to grant, 6 already held` —
+datastore.indexAdmin, cloudscheduler.admin, pubsub.admin and the two
+secretmanager roles. "Re-run as the app grows" doing precisely what the
+tighter set intended, incrementally, against a real policy.
+
+Cleanup: six bindings removed, the service account deleted, the policy
+diffed back to identical with where it started (13 bindings, `policy
+restored: True`). `tako-test-01` is as it was found.
+
 **Still unproven**, and honestly so:
 
-- **The `setIamPolicy` write.** Blocked by this environment's
-  permission classifier. The grant path is proven up to the point of
-  writing — `getIamPolicy` and `rolesHeldBy` ran for real — and no
-  further. Needs the owner to allow that call, or to run it themselves.
 - **The hand-over block**, which needs a principal WITHOUT
   `setIamPolicy`; the owner's account is not one.
 - **The billing refusal**, which needs a project with no billing.
