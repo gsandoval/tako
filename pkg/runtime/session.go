@@ -15,9 +15,11 @@ import (
 	"errors"
 	"fmt"
 	"html"
+	"html/template"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"slices"
 	"strings"
@@ -466,12 +468,17 @@ func SessionHandler(providers ...string) http.Handler {
 			// The dev bar (and dev sign-in page) post plain forms:
 			// bounce to next, else back to the page.
 			if r.PostFormValue("dev_user") != "" {
-				to := r.PostFormValue("next")
-				if to == "" || !strings.HasPrefix(to, "/") {
-					to = r.Referer()
-				}
-				if to == "" {
-					to = "/"
+				// Same guard as the sign-in page's: a bare "starts with /"
+				// admits //evil.example, and this one ends in a Location
+				// header. The Referer fallback goes through it too — that
+				// header is the browser's, not ours.
+				to := safeNext(r.PostFormValue("next"))
+				if to == "/" {
+					if ref := r.Referer(); ref != "" {
+						if u, err := url.Parse(ref); err == nil && u.Host == r.Host {
+							to = safeNext(u.RequestURI())
+						}
+					}
 				}
 				http.Redirect(w, r, to, http.StatusSeeOther)
 				return
@@ -823,14 +830,13 @@ func SignInPage(providers ...string) http.Handler {
 		prov[p] = true
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		next := r.URL.Query().Get("next")
-		if next == "" || !strings.HasPrefix(next, "/") {
-			next = "/"
-		}
+		next := safeNext(r.URL.Query().Get("next"))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
 		if isLocalBackend() {
-			fmt.Fprintf(w, signInDevPage, next, devRoleChecks(), devPasswordForm(prov, next))
+			// No script on this page at all, so the policy can say so.
+			w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'")
+			fmt.Fprintf(w, signInDevPage, html.EscapeString(next), devRoleChecks(), devPasswordForm(prov, next))
 			return
 		}
 		apiKey, authDomain, project := os.Getenv("TAKO_AUTH_APIKEY"), os.Getenv("TAKO_AUTH_DOMAIN"), os.Getenv("TAKO_PROJECT")
@@ -848,8 +854,56 @@ func SignInPage(providers ...string) http.Handler {
   <input name="password" type="password" placeholder="password" required>
   <button>Sign in with email</button></form>`
 		}
-		fmt.Fprintf(w, signInCloudPage, google, email, apiKey, authDomain, project, next)
+		// A nonce, minted per response, so the page's own script runs and
+		// an injected one does not. The policy names script and nothing
+		// else on purpose — see the note on signInCloudPage.
+		nonce := randomHex(16)
+		w.Header().Set("Content-Security-Policy",
+			"script-src 'self' https://www.gstatic.com 'nonce-"+nonce+"'; object-src 'none'; base-uri 'none'")
+		fmt.Fprintf(w, signInCloudPage, google, email, nonce, apiKey, authDomain, project, jsString(next))
 	})
+}
+
+// safeNext bounds where a ?next= may send someone: this origin, by
+// path, or nowhere.
+//
+// The old guard was strings.HasPrefix(next, "/"), which admits
+// "//evil.example" — protocol-relative, and absolute to every browser —
+// and "/\evil.example", which browsers normalise to the same thing. It
+// also admitted control characters, which are stripped before the URL is
+// resolved, so "/\t/evil.example" becomes "//evil.example" after the
+// guard has already passed it.
+//
+// What it does NOT do is bound the characters: "/a?q=<b>" is a perfectly
+// ordinary path, so every sink still escapes for its own context. This
+// function answers "whose origin", not "is it printable".
+func safeNext(raw string) string {
+	if raw == "" || raw[0] != '/' {
+		return "/"
+	}
+	for _, r := range raw {
+		// Anything a browser strips before resolving the URL cannot be
+		// allowed to change what the URL means after this check.
+		if r < 0x20 || r == 0x7f {
+			return "/"
+		}
+	}
+	if len(raw) > 1 && (raw[1] == '/' || raw[1] == '\\') {
+		return "/"
+	}
+	return raw
+}
+
+// jsString renders a value as a JavaScript string literal, quotes and
+// all.
+//
+// %q was the bug: it escapes what breaks a GO literal — quotes,
+// backslashes — and "</script>" contains neither, so a value carrying
+// one closed the script ELEMENT and everything after it was markup.
+// JSEscapeString escapes '<' and '>' too, which is what makes the
+// literal safe where it actually sits.
+func jsString(s string) string {
+	return `"` + template.JSEscapeString(s) + `"`
 }
 
 const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · tako dev</title>
@@ -906,6 +960,15 @@ func devRoleChecks() string {
 // the Firebase Auth compat SDK (gstatic). One POST of the resulting ID
 // token establishes the server session; the SDK's client state is not
 // used afterwards.
+//
+// Its CSP names script-src, object-src and base-uri, and deliberately
+// stops there. A default-src would have to enumerate every host the
+// Identity Platform SDK reaches — token exchange, the popup handler,
+// whatever a future SDK version adds — and a policy that breaks sign-in
+// is a worse outcome than the reflected script it was written to catch.
+// Those three directives are what an injected script needs: somewhere to
+// run from, a plugin to fall back to, and a base tag to retarget
+// relative URLs. The rest of the page's traffic is the SDK's business.
 const signInCloudPage = `<!doctype html><meta charset="utf-8"><title>sign in</title>
 <body style="font:16px sans-serif;max-width:32rem;margin:4rem auto">
 <h1>Sign in</h1>
@@ -913,9 +976,9 @@ const signInCloudPage = `<!doctype html><meta charset="utf-8"><title>sign in</ti
 <p id="err" style="color:#b00"></p>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
-<script>
+<script nonce="%s">
 firebase.initializeApp({apiKey: %q, authDomain: %q, projectId: %q});
-const next = %q;
+const next = %s;
 async function establish(cred) {
   const idToken = await cred.user.getIdToken();
   const res = await fetch("` + routes.Session + `", {method: "POST",

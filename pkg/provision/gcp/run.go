@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -99,28 +100,28 @@ func (r *RunServices) List(ctx context.Context) ([]provision.Observed, error) {
 	return observed, nil
 }
 
-// isPublic reads the live ingress stance: public IS the allUsers
-// invoker binding, so drift detection reads the policy rather than
-// assuming (a service flipped public/private in the console must hash
-// differently).
+// The ingress stance, spelled once: public IS the allUsers binding on
+// the invoker role. Three places read that fact — drift detection,
+// the converge below, and destroy — and a fourth spelling of either
+// string is a bug nobody sees until a service is open that should not
+// be.
+const (
+	invokerRole = "roles/run.invoker"
+	allUsers    = "allUsers"
+)
+
+// isPublic reads the live ingress stance, so drift detection reads the
+// policy rather than assuming (a service flipped public/private in the
+// console must hash differently).
 func (r *RunServices) isPublic(ctx context.Context, name string) bool {
-	var p struct {
-		Bindings []struct {
-			Role    string   `json:"role"`
-			Members []string `json:"members"`
-		} `json:"bindings"`
-	}
+	var p policy
 	url := r.C.url(runHost, "/v2/%s/services/%s:getIamPolicy", r.parent(), name)
 	if err := r.C.do(ctx, http.MethodGet, url, nil, &p); err != nil {
 		return false
 	}
 	for _, b := range p.Bindings {
-		if b.Role == "roles/run.invoker" {
-			for _, m := range b.Members {
-				if m == "allUsers" {
-					return true
-				}
-			}
+		if b.Role == invokerRole && slices.Contains(b.Members, allUsers) {
+			return true
 		}
 	}
 	return false
@@ -312,20 +313,90 @@ func (r *RunServices) Update(ctx context.Context, o provision.Object) error {
 	return r.allowPublic(ctx, o)
 }
 
-// allowPublic grants unauthenticated invocation — C2's ingress stance
-// (WithPrivate and auth arrive with their features).
+// allowPublic converges the ingress stance — C2's public/private —
+// onto the service's IAM policy.
+//
+// It reconciles BOTH ways, which is the whole of CR2. It used to only
+// add: declaring a deployed public route Private left allUsers bound, so
+// the door the developer just closed stayed open, and because isPublic
+// feeds liveHash the plan reported that service as changed on every
+// deploy from then on without ever being able to fix it.
+//
+// And it is a read-modify-write now. The old write was a setIamPolicy
+// carrying one binding, and setIamPolicy REPLACES the policy: everything
+// else on a public service — the invoker grant a calling service holds,
+// a teammate's run.viewer, another tool's binding — was destroyed on
+// every deploy. grants.go states that discipline as this package's rule
+// and honours it carefully; this was the one place that did not. The
+// etag rides along for the same reason it does there: a policy changed
+// between the read and the write is refused rather than clobbered.
+//
+// A policy that already says the right thing is not rewritten at all.
 func (r *RunServices) allowPublic(ctx context.Context, o provision.Object) error {
-	if public, _ := o.Spec["public"].(bool); !public {
+	public, _ := o.Spec["public"].(bool)
+	get := r.C.url(runHost, "/v2/%s/services/%s:getIamPolicy", r.parent(), o.Name)
+	var live policy
+	if err := r.C.do(ctx, http.MethodGet, get, nil, &live); err != nil {
+		return Classify(err, r.C.Project, "read the run service's IAM policy", "roles/run.admin")
+	}
+	next, changed := withPublicInvoker(live, public)
+	if !changed {
 		return nil
 	}
-	url := r.C.url(runHost, "/v2/%s/services/%s:setIamPolicy", r.parent(), o.Name)
-	body := map[string]any{"policy": map[string]any{
-		"bindings": []map[string]any{{"role": "roles/run.invoker", "members": []string{"allUsers"}}},
-	}}
-	if err := r.C.do(ctx, http.MethodPost, url, body, nil); err != nil {
-		return Classify(err, r.C.Project, "allow public access to the run service", "roles/run.admin")
+	set := r.C.url(runHost, "/v2/%s/services/%s:setIamPolicy", r.parent(), o.Name)
+	if err := r.C.do(ctx, http.MethodPost, set, map[string]any{"policy": next}, nil); err != nil {
+		what := "allow public access to the run service"
+		if !public {
+			what = "close public access to the run service"
+		}
+		return Classify(err, r.C.Project, what, "roles/run.admin")
 	}
 	return nil
+}
+
+// withPublicInvoker adds or removes allUsers from roles/run.invoker,
+// leaving every other member and every other role exactly as found.
+// Reports whether anything actually differs.
+func withPublicInvoker(live policy, public bool) (map[string]any, bool) {
+	changed := false
+	bindings := make([]map[string]any, 0, len(live.Bindings)+1)
+	found := false
+	for _, b := range live.Bindings {
+		if b.Role != invokerRole {
+			bindings = append(bindings, map[string]any{"role": b.Role, "members": b.Members})
+			continue
+		}
+		found = true
+		members := make([]string, 0, len(b.Members)+1)
+		held := false
+		for _, m := range b.Members {
+			if m == allUsers {
+				held = true
+				if !public {
+					changed = true // dropped
+					continue
+				}
+			}
+			members = append(members, m)
+		}
+		if public && !held {
+			members = append(members, allUsers)
+			changed = true
+		}
+		// A binding with no members left is not a binding Google keeps.
+		if len(members) > 0 {
+			bindings = append(bindings, map[string]any{"role": b.Role, "members": members})
+		}
+	}
+	if public && !found {
+		bindings = append(bindings, map[string]any{"role": invokerRole, "members": []string{allUsers}})
+		changed = true
+	}
+	out := map[string]any{"bindings": bindings}
+	if live.Etag != "" {
+		out["etag"] = live.Etag
+	}
+	return out, changed
 }
 
 // URL fetches the service's serving URL.
