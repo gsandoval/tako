@@ -1,0 +1,2 @@
+app.go:8:26: tako.Bucket name "Photo Uploads" is not usable as a physical name — use lowercase letters, digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit (tako/resource-name)
+app.go:10:33: tako.Queue name "thumbs_v2" is not usable as a physical name — use lowercase letters, digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit (tako/resource-name)

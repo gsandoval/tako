@@ -171,6 +171,19 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 				s.idField = f.Name
 				s.idJSON = jsonName(f)
 			case "index":
+				// A field the document does not carry cannot be
+				// indexed, and the failure is silent: the write declares
+				// an index on a key no document has, the query filters
+				// on it, and Datastore answers nothing without erroring.
+				// That is the exact shape FL20 exists to remove, so it
+				// is refused where the tags are read.
+				if omitted(f) {
+					e.schemaErr = fmt.Errorf("tako: entity %q: field %s is tagged entity:\"index\" "+
+						"but json:\"-\" keeps it out of the stored document — an index on a field "+
+						"nothing writes matches nothing, silently. Drop one of the two tags.",
+						e.name, f.Name)
+					return
+				}
 				s.indexed[f.Name] = jsonName(f)
 			}
 		}
@@ -181,6 +194,13 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 		e.schema = s
 	})
 	return e.schema, e.schemaErr
+}
+
+// omitted reports whether encoding/json will leave this field out of
+// the document entirely — json:"-", and only that spelling ("-," names
+// a field actually called "-").
+func omitted(f reflect.StructField) bool {
+	return f.Tag.Get("json") == "-"
 }
 
 func jsonName(f reflect.StructField) string {

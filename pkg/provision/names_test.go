@@ -78,3 +78,49 @@ func TestExampleShapedNamesPass(t *testing.T) {
 		}
 	}
 }
+
+// CR7: env isolation is a string prefix with no escaping, so it is not
+// injective. Two declarations can name the same physical resource in
+// some environment, and the environment where they collide is the one
+// nobody deployed yet.
+func TestTwoNamesThatBecomeOnePhysicalNameAreRefused(t *testing.T) {
+	g := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "topic", Name: "orders"},
+		{Kind: "topic", Name: "staging-orders"},
+	}}
+	err := CheckNames(g, Config{Project: "p", App: "shop", Env: "prod"})
+	if err == nil {
+		t.Fatal(`"orders" in env staging and "staging-orders" in prod are one Pub/Sub topic; ` +
+			"the deploy accepted both")
+	}
+	for _, want := range []string{"orders", "staging-orders", "staging"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message missing %q:\n%s", want, err)
+		}
+	}
+}
+
+// The derived names collide the same way: a bucket's event topic is
+// <bucket>-uploaded, so a queue spelled that way IS that topic.
+func TestADerivedNameCannotBeDeclaredByHand(t *testing.T) {
+	g := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "bucket", Name: "photos"},
+		{Kind: "queue", Name: "photos-uploaded"},
+	}}
+	if err := CheckNames(g, Config{Project: "p", App: "gallery", Env: "prod"}); err == nil {
+		t.Fatal("a queue named photos-uploaded is the bucket photos' own event topic")
+	}
+}
+
+// And the ordinary case still passes: a shared prefix is not a
+// collision unless the remainder is itself declared.
+func TestASharedPrefixIsNotACollision(t *testing.T) {
+	g := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "topic", Name: "order-placed"},
+		{Kind: "topic", Name: "order-shipped"},
+		{Kind: "queue", Name: "staging-only-queue"},
+	}}
+	if err := CheckNames(g, Config{Project: "p", App: "shop", Env: "prod"}); err != nil {
+		t.Errorf("false positive on ordinary names: %v", err)
+	}
+}

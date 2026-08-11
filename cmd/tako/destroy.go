@@ -127,6 +127,15 @@ func runDestroy(args []string) error {
 		}
 		if len(dataKinds) > 0 {
 			fmt.Printf("    datastore kinds %s (namespace %s)\n", strings.Join(dataKinds, ", "), t.env)
+			// The list is what this CODE declares, which is not the same
+			// as what is in the namespace: an entity kind deleted from
+			// the source in an earlier commit still holds its rows, and
+			// nothing here can see it. Saying so is the difference
+			// between data left on purpose and a promise that was not
+			// kept — and after this runs there is no app left to ask.
+			fmt.Printf("    (kinds this code no longer declares are NOT deleted and stay in\n"+
+				"     namespace %s — tako purges what the graph names, and data is\n"+
+				"     never destroyed by inference)\n", t.env)
 		}
 		for _, o := range observed {
 			if o.Kind == provision.KindPullSubscription {

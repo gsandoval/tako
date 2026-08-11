@@ -6,6 +6,7 @@ import (
 	"go/constant"
 	"go/token"
 	"go/types"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -85,6 +86,9 @@ func extractEntity(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		})
 		return nil, "", nil
 	}
+	if !checkResourceName("entity", "tako.Entity", resName, dir, pkg, call.Args[0], errs) {
+		return nil, "", nil
+	}
 
 	tv, ok := pkg.TypesInfo.Types[call]
 	if !ok {
@@ -128,6 +132,9 @@ func extractBucket(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 				describeExpr(call.Args[0])),
 			Rule: "const-name",
 		})
+		return nil
+	}
+	if !checkResourceName("bucket", "tako.Bucket", resName, dir, pkg, call.Args[0], errs) {
 		return nil
 	}
 	return &Resource{
@@ -545,6 +552,9 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 		})
 		return nil
 	}
+	if !checkResourceName(kind, ctor, resName, dir, pkg, call.Args[0], errs) {
+		return nil
+	}
 	// Only the carriers take configuration, and the type says which:
 	// Queue and Topic take a tako.Delivery, every other constructor
 	// through here has no config parameter at all. The swallowed-option
@@ -628,4 +638,47 @@ func extractLock(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		Package: pkg.PkgPath,
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
+}
+
+// physicalName is the shape a name may take when it becomes a GCS
+// bucket, a Pub/Sub topic or a Cloud Tasks queue (CR6).
+//
+// It is their intersection, and Cloud Tasks is the strict one: buckets
+// and topics allow underscores, a Tasks queue allows letters, digits
+// and hyphens and nothing else. A queue only becomes a Tasks queue when
+// it carries a rate limit or a delay, so an underscore in a queue name
+// is a deploy that works until the day someone adds WithRateLimit.
+//
+// Before this, the only name check anywhere was CheckNames' LENGTH
+// check — whose own comment says "AppID guarantees the characters are
+// legal", which is true of the app id and not of the declared name
+// beside it. So tako.Bucket("My Photos") planned cleanly and failed in
+// the middle of an apply with a Google 400 naming a string that appears
+// nowhere in the user's source: the failure CheckNames exists to move
+// forward, on the axis it did not cover.
+var physicalName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// physicallyNamed are the kinds whose declared name IS a Google
+// resource name. Deliberately not all of them: a Counter or Histogram
+// name becomes a Cloud Monitoring metric type, where underscores are
+// the convention (thumb_ms), a Secret Manager name accepts underscores
+// and capitals, and a Cache never leaves the process. Applying one
+// charset to all of them would refuse names that are perfectly legal
+// where they actually land.
+var physicallyNamed = map[string]bool{"bucket": true, "queue": true, "topic": true}
+
+// checkResourceName reports whether the name is usable, appending the
+// error if not.
+func checkResourceName(kind, ctor, name, dir string, pkg *packages.Package, arg ast.Expr, errs *ErrorList) bool {
+	if !physicallyNamed[kind] || physicalName.MatchString(name) {
+		return true
+	}
+	*errs = append(*errs, &Error{
+		Pos: relPos(dir, pkg.Fset, arg.Pos()),
+		Msg: fmt.Sprintf("%s name %q is not usable as a physical name — use lowercase letters, "+
+			"digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit",
+			ctor, name),
+		Rule: "resource-name",
+	})
+	return false
 }

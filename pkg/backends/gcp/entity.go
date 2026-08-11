@@ -16,12 +16,14 @@ import (
 //
 // Layout: one Datastore entity per document. The raw JSON doc rides an
 // unindexed blob property "_doc" so Get returns byte-identical content;
-// every top-level scalar JSON field is additionally stored as an indexed,
-// typed property (string / double / boolean / timestamp) so filters and
+// every top-level scalar JSON field is additionally stored as a typed
+// property (string / double / boolean / timestamp) so filters and
 // ordering run natively with the same semantics the local backend gives
-// them. Env isolation is the namespace (namespace = env). Strong
-// consistency comes from Datastore mode, so put-then-query reads its
-// writes like the local backend does.
+// them. Which of those mirrors are INDEXED is the app's declared
+// entity:"index" set, which arrives with each write — everything else is
+// stored excluded (FL20; see entity below). Env isolation is the
+// namespace (namespace = env). Strong consistency comes from Datastore
+// mode, so put-then-query reads its writes like the local backend does.
 type EntityStore struct {
 	c *Client
 }
