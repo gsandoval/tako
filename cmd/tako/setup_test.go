@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/provision/gcp"
 )
 
@@ -48,6 +49,26 @@ func TestTheHandOverBlockIsOnlyForAPermissionDenial(t *testing.T) {
 		err := errors.New(other)
 		if out := handOver(err, "p", "user:a@b.c", plan); out.Error() != other {
 			t.Errorf("a non-permission failure was dressed as a hand-over:\n%s", out)
+		}
+	}
+}
+
+// CR10: HasSuffix made the answer depend on declaration order, so a gap
+// in "api-key" was reported as a gap in "key" — and the printed command
+// then wrote a value nothing reads.
+func TestTheSuggestedSecretCommandNamesTheRightDeclaration(t *testing.T) {
+	g := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "secret", Name: "key"},
+		{Kind: "secret", Name: "api-key"},
+	}}
+	for _, c := range []struct{ env, physical, want string }{
+		{"prod", "api-key", "api-key"},
+		{"prod", "key", "key"},
+		{"staging", "staging-api-key", "api-key"},
+		{"staging", "staging-key", "key"},
+	} {
+		if got := declaredName(g, c.env, c.physical); got != c.want {
+			t.Errorf("declaredName(%s, %q) = %q, want %q", c.env, c.physical, got, c.want)
 		}
 	}
 }

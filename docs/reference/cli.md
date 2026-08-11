@@ -7,6 +7,9 @@ confirmation ladder, flag resolution, errors, and honest limits.
 ## Local — nothing outside this directory is touched
 
 ```
+tako new <name> [--kind api|site] [--module <path>] [--replace <dir>]
+                         write a new app: go.mod, one handler, a
+                         .gitignore — and for a site, the layout and page
 tako dev [--chaos]       run the app locally with reload (--chaos: seeded
                          duplicate/reordered deliveries)
 tako test [args]         analyze, refresh generated code and site builds,
@@ -33,6 +36,22 @@ against rather than whatever is on main.
 Serving is all it does, so there is no subcommand and no `--serve`
 flag — a flag that must always be passed is a flag that should not
 exist. It listens on `127.0.0.1` only.
+
+`tako new` writes the smallest app that runs, then resolves it and
+generates, so `tako dev` works on the next line rather than the one
+after. `--kind site` adds the pieces a site cannot start without — the
+site declaration, `templates/layout.html`, a page — because their
+absence surfaces as `the site has no templates/ directory`, a message
+about a checkout wearing the costume of a broken app. The `.gitignore`
+carries `.env` from the first commit, which is what `tako secrets set`
+requires before it will write a value.
+
+It refuses a directory that already exists, and removes what it wrote
+if resolution fails: half a project is worse than none.
+
+**Until tako is tagged and published, `--replace <dir>` is required** —
+a binary built from a checkout has no version a `go.mod` can depend on,
+and the refusal says so and prints the command with the flag in it.
 
 `tako test` never runs against stale generated code — it regenerates
 first and calls out drift (`regenerated: shop was stale`). It runs
@@ -75,7 +94,8 @@ grant.
 
 ```
 tako secrets                          what this app declares, and which have a value
-tako secrets set <name>               value from stdin, or an echo-off prompt
+tako secrets set <name>               value read whole from stdin, or an
+                                      echo-off prompt
 tako secrets rm  <name>               delete it
 ```
 
@@ -84,6 +104,12 @@ its comments and order, and refusing a `.env` that is not gitignored)
 and adds a Secret Manager version with `--project`. **A value is never
 printed** — there is no `get` and no `--show` — **and never taken from a
 flag**, because a flag lands in shell history, in `ps`, and in CI logs.
+
+A piped value is taken WHOLE, minus one trailing newline — a PEM key or
+a service-account JSON is one value, not its first line. `.env` is
+`name=value` per line with no quoting, so a multi-line value is refused
+locally and named as a `--project` one, where Secret Manager stores the
+bytes as they are.
 
 `rm` against a project destroys the secret and every version,
 permanently: the name is typed, and `--yes` does not apply. It says

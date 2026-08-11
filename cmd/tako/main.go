@@ -23,10 +23,12 @@ import (
 const usage = `tako — a Go framework over Google Cloud Run
 
 Local — nothing outside this directory is touched:
-  tako new <name> [--kind api|site] [--module <path>]
+  tako new <name> [--kind api|site] [--module <path>] [--replace <dir>]
                        the smallest tako app that runs: go.mod, a
                        handler, a .gitignore — and for a site, the
                        layout and page a site cannot start without
+                       (--replace points at a tako checkout, which is
+                       required until tako is tagged and published)
   tako dev [--chaos]   run the app locally with reload (--chaos: seeded
                        duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code and site builds,

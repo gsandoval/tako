@@ -85,7 +85,7 @@ func runSecrets(args []string) error {
 	// case: a command that writes DATA takes its project typed. One that
 	// converges infrastructure may infer it, because re-running fixes a
 	// wrong guess and nothing here does.
-	t, rest, err := parseAccountsTarget(args)
+	t, rest, err := parseSecretsTarget(args)
 	if err != nil {
 		return err
 	}
@@ -98,8 +98,14 @@ func runSecrets(args []string) error {
 		return err
 	}
 	declared := declaredSecrets(graph)
-	if len(declared) == 0 {
-		return fmt.Errorf("this app declares no secrets — tako.Secret(\"name\") is what puts one here")
+	// rm is exempt (CR14). An app that declares no secrets is exactly
+	// the app whose last tako.Secret was just deleted, and the orphan
+	// left in Secret Manager is what this command exists to remove —
+	// refusing the whole command there made the documented safe case
+	// unreachable.
+	if len(declared) == 0 && name != "rm" {
+		return fmt.Errorf("this app declares no secrets — tako.Secret(\"name\") is what puts one here\n" +
+			"      (tako secrets rm <name> still works: an orphan is why)")
 	}
 	c := &secretsCmd{out: os.Stdout, target: t, declared: declared, ask: askTerminal}
 	switch name {
@@ -118,6 +124,12 @@ type secretsCmd struct {
 	target   accountsTarget
 	declared []declaredSecret
 	ask      func(prompt string, secret bool) (string, error)
+
+	// gcp is built at most once. list() asks state() per declared
+	// secret, and each of those used to construct a fresh client —
+	// re-reading application-default credentials every time, for an
+	// answer that does not change within a run.
+	gcp *gcp.Client
 }
 
 func (c *secretsCmd) header() {
@@ -214,6 +226,19 @@ func (c *secretsCmd) set(name string) error {
 	}
 	if value == "" {
 		return fmt.Errorf("no value given — nothing was written")
+	}
+	// .env is one name=value per line with no quoting, so a value with a
+	// newline in it cannot be represented — writing it produces a file
+	// LoadEnvFile reads back as something else. Secret Manager has no
+	// such limit (the payload is bytes), so the refusal points there
+	// rather than sounding like tako will not hold the value at all.
+	if !c.target.isCloud() && strings.Contains(value, "\n") {
+		return fmt.Errorf("that value is more than one line, and .env cannot hold one — it is\n"+
+			"      name=value per line, with no quoting.\n\n"+
+			"      Multi-line values (a PEM key, a service-account JSON) work against a\n"+
+			"      project, where Secret Manager stores the bytes as they are:\n"+
+			"        tako secrets set %s --project <id>\n\n"+
+			"      For local runs, put a single-line stand-in in .env.", name)
 	}
 	if !c.target.isCloud() {
 		replaced, err := local.SetEnvValue(envPath(), name, value)
@@ -337,7 +362,15 @@ func (c *secretsCmd) mustBeDeclared(name string) error {
 }
 
 func (c *secretsCmd) client() (*gcp.Client, error) {
-	return gcp.NewClient(context.Background(), c.target.project, "")
+	if c.gcp != nil {
+		return c.gcp, nil
+	}
+	client, err := gcp.NewClient(context.Background(), c.target.project, "")
+	if err != nil {
+		return nil, err
+	}
+	c.gcp = client
+	return client, nil
 }
 
 // envPath is where the local values live: beside go.mod, which is what

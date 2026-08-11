@@ -14,13 +14,22 @@ import (
 
 // lifecycleSetup is the shared preamble of promote/rollback/prune:
 // analyze the app, authenticate, derive config.
-func lifecycleSetup(args []string) (target, *analyzer.AppGraph, *gcp.Client, provision.Config, error) {
+//
+// cmd and accepts are what the refusal says (CR13). This used to let
+// "--data" through for every caller and check only rest[0], which meant
+// two things at once: `tako promote --data` was silently accepted by a
+// command that has nothing to do with data, and `tako prune --data
+// --bogus` ignored the typo — prune strips its own --data before
+// calling here, so the exception was dead for the one command that
+// wanted it. Unknown flags name their command's real surface everywhere
+// else in this CLI.
+func lifecycleSetup(cmd, accepts string, args []string) (target, *analyzer.AppGraph, *gcp.Client, provision.Config, error) {
 	t, rest, err := parseTarget(args)
 	if err != nil {
 		return t, nil, nil, provision.Config{}, err
 	}
-	if len(rest) > 0 && rest[0] != "--data" {
-		return t, nil, nil, provision.Config{}, fmt.Errorf("unknown argument %q", rest[0])
+	if len(rest) > 0 {
+		return t, nil, nil, provision.Config{}, fmt.Errorf("unknown flag %q (%s accepts %s)", rest[0], cmd, accepts)
 	}
 	graph, err := analyzer.Analyze(analyzer.Config{Dir: "."})
 	if err != nil {
@@ -37,7 +46,7 @@ func lifecycleSetup(args []string) (target, *analyzer.AppGraph, *gcp.Client, pro
 // runPromote is `tako promote`: 100% of every service's traffic to the
 // latest revision — a canary's completion. Pure traffic; no rebuild.
 func runPromote(args []string) error {
-	_, graph, client, cfg, err := lifecycleSetup(args)
+	_, graph, client, cfg, err := lifecycleSetup("tako promote", "--project, --region, --env", args)
 	if err != nil {
 		return err
 	}
@@ -66,7 +75,7 @@ func runPromote(args []string) error {
 // revisions already exist. Infra-shape changes roll back via git revert
 // + tako deploy instead (the reconciler makes the cloud match old code).
 func runRollback(args []string) error {
-	_, graph, client, cfg, err := lifecycleSetup(args)
+	_, graph, client, cfg, err := lifecycleSetup("tako rollback", "--project, --region, --env", args)
 	if err != nil {
 		return err
 	}
@@ -122,7 +131,7 @@ func runPrune(args []string) error {
 		}
 		filtered = append(filtered, a)
 	}
-	t, graph, client, cfg, err := lifecycleSetup(filtered)
+	t, graph, client, cfg, err := lifecycleSetup("tako prune", "--data, --project, --region, --env", filtered)
 	if err != nil {
 		return err
 	}

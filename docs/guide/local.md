@@ -1,5 +1,21 @@
 # The local story
 
+## Starting from nothing
+
+```
+tako new blog --kind site
+cd blog && tako dev
+```
+
+`tako new` writes the smallest app that runs — `go.mod`, one handler, a
+`.gitignore` with `.env` in it — and for `--kind site` the layout and
+page a site cannot start without. It resolves the module and generates
+before it finishes, so the next command is `tako dev` rather than two
+more commands. (Until tako is tagged and published, add
+`--replace /path/to/tako`; the refusal prints it.)
+
+Everything below is about the app you now have.
+
 `tako dev` runs your app as one ordinary Go process. There are **no
 emulators and no Docker** anywhere in local development:
 

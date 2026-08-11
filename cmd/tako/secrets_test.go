@@ -193,3 +193,71 @@ func TestTheLocalPathIsTheOneBootReads(t *testing.T) {
 			"tako secrets has to move with it")
 	}
 }
+
+// CR9: `cat key.pem | tako secrets set signing-key` stored the first
+// line and reported success.
+//
+// askTerminal read with ReadString('\n'), so a piped value stopped at
+// the first newline — silently, on the one command whose entire job is
+// to place a value correctly. The reference documents stdin as the
+// input, so the piped path is the supported one, and it was the one
+// that lost data.
+func TestAPipedValueIsReadWhole(t *testing.T) {
+	got, err := readAll(strings.NewReader("-----BEGIN KEY-----\nline two\nline three\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(got, "\n") != 2 {
+		t.Errorf("a multi-line value was truncated to %q", got)
+	}
+	// One trailing newline is the operator's Enter, not part of the value.
+	if strings.HasSuffix(got, "\n") {
+		t.Errorf("the trailing newline survived: %q", got)
+	}
+}
+
+// .env is one name=value per line and cannot hold a newline, so a
+// multi-line value has to be REFUSED rather than written as something
+// LoadEnvFile will read back wrong. Secret Manager has no such limit
+// and takes it.
+func TestAMultiLineValueIsRefusedLocallyRatherThanMangled(t *testing.T) {
+	c, _ := secretsFixture(t)
+	if err := os.WriteFile(".gitignore", []byte(".env\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	c.ask = func(string, bool) (string, error) { return "line one\nline two", nil }
+	err := c.set("stripe-key")
+	if err == nil {
+		t.Fatal("a multi-line value was written into .env, which cannot represent it")
+	}
+	for _, want := range []string{"more than one line", "--project"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal missing %q: %v", want, err)
+		}
+	}
+	// And it must not have half-written it.
+	values, readErr := local.LoadEnvFile(".env")
+	if readErr != nil {
+		t.Fatalf(".env is no longer parseable: %v", readErr)
+	}
+	if _, ok := values["stripe-key"]; ok {
+		t.Error("the refused value was written anyway")
+	}
+}
+
+// CR12: the refusal is shared with tako users, and used to name that
+// command whichever one you ran.
+func TestTheSecretsRefusalNamesSecrets(t *testing.T) {
+	_, _, err := parseSecretsTarget([]string{"--env", "staging"})
+	if err == nil {
+		t.Fatal("--env without --project must be refused")
+	}
+	if strings.Contains(err.Error(), "tako users") || strings.Contains(err.Error(), "people") {
+		t.Errorf("tako secrets was refused with tako users' message:\n%s", err)
+	}
+	for _, want := range []string{"tako secrets", "secrets", ".env"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message missing %q:\n%s", want, err)
+		}
+	}
+}

@@ -75,7 +75,20 @@ func (t accountsTarget) describe() string {
 // turns `tako users create` into a real account in a real project, and
 // no later deploy takes it back out. So the cloud is somewhere you go
 // on purpose, by typing it.
+// parseAccountsTarget is shared by `tako users` and `tako secrets`, so
+// the refusal below names the command that was actually run (CR12).
+// It used to say "tako users … this one writes people" whichever one
+// called it, which sends a reader of `tako secrets --env staging` off
+// to look at a command they did not type.
 func parseAccountsTarget(raw []string) (accountsTarget, []string, error) {
+	return parseDataTarget("tako users", "people", ".tako/data", raw)
+}
+
+func parseSecretsTarget(raw []string) (accountsTarget, []string, error) {
+	return parseDataTarget("tako secrets", "secrets", ".env", raw)
+}
+
+func parseDataTarget(cmd, writes, local string, raw []string) (accountsTarget, []string, error) {
 	t := accountsTarget{}
 	var envGiven bool
 	// Both --flag value and --flag=value, like every other command.
@@ -106,12 +119,12 @@ func parseAccountsTarget(raw []string) (accountsTarget, []string, error) {
 		}
 	}
 	if envGiven && t.project == "" {
-		return t, nil, errors.New("--env names a cloud environment but no project was given\n" +
-			"      add --project <id>, or drop --env to work on .tako/data\n\n" +
-			"      tako users never takes the project from GOOGLE_CLOUD_PROJECT or from\n" +
-			"      gcloud config the way the other cloud commands do: this one writes\n" +
-			"      people, and a project inherited from a shell is how a dev fixture\n" +
-			"      lands in production")
+		return t, nil, fmt.Errorf("--env names a cloud environment but no project was given\n"+
+			"      add --project <id>, or drop --env to work on %s\n\n"+
+			"      %s never takes the project from GOOGLE_CLOUD_PROJECT or from\n"+
+			"      gcloud config the way the other cloud commands do: this one writes\n"+
+			"      %s, and a project inherited from a shell is how a dev fixture\n"+
+			"      lands in production", local, cmd, writes)
 	}
 	if t.isCloud() {
 		if t.env == "" {

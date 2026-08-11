@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/devserver"
 	"github.com/gsandoval/tako/pkg/provision/gcp"
 )
@@ -45,6 +46,11 @@ func runSetup(args []string) error {
 		case rest[i] == "--member" && i+1 < len(rest):
 			i++
 			member = rest[i]
+		case rest[i] == "--member":
+			// Not "unknown flag": the flag is known and its VALUE is
+			// missing, which is a different mistake with a different fix.
+			return fmt.Errorf("--member needs a value, e.g. --member user:you@example.com " +
+				"or --member serviceAccount:ci@project.iam.gserviceaccount.com")
 		case strings.HasPrefix(rest[i], "--member="):
 			member = strings.TrimPrefix(rest[i], "--member=")
 		default:
@@ -174,7 +180,7 @@ func setupRemainder(ctx context.Context, client *gcp.Client, t target, graph *an
 			continue
 		}
 		out = append(out, fmt.Sprintf("the secret %s has no value — that is your data, not tako's\n"+
-			"      tako secrets set %s --project %s", name, declaredName(graph, name), t.project))
+			"      tako secrets set %s --project %s", name, declaredName(graph, t.env, name), t.project))
 	}
 	for _, p := range needs.AuthProviders {
 		if p != "google" {
@@ -195,9 +201,16 @@ func setupRemainder(ctx context.Context, client *gcp.Client, t target, graph *an
 // declaredName maps a physical secret name back to what the app
 // declared, since that is what `tako secrets set` takes. In prod they
 // are the same; in any other env the physical one is prefixed.
-func declaredName(graph *analyzer.AppGraph, physical string) string {
+//
+// It rebuilds the physical name and compares, rather than matching a
+// suffix (CR10). HasSuffix made the answer depend on declaration order:
+// with secrets "key" and "api-key", the physical "api-key" ends with
+// "key", so setup told the operator to run `tako secrets set key` for a
+// gap in `api-key` — and that command succeeds, writing a value nothing
+// reads while the real gap stays open.
+func declaredName(graph *analyzer.AppGraph, env, physical string) string {
 	for _, r := range graph.Resources {
-		if r.Kind == "secret" && strings.HasSuffix(physical, r.Name) {
+		if r.Kind == "secret" && gcpb.SecretName(env, r.Name) == physical {
 			return r.Name
 		}
 	}

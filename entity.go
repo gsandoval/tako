@@ -37,6 +37,10 @@ type entitySchema struct {
 	idField string            // Go name of the entity:"id" field
 	idJSON  string            // its JSON document name
 	indexed map[string]string // Go field name → JSON name, entity:"index" fields
+	// indexedJSON is the same set as a sorted slice — the shape every
+	// write hands to the backend. Built here, once, rather than
+	// assembled and sorted on each Put, Update and Tx.
+	indexedJSON []string
 }
 
 // Get returns the entity stored under id. tako.IsNotFound reports absence.
@@ -74,12 +78,9 @@ func (e *EntityHandle[T]) indexedFields() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]string, 0, len(s.indexed))
-	for _, jsonName := range s.indexed {
-		out = append(out, jsonName)
-	}
-	sort.Strings(out) // stable, so a plan or a log reads the same twice
-	return out, nil
+	// Built once with the schema, not per write: Put, Update and Tx all
+	// ask for this, and it cannot change for the life of a handle.
+	return s.indexedJSON, nil
 }
 
 // Delete removes the entity stored under id; deleting an absent id is not
@@ -191,6 +192,11 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 			e.schemaErr = fmt.Errorf("tako: entity %q: type %s has no entity:\"id\" field", e.name, t)
 			return
 		}
+		s.indexedJSON = make([]string, 0, len(s.indexed))
+		for _, name := range s.indexed {
+			s.indexedJSON = append(s.indexedJSON, name)
+		}
+		sort.Strings(s.indexedJSON) // stable, so a plan or a log reads the same twice
 		e.schema = s
 	})
 	return e.schema, e.schemaErr

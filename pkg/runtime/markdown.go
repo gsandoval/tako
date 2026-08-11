@@ -18,10 +18,14 @@ import (
 // for admin-authored content the app owner vouches for.
 
 var (
-	markdownOnce      sync.Once
-	sanitizedRenderer goldmark.Markdown
-	trustedRenderer   goldmark.Markdown
-	ugcPolicy         *bluemonday.Policy
+	markdownOnce sync.Once
+	// One renderer, both postures: goldmark always emits raw HTML and
+	// the SANITIZER is the guarantee, so "trusted" is the absence of a
+	// step rather than a different renderer. There used to be a second
+	// variable assigned from the first, which read as though the two
+	// postures rendered differently.
+	renderer  goldmark.Markdown
+	ugcPolicy *bluemonday.Policy
 )
 
 func markdownInit() {
@@ -30,11 +34,10 @@ func markdownInit() {
 		// strikethrough, autolinks). Raw HTML is emitted by goldmark and
 		// then stripped or kept by policy — one renderer shape, the
 		// sanitizer is the guarantee.
-		sanitizedRenderer = goldmark.New(
+		renderer = goldmark.New(
 			goldmark.WithExtensions(extension.Table, extension.Strikethrough, extension.Linkify),
 			goldmark.WithRendererOptions(html.WithUnsafe()),
 		)
-		trustedRenderer = sanitizedRenderer
 		// UGCPolicy: bluemonday's user-generated-content profile —
 		// exactly the elements markdown produces (headings, emphasis,
 		// links, code, lists, tables, images), rel=nofollow forced on
@@ -51,11 +54,7 @@ func markdownInit() {
 func RenderMarkdown(src string, trusted bool) ([]byte, error) {
 	markdownInit()
 	var buf bytes.Buffer
-	r := sanitizedRenderer
-	if trusted {
-		r = trustedRenderer
-	}
-	if err := r.Convert([]byte(src), &buf); err != nil {
+	if err := renderer.Convert([]byte(src), &buf); err != nil {
 		return nil, err
 	}
 	if trusted {

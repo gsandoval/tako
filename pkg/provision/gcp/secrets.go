@@ -63,8 +63,14 @@ func (c *Client) SecretState(ctx context.Context, physical string) (SecretState,
 	if err := c.do(ctx, http.MethodGet, vu, nil, &versions); err != nil {
 		return st, Classify(err, c.Project, "list secret versions", "roles/secretmanager.viewer")
 	}
+	// ENABLED only (CR11). A version can be ENABLED, DISABLED or
+	// DESTROYED, and this used to skip DESTROYED and count the other
+	// two — so a secret whose only version was disabled read as "set".
+	// Services access :latest, which fails on a disabled version, so
+	// that answer was wrong about the one question the column asks:
+	// will the services that resolve this boot.
 	for _, v := range versions.Versions {
-		if v.State == "DESTROYED" {
+		if v.State != "ENABLED" {
 			continue
 		}
 		st.Versions++

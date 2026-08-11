@@ -12,10 +12,10 @@ package main
 // copies will drift. A test asserts users.go imports no backend.
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -141,9 +141,9 @@ func (c *usersCmd) cloudErr(err error) error {
 	return err
 }
 
-// askTerminal reads one line from the operator. A password is read with
+// askTerminal reads a value from the operator. A password is read with
 // echo off when there is a terminal to turn it off on; piped input (a
-// script, a test) reads a line and says nothing, because a prompt that
+// script, a test) is read whole and says nothing, because a prompt that
 // demands a TTY is a command CI cannot run.
 func askTerminal(prompt string, secret bool) (string, error) {
 	fmt.Fprint(os.Stdout, prompt)
@@ -152,13 +152,29 @@ func askTerminal(prompt string, secret bool) (string, error) {
 		fmt.Fprintln(os.Stdout)
 		return string(raw), err
 	}
-	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	value, err := readAll(os.Stdin)
 	// Piped input echoes nothing, so the newline the operator's Enter
 	// would have produced has to come from here — without it the next
 	// line of the transcript continues the prompt ("password:   created").
 	fmt.Fprintln(os.Stdout)
-	if err != nil && line == "" {
+	return value, err
+}
+
+// readAll takes the WHOLE of a piped value, not its first line (CR9).
+//
+// It used to be ReadString('\n'), which is right for a typed password
+// and silently wrong for `cat key.pem | tako secrets set signing-key`:
+// the stored value was "-----BEGIN PRIVATE KEY-----" and the command
+// said ✓. The reference documents stdin as the input, so the piped path
+// is the supported one, and it was the one that lost data.
+//
+// Exactly one trailing newline comes off — that is the operator's
+// Enter, not part of the value. Anything beyond it belongs to whoever
+// sent it.
+func readAll(r io.Reader) (string, error) {
+	raw, err := io.ReadAll(r)
+	if err != nil && len(raw) == 0 {
 		return "", err
 	}
-	return strings.TrimRight(line, "\r\n"), nil
+	return strings.TrimSuffix(strings.TrimSuffix(string(raw), "\n"), "\r"), nil
 }

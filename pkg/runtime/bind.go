@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 )
@@ -29,7 +31,7 @@ func parseErr(kind, name, raw, typ string) error {
 func DecodeJSON(r *http.Request, req any) error {
 	dec := json.NewDecoder(r.Body)
 	if err := dec.Decode(req); err != nil {
-		if err.Error() == "EOF" { // empty body: all fields stay zero
+		if errors.Is(err, io.EOF) { // empty body: all fields stay zero
 			return nil
 		}
 		return &bindError{msg: "body: invalid JSON"}
@@ -105,8 +107,10 @@ func FormString(r *http.Request, name string) string {
 // "select some rows"; FormString would return only the first of them.
 func FormStrings(r *http.Request, name string) []string {
 	// FormValue parses on demand; this reads r.Form directly, so it
-	// must ask for the parse itself. A parse error leaves r.Form empty,
-	// which yields nil — the same answer as a field nobody sent.
+	// must ask for the parse itself. ParseMultipartForm parses the URL
+	// query and any urlencoded body BEFORE it looks for a multipart
+	// part, so a non-multipart request still populates r.Form and the
+	// error it returns here is not one to act on.
 	_ = r.ParseMultipartForm(maxMultipartMemory)
 	return r.Form[name]
 }
