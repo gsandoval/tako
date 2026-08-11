@@ -50,7 +50,7 @@ Registry. Held as acceptable because the flag name carries it — and
 help sits `build` at the boundary line with the consequence spelled
 out.
 
-## Accounts — local unless you type a project
+## Your data — local unless you type a project
 
 ```
 tako users list                       every account and its roles
@@ -72,6 +72,23 @@ email, and deleting locally does not (`.tako/data` is the reset story).
 `tako dev` holds `.tako/data` while it runs — stop it first. Against a
 project you need `roles/identitytoolkit.admin`; the refusal prints the
 grant.
+
+```
+tako secrets                          what this app declares, and which have a value
+tako secrets set <name>               value from stdin, or an echo-off prompt
+tako secrets rm  <name>               delete it
+```
+
+The values behind `tako.Secret`. `set` writes `.env` locally (keeping
+its comments and order, and refusing a `.env` that is not gitignored)
+and adds a Secret Manager version with `--project`. **A value is never
+printed** — there is no `get` and no `--show` — **and never taken from a
+flag**, because a flag lands in shell history, in `ps`, and in CI logs.
+
+`rm` against a project destroys the secret and every version,
+permanently: the name is typed, and `--yes` does not apply. It says
+whether the secret is still declared (its services will refuse to boot)
+or an orphan (the safe case). Locally it just drops the line.
 
 ## Cloud, read-only
 
@@ -165,13 +182,17 @@ parser:
 
 `--flag value` and `--flag=value` both work, everywhere.
 
-**`tako users` is the one exception, deliberately.** It reads `--project`
-and `--env` from the command line and nowhere else — no
-`GOOGLE_CLOUD_PROJECT`, no gcloud config. Every other cloud command
-reads, or converges a project toward what your code already says, so a
-wrong guess is fixed by re-running. That one writes people, and an
-inherited project is how a dev fixture lands in production. `--env`
-without `--project` is refused rather than silently meaning "local".
+**`tako users` and `tako secrets` are the exception, deliberately.**
+They read `--project` and `--env` from the command line and nowhere
+else — no `GOOGLE_CLOUD_PROJECT`, no gcloud config.
+
+The rule is which way a mistake goes. Commands that **converge
+infrastructure** (`setup`, `deploy`, `prune`) may infer a project,
+because re-running fixes a wrong guess. Commands that **write your
+data** — a person, a secret — may not: nothing re-derives those, and an
+inherited project is how a dev fixture or a test key lands in
+production. `--env` without `--project` is refused rather than silently
+meaning "local".
 
 ## Errors you'll meet
 

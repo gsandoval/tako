@@ -181,6 +181,12 @@ var mutatingVerbs = []string{
 	// duplicate-address check would not catch it because the first write
 	// did succeed. Not retried, deliberately.
 	":signUp",
+	// secrets:addVersion adds one every time it is called (SC4). A retry
+	// after a response tako never saw would leave two versions holding
+	// the same value — harmless to read, since services take the latest,
+	// but it puts a phantom entry in the audit trail a person will later
+	// try to explain. The operator re-runs if it failed.
+	":addVersion",
 }
 
 // idempotent reports whether re-sending this request is safe. GET and

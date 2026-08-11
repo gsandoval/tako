@@ -12,7 +12,7 @@ emulators and no Docker** anywhere in local development:
 | `tako.Job` | executions ride the local queue dispatcher |
 | signed URLs | served by your own process |
 | `tako.Auth` | a dev bar: sign in as alice/bob, no GCP anywhere |
-| `tako.Secret` | `.env` in the module directory |
+| `tako.Secret` | `.env` in the module directory (`tako secrets set`) |
 
 Because queues are channels calling your functions, a breakpoint
 steps from a publish straight into the worker — and a cross-service
@@ -51,6 +51,13 @@ comment on the declaration says so.
   an account you made with `tako users create ana@example.com
   --password`. A dev sign-in creates a real local account, because in
   the cloud a session cannot exist without one.
+- **Secrets are a command too.** `tako secrets` lists what the app
+  declares and which have a value — so you find all three missing names
+  at once instead of one boot failure at a time — and `tako secrets set
+  <name>` writes into `.env`, keeping its comments and its order. It
+  refuses to write into a `.env` that is not gitignored. A value is
+  never printed and never taken from a flag; it comes from stdin or an
+  echo-off prompt. `--project <id>` targets Secret Manager instead.
 - **The accounts are a command, not a program you have to write.**
   `tako users list|show|create|grant|revoke|disable|enable|delete`
   works on `.tako/data` — the same accounts `tako dev` signs in — and

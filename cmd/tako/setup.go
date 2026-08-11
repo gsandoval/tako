@@ -164,9 +164,17 @@ func setupRemainder(ctx context.Context, client *gcp.Client, t target, graph *an
 			"      (the location is permanent — pick the region your services run in,\n"+
 			"       which is %s unless you deploy elsewhere)", t.project, t.project, t.region))
 	}
+	// Only the ones that are actually missing. This used to list every
+	// declared secret unconditionally, so setup told an operator to
+	// create a secret that already existed with a version in it — found
+	// by SC4, whose whole job is knowing the difference.
 	for _, name := range needs.Secrets {
+		st, err := client.SecretState(ctx, name)
+		if err != nil || st.Exists && st.Versions > 0 {
+			continue
+		}
 		out = append(out, fmt.Sprintf("the secret %s has no value — that is your data, not tako's\n"+
-			"      printf '<value>' | gcloud secrets create %s --data-file=- --project %s", name, name, t.project))
+			"      tako secrets set %s --project %s", name, declaredName(graph, name), t.project))
 	}
 	for _, p := range needs.AuthProviders {
 		if p != "google" {
@@ -182,6 +190,18 @@ func setupRemainder(ctx context.Context, client *gcp.Client, t target, graph *an
 			"      gcloud domains verify %s", d, d))
 	}
 	return out
+}
+
+// declaredName maps a physical secret name back to what the app
+// declared, since that is what `tako secrets set` takes. In prod they
+// are the same; in any other env the physical one is prefixed.
+func declaredName(graph *analyzer.AppGraph, physical string) string {
+	for _, r := range graph.Resources {
+		if r.Kind == "secret" && strings.HasSuffix(physical, r.Name) {
+			return r.Name
+		}
+	}
+	return physical
 }
 
 func printRemainder(remainder []string, t target) {

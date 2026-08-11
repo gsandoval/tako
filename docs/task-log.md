@@ -22110,3 +22110,90 @@ The test plan gains two cases for it:
 ### Gate
 
 Stopping here. No code written. SC4 is now fully specified.
+
+---
+
+## SC4 — shipped (2026-08-10)
+
+Approved 2026-08-10 ("Build it"), with D5 ruled the other way from my
+recommendation the same day. `pkg/provision/gcp/secrets.go`,
+`pkg/backends/local/envfile.go` (writer), `cmd/tako/secrets.go`,
+`cmd/tako/secrets_test.go`, `validate/secrets.md`, plus the SC2 fix
+below.
+
+### The two properties, and how they are held
+
+**No value is printed.** `TestNoCommandEverPrintsAValue` seeds a
+sentinel, runs every subcommand, and fails if it appears in output OR in
+an error. Written as "can a value reach the output by any path" rather
+than "does list have a value column", because the way this stops being
+true is a column added for debugging. Nothing in
+`pkg/provision/gcp/secrets.go` calls `:access`, so there is no code path
+from a stored value to a terminal.
+
+**No value arrives as a flag.** stdin or an echo-off prompt, reusing
+SC1's `askTerminal`.
+
+### The rule, now stated rather than implied
+
+`tako users` was an exception; `tako secrets` makes it a rule, and
+`tako --help` and `reference/cli.md` both carry it:
+
+> Commands that CONVERGE INFRASTRUCTURE may infer a project, because
+> re-running fixes a wrong guess. Commands that WRITE YOUR DATA may not,
+> because nothing re-derives a person or a secret.
+
+### The gitignore guard
+
+`tako secrets set` refuses a `.env` that `git check-ignore` does not
+claim. The convention existed only as a comment inside
+`examples/gallery/.env` — and that file is exactly what the guard fired
+on during validation, which is why its message names the case.
+
+### What SC4 found in SC2, one day old
+
+`setup`'s remainder listed every declared secret as valueless without
+checking, so against `tako-test-01` it told an operator to create
+`notifier-key` — which existed, with a version in it. It checks now, and
+names `tako secrets set` instead of a raw gcloud line. A command that
+reports a gap that is not there is worse than one that reports nothing:
+the second time it is right, nobody believes it.
+
+### Live validation (tako-test-01)
+
+Full transcripts in `validate/secrets.md` §6. Proven against the real
+project: list with version counts, `set` adding a version (1 → 2,
+re-read to confirm), the typed-name refusal deleting NOTHING (confirmed
+with `gcloud secrets describe`), and the real delete (confirmed
+`NOT_FOUND` after). The orphan-vs-declared message was exercised on an
+orphan, which is the safe case the ruling exists for.
+
+### Corrections to the proposal
+
+- The proposal's transcript showed `prod-stripe-key` as the physical
+  name in prod. Wrong: `Prefixed` leaves the DEFAULT env unprefixed, so
+  in prod the physical name is the declared name. The command shows the
+  real one, which is the argument for showing it at all.
+- I nearly shipped a second `SecretName` in `pkg/provision/gcp`, which
+  is the exact drift this codebase spent the week removing. Deleted; the
+  CLI uses `pkg/backends/gcp`'s, the one a deployed service resolves
+  with.
+
+### Existing guards that caught this work
+
+`TestEveryCustomMethodPostIsClassified` rejected `:addVersion` until it
+was classified. Non-idempotent: a retry after a response tako never saw
+leaves two versions holding one value — harmless to read, and a phantom
+entry in an audit trail somebody later has to explain.
+
+### Discovered work
+
+- **45. `tako secrets` makes one API call per declared secret.** Fine at
+  gallery's one; an app with a dozen pays a dozen round trips on `list`.
+  Secret Manager has a list endpoint that would answer in one.
+
+### Gate (agent-side)
+
+`go vet ./...` and `go test ./...` green at the root. All seven examples
+green under `tako test`. Scripted walk: `validate/secrets.md`, every
+step run, including the live half.

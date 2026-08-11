@@ -46,11 +46,15 @@ Local — nothing outside this directory is touched:
                        daemon); --push CROSSES THE LINE below: uploads
                        to <repo>/<service> on Artifact Registry
 
-Accounts — local unless you type a project:
+Your data — local unless you type a project:
   tako users list|show|create|grant|revoke|disable|enable|delete
                        the people your sign-in door admits. Works on
                        .tako/data by default; --project <id> [--env]
                        works on a deployed app's Identity Platform
+  tako secrets [set|rm <name>]
+                       the values declared with tako.Secret: which have
+                       one, and putting one there. Never prints a value
+                       and never takes one from a flag
 
 Cloud, read-only:
   tako logs [service] [--since 15m]
@@ -101,12 +105,13 @@ Cloud commands resolve --project (else GOOGLE_CLOUD_PROJECT, else gcloud
 config), --region (else TAKO_REGION, else us-central1), and --env
 (default prod) identically; --flag value and --flag=value both work.
 
-tako users is the one exception, and deliberately: it never infers a
-project from the environment or from gcloud config. Every other cloud
-command reads, or converges a project toward what your code already
-says. That one writes people, and a project left in a shell is how a
-dev fixture lands in production — so the cloud is somewhere it goes
-only when you type --project.
+The two under "Your data" are the exception, and deliberately: they
+never infer a project from the environment or from gcloud config. The
+rule is which way a mistake goes. Commands that CONVERGE INFRASTRUCTURE
+(setup, deploy, prune) may infer it, because re-running fixes a wrong
+guess. Commands that WRITE YOUR DATA — a person, a secret — may not,
+because nothing re-derives those, and a project left over in a shell is
+how a dev fixture or a test key lands in production.
 `
 
 func main() {
@@ -129,6 +134,10 @@ func main() {
 		}
 	case "test":
 		if err := runTest(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "secrets":
+		if err := runSecrets(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "users":
