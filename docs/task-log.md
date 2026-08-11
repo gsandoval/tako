@@ -21979,11 +21979,59 @@ The convention exists today only as a comment inside
 `examples/gallery/.env`. A comment is not a guard, and the failure it
 prevents is the worst one in this whole series.
 
-**D5 — `rm` is local only.** Deleting a Secret Manager secret destroys
-every version, and versions are the audit trail; disabling a version is
-a rotation decision tako has no opinion about. Locally `.env` is a file
-the user owns and `rm` is a convenience. So the cloud half of `rm` is
-simply absent, and says why.
+**D5 — `rm` deletes in the cloud too, and fully** (owner, 2026-08-10;
+my recommendation to leave it out was overruled).
+
+That makes it the most destructive command in the series: deleting a
+Secret Manager secret destroys the secret AND every version, permanently
+— there is no undelete. So it sits on the ladder's bottom rung: typed
+confirmation, always, and **`--yes` never applies**, exactly like
+`tako destroy` and `prune --data`.
+
+Locally it stays a convenience — `.env` is a file the user owns, and the
+guide already says deleting `.tako` is the reset story — so it removes
+the line and moves on.
+
+The cloud transcript shows what is about to be lost before asking:
+
+```
+$ tako secrets rm stripe-key --project acme-prod-4821
+tako secrets · cloud · acme-prod-4821 / prod
+  prod-stripe-key   3 versions, created 2026-04-02, updated 2026-08-01
+  this destroys the secret and all 3 versions, permanently — Secret
+  Manager has no undelete, and the versions ARE the audit trail.
+  type the secret's name to confirm: stripe-key
+  ✓ destroyed prod-stripe-key and 3 versions
+```
+
+**Declared and orphaned are different, and the message says which.**
+The safe case is the one the ruling exists for — a value created in the
+wrong project or under a wrong name, or left behind after a declaration
+was removed:
+
+```
+  stripe-key is not declared by this app — an orphan, which is the safe
+  case for this command.
+```
+
+The dangerous case gets its own sentence, because the consequence is
+specific and immediate:
+
+```
+  stripe-key IS declared, at app.go:42. Every service that resolves it
+  refuses to BOOT without a value — this does not degrade, it stops the
+  next deploy and the next cold start.
+```
+
+It still proceeds after the typed name. Refusing would block the exact
+cleanup the ruling asked for, and an operator who has read that sentence
+and typed the name has made a decision, not a mistake.
+
+**Individual versions are still out of scope.** Disabling or destroying
+one version of a live secret is rotation, which has an ordering and a
+rollback story tako has no opinion about. The whole-secret delete is a
+different act — "this should not exist" — and that is the one being
+added.
 
 ### Cloud errors & permissions
 
@@ -22015,9 +22063,10 @@ reason: writing a value under a name nothing reads is a silent no-op.
 ### Non-goals
 
 - **No reading values back** (D1), and therefore no `tako secrets get`.
-- **No rotation, expiry or version policy.** Adding a version is the
-  whole write surface; disabling and destroying versions are decisions
-  with an audit trail attached, and they belong in the console.
+- **No rotation, expiry or per-version policy.** Adding a version is the
+  whole write surface, and `rm` removes a secret entirely (D5);
+  disabling or destroying ONE version of a live secret is rotation, and
+  belongs in the console.
 - **No `.env` for tests.** `NewTestApp` deliberately does not read it —
   a test says what it depends on via `app.SetSecret`. That difference
   is documented as a feature and stays one.
@@ -22042,17 +22091,22 @@ reason: writing a value under a name nothing reads is a silent no-op.
    `notifier-key` gap that gallery declares — so the cloud half has a
    real target on day one.
 
-### The question I want ruled on
+### Ruled
 
-**D5's asymmetry.** `tako secrets rm` working locally and not against a
-project is honest but lopsided, and someone will eventually want to
-delete a secret they created by mistake. The alternative is a cloud
-`rm` behind the ladder's typed confirmation (like `tako destroy`),
-which is more complete and adds a way to destroy an audit trail. I
-recommend leaving it out: the console does this well, with the
-confirmation and the record, and tako's absence here is a smaller cost
-than a convenient way to erase history.
+**D5 → the cloud `rm` is in, as a full delete** (owner, 2026-08-10),
+overruling my recommendation. Designed above: typed confirmation,
+`--yes` never applies, the version count and dates shown before the
+prompt, and a different sentence for a declared secret than for an
+orphan.
+
+The test plan gains two cases for it:
+
+6. **`--yes` does not answer this prompt.** The ladder's rule is that
+   the bottom rung has no flag, and the way that breaks is somebody
+   adding `--yes` handling for consistency with the rung above.
+7. **A wrong typed name deletes nothing**, asserted against a fake that
+   fails the test if any DELETE arrives.
 
 ### Gate
 
-Stopping here. No code written.
+Stopping here. No code written. SC4 is now fully specified.
