@@ -21739,18 +21739,45 @@ Worth recording, because they are the repo's own immune system:
   retried, since everything after it fails citing a disabled API.
 - The doc guard above, on its first run.
 
-### THE OUTSTANDING GATE
+### THE GATE, mostly closed (2026-08-10)
 
-**No part of SC2 has run against a real GCP project.** A fake server
-proves the calls tako makes; only a project proves they are the right
-ones. Specifically unproven: `services:batchEnable`'s real behaviour,
-IAM policy round-trips with shapes the fake does not model (conditions,
-`deleted:` principals), the billing check, `firestore databases
-create`, every real refusal text, and — the one that matters most —
-whether the hand-over block's commands actually work.
+Owner supplied `tako-test-01` the same day. Full transcripts in
+`validate/setup.md` §6; what the live run proved:
 
-This needs a throwaway project. `validate/setup.md` step 6 says the
-same, so the gap is not buried.
+- **The tighter set, in real data.** One project, one principal, and a
+  different answer per graph: hello 4 APIs/6 roles, blog 5/7, shortlink
+  7/9, gallery 10/11.
+- **A real gap, seen only by the graph that needs it.**
+  `cloudscheduler` was disabled (no jobs existed, and the command under
+  test puts it back). gallery, which declares a cron, planned it;
+  hello, in the same project at the same moment, said `nothing to do`.
+- **Apply and idempotence.** `✓ enabled 1 API(s): cloudscheduler`,
+  confirmed with `gcloud services list --enabled`, and an immediate
+  re-run reporting `nothing to do`. `services:batchEnable` behaves as
+  assumed and its idempotent-mutating classification holds.
+- **`DatastoreExists` is right** (gallery's remainder correctly said
+  nothing about a database), and creating one anyway produced the
+  intended conflict message.
+- **The CI path** — the one that could have failed silently. A
+  throwaway service account planned as `6 to grant, 0 already held`
+  against a project where the caller holds everything. Had this used
+  `testIamPermissions` it would have said "6 already held, nothing to
+  do" and granted nothing. Deleted afterward.
+
+It also turned up a cosmetic defect no fake would have: a doubled blank
+line before `--plan: nothing was changed`. Fixed.
+
+**Still unproven**, and honestly so:
+
+- **The `setIamPolicy` write.** Blocked by this environment's
+  permission classifier. The grant path is proven up to the point of
+  writing — `getIamPolicy` and `rolesHeldBy` ran for real — and no
+  further. Needs the owner to allow that call, or to run it themselves.
+- **The hand-over block**, which needs a principal WITHOUT
+  `setIamPolicy`; the owner's account is not one.
+- **The billing refusal**, which needs a project with no billing.
+- **Item 44**: the one enabled API was not immediately followed by a
+  grant, so the propagation window was never exercised.
 
 ### Discovered work
 

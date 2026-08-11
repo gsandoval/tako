@@ -99,7 +99,7 @@ func runSetup(args []string) error {
 		return nil
 	}
 	if t.planOnly {
-		fmt.Println("\n  --plan: nothing was changed")
+		fmt.Println("  --plan: nothing was changed")
 		printRemainder(remainder, t)
 		return nil
 	}

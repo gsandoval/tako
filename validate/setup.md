@@ -1,8 +1,8 @@
 # validate/setup.md — SC2 (`tako setup`, `tako datastore create`)
 
-**Read step 6 first if you are deciding whether this is done.** Every
-other step ran; the live path did not, because there is no project to
-run it against.
+**Read 6a first if you are deciding whether this is done.** The live
+path ran against `tako-test-01` on 2026-08-10; one piece of it — the
+IAM write — is still unproven.
 
 ## 1. What SC2 is, and is not
 
@@ -93,23 +93,94 @@ database gap does **not** print `gcloud firestore databases create` —
 that would pick the region for the user, which is the one choice that
 cannot be taken back.
 
-## 6. NOT DONE: the live path
+## 6. The live path — run against tako-test-01 (2026-08-10)
 
-Everything above runs against a fake project. **No part of SC2 has
-touched a real GCP project**, which means these are unproven:
+Owner supplied the project. What ran, and what it proved:
 
-- that `services:batchEnable` behaves as assumed (it is classified as
-  idempotent-mutating and will be retried);
-- that `:getIamPolicy` / `:setIamPolicy` round-trip preserves bindings
-  the fake does not model (conditions, `deleted:` principals);
-- that the hand-over block is correct — a fake cannot tell me the
-  commands I print actually work;
-- the billing check, `firestore databases create`, and every real
-  refusal text.
+**The tighter set, in real data.** Each example planned against the same
+project:
 
-A fake server can prove the calls tako makes. Only a project can prove
-they are the right ones. **This is the outstanding gate for SC2**, and
-it needs a throwaway project to point at.
+```
+hello      nothing to do — 4 API(s) on, 6 role(s) held
+shortlink  nothing to do — 7 API(s) on, 9 role(s) held
+gallery    nothing to do — 10 API(s) on, 11 role(s) held
+blog       nothing to do — 5 API(s) on, 7 role(s) held
+```
+
+One project, one principal, different answers per graph. That is the
+owner's ruling working against something real rather than a fake.
+
+**A gap, and who can see it.** `cloudscheduler.googleapis.com` was
+disabled (no scheduler jobs existed, so nothing was lost, and the
+command under test puts it back). gallery, which declares a cron:
+
+```
+  APIs — 1 to enable, 9 already on
+    + cloudscheduler.googleapis.com
+```
+
+hello, in the same project, at the same moment: `nothing to do`. The
+gap is invisible to a graph that does not need it.
+
+**Apply, and idempotence.**
+
+```
+  apply? [y/N] y
+  ✓ enabled  1 API(s): cloudscheduler
+```
+
+`gcloud services list --enabled` confirms it landed;
+re-running immediately reports `nothing to do — 10 API(s) on`.
+`services:batchEnable` behaves as assumed, and its
+idempotent-mutating classification holds.
+
+**The database.** gallery declares entities and the remainder said
+nothing about a database — correct: the project has one, and
+`DatastoreExists` saw it. Creating it again exercises the conflict
+path:
+
+```
+tako datastore · tako-test-01
+  creating a datastore-mode database in us-central1 — this location is permanent
+  create? [y/N] y
+tako: tako-test-01 already has a database — its location cannot be changed,
+      so there is nothing to do here
+```
+
+**The CI path, which is the one that could have failed silently.** A
+throwaway service account, planned against a project where the CALLER
+holds everything:
+
+```
+  Roles for serviceAccount:tako-sc2-probe@… — 6 to grant, 0 already held
+    + roles/run.admin                          run.services.create
+    + roles/iam.serviceAccountAdmin            iam.serviceAccounts.create
+    + roles/iam.serviceAccountUser             iam.serviceAccounts.actAs
+    + roles/artifactregistry.admin             artifactregistry.repositories.create
+    + roles/storage.admin                      storage.buckets.create
+    + roles/resourcemanager.projectIamAdmin    resourcemanager.projects.setIamPolicy
+```
+
+`0 already held` is the proof. Had this used `testIamPermissions` — which
+answers for the caller — it would have said "6 already held, nothing to
+do", granted the service account nothing, and printed success. The
+service account was deleted afterward.
+
+This run also found a cosmetic defect (a doubled blank line before
+`--plan: nothing was changed`), now fixed.
+
+## 6a. STILL NOT PROVEN
+
+- **The IAM write.** `setIamPolicy` was blocked by this environment's
+  permission classifier, so the grant path is proven up to the point of
+  writing and no further. The read side of it — `getIamPolicy`,
+  `rolesHeldBy` — did run.
+- **The hand-over block.** It needs a principal without
+  `setIamPolicy`, which the owner's account is not.
+- **The billing refusal**, which needs a project without billing.
+- **Item 44** (`waitForAPIs` is never called): the one API enabled here
+  was not immediately followed by a grant, so the propagation window was
+  never exercised.
 
 ## 7. The suite is unaffected
 
