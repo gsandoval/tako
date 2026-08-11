@@ -21308,17 +21308,250 @@ the earlier one.
    pasted into this log. This one cannot be validated any other way: a
    fake server cannot tell me the block is right.
 
-### The two questions I want ruled on
+### Both questions, ruled (owner, 2026-08-10)
 
-1. **D1's default.** Full bundle (grant once, never think again) versus
-   the graph's subset (least privilege, re-run as the app grows). I
-   recommend the full bundle with `--minimal` as the opt-in, because
-   the failure mode of the subset lands mid-feature.
-2. **D4.** Should `--yes` cover creating the Datastore database, given
-   its location is permanent? I lean yes — it is a create, and the
-   ladder reserves typed confirmation for destruction — but a permanent
-   choice made by a flag in CI is the kind of thing that is obvious
-   only in hindsight.
+**D1 → the tighter permissions, always.** Setup grants only what this
+app's graph needs; there is no full-bundle mode and no `--minimal`
+flag, because the subset IS the behaviour. My recommendation was the
+opposite and the owner overruled it.
+
+The consequence is accepted rather than hidden: **setup is a command
+you re-run as the app grows.** So it has to be pleasant to re-run — it
+already is, being idempotent and reporting "nothing to do" — and the
+deploy's preflight, which finds the gap that prompts the re-run, should
+name `tako setup` in its remediation rather than printing raw gcloud
+lines. That is a change to preflight's gap text and is part of SC2.
+
+It also lands on the right side of tako's own doctrine: every runtime
+grant is derived from the graph, and the deployer's now is too. The
+Layer 1 table in `docs/tako-cloud-permissions.md` becomes documentation
+of the maximum rather than a block to paste.
+
+**D4 → not part of setup. Its own command, with the region typed.**
+
+```
+tako datastore create --region us-central1 --project acme-prod-4821
+```
+
+`--region` is REQUIRED here — no default, no inheriting `TAKO_REGION`,
+no falling back to us-central1 — because a Datastore database's
+location cannot be changed afterward and every other region default in
+this CLI exists to save typing on a decision that is reversible. This
+one is not.
+
+`tako setup` therefore never creates a database. It reports the missing
+one and names the command:
+
+```
+Still yours — tako cannot do these:
+  · this app declares entities and acme-prod-4821 has no Datastore database
+      tako datastore create --region <region> --project acme-prod-4821
+      (the location is permanent — pick the region your services run in)
+```
+
+Preflight's existing gap text (`preflight.go:163`, currently a raw
+`gcloud firestore databases create` line) changes to name the tako
+command for the same reason.
+
+### Gate
+
+Stopping here. No code written. SC2 is now fully specified — say the
+word and it gets built.
+
+---
+
+## FL20 — DX proposal: `entity:"index"` decides what is indexed (2026-08-10) — AWAITING APPROVAL
+
+From flauta's friction log, 2026-08-09: *"every scalar field is indexed
+in Datastore, and Datastore caps an indexed string at 1500 bytes"* —
+the entry they marked as the one **no amount of app-side care can work
+around**. Every other open entry in that log has a workaround.
+
+Owner direction, 2026-08-10: *"indexes need to be explicit."*
+
+### What is actually wrong
+
+Not "tako chose to index everything." The tag exists, is read, and does
+something — just not the thing its name promises. Three facts:
+
+**1. The tag is read into a set** (`entity.go:141`):
+
+```go
+case "index":
+    s.indexed[f.Name] = jsonName(f)
+```
+
+**2. That set has exactly one consumer in the whole repo**
+(`entity.go:344`), and it is the QUERY layer:
+
+```go
+jsonField, ok := s.indexed[field]
+if !ok {
+    return "", fmt.Errorf("tako: entity %q: %s is not an indexed field", q.h.name, field)
+}
+```
+
+**3. The write path cannot see it**, because the contract carries only
+bytes (`pkg/backends/entity.go`):
+
+```go
+Put(ctx context.Context, kind, id string, doc []byte) error
+```
+
+So the GCP store re-derives properties by unmarshalling the JSON and
+mirroring every scalar it finds (`pkg/backends/gcp/entity.go`,
+`entity()`), with `excludeFromIndexes` set on the document blob and on
+nothing else.
+
+**`entity:"index"` is a query permission, not a storage instruction.**
+An untagged `Body string` is still mirrored as an indexed Datastore
+property, and Datastore rejects an indexed string over 1500 bytes — so
+an app fails to write a field it never asked to index, with an error
+about an index it never declared. That is why it cannot be worked
+around: the app has already said the right thing.
+
+### The constraint that shapes the fix
+
+The two failure directions are not symmetric, and this decides the
+design:
+
+- **Over-indexing** (today) fails the WRITE, loudly, at the API.
+- **Under-indexing** fails the READ, **silently**. A Datastore filter
+  on an excluded property does not error — the entity is simply not in
+  that property's index, so the query returns nothing. A page of posts
+  quietly becomes empty.
+
+So the fix must not trade a loud bug for a silent one. Anything that
+lets a call site forget to pass its indexed set is worse than what we
+have now.
+
+**The framework's own kinds are the sharp edge here.**
+`pkg/runtime/session.go` writes `sessionKind` through
+`hooks.Entity.Put` in three places, and `eachSession` queries sessions
+**by uid** — that query is what sign-out, revocation and role
+stale-marking are built on. Exclude `uid` by accident and revocation
+silently stops revoking. That is a security property, failing quietly,
+and it is the reason the design below refuses to make the set optional.
+
+### The surface — nothing changes for the user
+
+```go
+type Post struct {
+    ID     string `entity:"id"`
+    Author string `entity:"index"`   // queryable, and therefore indexed
+    Slug   string `entity:"index"`
+    Title  string                    // stored, never queried, never indexed
+    Body   string                    // 40 KB of markdown — fine now
+}
+```
+
+That is already what the doc comments say the tag means. FL20 makes it
+true. The user-visible change is that the second and third fields stop
+being indexed, so `Body` can hold a document.
+
+**A tagged field that is too long gets a message about the thing the
+app actually declared**, instead of Datastore's:
+
+```
+tako: entity "posts": Title is declared entity:"index" and this value is
+      1,842 bytes — Datastore caps an INDEXED string at 1500. Drop the
+      tag if you do not query on Title; keep it and store the long text
+      in another field.
+```
+
+### The contract change
+
+```go
+// pkg/backends/entity.go
+Put(ctx context.Context, kind, id string, doc []byte, indexed []string) error
+```
+
+and the same fifth argument on `EntityTxOps.Put`. `indexed` names the
+document's queryable fields, by their JSON names. `local` ignores it
+(bbolt indexes nothing and scans); `gcp` sets
+`excludeFromIndexes: true` on every mirrored property not in the list.
+
+**Where the set comes from — one place per kind, never a call site's
+choice:**
+
+- **App entities**: `EntityHandle[T].loadSchema()`, which already
+  computes it and caches it per handle. One site (`entity.go:57`),
+  fed structurally. There is no way for an app to get this wrong.
+- **The runtime's own kinds** (`sessionKind`, `seenKind`): a `var`
+  beside each record type, so the four call sites in `session.go` name
+  a constant rather than a literal.
+
+### The alternative I did not pick
+
+A schema table emitted by codegen into the generated main and
+registered at boot — which fits "static analysis + codegen, never
+reflection" better, and the analyzer already collects the fields.
+
+It fails on the constraint above. A bare test, or any path that boots
+backends without a generated main, would have an EMPTY table — and an
+empty table means "index nothing", which means every query silently
+returns nothing. A design whose failure mode is a silent empty read in
+exactly the environment where people write assertions is the wrong
+design, however well it matches the doctrine.
+
+The reflection cost stays where it already is: once per handle, in
+`loadSchema`, which is init-shaped work and not on the request path.
+
+### Conformance cases (written first, as the rule requires)
+
+1. **A long untagged field round-trips.** Put a 2 KB untagged string,
+   get it back. This is flauta's blocker, and it fails against `gcp`
+   today.
+2. **A tagged field is still queryable after a write.** `Where` on it
+   returns the row — the under-indexing regression, pinned in the
+   direction that fails silently.
+3. **A tagged field over 1500 bytes is refused with tako's text**, not
+   Datastore's.
+4. **Sessions survive.** A runtime-level case: mint a session, mark it
+   stale by uid, and assert `eachSession` found it. Not a conformance
+   case (sessions are runtime, not a backend contract) but it belongs
+   in the same slice, because it is the one that fails quietly.
+
+Cases 1–3 go in `pkg/backends/conformance`, so `local` and `gcp` are
+held to them together. Per "conformance is law", they are written and
+red before the gcp change.
+
+### Migration, and what does not change
+
+- **No data migration.** Datastore re-indexes an entity when it is
+  written, so existing documents keep their current indexes until they
+  are next put. Over-indexed old data is harmless — and a document that
+  would now be legal could never have been written before, so there is
+  nothing stranded.
+- **Composite index derivation is unaffected.** The deploy derives
+  composites from query call sites (`Resource.Composites`), and a field
+  can only be queried if it is tagged — so every composite names fields
+  that remain indexed.
+- **`local` behaviour does not change at all.** It never indexed
+  anything; it scans. Which is exactly why this bug could not be caught
+  locally, and why case 1 is a conformance case rather than a unit test.
+
+### Non-goals
+
+- **No `entity:"exclude"` tag.** Untagged already means unindexed once
+  this lands; a second tag for the default is surface with no job.
+- **No automatic long-field detection.** tako will not silently drop a
+  tag because a value got long — that would make a query start
+  returning nothing based on data.
+- **Not touching the 1500-byte limit itself.** It is Datastore's, it is
+  not negotiable, and the fix is to stop indexing things nobody asked
+  to index.
+- **No change to how queries validate fields.** `indexedField` already
+  refuses an untagged field, which is what makes the tag set a safe
+  source of truth for the write path.
+
+### Cost, stated plainly
+
+This changes an interface in `pkg/backends`, which is the one place the
+repo treats as a contract. Both backends, the conformance suite, the
+runtime's session store and the local user store all move together. It
+is the largest surface change since AB10, and it is worth it because
+the alternative is an app that cannot store a paragraph.
 
 ### Gate
 
