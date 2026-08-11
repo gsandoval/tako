@@ -54,20 +54,43 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 
 | Role | Why |
 |---|---|
-| `roles/artifactregistry.writer` | push images (C1) |
+| `roles/artifactregistry.admin` | CREATE the image repository, then push to it (C1) |
 | `roles/run.admin` | create/update Cloud Run services (C2) |
 | `roles/iam.serviceAccountAdmin` | create per-service SAs (C2) |
 | `roles/iam.serviceAccountUser` | attach SAs to services (C2) |
 | `roles/storage.admin` | buckets (C3+) |
-| `roles/datastore.owner` | entity stores + indexes (C3+) |
+| `roles/datastore.owner` | entity stores + indexes (C3+); `tako setup` grants the narrower `roles/datastore.indexAdmin` when that is all the graph needs |
 | `roles/pubsub.admin` | topics/subscriptions (C-async) |
 | `roles/cloudtasks.admin` | delayed queues (C-async) |
-| `roles/secretmanager.admin` | secret references (C-config) |
+| `roles/secretmanager.admin` | secret references (C-config); `tako setup` grants `roles/secretmanager.viewer` for the read half |
 | `roles/cloudscheduler.admin` | crons (C-async) |
 | `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
 | `roles/monitoring.notificationChannelEditor` | `tako.AlertEmail`/`AlertWebhook`/`AlertTopic` channels (Y1) |
 | `roles/serviceusage.serviceUsageConsumer` | bill tako's API calls to the target project, not to gcloud's shared client (FL19) |
 | `roles/identitytoolkit.admin` | `tako users` against a project: create the first admin, hand out roles (SC1) |
+| `roles/resourcemanager.projectIamAdmin` | write the DERIVED runtime grants — every service's own identity gets its edges from the graph, and that is a policy write on the project |
+| `roles/serviceusage.serviceUsageAdmin` | needed by `tako setup` itself, to turn the APIs above on |
+
+**Three of these are corrections the SC1/SC2 work surfaced**, and they
+are worth naming because a bundle that is subtly short is worse than
+one that is honest about being broad:
+
+- `artifactregistry.writer` was **not enough**. The deploy CREATES the
+  repository, and only `.admin` grants
+  `artifactregistry.repositories.create`. A deployer granted exactly
+  what this table used to say failed on their first deploy.
+- `resourcemanager.projectIamAdmin` was **missing entirely**, though
+  preflight has required `resourcemanager.projects.setIamPolicy` all
+  along: every derived runtime grant is a policy write. Same story —
+  follow the table exactly, fail on the first deploy.
+- `serviceusage.serviceUsageAdmin` is new because `tako setup` now
+  enables APIs rather than printing the command to.
+
+The table drifted from the code because nothing held them together.
+`TestEveryRoleSetupCanGrantIsInThePermissionsDoc` does now: every role
+tako can grant must appear here. The table may list MORE (it is the
+"grant once and stop thinking" maximum, while `tako setup` grants the
+subset a given graph needs), but it may never list less.
 
 **On the accounts row.** It appears in Layer 2 as well, derived per
 service, and that is not a duplicate: there it is a property of a

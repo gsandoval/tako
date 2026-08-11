@@ -38,6 +38,8 @@ const (
 	identityHost   = "identitytoolkit.googleapis.com"
 	monitoringHost = "monitoring.googleapis.com"
 	iamCredsHost   = "iamcredentials.googleapis.com"
+	firestoreHost  = "firestore.googleapis.com"
+	billingHost    = "cloudbilling.googleapis.com"
 )
 
 // Client is one authenticated deploy target.
@@ -156,6 +158,11 @@ var idempotentMutatingVerbs = []string{
 	// store maps to success, so a retry lands in the same place a first
 	// success would.
 	":delete",
+	// services:batchEnable asks for a set of APIs to be ON. Enabling one
+	// already enabled is a no-op, so re-sending converges on the same
+	// state — and this is the call a flaky first setup most wants
+	// retried, since everything after it fails citing a disabled API.
+	":batchEnable",
 }
 
 // mutatingVerbs are the colon-suffixed POSTs that must NOT be retried,

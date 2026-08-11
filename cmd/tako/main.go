@@ -59,6 +59,14 @@ Cloud, read-only:
   tako dlq [service]   peek dead-lettered messages per async service
 
 Cloud, mutating (see the confirmation ladder below):
+  tako setup [--member <principal>] [--plan]
+                       enable the APIs and grant the roles THIS app's
+                       graph needs, to you or to --member; idempotent,
+                       and re-run as the app grows
+  tako datastore create --region <region>
+                       the project's datastore-mode database. --region is
+                       required and never defaulted: the location is
+                       permanent
   tako deploy [--plan] [--canary <pct>] [--yes]
                        reconcile the app onto GCP: preflight, classified
                        plan (--plan stops there), lease, apply, live URL;
@@ -129,6 +137,14 @@ func main() {
 		}
 	case "build":
 		if err := runBuild(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "setup":
+		if err := runSetup(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "datastore":
+		if err := runDatastore(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "deploy":

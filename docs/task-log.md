@@ -21660,3 +21660,108 @@ check is outstanding and is named as such in `validate/entity-index.md`.
 `go vet ./...` and `go test ./...` green at the root. All seven examples
 green under `tako test`, unchanged. Scripted walk:
 `validate/entity-index.md`, every step run.
+
+---
+
+## SC2 — shipped, with one gate outstanding (2026-08-10)
+
+Approved 2026-08-10 ("Carry on then"), after both questions were ruled
+on. `pkg/provision/gcp/setup.go`, `setup_test.go`, `setupdoc_test.go`,
+`cmd/tako/setup.go`, `preflight.go` (Requirements extracted, gap texts
+retargeted), `gcp.go` (two hosts, one verb classification),
+`docs/tako-cloud-permissions.md`, `validate/setup.md`.
+
+**Read the outstanding gate first** (below). Everything here runs
+against a fake project; none of it has touched a real one.
+
+### Built as ruled
+
+**Tighter permissions, always.** `Requirements(needs)` returns the APIs
+and permission→role pairs THIS graph needs, and setup grants exactly
+those. No full bundle, no `--minimal`. An app with no queues is never
+granted `pubsub.admin`, and a test says so.
+
+The consequence, accepted: setup is re-run as the app grows. So
+preflight's gap text now names it — `enable it with the rest: tako
+setup --project p` rather than a raw gcloud line — and a test pins that,
+because a gap that told the user to paste a binding would route them
+around the command that exists to do it.
+
+**The database is its own command**, `tako datastore create --region
+<r>`, with `--region` required and refused BEFORE the project is
+resolved: the refusal needs nothing from the cloud, and meeting "no
+project set" first would teach the wrong lesson.
+
+### One table, two readers
+
+`Requirements` was extracted from `Preflight` rather than written
+beside it. Two derivations would eventually disagree, and the failure
+would be setup granting a set preflight still called incomplete — a
+user told to run the command they had just run.
+
+### What the doc guard found
+
+`TestEveryRoleSetupCanGrantIsInThePermissionsDoc` failed on its first
+run and turned up three real defects in a table that has been the
+documented setup for months:
+
+1. **`artifactregistry.writer` was not enough.** The deploy CREATES the
+   repository; only `.admin` grants `repositories.create`. A deployer
+   granted exactly what the table said failed on their first deploy.
+2. **`resourcemanager.projectIamAdmin` was missing entirely**, though
+   preflight has required `resourcemanager.projects.setIamPolicy` all
+   along — every derived runtime grant is a policy write.
+3. **`serviceusage.serviceUsageAdmin`** was needed the moment setup
+   started enabling APIs.
+
+The first two mean the documented one-time setup has been quietly
+incomplete for anyone who followed it literally. Corrected, and now
+held by a test: every role tako can grant must appear in the table. The
+table may list more — it is the "grant once and stop thinking" maximum
+while setup grants a graph's subset — but never less.
+
+### The CI case, which is easy to get silently wrong
+
+`testIamPermissions` answers for the CALLER. Using it to decide what a
+`--member serviceAccount:…` already holds would report every role as
+held (the human running setup holds them), grant the service account
+nothing, and print success — leaving CI unable to deploy with no
+message anywhere. So `PlanSetup` takes `self`, and reads the policy
+directly for anyone else.
+
+### Existing guards that caught this work
+
+Worth recording, because they are the repo's own immune system:
+
+- `TestEveryCustomMethodPostIsClassified` rejected `:batchEnable` until
+  it was classified. It is idempotent-mutating: enabling an enabled
+  service is a no-op, and it is the call a flaky first setup most wants
+  retried, since everything after it fails citing a disabled API.
+- The doc guard above, on its first run.
+
+### THE OUTSTANDING GATE
+
+**No part of SC2 has run against a real GCP project.** A fake server
+proves the calls tako makes; only a project proves they are the right
+ones. Specifically unproven: `services:batchEnable`'s real behaviour,
+IAM policy round-trips with shapes the fake does not model (conditions,
+`deleted:` principals), the billing check, `firestore databases
+create`, every real refusal text, and — the one that matters most —
+whether the hand-over block's commands actually work.
+
+This needs a throwaway project. `validate/setup.md` step 6 says the
+same, so the gap is not buried.
+
+### Discovered work
+
+- **44. `tako setup` does not wait for API enablement to propagate.**
+  `waitForAPIs` exists and is not called: batchEnable returns before
+  the change is visible, and a grant issued into that window can fail
+  citing the API. Unproven either way without a live project, so it is
+  filed rather than guessed at.
+
+### Gate (agent-side)
+
+`go vet ./...` and `go test ./...` green at the root. All seven examples
+green under `tako test`. Scripted walk: `validate/setup.md`, steps 1–5
+and 7 run; step 6 explicitly not.

@@ -18,9 +18,14 @@ var preflightAPIs = []string{
 	storageHost,
 }
 
+// Perm is a required permission and the narrowest role that grants it.
+// Remediation names that role, never a broader one — and `tako setup`
+// grants exactly these, which is why the two must come from one table.
+type Perm struct{ Name, Role string }
+
 // preflightPerms maps required permissions to the narrowest role that
 // grants them — the remediation text names that role, never broader.
-var preflightPerms = []struct{ perm, role string }{
+var preflightPerms = []Perm{
 	{"run.services.create", "roles/run.admin"},
 	{"run.services.update", "roles/run.admin"},
 	{"run.services.setIamPolicy", "roles/run.admin"},
@@ -65,35 +70,39 @@ type Needs struct {
 	AuthProviders []string
 }
 
-// Preflight checks credentials, APIs, and permissions before any
-// mutation — every gap is one line with its fix (preflight-as-UX).
-// It returns the API short names it verified, for the CLI's ok line.
-func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
-	var gaps []string
-
+// Requirements is what THIS graph needs on a project: the APIs to
+// enable and the permissions to hold, with the role granting each.
+//
+// One table, two readers. Preflight reports what is missing and `tako
+// setup` grants it — if those derived their own lists, setup would one
+// day grant a set that preflight still called incomplete, and the user
+// would be told to run the command they had just run.
+func Requirements(needs Needs) ([]string, []Perm) {
 	apis := append([]string{}, preflightAPIs...)
-	perms := append([]struct{ perm, role string }{}, preflightPerms...)
+	perms := append([]Perm{}, preflightPerms...)
 	if needs.Datastore {
 		apis = append(apis, datastoreHost)
-		perms = append(perms, struct{ perm, role string }{"datastore.indexes.create", "roles/datastore.indexAdmin"})
+		perms = append(perms, Perm{"datastore.indexes.create", "roles/datastore.indexAdmin"})
 	}
 	if needs.Scheduler {
 		apis = append(apis, schedulerHost)
+		perms = append(perms, Perm{"cloudscheduler.jobs.create", "roles/cloudscheduler.admin"})
 	}
 	if needs.Tasks {
 		apis = append(apis, tasksHost)
+		perms = append(perms, Perm{"cloudtasks.queues.create", "roles/cloudtasks.admin"})
 	}
 	if needs.PubSub {
 		apis = append(apis, pubsubHost)
 		perms = append(perms,
-			struct{ perm, role string }{"pubsub.topics.create", "roles/pubsub.admin"},
-			struct{ perm, role string }{"pubsub.subscriptions.create", "roles/pubsub.admin"})
+			Perm{"pubsub.topics.create", "roles/pubsub.admin"},
+			Perm{"pubsub.subscriptions.create", "roles/pubsub.admin"})
 	}
 	if len(needs.Secrets) > 0 {
 		apis = append(apis, secretHost)
 		perms = append(perms,
-			struct{ perm, role string }{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
-			struct{ perm, role string }{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
+			Perm{"secretmanager.secrets.get", "roles/secretmanager.viewer"},
+			Perm{"secretmanager.secrets.setIamPolicy", "roles/secretmanager.admin"})
 	}
 	if needs.Metrics {
 		apis = append(apis, monitoringHost)
@@ -104,6 +113,16 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	if len(needs.AuthProviders) > 0 {
 		apis = append(apis, identityHost)
 	}
+	return apis, perms
+}
+
+// Preflight checks credentials, APIs, and permissions before any
+// mutation — every gap is one line with its fix (preflight-as-UX).
+// It returns the API short names it verified, for the CLI's ok line.
+func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
+	var gaps []string
+
+	apis, perms := Requirements(needs)
 
 	for _, api := range apis {
 		var state struct {
@@ -116,7 +135,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 			return nil, Classify(err, c.Project, "check enabled APIs", "roles/serviceusage.serviceUsageViewer")
 		}
 		if state.State != "ENABLED" {
-			gaps = append(gaps, fmt.Sprintf("the %s API is disabled — enable it: gcloud services enable %s --project %s", api, api, c.Project))
+			gaps = append(gaps, fmt.Sprintf("the %s API is disabled — enable it with the rest: tako setup --project %s", api, c.Project))
 		}
 	}
 
@@ -125,7 +144,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 	}
 	ask := make([]string, len(perms))
 	for i, p := range perms {
-		ask[i] = p.perm
+		ask[i] = p.Name
 	}
 	url := c.url(crmHost, "/v1/projects/%s:testIamPermissions", c.Project)
 	if err := c.do(ctx, http.MethodPost, url, map[string]any{"permissions": ask}, &granted); err != nil {
@@ -136,8 +155,8 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		have[p] = true
 	}
 	for _, p := range perms {
-		if !have[p.perm] {
-			gaps = append(gaps, fmt.Sprintf("you lack %s — grant: gcloud projects add-iam-policy-binding %s --member user:$(gcloud config get account) --role %s", p.perm, c.Project, p.role))
+		if !have[p.Name] {
+			gaps = append(gaps, fmt.Sprintf("you lack %s — grant it with the rest: tako setup --project %s", p.Name, c.Project))
 		}
 	}
 
@@ -160,7 +179,7 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		}}}
 		err := c.do(ctx, http.MethodPost, c.url(datastoreHost, "/v1/projects/"+c.Project+":lookup"), probe, nil)
 		if ae, ok := err.(*apiError); ok && (ae.Status == http.StatusNotFound || strings.Contains(ae.Message, "database")) {
-			gaps = append(gaps, fmt.Sprintf("no Datastore database in %s — create it: gcloud firestore databases create --location=%s --type=datastore-mode --project %s", c.Project, c.Region, c.Project))
+			gaps = append(gaps, fmt.Sprintf("no Datastore database in %s — create it: tako datastore create --region <region> --project %s\n    (the location is permanent, so tako will not pick one for you)", c.Project, c.Project))
 		}
 	}
 
