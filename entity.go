@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
+	"sort"
 	"sync"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -54,7 +55,31 @@ func (e *EntityHandle[T]) Put(ctx Ctx, entity T) error {
 	if err != nil {
 		return err
 	}
-	return entityBackend(ctx).Put(ctx, e.name, id, doc)
+	indexed, err := e.indexedFields()
+	if err != nil {
+		return err
+	}
+	return entityBackend(ctx).Put(ctx, e.name, id, doc, indexed)
+}
+
+// indexedFields is the entity:"index" set, as JSON names, for the store.
+//
+// This is the whole of FL20 from the SDK's side: the tag used to be
+// read for the query layer's benefit and never reached a write, so the
+// backend mirrored every scalar into an index and a long untagged field
+// was refused for an index nobody declared. One handle, one schema, one
+// place — an app cannot get this wrong, because it never sees it.
+func (e *EntityHandle[T]) indexedFields() ([]string, error) {
+	s, err := e.loadSchema()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(s.indexed))
+	for _, jsonName := range s.indexed {
+		out = append(out, jsonName)
+	}
+	sort.Strings(out) // stable, so a plan or a log reads the same twice
+	return out, nil
 }
 
 // Delete removes the entity stored under id; deleting an absent id is not
@@ -79,7 +104,11 @@ func (e *EntityHandle[T]) Query(ctx Ctx) *EntityQuery[T] {
 // Update performs a transactional read-modify-write of the entity stored
 // under id. tako.IsNotFound reports an absent id.
 func (e *EntityHandle[T]) Update(ctx Ctx, id string, mutate func(*T)) error {
-	err := entityBackend(ctx).Update(ctx, e.name, id, func(doc []byte) ([]byte, error) {
+	indexed, err := e.indexedFields()
+	if err != nil {
+		return err
+	}
+	err = entityBackend(ctx).Update(ctx, e.name, id, indexed, func(doc []byte) ([]byte, error) {
 		var v T
 		if err := json.Unmarshal(doc, &v); err != nil {
 			return nil, err
@@ -94,7 +123,11 @@ func (e *EntityHandle[T]) Update(ctx Ctx, id string, mutate func(*T)) error {
 // error the transaction is rolled back and the error is returned
 // unchanged, so status errors (tako.Errorf) compose with transactions.
 func (e *EntityHandle[T]) Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error {
-	return entityBackend(ctx).Tx(ctx, e.name, func(ops backends.EntityTxOps) error {
+	indexed, err := e.indexedFields()
+	if err != nil {
+		return err
+	}
+	return entityBackend(ctx).Tx(ctx, e.name, indexed, func(ops backends.EntityTxOps) error {
 		return fn(&entityTx[T]{h: e, ops: ops})
 	})
 }

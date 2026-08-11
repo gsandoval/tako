@@ -15,7 +15,7 @@ func TestPersistenceAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.Put(ctx, "links", "gh", []byte(`{"slug":"gh","hits":1}`)); err != nil {
+	if err := s.Put(ctx, "links", "gh", []byte(`{"slug":"gh","hits":1}`), []string{"slug", "hits"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

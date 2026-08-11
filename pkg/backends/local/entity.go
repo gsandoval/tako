@@ -96,7 +96,35 @@ func (s *EntityStore) Get(ctx context.Context, kind, id string) ([]byte, error) 
 	return doc, err
 }
 
-func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte) error {
+// checkIndexed enforces the ONE thing about indexes that local can
+// enforce: the cap on an indexed value.
+//
+// Nothing here indexes — this backend scans — so the check buys this
+// store nothing at all. It buys the developer the only thing that
+// matters: an app that writes a 2 KB indexed title fails on the laptop
+// where it was written instead of on the first deploy. A limit visible
+// only in production is a limit the conformance suite is supposed to
+// have made visible here (decision 9).
+func checkIndexed(kind string, doc []byte, indexed []string) error {
+	if len(indexed) == 0 {
+		return nil
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(doc, &fields); err != nil {
+		return nil // Put's own unmarshal reports it; this is not that error
+	}
+	for _, name := range indexed {
+		if s, ok := fields[name].(string); ok && len(s) > backends.MaxIndexedBytes {
+			return backends.IndexedTooLong(kind, name, len(s))
+		}
+	}
+	return nil
+}
+
+func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte, indexed []string) error {
+	if err := checkIndexed(kind, doc, indexed); err != nil {
+		return err
+	}
 	db, err := s.handle()
 	if err != nil {
 		return err
@@ -139,7 +167,7 @@ func (s *EntityStore) Exists(ctx context.Context, kind, id string) (bool, error)
 	return exists, err
 }
 
-func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(doc []byte) ([]byte, error)) error {
+func (s *EntityStore) Update(ctx context.Context, kind, id string, indexed []string, mutate func(doc []byte) ([]byte, error)) error {
 	db, err := s.handle()
 	if err != nil {
 		return err
@@ -157,11 +185,14 @@ func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(d
 		if err != nil {
 			return err
 		}
+		if err := checkIndexed(kind, next, indexed); err != nil {
+			return err
+		}
 		return b.Put([]byte(id), next)
 	})
 }
 
-func (s *EntityStore) Tx(ctx context.Context, kind string, fn func(tx backends.EntityTxOps) error) error {
+func (s *EntityStore) Tx(ctx context.Context, kind string, indexed []string, fn func(tx backends.EntityTxOps) error) error {
 	db, err := s.handle()
 	if err != nil {
 		return err
@@ -171,12 +202,14 @@ func (s *EntityStore) Tx(ctx context.Context, kind string, fn func(tx backends.E
 		if err != nil {
 			return err
 		}
-		return fn(&entityTx{b: b})
+		return fn(&entityTx{b: b, kind: kind, indexed: indexed})
 	})
 }
 
 type entityTx struct {
-	b *bolt.Bucket
+	b       *bolt.Bucket
+	kind    string
+	indexed []string
 }
 
 func (t *entityTx) Get(id string) ([]byte, error) {
@@ -187,7 +220,12 @@ func (t *entityTx) Get(id string) ([]byte, error) {
 	return bytes.Clone(v), nil
 }
 
-func (t *entityTx) Put(id string, doc []byte) error { return t.b.Put([]byte(id), doc) }
+func (t *entityTx) Put(id string, doc []byte) error {
+	if err := checkIndexed(t.kind, doc, t.indexed); err != nil {
+		return err
+	}
+	return t.b.Put([]byte(id), doc)
+}
 
 func (t *entityTx) Delete(id string) error { return t.b.Delete([]byte(id)) }
 

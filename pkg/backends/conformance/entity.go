@@ -5,10 +5,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/gsandoval/tako/pkg/backends"
 )
+
+// linksIndexed is the seeded kind's queryable set: every field the
+// cases below filter or order on. Naming it once, here, is the shape
+// an app gets for free — its schema comes off the struct tags — and
+// keeps the cases about behaviour rather than about bookkeeping.
+var linksIndexed = []string{"slug", "owner", "hits", "created"}
 
 // RunEntity runs the entity-contract suite against a fresh store from
 // open. Every backend must pass it unchanged — any local/gcp behavior
@@ -35,7 +42,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 			{"b", "memo", 1, "2026-07-03T10:00:00Z"},
 			{"c", "alex", 7, "2026-07-02T12:00:00+02:00"}, // == 10:00Z
 		} {
-			if err := s.Put(ctx, "links", d.id, doc(d.id, d.owner, d.hits, d.created)); err != nil {
+			if err := s.Put(ctx, "links", d.id, doc(d.id, d.owner, d.hits, d.created), linksIndexed); err != nil {
 				t.Fatalf("seed %d: %v", i, err)
 			}
 		}
@@ -63,7 +70,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 	t.Run("get put roundtrip", func(t *testing.T) {
 		s := open(t)
 		want := doc("x", "memo", 0, "2026-07-01T00:00:00Z")
-		if err := s.Put(ctx, "links", "x", want); err != nil {
+		if err := s.Put(ctx, "links", "x", want, linksIndexed); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Get(ctx, "links", "x")
@@ -81,9 +88,9 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("put is an upsert", func(t *testing.T) {
 		s := open(t)
-		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"))
+		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"), linksIndexed)
 		want := doc("x", "alex", 9, "2026-07-02T00:00:00Z")
-		if err := s.Put(ctx, "links", "x", want); err != nil {
+		if err := s.Put(ctx, "links", "x", want, linksIndexed); err != nil {
 			t.Fatal(err)
 		}
 		got, _ := s.Get(ctx, "links", "x")
@@ -94,7 +101,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("exists", func(t *testing.T) {
 		s := open(t)
-		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"))
+		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"), linksIndexed)
 		if ok, err := s.Exists(ctx, "links", "x"); err != nil || !ok {
 			t.Fatalf("Exists(x) = %v, %v", ok, err)
 		}
@@ -105,7 +112,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("delete removes and is idempotent", func(t *testing.T) {
 		s := open(t)
-		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"))
+		_ = s.Put(ctx, "links", "x", doc("x", "memo", 0, "2026-07-01T00:00:00Z"), linksIndexed)
 		if err := s.Delete(ctx, "links", "x"); err != nil {
 			t.Fatal(err)
 		}
@@ -119,7 +126,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("update mutates atomically", func(t *testing.T) {
 		s := seed(t)
-		err := s.Update(ctx, "links", "a", func(d []byte) ([]byte, error) {
+		err := s.Update(ctx, "links", "a", linksIndexed, func(d []byte) ([]byte, error) {
 			var m map[string]any
 			_ = json.Unmarshal(d, &m)
 			m["hits"] = m["hits"].(float64) + 1
@@ -138,7 +145,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("update missing is ErrNotFound", func(t *testing.T) {
 		s := open(t)
-		err := s.Update(ctx, "links", "nope", func(d []byte) ([]byte, error) { return d, nil })
+		err := s.Update(ctx, "links", "nope", linksIndexed, func(d []byte) ([]byte, error) { return d, nil })
 		if !errors.Is(err, backends.ErrNotFound) {
 			t.Fatalf("err = %v", err)
 		}
@@ -147,7 +154,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 	t.Run("update propagates mutate error without writing", func(t *testing.T) {
 		s := seed(t)
 		boom := errors.New("boom")
-		err := s.Update(ctx, "links", "a", func(d []byte) ([]byte, error) { return nil, boom })
+		err := s.Update(ctx, "links", "a", linksIndexed, func(d []byte) ([]byte, error) { return nil, boom })
 		if !errors.Is(err, boom) {
 			t.Fatalf("err = %v", err)
 		}
@@ -301,7 +308,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("count sees writes and deletes", func(t *testing.T) {
 		s := seed(t)
-		if err := s.Put(ctx, "links", "d", doc("d", "memo", 9, "2026-07-04T10:00:00Z")); err != nil {
+		if err := s.Put(ctx, "links", "d", doc("d", "memo", 9, "2026-07-04T10:00:00Z"), linksIndexed); err != nil {
 			t.Fatal(err)
 		}
 		got, err := s.Count(ctx, "links", backends.EntityQuery{
@@ -384,11 +391,11 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 		// Before the cursor: an offset cursor would now push "a" onto
 		// page 2 and show it twice.
-		if err := s.Put(ctx, "links", "z", doc("z", "memo", 0, "2026-07-01T00:00:00Z")); err != nil {
+		if err := s.Put(ctx, "links", "z", doc("z", "memo", 0, "2026-07-01T00:00:00Z"), linksIndexed); err != nil {
 			t.Fatal(err)
 		}
 		// After the cursor: genuinely part of what is still to come.
-		if err := s.Put(ctx, "links", "d", doc("d", "memo", 5, "2026-07-05T10:00:00Z")); err != nil {
+		if err := s.Put(ctx, "links", "d", doc("d", "memo", 5, "2026-07-05T10:00:00Z"), linksIndexed); err != nil {
 			t.Fatal(err)
 		}
 		page2, _, err := s.Page(ctx, "links", q, next)
@@ -447,7 +454,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("tx commits all writes together", func(t *testing.T) {
 		s := open(t)
-		err := s.Tx(ctx, "links", func(tx backends.EntityTxOps) error {
+		err := s.Tx(ctx, "links", linksIndexed, func(tx backends.EntityTxOps) error {
 			if err := tx.Put("x", doc("x", "memo", 0, "2026-07-01T00:00:00Z")); err != nil {
 				return err
 			}
@@ -466,7 +473,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 	t.Run("tx error rolls everything back", func(t *testing.T) {
 		s := seed(t)
 		boom := errors.New("boom")
-		err := s.Tx(ctx, "links", func(tx backends.EntityTxOps) error {
+		err := s.Tx(ctx, "links", linksIndexed, func(tx backends.EntityTxOps) error {
 			if err := tx.Put("z", doc("z", "memo", 0, "2026-07-01T00:00:00Z")); err != nil {
 				return err
 			}
@@ -488,7 +495,7 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 
 	t.Run("tx reads see the store state", func(t *testing.T) {
 		s := seed(t)
-		err := s.Tx(ctx, "links", func(tx backends.EntityTxOps) error {
+		err := s.Tx(ctx, "links", linksIndexed, func(tx backends.EntityTxOps) error {
 			if _, err := tx.Get("a"); err != nil {
 				return err
 			}
@@ -499,6 +506,80 @@ func RunEntity(t *testing.T, open func(t *testing.T) backends.Entity) {
 		})
 		if err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	// --- FL20: entity:"index" decides what is indexed -----------------
+	//
+	// The tag was read into a set whose only consumer was the query
+	// layer, and the write path could not see it — so every scalar was
+	// mirrored as an indexed Datastore property whether or not the app
+	// asked. An app then failed to write a field it never declared
+	// queryable, with an error about an index it never asked for. These
+	// three cases are the contract that replaced that.
+
+	t.Run("an unindexed field holds more than an index could", func(t *testing.T) {
+		s := open(t)
+		// A blog post's body: longer than any index takes, and nobody
+		// filters on it. This is the case that failed against gcp and
+		// passed against local, which is why it lives here.
+		body := strings.Repeat("a paragraph. ", 400) // ~5 KB
+		raw, err := json.Marshal(map[string]any{"slug": "x", "owner": "memo", "body": body})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.Put(ctx, "posts", "x", raw, []string{"slug", "owner"}); err != nil {
+			t.Fatalf("a %d-byte unindexed field was refused: %v", len(body), err)
+		}
+		got, err := s.Get(ctx, "posts", "x")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var back map[string]any
+		if err := json.Unmarshal(got, &back); err != nil {
+			t.Fatal(err)
+		}
+		if back["body"] != body {
+			t.Fatalf("the long field did not survive the round trip (%d bytes back)", len(fmt.Sprint(back["body"])))
+		}
+	})
+
+	t.Run("a declared field is still queryable after a write", func(t *testing.T) {
+		// The other direction, and the dangerous one: excluding too
+		// much does not error, it just matches nothing. A backend that
+		// indexed nothing would pass the case above and fail here.
+		s := open(t)
+		raw, _ := json.Marshal(map[string]any{"slug": "x", "owner": "memo", "body": "short"})
+		if err := s.Put(ctx, "posts", "x", raw, []string{"slug", "owner"}); err != nil {
+			t.Fatal(err)
+		}
+		docs, err := s.Query(ctx, "posts", backends.EntityQuery{
+			Filters: []backends.Filter{{Field: "owner", Op: "=", Value: "memo"}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(docs) != 1 {
+			t.Fatalf("a filter on a DECLARED field matched %d rows, want 1 — "+
+				"excluding a queryable field is silent, and this is the case that hears it", len(docs))
+		}
+	})
+
+	t.Run("an indexed value past the cap is refused the same way everywhere", func(t *testing.T) {
+		s := open(t)
+		long := strings.Repeat("x", backends.MaxIndexedBytes+1)
+		raw, _ := json.Marshal(map[string]any{"slug": "x", "owner": long})
+		err := s.Put(ctx, "posts", "x", raw, []string{"slug", "owner"})
+		if err == nil {
+			t.Fatal("an indexed value past the cap was accepted — it would be accepted here and " +
+				"refused in the cloud, which is the difference this suite exists to catch")
+		}
+		// The wording is the contract: the app can act on "drop the
+		// tag", and cannot act on Datastore's version of this.
+		for _, want := range []string{`entity "posts"`, "owner", `entity:"index"`, "1500"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("refusal missing %q:\n%s", want, err)
+			}
 		}
 	})
 }

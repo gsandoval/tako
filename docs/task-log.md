@@ -21556,3 +21556,107 @@ the alternative is an app that cannot store a paragraph.
 ### Gate
 
 Stopping here. No code written.
+
+---
+
+## FL20 — shipped (2026-08-10)
+
+Approved 2026-08-10 ("Go"). `pkg/backends/entity.go` (contract),
+`local/entity.go`, `gcp/entity.go`, `conformance/entity.go`,
+`entity.go` (SDK), `pkg/runtime/session.go`,
+`pkg/backends/gcp/entity_index_test.go`, `validate/entity-index.md`.
+
+**No example changed, and no app has to.** The tags were already right;
+they simply did nothing on the way in.
+
+### What shipped
+
+`Put`, `Update` and `Tx` carry the queryable set. `EntityTxOps.Put` did
+NOT change — a transaction is scoped to one kind, so the set belongs on
+`Tx` and the per-write call has nothing left to get wrong. That was not
+in the proposal and is strictly better than what it described.
+
+The set reaches the store from one place per kind:
+
+- app entities — `EntityHandle.indexedFields()`, off the cached schema.
+  An app never passes one, so it cannot pass the wrong one.
+- `_tako_session` — `sessionIndexed`, and see below.
+- `_tako_seen` — empty, deliberately, with a comment saying it was
+  chosen rather than forgotten.
+
+### The session constant, which is the part worth reading
+
+The proposal called sessions "the sharp edge" and planned a test.
+Building it showed a test would not have worked: `eachSession` looks
+sessions up by uid, revocation and stale-marking are that query, and a
+wrong declaration there fails **silently on gcp only** — `local` scans,
+so it answers the query whatever was declared. Every existing session
+test would have stayed green while revocation quietly stopped revoking.
+
+So it is structural instead. `sessionUIDField` is one constant, used by
+the query and by the declared index, and the two cannot disagree
+because there is only one of them. Two names that must agree, one of
+which fails only in production, is the exact shape FL20 exists to
+remove — it would have been odd to fix it in the contract and reproduce
+it in the framework's own code.
+
+### local now enforces a limit it does not need
+
+`checkIndexed` refuses an indexed value past 1500 bytes on the LOCAL
+backend, which indexes nothing and scans. It buys local nothing and
+buys the developer the only thing that matters: a 2 KB indexed title
+fails on the laptop where it was written rather than on the first
+deploy. The message is one shared `backends.IndexedTooLong`, so the two
+backends cannot drift in wording — the same reasoning as
+`ErrPageNeedsOrder`.
+
+### Mutation proofs
+
+The two directions fail differently, and both were broken and watched:
+
+| Mutation | Caught by |
+|---|---|
+| index every mirrored scalar (the pre-FL20 behaviour) | `TestOnlyDeclaredFieldsGoUpIndexed` — "a 5 KB body is refused for an index nobody asked for"; `TestAnEntityWithNoDeclaredFieldsIndexesNothing` |
+| exclude everything (index nothing) | `TestOnlyDeclaredFieldsGoUpIndexed` — "went up EXCLUDED — a filter on it would match nothing, and Datastore reports no error for that"; `TestAnIndexedValuePastTheCapIsRefusedBeforeItIsSent` |
+
+The second mutation is the one that mattered. Over-indexing fails the
+write loudly; under-indexing fails the read silently. A fix that traded
+one for the other would have looked like progress and passed a suite
+that only tested the first.
+
+### Where the proof had to live
+
+Conformance states the contract but proves it only against a live
+project, and against `local` all three new cases pass **before and
+after** the fix. So the binding proof is
+`pkg/backends/gcp/entity_index_test.go`, asserting the properties
+handed to Datastore — the one place the defect ever existed.
+
+### What this fixes, concretely
+
+`examples/journal`'s `Post` tags two of six fields. Before this,
+`owner`, `title`, `body` and `id` all went up indexed — so a deployed
+journal could not have stored a post longer than about 250 words, and
+the error would have named an index nobody wrote. Every local test
+passed.
+
+### Not covered
+
+The live path. These cases prove what tako sends; only `-backend=gcp`
+conformance against a real project proves Datastore accepts it. That
+check is outstanding and is named as such in `validate/entity-index.md`.
+
+### Discovered work
+
+- **43. The analyzer's derived index set and the struct tags are two
+  sources.** `Resource.Indexes` comes from `Where`/`OrderBy` call sites
+  and drives composite-index creation; the write path now uses the tag
+  set. They cannot currently disagree (`indexedField` refuses an
+  untagged field), so this is not a bug — but nothing enforces that
+  invariant, and it is the kind that stops being true quietly.
+
+### Gate (agent-side)
+
+`go vet ./...` and `go test ./...` green at the root. All seven examples
+green under `tako test`, unchanged. Scripted walk:
+`validate/entity-index.md`, every step run.

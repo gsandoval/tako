@@ -96,7 +96,7 @@ func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	return rec, hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+	return rec, hooks.Entity.Put(ctx, sessionKind, rec.ID, doc, sessionIndexed)
 }
 
 // The SDK changes a role; the runtime owns what a session is. This is
@@ -168,7 +168,7 @@ func announceFirstSignIn(ctx context.Context, u tako.User) {
 	if err != nil {
 		return
 	}
-	if err := hooks.Entity.Put(ctx, seenKind, u.ID, doc); err != nil {
+	if err := hooks.Entity.Put(ctx, seenKind, u.ID, doc, seenIndexed); err != nil {
 		return
 	}
 	raw, err := json.Marshal(u)
@@ -231,7 +231,7 @@ func StaleSessions(ctx context.Context, uid string) error {
 		if err != nil {
 			return err
 		}
-		return hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+		return hooks.Entity.Put(ctx, sessionKind, rec.ID, doc, sessionIndexed)
 	})
 }
 
@@ -244,12 +244,36 @@ func EndSessions(ctx context.Context, uid string) error {
 	})
 }
 
+// sessionUIDField is the ONE field a session is ever looked up by, and
+// it is a constant so that the query below and the index declared for
+// the write CANNOT disagree.
+//
+// That is not tidiness. eachSession queries sessions by uid, and
+// sign-out, revocation and role stale-marking are all that query. If
+// the write declared a different field — or none — nothing would error:
+// a Datastore filter on an unindexed property matches nothing and
+// reports success, so revocation would quietly stop revoking. A test
+// would not catch it either, because the local backend scans and
+// indexes nothing, so it answers the query whatever was declared.
+//
+// Two names that must agree, one of which only fails in production, is
+// exactly the shape FL20 exists to remove. So there are not two names.
+const sessionUIDField = "uid"
+
+var sessionIndexed = []string{sessionUIDField}
+
+// seenIndexed is empty, and correctly so: _tako_seen is read by Exists
+// on a key and never queried. Naming it anyway keeps the two kinds
+// symmetric, so a reader can see the answer was chosen rather than
+// forgotten.
+var seenIndexed []string
+
 func eachSession(ctx context.Context, uid string, fn func(sessionRecord) error) error {
 	if hooks.Entity == nil {
 		return nil
 	}
 	docs, err := hooks.Entity.Query(ctx, sessionKind, backends.EntityQuery{
-		Filters: []backends.Filter{{Field: "uid", Op: "=", Value: uid}},
+		Filters: []backends.Filter{{Field: sessionUIDField, Op: "=", Value: uid}},
 	})
 	if err != nil {
 		return err
@@ -282,7 +306,7 @@ func refreshRoles(ctx context.Context, rec *sessionRecord) {
 	}
 	rec.Roles, rec.Stale = account.Roles, false
 	if doc, err := json.Marshal(rec); err == nil {
-		_ = hooks.Entity.Put(ctx, sessionKind, rec.ID, doc)
+		_ = hooks.Entity.Put(ctx, sessionKind, rec.ID, doc, sessionIndexed)
 	}
 }
 

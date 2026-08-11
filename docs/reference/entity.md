@@ -24,6 +24,23 @@ The struct is the schema: `entity:"id"` marks the key field (exactly
 one, a string), `entity:"index"` the fields you may filter and order
 by. The name is the store's stable identity — a string constant.
 
+**Untagged fields are stored and never indexed**, which is what lets
+them be large. A `Body string` holding 40 KB of markdown is fine; a
+field carrying `entity:"index"` is subject to the store's cap on an
+indexed value (1500 bytes in Datastore) and is refused past it, on
+both backends, with the tag named:
+
+```
+tako: entity "posts": Title is declared entity:"index" and this value is
+      1842 bytes — an indexed string is capped at 1500. Drop the tag if you
+      do not query on Title; keep it and put the long text in another
+      field, which is not indexed and has no such limit.
+```
+
+`local` enforces that cap too, though it indexes nothing and does not
+need to: a limit you only meet on the first deploy is not a limit the
+conformance suite did its job on.
+
 ## Use
 
 Keyed access like every keyed store: `Get`, `Put`, `Delete`, `Exists`.
@@ -125,8 +142,14 @@ the contract that `local` and `gcp` behave alike.
 ## Cloud
 
 The same declaration becomes Datastore — envs isolated by namespace
-(namespace = env), kinds keeping their plain names. Indexes are
-**derived from your call sites**, never hand-declared: single-property
+(namespace = env), kinds keeping their plain names. The document is
+stored whole in one excluded blob; each scalar field is mirrored as a
+property so queries have something to match, and **only the fields you
+tagged are indexed** — the rest go up `excludeFromIndexes`, present and
+readable and under no size cap.
+
+Indexes are **derived from your call sites**, never hand-declared:
+single-property
 indexes from the fields you actually `Where`/`OrderBy`, and a Datastore
 **composite index per combined query shape**, grouped per function —
 filter fields first (struct order, ascending), then `OrderBy` fields in

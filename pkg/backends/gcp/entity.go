@@ -66,7 +66,22 @@ func value(v any) (map[string]any, bool) {
 	}
 }
 
-func (s *EntityStore) entity(kind, id string, doc []byte) (map[string]any, error) {
+// entity builds the Datastore entity: the document itself in one
+// excluded blob, plus a mirrored property per scalar so queries have
+// something to filter and order on.
+//
+// Which of those mirrors are INDEXED is the whole of FL20. It used to
+// be all of them, because the write path could not see the app's
+// entity:"index" tags — the contract carried bytes alone. So an
+// untagged field was indexed anyway, and Datastore caps an indexed
+// string at 1500 bytes: an app failed to write a paragraph it had
+// never declared queryable, citing an index it had never asked for.
+//
+// Now the queryable set arrives with the document and everything else
+// is excluded. A mirror is still written for every scalar — excluded
+// properties are readable and cost nothing to keep — so nothing about
+// reads changes; they are simply no longer in an index.
+func (s *EntityStore) entity(kind, id string, doc []byte, indexed []string) (map[string]any, error) {
 	props := map[string]any{
 		docProp: map[string]any{
 			"blobValue":          base64.StdEncoding.EncodeToString(doc),
@@ -77,13 +92,30 @@ func (s *EntityStore) entity(kind, id string, doc []byte) (map[string]any, error
 	if err := json.Unmarshal(doc, &fields); err != nil {
 		return nil, fmt.Errorf("entity doc is not a JSON object: %w", err)
 	}
+	queryable := make(map[string]bool, len(indexed))
+	for _, name := range indexed {
+		queryable[name] = true
+	}
 	for name, v := range fields {
 		if name == docProp {
 			continue
 		}
-		if dv, ok := value(v); ok {
-			props[name] = dv
+		dv, ok := value(v)
+		if !ok {
+			continue
 		}
+		if !queryable[name] {
+			// Copied, because value() returns a fresh map per call but
+			// the intent is worth being explicit about: stored, never
+			// indexed, no cap.
+			dv["excludeFromIndexes"] = true
+		} else if str, isString := fields[name].(string); isString && len(str) > backends.MaxIndexedBytes {
+			// Caught HERE rather than at the API, because Datastore's
+			// version of this names a property and a limit and leaves
+			// the reader to work out that a struct tag put it there.
+			return nil, backends.IndexedTooLong(kind, name, len(str))
+		}
+		props[name] = dv
 	}
 	return map[string]any{"key": s.key(kind, id), "properties": props}, nil
 }
@@ -156,8 +188,8 @@ func (s *EntityStore) commit(ctx context.Context, tx string, mutations []map[str
 	return s.c.do(ctx, "POST", s.url("commit"), body, nil)
 }
 
-func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte) error {
-	entity, err := s.entity(kind, id, doc)
+func (s *EntityStore) Put(ctx context.Context, kind, id string, doc []byte, indexed []string) error {
+	entity, err := s.entity(kind, id, doc, indexed)
 	if err != nil {
 		return err
 	}
@@ -168,8 +200,8 @@ func (s *EntityStore) Delete(ctx context.Context, kind, id string) error {
 	return s.commit(ctx, "", []map[string]any{{"delete": s.key(kind, id)}})
 }
 
-func (s *EntityStore) Update(ctx context.Context, kind, id string, mutate func(doc []byte) ([]byte, error)) error {
-	return s.Tx(ctx, kind, func(tx backends.EntityTxOps) error {
+func (s *EntityStore) Update(ctx context.Context, kind, id string, indexed []string, mutate func(doc []byte) ([]byte, error)) error {
+	return s.Tx(ctx, kind, indexed, func(tx backends.EntityTxOps) error {
 		doc, err := tx.Get(id)
 		if err != nil {
 			return err
@@ -187,6 +219,7 @@ type entityTx struct {
 	s         *EntityStore
 	ctx       context.Context
 	kind, tx  string
+	indexed   []string
 	mutations []map[string]any
 }
 
@@ -199,7 +232,7 @@ func (t *entityTx) Get(id string) ([]byte, error) {
 }
 
 func (t *entityTx) Put(id string, doc []byte) error {
-	entity, err := t.s.entity(t.kind, id, doc)
+	entity, err := t.s.entity(t.kind, id, doc, t.indexed)
 	if err != nil {
 		return err
 	}
@@ -212,14 +245,14 @@ func (t *entityTx) Delete(id string) error {
 	return nil
 }
 
-func (s *EntityStore) Tx(ctx context.Context, kind string, fn func(tx backends.EntityTxOps) error) error {
+func (s *EntityStore) Tx(ctx context.Context, kind string, indexed []string, fn func(tx backends.EntityTxOps) error) error {
 	var begin struct {
 		Transaction string `json:"transaction"`
 	}
 	if err := s.c.do(ctx, "POST", s.url("beginTransaction"), map[string]any{}, &begin); err != nil {
 		return err
 	}
-	t := &entityTx{s: s, ctx: ctx, kind: kind, tx: begin.Transaction}
+	t := &entityTx{s: s, ctx: ctx, kind: kind, indexed: indexed, tx: begin.Transaction}
 	if err := fn(t); err != nil {
 		_ = s.c.do(ctx, "POST", s.url("rollback"), map[string]any{"transaction": begin.Transaction}, nil)
 		return err

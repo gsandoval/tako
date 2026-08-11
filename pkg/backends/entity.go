@@ -3,6 +3,7 @@ package backends
 import (
 	"context"
 	"errors"
+	"fmt"
 )
 
 // ErrNotFound marks an absent value. The SDK maps it to tako.IsNotFound.
@@ -25,6 +26,31 @@ var (
 	ErrPageNeedsLimit = errors.New("tako: Page needs a page size — add Limit(n) to say how big a page is")
 )
 
+// MaxIndexedBytes is Datastore's cap on the value of an INDEXED string
+// property. Untagged fields are not indexed (FL20) and may hold as much
+// as a document holds; a field carrying entity:"index" is subject to it.
+const MaxIndexedBytes = 1500
+
+// IndexedTooLong is the refusal both backends give for an indexed value
+// past the cap, and it is deliberately shared rather than written twice.
+//
+// local does not index anything — it scans — so nothing about its own
+// storage requires this check. It makes it anyway, because the
+// alternative is an app that writes a 2 KB title happily on a laptop
+// and fails the first time it is deployed. That difference is exactly
+// what the conformance suite exists to prevent, so the limit is part of
+// the contract rather than a property of one backend.
+//
+// The message names the tag, because the tag is the thing the app can
+// change: the value is long because somebody asked for it to be
+// queryable.
+func IndexedTooLong(kind, field string, n int) error {
+	return fmt.Errorf("tako: entity %q: %s is declared entity:%q and this value is %d bytes — "+
+		"an indexed string is capped at %d. Drop the tag if you do not query on %s; "+
+		"keep it and put the long text in another field, which is not indexed and has no such limit",
+		kind, field, "index", n, MaxIndexedBytes, field)
+}
+
 // Entity is the storage contract behind tako.Entity[T]. Values are opaque
 // JSON documents keyed by (kind, id); queries filter and order on the
 // documents' top-level JSON fields. The conformance suite defines the
@@ -33,7 +59,22 @@ type Entity interface {
 	// Get returns the document stored under (kind, id), or ErrNotFound.
 	Get(ctx context.Context, kind, id string) ([]byte, error)
 	// Put stores doc under (kind, id), replacing any existing document.
-	Put(ctx context.Context, kind, id string, doc []byte) error
+	//
+	// indexed names the document's queryable fields, by their JSON
+	// names — the fields carrying entity:"index". Everything else is
+	// stored and never indexed, which is what lets a document hold a
+	// value no index could (FL20).
+	//
+	// It is a parameter rather than something a store remembers per
+	// kind because the two ways of getting this wrong are not equally
+	// bad. Indexing too much fails the WRITE, loudly, at the cap.
+	// Indexing too little fails the READ, SILENTLY: a Datastore filter
+	// on an excluded property matches nothing and reports no error, so
+	// a page of posts simply comes back empty. A store that had to be
+	// told once, somewhere else, would fail that way whenever the
+	// telling was skipped — in a bare test, say. Travelling with the
+	// document, it cannot be skipped.
+	Put(ctx context.Context, kind, id string, doc []byte, indexed []string) error
 	// Delete removes (kind, id); deleting an absent id is not an error.
 	Delete(ctx context.Context, kind, id string) error
 	// Exists reports whether (kind, id) holds a document.
@@ -67,11 +108,15 @@ type Entity interface {
 	Count(ctx context.Context, kind string, q EntityQuery) (int64, error)
 	// Update atomically applies mutate to the document under (kind, id).
 	// It returns ErrNotFound when the id is absent, and mutate's error
-	// unchanged when mutate fails.
-	Update(ctx context.Context, kind, id string, mutate func(doc []byte) ([]byte, error)) error
+	// unchanged when mutate fails. indexed is Put's.
+	Update(ctx context.Context, kind, id string, indexed []string, mutate func(doc []byte) ([]byte, error)) error
 	// Tx runs fn atomically against one kind: all of fn's writes commit
 	// together, or none do when fn returns an error (returned unchanged).
-	Tx(ctx context.Context, kind string, fn func(tx EntityTxOps) error) error
+	//
+	// indexed is declared once here, not per write, because a
+	// transaction is scoped to ONE kind and a kind has one schema —
+	// so EntityTxOps.Put has nothing left to get wrong.
+	Tx(ctx context.Context, kind string, indexed []string, fn func(tx EntityTxOps) error) error
 }
 
 // EntityTxOps are the operations available inside an entity transaction.
