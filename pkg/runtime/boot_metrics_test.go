@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	tako "github.com/gsandoval/tako"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
@@ -77,13 +78,25 @@ func TestTheCloudBootWiresTheMetricsBackend(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, ok := splitFuncs(string(src))["BootGCP"]
+	// bootGCP is the shared body: BootGCP reads the env and BootGCPWith
+	// takes a target (SC5), and both land here. Checking the body rather
+	// than either entry point is what keeps this true if a third way in
+	// ever arrives — the lesson item 38 charged full price for.
+	body, ok := splitFuncs(string(src))["bootGCP"]
 	if !ok {
-		t.Fatal("BootGCP is gone from boot.go — if it moved, move this check with it")
+		t.Fatal("bootGCP is gone from boot.go — if it moved, move this check with it")
 	}
 	if !strings.Contains(body, "hooks.Metrics = ") {
-		t.Error("BootGCP never assigns hooks.Metrics — deployed services would export no " +
+		t.Error("the cloud boot never assigns hooks.Metrics — deployed services would export no " +
 			"per-endpoint metrics, and every Erroring/SlowerThan/CronMissed alert over them is dead")
+	}
+	// And both doors must reach it, or one of them boots a service that
+	// is quietly different from the other's.
+	for _, entry := range []string{"BootGCP", "BootGCPWith"} {
+		if !strings.Contains(splitFuncs(string(src))[entry], "bootGCP(opts)") &&
+			!strings.Contains(splitFuncs(string(src))[entry], "BootGCPWith(opts)") {
+			t.Errorf("%s does not reach the shared cloud boot", entry)
+		}
 	}
 }
 
@@ -102,4 +115,49 @@ func splitFuncs(src string) map[string]string {
 		out[src[loc[2]:loc[3]]] = src[loc[1]:end]
 	}
 	return out
+}
+
+// SC5. The target of a CLI run is an argument, not an ambient fact —
+// flauta's tool had to set TAKO_PROJECT in its own process and then call
+// BootGCP, which is a program mutating its environment to configure a
+// library.
+//
+// Booting for real needs a project, a metadata server and Secret
+// Manager, so what is testable is the refusal: the fields that must be
+// there, and the fact that the message is not the generated main's.
+func TestBootGCPWithNamesTheFieldItNeeds(t *testing.T) {
+	for _, tc := range []struct {
+		missing string
+		opts    gcpb.Options
+	}{
+		{"Project", gcpb.Options{App: "flauta", Env: "staging"}},
+		{"App", gcpb.Options{Project: "p", Env: "staging"}},
+		{"Env", gcpb.Options{Project: "p", App: "flauta"}},
+	} {
+		err := BootGCPWith(tc.opts)
+		if err == nil {
+			t.Fatalf("Options with no %s must be refused", tc.missing)
+		}
+		if !strings.Contains(err.Error(), "Options."+tc.missing) {
+			t.Errorf("refusal does not name the missing field:\n%s", err)
+		}
+		// The generated main's message blames the deploy, correctly, and
+		// would be nonsense here: nobody injected anything.
+		if strings.Contains(err.Error(), "this is a tako bug") {
+			t.Errorf("a hand-written caller was told its own mistake is tako's:\n%s", err)
+		}
+	}
+}
+
+// Env is required rather than defaulted to prod, and that is the whole
+// safety property: it is the Datastore namespace, so a tool that
+// defaulted would read and write production because a field was empty.
+func TestBootGCPWithDoesNotAssumeProd(t *testing.T) {
+	err := BootGCPWith(gcpb.Options{Project: "p", App: "flauta"})
+	if err == nil {
+		t.Fatal("an empty Env must be refused, not silently taken as prod")
+	}
+	if !strings.Contains(err.Error(), "Datastore namespace") {
+		t.Errorf("the refusal should say why env cannot be assumed:\n%s", err)
+	}
 }

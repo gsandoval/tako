@@ -22197,3 +22197,145 @@ entry in an audit trail somebody later has to explain.
 `go vet ./...` and `go test ./...` green at the root. All seven examples
 green under `tako test`. Scripted walk: `validate/secrets.md`, every
 step run, including the live half.
+
+---
+
+## SC5 + SC3 — design and build, self-directed (2026-08-10)
+
+Owner: *"Do them both, design and implementation non stop, if multiple
+options exist, ask yourself, come with a proposal and follow it."* So
+the decisions below are mine, recorded before the code rather than
+after, and the reasoning is here to be overruled later.
+
+### SC5 — `runtime.BootGCPWith`
+
+**The ask** (flauta friction, 2026-08-09): they needed a CLI that writes
+into a deployed store. `runtime.BootGCP()` takes no arguments and reads
+`TAKO_PROJECT`/`TAKO_APP`/`TAKO_ENV`/`TAKO_SERVICE`, so their tool set
+those variables in-process and then called it. Their words: *"the target
+of a CLI run is an argument, not an ambient fact, and a process that
+mutates its own environment to configure a library is a shape worth not
+spreading."*
+
+**Decision — export the function, not a new options type.**
+`gcpb.Options` is already exported and is already what `BootGCP` builds.
+Adding a second struct to avoid naming `pkg/backends/gcp` would be a
+type whose only job is to be copied into another type.
+
+```go
+func BootGCPWith(opts gcp.Options) error   // explicit target
+func BootGCP() error                        // reads the env, calls the above
+```
+
+**Decision — the two paths get different refusals**, because they are
+different bugs. A missing `TAKO_PROJECT` in a generated main means the
+deploy failed to inject it (a tako bug, and it says so). A missing
+`Options.Project` in a hand-written tool means the caller left it out.
+One message cannot be right for both.
+
+**Decision — `Env` is required, not defaulted to prod.** Env is the
+Datastore namespace and the name prefix. A tool that silently addresses
+prod because a field was empty is the exact hazard the SC1/SC4 project
+rule exists for. `BootGCP` still gets it from the environment, where the
+deploy always sets it.
+
+### SC3 — `tako new`
+
+**The gap**: the guide's entry point is "the six examples". There is no
+documented path from `go install tako` to an app of your own beyond
+three shell commands in the README — fine for an API, and wrong for a
+site, where the missing pieces (`web/templates/layout.html`, a page
+template, the site declaration) fail with `the site has no templates/
+directory`.
+
+**Decision — two kinds, `api` and `site`.** Not `worker`: a worker is a
+`tako.Queue` and a handler inside a package that already exists, so
+scaffolding one produces a project that does nothing until you add an
+endpoint anyway. The value is in the file *pairs* a site needs, not in
+generating a line of Go anybody can type.
+
+**Decision — the scaffold pins the version of tako that generated it**,
+read from `debug.ReadBuildInfo()`. A CLI and an SDK that disagree is a
+support question nobody can answer from the transcript; this way the
+go.mod says which binary made it.
+
+**Decision — and when that version is `(devel)`, say so and offer
+`--replace`.** A tako built from a checkout has no published version to
+pin. Rather than write a go.mod that cannot resolve, `tako new` writes
+the require, runs `go mod tidy`, and on failure prints both ways
+forward. `--replace <path>` writes the replace directive for a local
+checkout, which is what makes the command usable today, before v0.1.0
+is tagged.
+
+**Decision — the module path defaults to the directory name**,
+`--module` overrides. `go mod init hello` is what the README already
+tells people to type; matching it means the scaffold is not a third
+convention.
+
+**Decision — `.gitignore` is generated, with `.env` in it.** SC4 refuses
+to write a secret into a `.env` git would commit. A `tako new` that did
+not create that line would be shipping the failure SC4 exists to
+prevent, one project at a time.
+
+**Non-goals.** No template repository, no `--from <url>`, no interactive
+wizard, no framework-version upgrade command. `tako new` writes the
+smallest thing that runs and gets out of the way.
+
+### SC5 + SC3 — shipped (2026-08-10)
+
+Both built without a gate, as instructed. Transcripts in
+`validate/new.md`.
+
+**SC5** — `runtime.BootGCPWith(gcp.Options)`. `BootGCP` now reads the
+env and calls it; both reach one shared `bootGCP`. The API lock gained
+exactly one symbol, regenerated deliberately.
+
+The refusals are the design: `BootGCPWith` names the missing field and
+does NOT say "this is a tako bug" — that sentence belongs to the
+generated-main path, where an empty `TAKO_PROJECT` really is the
+deploy's failure, and telling a hand-written caller their own omission
+is tako's fault sends them to file an issue. `Env` is required rather
+than defaulted, because it is the Datastore namespace.
+
+`TestTheCloudBootWiresTheMetricsBackend` now reads the shared body
+rather than either entry point — item 38's lesson applied before it
+cost anything this time.
+
+**SC3** — `tako new <name> [--kind api|site] [--module] [--replace]`.
+
+### Two things the build changed about the design
+
+Both are the same lesson, and it is the one worth keeping: **a
+scaffold's bar is "the next command works", and it is easy to be one
+step short of it.**
+
+1. **`go mod tidy` cannot see the generated main.** It skips
+   dot-directories, and generated code lives in `.tako/gen`. The first
+   working version resolved the app's own imports, reported success, and
+   `tako dev` died with six `missing go.sum entry` lines naming
+   goldmark, bluemonday and x/net — packages the user has never heard
+   of. Fixed by fetching `pkg/runtime` by name. Guarded, because the
+   failure is invisible until somebody runs the app.
+
+2. **A `go build` binary reports a pseudo-version, not `(devel)`.** The
+   design branched on `(devel)`; Go actually stamps
+   `v0.0.0-20260811030652-…+dirty` from VCS state, which is equally
+   unfetchable. `released()` now recognises only a real tag.
+
+Neither was visible from the design. Both were found by running the
+thing the command produces, which is the only test that means anything
+for a scaffold.
+
+### Discovered work
+
+- **46. `tako new` needs `--replace` until v0.1.0 is tagged.** Not a
+  defect — the refusal says exactly why and prints the command with the
+  flag — but the plain `tako new <name>` path is unexercised, and it is
+  the one every user will take. Worth re-running §1 of `validate/new.md`
+  the day the tag lands.
+
+### Gate (agent-side)
+
+`go vet ./...` and `go test ./...` green at the root. All seven examples
+green under `tako test`. Both scaffolded kinds built, booted and served:
+`{"message":"Hello, ada!"}` and a rendered page.

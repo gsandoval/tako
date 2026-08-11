@@ -71,11 +71,51 @@ func BootGCP() error {
 		Env:     os.Getenv("TAKO_ENV"),
 		Service: os.Getenv("TAKO_SERVICE"),
 	}
+	// This refusal is for a GENERATED main, where the environment is the
+	// deploy's to set — so an empty one is tako's bug, and says so.
+	// BootGCPWith has its own, because a hand-written tool that left a
+	// field out is a different mistake with a different fix.
 	for name, v := range map[string]string{"TAKO_PROJECT": opts.Project, "TAKO_APP": opts.App, "TAKO_ENV": opts.Env} {
 		if v == "" {
 			return fmt.Errorf("%s is not set — tako deploy injects it, so this is a tako bug", name)
 		}
 	}
+	return BootGCPWith(opts)
+}
+
+// BootGCPWith is BootGCP with the target as an argument (SC5).
+//
+// It exists because the target of a CLI run is an argument, not an
+// ambient fact. An app that needs a tool writing into its deployed
+// store — a backfill, an importer, an operator script — had to set
+// TAKO_PROJECT and friends in its own process and then call BootGCP,
+// which is a program mutating its environment to configure a library.
+// Three lines, and honest enough, but a shape worth not spreading.
+//
+// Project, App and Env are all required, and Env is deliberately NOT
+// defaulted: it is the Datastore namespace and the prefix on every
+// derived name, so a tool that silently addressed prod because a field
+// was empty is exactly the accident this signature exists to prevent.
+// Service is optional — it only shapes dead-letter topic names, which a
+// tool that publishes nothing never reaches.
+//
+//	err := runtime.BootGCPWith(gcp.Options{
+//		Project: *project, App: "flauta", Env: *env,
+//	})
+func BootGCPWith(opts gcpb.Options) error {
+	for _, f := range []struct{ name, value string }{
+		{"Project", opts.Project}, {"App", opts.App}, {"Env", opts.Env},
+	} {
+		if f.value == "" {
+			return fmt.Errorf("tako: BootGCPWith needs Options.%s — project, app and env together "+
+				"name the resources a deployed service reads, and env is the Datastore namespace, "+
+				"so it is required rather than assumed to be prod", f.name)
+		}
+	}
+	return bootGCP(opts)
+}
+
+func bootGCP(opts gcpb.Options) error {
 	// Before anything else can log: from here on every line this process
 	// writes carries a severity Cloud Logging understands, and requests
 	// carry the trace that nests their handler's lines underneath them.

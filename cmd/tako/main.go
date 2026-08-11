@@ -23,6 +23,10 @@ import (
 const usage = `tako — a Go framework over Google Cloud Run
 
 Local — nothing outside this directory is touched:
+  tako new <name> [--kind api|site] [--module <path>]
+                       the smallest tako app that runs: go.mod, a
+                       handler, a .gitignore — and for a site, the
+                       layout and page a site cannot start without
   tako dev [--chaos]   run the app locally with reload (--chaos: seeded
                        duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code and site builds,
@@ -120,6 +124,10 @@ func main() {
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "new":
+		if err := runNew(os.Args[2:]); err != nil {
+			fail(err)
+		}
 	case "dev":
 		opts := devserver.Options{Dir: "."}
 		for _, arg := range os.Args[2:] {

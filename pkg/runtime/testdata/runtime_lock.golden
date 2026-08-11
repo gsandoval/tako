@@ -4,6 +4,7 @@ const RequestsMetric untyped string
 func BlobHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.Blob], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
 func Boot()
 func BootGCP() error
+func BootGCPWith(opts github.com/gsandoval/tako/pkg/backends/gcp.Options) error
 func BootLocal(dir string) error
 func CacheFor(seconds int) HandlerOption
 func CronDispatch() net/http.Handler
