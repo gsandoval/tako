@@ -3,12 +3,14 @@ package runtime
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	tako "github.com/gsandoval/tako"
@@ -98,6 +100,42 @@ func gcsNotification(attrs map[string]string, data []byte) ([]byte, bool) {
 	return payload, true
 }
 
+// verifyPushCaller authenticates a delivery (CR3).
+//
+// Both cloud deliverers — a Pub/Sub push subscription and a Cloud Tasks
+// task — carry a Google-signed OIDC token whose audience is this
+// service's URL and whose identity is this service's own SA. The deploy
+// injects both as TAKO_PUSH_AUDIENCE / TAKO_PUSH_INVOKER, exactly as it
+// does for the cron route, so what a worker will accept is derivable
+// before anything exists.
+//
+// It fails CLOSED in the cloud: a deployed service whose identity is
+// missing refuses, because the alternative — falling back to accepting
+// everything — is precisely the behaviour this replaces. Locally there
+// is nothing to sign a token with and no GCP within reach of tako dev,
+// so a local backend skips the check; the endpoint is on 127.0.0.1 and
+// its only caller is the in-process dispatcher.
+func verifyPushCaller(r *http.Request) (int, error) {
+	if isLocalBackend() {
+		return 0, nil
+	}
+	audience, invoker := os.Getenv("TAKO_PUSH_AUDIENCE"), os.Getenv("TAKO_PUSH_INVOKER")
+	if audience == "" || invoker == "" {
+		return http.StatusInternalServerError, errors.New(
+			"this service has no push identity — tako deploy injects TAKO_PUSH_AUDIENCE and " +
+				"TAKO_PUSH_INVOKER for every worker and subscriber, so this is a tako bug; " +
+				"re-run tako deploy, and file it if it persists")
+	}
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return http.StatusUnauthorized, errors.New("deliveries carry an OIDC bearer token")
+	}
+	if err := verifyGoogleToken(r.Context(), token, audience, invoker); err != nil {
+		return http.StatusForbidden, fmt.Errorf("delivery rejected: %v", err)
+	}
+	return 0, nil
+}
+
 // PushHandler serves a per-service delivery endpoint: POST /_tako/push
 // with the message payload as the body invokes the service's one async
 // handler. This is how a worker/subscriber service receives work in the
@@ -119,6 +157,10 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 		panic("tako: PushHandler before Boot")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if status, err := verifyPushCaller(r); err != nil {
+			http.Error(w, err.Error(), status)
+			return
+		}
 		payload, err := io.ReadAll(r.Body)
 		if err != nil {
 			http.Error(w, "read payload: "+err.Error(), http.StatusBadRequest)

@@ -40,11 +40,22 @@ func (e Endpoint[Req, Res]) Call(ctx Ctx, req Req) (Res, error) {
 	// endpoint's service (cloud only — dev and tests stay in-process,
 	// and so do co-located packages, which are never registered).
 	if raw := hooks.RemoteCallFor(e.pkg + " " + e.route); raw != nil {
-		if t, ok := raw.(func(Ctx, Req) (Res, error)); ok {
-			// The callee's own mount enforces its gates, and it is the
-			// only side that can: a policy may read the callee's store.
-			return t(ctx, req)
+		t, ok := raw.(func(Ctx, Req) (Res, error))
+		if !ok {
+			// A registered transport of the wrong type used to fall
+			// through to the direct call below — which runs the CALLEE's
+			// handler inside the CALLER's process, against the caller's
+			// backends: another service's entity store, silently, with a
+			// successful-looking result. A wiring bug has to be loud.
+			var zero Res
+			return zero, fmt.Errorf("tako: the remote transport registered for %s %s has type %T, "+
+				"not func(tako.Ctx, %T) (%T, error) — generated code wired this, so it is a tako bug; "+
+				"re-run tako deploy, and file it if it persists",
+				e.pkg, e.route, raw, req, zero)
 		}
+		// The callee's own mount enforces its gates, and it is the
+		// only side that can: a policy may read the callee's store.
+		return t(ctx, req)
 	}
 	// The declared gates, for the direct call — the same rule the
 	// generated mount applies to an HTTP request. Without this, a

@@ -312,14 +312,26 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					cfg.Project, cfg.Region, cfg.Name(e.To)+"-tako", cfg.RunURL(worker), cfg.SAEmail(worker))
 			}
 		}
-		// Cron trigger identity (T2): the dispatch route verifies a
+		// Trigger identities: the routes Google calls verify a
 		// Google-signed OIDC token with exactly this audience and
 		// invoker — deterministic, so plannable before anything exists.
+		//
+		// Cron is Cloud Scheduler's (T2). Push is Pub/Sub's and Cloud
+		// Tasks' (CR3): both deliverers are configured with this same
+		// pair — the push subscription's oidcToken, the task's identity —
+		// so a worker can say who may deliver to it rather than trusting
+		// whoever reaches the port.
 		for _, h := range g.Handlers {
-			if h.Service == svc.Name && h.Kind == "cron" {
+			if h.Service != svc.Name {
+				continue
+			}
+			switch h.Kind {
+			case "cron":
 				env["TAKO_CRON_AUDIENCE"] = cfg.RunURL(svc.Name)
 				env["TAKO_CRON_INVOKER"] = cfg.SAEmail(svc.Name)
-				break
+			case "worker", "subscribe":
+				env["TAKO_PUSH_AUDIENCE"] = cfg.RunURL(svc.Name)
+				env["TAKO_PUSH_INVOKER"] = cfg.SAEmail(svc.Name)
 			}
 		}
 		objs = append(objs, Object{

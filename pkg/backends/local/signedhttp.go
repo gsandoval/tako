@@ -122,7 +122,33 @@ func serveGet(w http.ResponseWriter, r *http.Request, c signedClaims, store *Buc
 	if data.Size >= 0 {
 		w.Header().Set("Content-Length", fmt.Sprintf("%d", data.Size))
 	}
+	// These bytes came from outside the program — an upload, by whoever
+	// held the URL — and locally they come back from the APP'S OWN
+	// ORIGIN, where a document can read the session's page and act as
+	// the person reading it. In the cloud the same object is served by
+	// storage.googleapis.com, a different origin, so this is one of the
+	// few places where local is the more dangerous of the two.
+	//
+	// nosniff makes the declared type binding (the same reason
+	// BlobHandler sets it), and a type the browser would EXECUTE as a
+	// document is served as a download instead. Images, stylesheets and
+	// scripts still render inline, which is what signed GETs are for.
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if executableInABrowser(data.ContentType) {
+		w.Header().Set("Content-Disposition", "attachment")
+	}
 	_, _ = io.Copy(w, data.Reader)
+}
+
+// executableInABrowser reports whether a top-level navigation to this
+// content type runs script in the serving origin.
+func executableInABrowser(ct string) bool {
+	base, _, _ := strings.Cut(ct, ";")
+	switch strings.ToLower(strings.TrimSpace(base)) {
+	case "text/html", "application/xhtml+xml", "image/svg+xml", "application/xml", "text/xml":
+		return true
+	}
+	return false
 }
 
 // contentTypeMatches applies a SignedPut pattern: "" accepts anything,

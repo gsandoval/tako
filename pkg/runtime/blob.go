@@ -23,14 +23,25 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		o(&conf)
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqID := newRequestID()
+		// incomingRequestID, not newRequestID: a propagated trace id
+		// belongs to the chain that started it. This wrapper minted a
+		// fresh one, so a blob route was the point where `tako logs`
+		// stopped being able to follow a request across services —
+		// nothing about returning bytes instead of JSON justifies that.
+		reqID := incomingRequestID(r)
 		session := loadSession(r)
 		if conf.requireAuth && session == nil {
 			http.Error(w, authRequired, http.StatusUnauthorized)
 			return
 		}
+		// And the same cross-service context the other two build: the
+		// session id and trace id an outgoing Call re-propagates, plus
+		// the caller's deadline bounding this handler. Without it a blob
+		// handler's own Calls arrived anonymous and unbounded.
+		base, cancel := callContext(r, session, reqID)
+		defer cancel()
 		ctx := &requestCtx{
-			Context: r.Context(),
+			Context: base,
 			log:     requestLogger(r, reqID),
 			client:  clientOf(r),
 		}

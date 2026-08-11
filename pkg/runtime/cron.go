@@ -189,6 +189,16 @@ func verifyGoogleIDToken(ctx context.Context, token string) error {
 	if audience == "" || invoker == "" {
 		return errors.New("this service has no cron trigger identity configured")
 	}
+	return verifyGoogleToken(ctx, token, audience, invoker)
+}
+
+// verifyGoogleToken is the check itself, with the expectations passed
+// in: Cloud Scheduler drives crons and Pub/Sub push (and Cloud Tasks)
+// drives workers, and all three present the same kind of token against
+// the same kind of pair. One implementation, because a second copy is
+// how one of the two routes ends up with a weaker check than the other
+// — which is the state CR3 found.
+func verifyGoogleToken(ctx context.Context, token, audience, invoker string) error {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return errors.New("not a JWT")
