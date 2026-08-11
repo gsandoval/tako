@@ -21859,3 +21859,200 @@ project we had, not the project a user starts with.
 `go vet ./...` and `go test ./...` green at the root. All seven examples
 green under `tako test`. Scripted walk: `validate/setup.md`, steps 1–5
 and 7 run; step 6 explicitly not.
+
+---
+
+## SC4 — DX proposal: `tako secrets`, the value nobody can put anywhere (2026-08-10) — AWAITING APPROVAL
+
+Fourth of the scaffolding series. SC1 and SC2 shipped 2026-08-10; SC3
+(`tako new`) waits on the v0.1.0 tag, so SC4 goes next.
+
+### The evidence
+
+SC2's own output is the argument. `tako setup` ends by telling you what
+it cannot do, and one of those lines is:
+
+```
+Still yours — tako cannot do these:
+  · the secret notifier-key has no value — that is your data, not tako's
+      printf '<value>' | gcloud secrets create notifier-key --data-file=- --project tako-test-01
+```
+
+Preflight has printed a version of that line for months. The value IS
+the user's data — that part is right and does not change — but "tako
+cannot create it" and "tako cannot help you put it anywhere" are
+different claims, and only the first is true.
+
+Locally it is worse, because there is no line at all:
+
+- `.env` is hand-written, and its format is documented in a doc comment.
+- Nothing lists what an app declares. You learn the name when boot
+  refuses: `secret "notifier-key" is not set — add it to .env`.
+- One at a time. Three declared secrets is three boot failures.
+
+### The surface
+
+```
+tako secrets                       what this app declares, and which have a value
+tako secrets set <name>            value from stdin, or prompted with echo off
+tako secrets rm <name>             local only — see D5
+```
+
+**Local**, the dev-loop case:
+
+```
+$ tako secrets
+tako secrets · local · .env
+  NAME           VALUE     DECLARED AT
+  notifier-key   set       app.go:41
+  stripe-key     MISSING   app.go:42
+  2 declared, 1 without a value — tako dev will refuse to boot
+```
+
+```
+$ tako secrets set stripe-key
+  value: ········
+  ✓ wrote stripe-key to .env
+```
+
+**Cloud**:
+
+```
+$ tako secrets --project acme-prod-4821
+tako secrets · cloud · acme-prod-4821 / prod
+  NAME           VALUE     PHYSICAL              DECLARED AT
+  notifier-key   set       prod-notifier-key     app.go:41
+  stripe-key     MISSING   prod-stripe-key       app.go:42
+  2 declared, 1 without a value — those services will refuse to boot
+```
+
+```
+$ printf '%s' "$KEY" | tako secrets set stripe-key --project acme-prod-4821
+  ✓ created prod-stripe-key and added version 1
+```
+
+The physical column earns its place: the name in Secret Manager is
+env-prefixed (`gcpb.SecretName`), so `prod-stripe-key` and
+`staging-stripe-key` are different secrets from one declaration, and
+an operator looking at the console needs to know which row is theirs.
+
+### The decisions
+
+**D1 — a value is never printed. Ever.** `tako secrets` shows `set` or
+`MISSING`, never a value, and there is no `--show`, no `get`. A
+secret manager you can `cat` teaches people to paste secrets into
+terminals that are logged, shared and screen-shared. If you need the
+value you have the console and an audit trail; tako will not be the
+convenient way around that.
+
+**D2 — a value never arrives as a flag.** No `--value`. It comes from
+stdin (`printf '%s' "$KEY" | tako secrets set …`) or an echo-off
+prompt, reusing SC1's `askTerminal`. `--value hunter2` lands in shell
+history, in `ps`, and in any CI log that echoes its commands.
+
+**D3 — the project is explicit, exactly as `tako users`.** No
+`GOOGLE_CLOUD_PROJECT`, no gcloud config.
+
+This is now a rule rather than a special case, and it is worth naming
+because SC2 went the other way on purpose:
+
+> **Commands that write your DATA type the project. Commands that
+> converge INFRASTRUCTURE infer it.**
+
+`tako users` and `tako secrets` write things no later run re-derives —
+a person, a value — so an inherited project is how a dev fixture or a
+test key lands in production. `tako setup`, `deploy`, `prune` converge
+what the code already says, and re-running fixes a wrong guess.
+
+**D4 — `.env` must be gitignored, and tako checks.** `tako secrets set`
+refuses to write a file `git check-ignore` does not claim:
+
+```
+tako: .env is not gitignored, and this writes a secret into it
+      add it first — one line, once:
+        echo '.env' >> .gitignore
+      (examples/gallery commits a .env on purpose: a dummy value so the
+       demo runs. That is a demo's choice, not a default.)
+```
+
+The convention exists today only as a comment inside
+`examples/gallery/.env`. A comment is not a guard, and the failure it
+prevents is the worst one in this whole series.
+
+**D5 — `rm` is local only.** Deleting a Secret Manager secret destroys
+every version, and versions are the audit trail; disabling a version is
+a rotation decision tako has no opinion about. Locally `.env` is a file
+the user owns and `rm` is a convenience. So the cloud half of `rm` is
+simply absent, and says why.
+
+### Cloud errors & permissions
+
+Needed: `roles/secretmanager.admin` to create a secret and add a
+version. Already in the Layer 1 table AND derived by `Requirements`
+when the graph declares any secret — so `tako setup` grants it, which
+is the whole point of the two commands landing in sequence.
+
+```
+tako: you lack secretmanager.admin on acme-prod-4821 — grant it with the rest:
+        tako setup --project acme-prod-4821
+```
+```
+tako: secretmanager.googleapis.com is disabled on acme-prod-4821 — enable it
+      with the rest: tako setup --project acme-prod-4821
+```
+```
+tako: this app declares no secrets — tako.Secret("name") is what puts one here
+```
+```
+tako: "stripe-ke" is not a secret this app declares
+      declared: notifier-key, stripe-key (tako.Secret)
+      did you mean stripe-key?
+```
+
+That last one is SC1's role check, in the same shape and for the same
+reason: writing a value under a name nothing reads is a silent no-op.
+
+### Non-goals
+
+- **No reading values back** (D1), and therefore no `tako secrets get`.
+- **No rotation, expiry or version policy.** Adding a version is the
+  whole write surface; disabling and destroying versions are decisions
+  with an audit trail attached, and they belong in the console.
+- **No `.env` for tests.** `NewTestApp` deliberately does not read it —
+  a test says what it depends on via `app.SetSecret`. That difference
+  is documented as a feature and stays one.
+- **No secret values in the AppGraph, ever**, and no caching to disk.
+- **No `--env` shortcut for copying a value between environments.**
+  "Promote staging's key to prod" is a decision, not a convenience.
+
+### Test plan (test-first)
+
+1. **A guard that no value can reach stdout.** The strongest available
+   version: `tako secrets` and `tako secrets set` run against a store
+   holding a known sentinel value, and the test fails if the sentinel
+   appears anywhere in their output. That is the one property D1 is.
+2. **The gitignore refusal**, in a real temp git repo — `.env` ignored
+   and not, both asserted.
+3. **Golden transcripts and every error text**, as SC1.
+4. **Local round-trip**: set, then `tako dev`'s boot resolves it (the
+   real `local.LoadEnvFile` path, not a mock), and an existing `.env`
+   keeps its comments and its other lines.
+5. **`validate/secrets.md`**, including a live run against
+   `tako-test-01`, which already has `secretmanager` enabled and a
+   `notifier-key` gap that gallery declares — so the cloud half has a
+   real target on day one.
+
+### The question I want ruled on
+
+**D5's asymmetry.** `tako secrets rm` working locally and not against a
+project is honest but lopsided, and someone will eventually want to
+delete a secret they created by mistake. The alternative is a cloud
+`rm` behind the ladder's typed confirmation (like `tako destroy`),
+which is more complete and adds a way to destroy an audit trail. I
+recommend leaving it out: the console does this well, with the
+confirmation and the record, and tako's absence here is a smaller cost
+than a convenient way to erase history.
+
+### Gate
+
+Stopping here. No code written.
