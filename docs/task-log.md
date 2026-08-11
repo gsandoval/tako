@@ -22339,3 +22339,85 @@ for a scaffold.
 `go vet ./...` and `go test ./...` green at the root. All seven examples
 green under `tako test`. Both scaffolded kinds built, booted and served:
 `{"message":"Hello, ada!"}` and a rendered page.
+
+---
+
+## CR — the full-repo code review, and its fixes (2026-08-11)
+
+A review over all of tako (~40k lines of non-test Go, 17 packages),
+looking for simplifications, organization, security, inconsistency and
+semantic divergence. Fourteen findings, all fixed, each with a test that
+fails without the fix. Four commits: 1de878d, 5c398b5, 5be680c, 28734b8.
+
+**Security (all confirmed by reproduction before the fix)**
+
+- **CR1** Reflected XSS on the DEPLOYED sign-in page: `?next=` went into
+  a JS string literal via `%q`, which escapes what breaks a Go literal
+  and not `</script>`. Plus an open redirect (`//evil.example` passes
+  `HasPrefix(next, "/")`) in three places, and a second XSS on the dev
+  page where the same value went into an attribute unescaped — forty
+  lines from a call site that escapes it. One `safeNext` origin rule,
+  per-sink escaping, and an enforcing `script-src` CSP with a
+  per-response nonce on tako's own pages.
+- **CR2** `Route{Private: true}` on a deployed public route issued NO
+  IAM call: `allowPublic` only ever added `allUsers`. The service stayed
+  open, and since `isPublic` feeds `liveHash` the plan reported it as
+  changed on every deploy without converging. It was also a blind
+  `setIamPolicy` carrying one binding, which replaces the policy —
+  destroying the invoker grants and any human's binding every deploy,
+  against the read-modify-write rule `grants.go` states. Now reconciles
+  both ways, with the etag, writing nothing when already correct.
+- **CR3** `/_tako/push` authenticated nothing, though its doc promised
+  Phase F would. Now verifies the Google-signed OIDC token both
+  deliverers already carry, sharing the cron route's check; the deploy
+  injects `TAKO_PUSH_AUDIENCE`/`TAKO_PUSH_INVOKER`. Fails closed in the
+  cloud, skipped locally.
+- **CR5** A local signed GET served uploaded bytes with the uploader's
+  content type, no `nosniff`, from the app's own origin — local was the
+  more dangerous of the two backends, since GCS serves from elsewhere.
+
+**Correctness**
+
+- **CR4** `BlobHandler` minted a fresh request id (breaking trace
+  chains) and skipped `callContext` (no deadline, no session for its own
+  Calls). A mis-typed remote transport silently ran the callee's handler
+  in the caller's process against the caller's backends; now an error.
+- **CR6** Nothing validated the CHARACTERS of a declared name, while
+  `CheckNames` claimed they were guaranteed. New `tako/resource-name`,
+  scoped to bucket/queue/topic and Cloud Tasks' charset — not to
+  Counter/Histogram/Secret, where underscores and capitals are legal.
+- **CR7** Env isolation is a prefix with no separator, so it is not
+  injective: topic `orders` in `--env staging` and topic
+  `staging-orders` in prod are one topic. Refused at deploy time.
+  **Discovered work:** the structural fix is a separator a name cannot
+  contain, which renames every physical resource in every deployed app.
+- **CR8** `entity:"index"` on a `json:"-"` field indexed a key no
+  document carries — the silent empty read FL20 exists to remove.
+- **CR10/CR11** setup named the wrong secret when one name was a suffix
+  of another; a DISABLED version read as "set".
+
+**Consistency** — CR9 (piped secrets truncated at the first line),
+CR12 (a shared refusal naming the wrong command), CR13 (`--data`
+accepted by promote/rollback, flags after it ignored), CR14 (`secrets
+rm` unreachable for the orphan case it exists for), plus `destroy`
+saying which data it leaves behind, six simplifications, and `tako new`
+documented in the pages `tako docs` serves.
+
+**Validation** — `go vet` clean, root suite green, all seven examples
+green under `tako test`, a scaffolded site app booted and served, and
+the sign-in guard checked live against journal:
+
+```
+$ curl -s 'localhost:8124/_tako/signin?next=/"><script>alert(1)</script>'
+name="next" value="/&#34;&gt;&lt;script&gt;alert(1)&lt;/script&gt;"
+$ curl -s 'localhost:8124/_tako/signin?next=//evil.example'
+name="next" value="/"
+$ curl -si 'localhost:8124/_tako/signin' | grep -i content-security
+Content-Security-Policy: default-src 'self'; script-src 'none'; object-src 'none'; base-uri 'none'
+```
+
+**Not done, deliberately** — the app-wide CSP is still
+`Report-Only` with no reporting endpoint, so it neither blocks nor
+reports. Making it enforcing would break user templates carrying inline
+script or style; that is a product decision with a migration story and
+needs its own DX proposal. Recorded as discovered work.
