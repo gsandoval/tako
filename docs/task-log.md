@@ -22828,3 +22828,82 @@ suite green.
 
 **CR2 and CR3 hold in the cloud.** Agent-side validation complete; the
 human row for the CR series is still unwritten.
+
+## FL21 — templates are a tree (2026-08-11)
+
+Asked for directly by the app that filed it, after the entry changed weight
+twice.
+
+### The gap
+
+`RegisterSiteTemplates` read `templates/` with `fs.ReadDir` and skipped every
+entry where `e.IsDir()`. A template in a subdirectory was never registered, and
+`site.Render` named it back at you as not found.
+
+Filed against tako on 2026-08-09 by an app with seventeen templates in one
+folder — the admin's and the public site's — told apart by a filename prefix,
+which is a convention rather than a boundary. It was **workaround-fine** then:
+nothing was blocked and nothing was at risk.
+
+It gained a second consumer the same day and a third on 2026-08-11. The app
+now serves more than one site, a site bundle would naturally own
+`sites/<name>/templates/`, and it cannot — so the entry stopped being about
+tidiness and became the ceiling on how different a second site can look. Then
+template editing in the admin became committed scope, and **a site that cannot
+own a template cannot be given one to edit**.
+
+### The fix, and the part a WalkDir alone would not have done
+
+`fs.WalkDir` in place of `fs.ReadDir`, keyed by path relative to `templates/`.
+
+The subtlety is that **`ParseFS` names a template after its base name**, so
+walking a tree and parsing with `ParseFS` would have made `admin/nav.html` and
+`site/nav.html` one template with the second silently winning — a worse failure
+than the one being fixed, because it renders. So each template is parsed by
+name instead:
+
+```go
+layout.New(rel).Parse(src)          // partials, into the shared base
+t.New(rel).Parse(src)               // pages, into their own clone
+```
+
+The two-tier rule is untouched: a file defining `content` is a page and gets
+its own clone, everything else is a partial parsed into the shared base. That
+split was always path-agnostic. Only the **top-level** `layout.html` is the
+shell; one deeper in the tree is an ordinary template with an ordinary name, so
+a bundle can carry its own without becoming the root for everybody.
+
+`site.Fragment` executes a template by its own name, so the name a partial is
+defined under and the name it is looked up by have to be the same string —
+which is why partials are keyed by path too, not just pages.
+
+### Compatibility
+
+**No exported symbol changed** (`docs/surface_test.go` unchanged), and no flat
+site is renamed: for a template at the top level, path-relative-to-`templates/`
+IS its base name.
+
+Proven rather than argued — the 17-template app that filed the friction runs
+its whole suite, golden HTML files included, against this build with no change
+to a single template name or render call.
+
+### Validation
+
+```
+pkg/runtime            6 new tests, 4 of which fail before the change
+go test ./...          18 packages ok
+go vet ./...           clean
+the consumer's suite   ok (106s), golden files byte-identical
+```
+
+The four that fail first are the ones that matter: a page in a subdirectory, a
+base-name collision, a nested partial used both by path and as a fragment, and
+a nested `layout.html`. The two that pass before the change do so honestly —
+the flat-site test is the compatibility claim, and the parse-error test passes
+because "not found" also happens to name the path.
+
+### Verdict
+
+**Shipped.** Agent-side validation complete; the human row is unwritten, and
+the consumer's own move — `git mv` its templates into two directories and turn
+its prefix test into a path test — is that app's task, not this one.

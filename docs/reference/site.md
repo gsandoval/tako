@@ -155,6 +155,27 @@ generator emits.
 
 The `templates/` subtree is the one part never served raw: it backs
 `site.Render` / `site.Fragment` ([pages.md](pages.md)).
+
+It is a **tree**, and every template is named by its path relative to
+`templates/`:
+
+```
+web/templates/
+├── layout.html            → the shell
+├── admin/nav.html         → site.Render(ctx, "admin/nav.html", v)
+├── site/index.html        → site.Render(ctx, "site/index.html", v)
+└── shared/card.html       → {{ template "shared/card.html" . }}
+                             site.Fragment(ctx, "shared/card.html", v)
+```
+
+So `admin/nav.html` and `site/nav.html` are two templates, not one — an app
+can keep its admin's markup and its public site's in separate directories, and
+a site bundle can own the templates it renders with. A template at the top
+level is named exactly as before, because its path IS its base name.
+
+Only the top-level `layout.html` is the shell. One deeper in the tree is an
+ordinary template with an ordinary name.
+
 `layout.html` is OPTIONAL — a site whose shell comes from a static
 generator (Hugo, etc.) renders only fragments, and blog's fragment
 templates ride Hugo's `static/` dir into `public/templates/` so one

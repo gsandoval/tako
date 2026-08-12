@@ -98,8 +98,7 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 	siteTemplates = map[string]*template.Template{}
 	siteParseErrors = map[string]error{}
 
-	entries, err := fs.ReadDir(fsys, "templates")
-	if err != nil {
+	if _, err := fs.ReadDir(fsys, "templates"); err != nil {
 		// Not "web/templates/…": the site directory is whatever tako.Site
 		// was given, and naming a path this app may not have sends the
 		// reader looking for the wrong thing.
@@ -124,43 +123,72 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 	// its own clone — their block names would collide in one set);
 	// PARTIALS don't, and parse into the shared base so any page or
 	// fragment can {{ template }} them (post cards, toggles).
-	var pages, partials []string
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || name == "layout.html" || !strings.HasSuffix(name, ".html") {
-			continue
-		}
-		raw, err := fs.ReadFile(fsys, "templates/"+name)
+	//
+	// The set is a TREE, walked rather than listed, and every template is
+	// keyed by its path RELATIVE to templates/ — so an app can put the
+	// admin's templates and the public site's in separate directories, and
+	// a site bundle can own the templates it renders with.
+	//
+	// Each is parsed BY NAME rather than with ParseFS, and that is the whole
+	// reason a WalkDir alone would not have been enough: ParseFS names a
+	// template after its base, so admin/nav.html and site/nav.html would be
+	// one template and the second would silently win.
+	//
+	// A top-level template's path IS its base name, so every flat site keeps
+	// the names it had.
+	type sourced struct{ name, src string }
+	var pages, partials []sourced
+	walkErr := fs.WalkDir(fsys, "templates", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			siteParseErrors[name] = err
-			continue
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		name := strings.TrimPrefix(p, "templates/")
+		// Only the TOP-LEVEL layout.html is the shell. One deeper in the
+		// tree is an ordinary template with an ordinary name, so a bundle
+		// can carry its own without becoming the root for everybody.
+		if name == "layout.html" || !strings.HasSuffix(name, ".html") {
+			return nil
+		}
+		raw, readErr := fs.ReadFile(fsys, p)
+		if readErr != nil {
+			siteParseErrors[name] = readErr
+			return nil
 		}
 		if definesContent(string(raw)) {
-			pages = append(pages, name)
+			pages = append(pages, sourced{name, string(raw)})
 		} else {
-			partials = append(partials, name)
+			partials = append(partials, sourced{name, string(raw)})
+		}
+		return nil
+	})
+	if walkErr != nil {
+		siteSetupError = fmt.Errorf("site templates: %v", walkErr)
+		return
+	}
+
+	for _, t := range partials {
+		if _, err := layout.New(t.name).Parse(t.src); err != nil {
+			siteParseErrors[t.name] = err
 		}
 	}
-	for _, name := range partials {
-		if _, err := layout.ParseFS(fsys, "templates/"+name); err != nil {
-			siteParseErrors[name] = err
+	for _, t := range partials {
+		if siteParseErrors[t.name] == nil {
+			siteTemplates[t.name] = layout // fragments render from the shared base
 		}
 	}
-	for _, name := range partials {
-		if siteParseErrors[name] == nil {
-			siteTemplates[name] = layout // fragments render from the shared base
-		}
-	}
-	for _, name := range pages {
+	for _, p := range pages {
 		t, err := layout.Clone()
 		if err == nil {
-			_, err = t.ParseFS(fsys, "templates/"+name)
+			_, err = t.New(p.name).Parse(p.src)
 		}
 		if err != nil {
-			siteParseErrors[name] = err
+			siteParseErrors[p.name] = err
 			continue
 		}
-		siteTemplates[name] = t
+		siteTemplates[p.name] = t
 	}
 }
 
