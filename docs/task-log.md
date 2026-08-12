@@ -23076,3 +23076,158 @@ dropping `validName` (the old analyzer rule) fails it on `json:"a\"b"`.
 
 **Shipped.** Agent-side validation complete. The human rows for the CR
 series, Z6, FL21 and these two are all still unwritten.
+
+## DOC1 — documentation accuracy, held down by tests (2026-08-12)
+
+Asked for directly: "focus on documentation accuracy and quality, it has
+to be extremely good."
+
+The docs already had real machinery — every page renders, every internal
+link resolves, every exported symbol has a page, every `tako.X` the prose
+names exists, every struct field it names exists. So the useful question
+was not "are the docs good" but **which claims nothing could check**.
+Three turned out to be false.
+
+### 1. errors.md called itself the index and was missing a third of the rules
+
+The page opens with "This page is the index" of every analysis error.
+**Eighteen rule ids were in no table on it** — every role and policy rule
+(`role-var`, `unexported-role`, `empty-role`, `policy-var`,
+`unexported-policy`, `policy-private`, `const-role`), every alert rule
+(`alert-condition`, `alert-subject`, `channel-binding`, `window`,
+`quantile`, `status-class`, `scoped-label`), plus `resource-name`,
+`route-conflict` and `reserved-prefix`.
+
+These are not exotic. A door with no key (`empty-role`) and a private
+route with a policy (`policy-private`) both describe an app that
+compiles, deploys and refuses everybody; `route-conflict` is a startup
+panic. A reader met all eighteen for the first time in their terminal.
+
+Four new sections, seventeen rules, every text quoted verbatim from the
+golden corpus. The eighteenth is below.
+
+### 2. "The text is golden-tested" was true of 78 of 86 quoted lines
+
+Six of the texts the page quoted had no fixture behind them, so they had
+been transcribed by hand — and two had drifted into something no tako
+build has ever printed:
+
+```
+- service X cannot be both latency (Web) and batch (Sweep) …
+- service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) from Api …
++ service mixedprofile cannot be both latency (Web) and batch (Sweep) …
++ service mixedtraffic-work cannot carry both traffic (http/2 end to end) from Work and traffic (timeout 45s) from mixedtraffic.Svc …
+```
+
+`X` was never a service name, and `http2` is not how the formatter
+renders that setting — it prints "http/2 end to end".
+
+**Six new fixtures** rather than six edits, because the fix for an
+untested error text is a test: `pagebinding`, `jobbinding`, `jobnobody`,
+`cronconfig`, `statuspage`, `mixedprofile`, `mixedtraffic`. Writing them
+surfaced a structural fact worth recording: `Analyze` returns early if
+the declaration phase produced any error, so whole-graph rules
+(`job-binding`'s unbound job, `mixed-*`) can only be reached by a fixture
+whose declarations are otherwise clean. That is why `jobnobody` exists
+beside `jobbinding` instead of inside it.
+
+Two quoted lines legitimately have no golden and now say so in the test:
+the `unknown field Footprint` line is a Go type error (a fixture for it
+could not load — which is the point that passage makes), and the
+site-shadow line is a warning, pinned in `pkg/analyzer/shadow_test.go`.
+
+### 3. `tako setup` and `tako datastore create` were documented nowhere
+
+Not in `reference/cli.md`, not in the guide, not in any reference page —
+`grep -rn "tako setup" docs/guide docs/reference` came back empty. Both
+are prerequisites for a first deploy: setup enables the APIs and grants
+the roles the graph needs, and `datastore create` makes the database
+**whose location is permanent**. The documented path to a deploy skipped
+them both, and `guide/cloud.md`'s "One-time project setup" section
+described the automated parts while naming neither command.
+
+Fixed in three places: cli.md's mutating table plus a section on each,
+cloud.md's setup section (both commands, why datastore is separate), and
+one line in `01-hello.md`, which had told a reader to run `tako deploy`
+with nothing before it.
+
+### The tests that keep all three true
+
+`pkg/docserver/rules_test.go`, `pkg/docserver/clidoc_test.go` — with the
+existing doc-accuracy tests, because that is where this kind of test
+lives.
+
+- **Every rule id ↔ errors.md, both directions.** Ids come from
+  `Rule: "…"` literals in the analyzer plus every id the golden corpus
+  emitted; the second half is what catches `alert-subject`, whose id
+  reaches `Error.Rule` through a variable. Stated limit: a brand-new rule
+  with neither a literal nor a fixture slips both — which is a rule with
+  no test, already refused by the project's test-first rule.
+- **Every message errors.md quotes came out of the corpus**, byte for
+  byte, or is named in `notInTheCorpus` with its reason. 84 of 86 match;
+  the two exceptions are the two above.
+- **Every command the CLI dispatches appears in cli.md.**
+
+Mutation-proofed, all three: deleting the `scoped-label` row, changing
+`Status("503")` to `Status("500")` in a quoted line, and renaming
+`tako setup` in the reference each fail with the message that names the
+problem.
+
+### Two code fixes the audit forced
+
+- **One `alert-condition` message, not two.** Two reachable sites
+  answered the same mistake ("that is not a reading I can read") with two
+  different menus, and the shorter one was four options short — it told a
+  reader `tako.Requests`, `tako.RequestMs`, `tako.ServicePercentile` and
+  `tako.ServiceInstances` did not exist, depending on how they got it
+  wrong. Now one `notAReadingMsg`, and the fixture covers both paths.
+- **`tako/invalid-option` deleted.** It survived on `tako.Lock`, whose
+  signature is `Lock(name string)` — so `call.Args[1:]` is empty for
+  every input that compiles. Unreachable, unfixturable for the same
+  reason, and errors.md had already described the rule as gone. The
+  signature was doing the work; the rule was decoration.
+- **`tako --help` had two commands' lines crossed**: `tako logs`'s
+  description sat under `tako metrics`, leaving metrics undescribed and
+  logs' summary attached to the wrong verb. cli.md had it right, which is
+  how it was found.
+
+### Also verified and left alone
+
+The numeric claims scattered through the reference are all true: the
+lease TTL (30s, `backends.LeaseTTL`), the histogram bounds (18 buckets
+doubling from 1 → 262144), Cloud Tasks' 500/s rate ceiling, the cron
+attempt deadline default (180s), `tako logs` having no `--severity`
+flag, `tako.Cache` taking no options, three named profiles. Every
+reference page is in the reference index, and every "Not yet" section
+still describes a real limit. The guide's snippets match the examples
+they cite — one identifier in chapter 2 (`published`) is journal's,
+borrowed ahead of chapter 4, and now says so.
+
+### Delivery security, which CR3 had made stale
+
+`queue.md` still said the push endpoint was safe because the service is
+private — "curl gets 403 at Google's front door" — which is exactly the
+reasoning CR3 replaced. It now describes both doors and says which one
+matters: "the service happens to be private" is a fact computed in
+another package and one graph change away from being false. `topic.md`
+gained the same pointer, and `observability.md` documents the refusal
+line from item 49 as a Cloud Logging record, next to the JSON example
+already there.
+
+### Validation
+
+```
+go test ./...          19 packages ok
+go vet ./...           clean
+gofmt -l               clean
+tako test              blog gallery hello journal shop shortlink siren — all ok,
+                       against a CLI rebuilt with the new analyzer
+new fixtures           7 (each generated with -update, then read)
+new tests              3, all mutation-proofed in both directions
+```
+
+### Verdict
+
+**Shipped.** Agent-side validation complete. What a test cannot reach is
+still the human's: whether the new sections read as well as the ones they
+sit beside.

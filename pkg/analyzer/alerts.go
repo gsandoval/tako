@@ -22,6 +22,21 @@ import (
 	"golang.org/x/tools/go/packages"
 )
 
+// notAReadingMsg is what a condition says when its metric is not
+// something the analyzer can read: a variable holding a reading, or a
+// call that is not one of the readings.
+//
+// One string, because there are two ways to arrive at the same mistake
+// (the argument is not a call at all; the argument is a call to
+// something else) and they used to answer with two different menus —
+// the first of them four options short, so a reader was told
+// tako.Requests and tako.ServiceInstances did not exist depending on how
+// they got it wrong. The menu is also what errors.md quotes.
+const notAReadingMsg = "a condition's metric must be a tako reading — a method on a Counter or " +
+	"Histogram (uploads.Rate(), thumbMs.Percentile(0.99)), on tako.Requests / tako.RequestMs, " +
+	"or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / " +
+	"tako.PlatformMetric"
+
 // channelKinds maps the SDK constructor to the Cloud Monitoring channel
 // type. The values are Google's, verified against the notification
 // channel descriptors.
@@ -384,7 +399,7 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 	if !ok {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, cond.Args[0].Pos()),
-			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)) or tako.ServiceMetric / tako.QueueMetric / tako.PlatformMetric",
+			Msg:  notAReadingMsg,
 			Rule: "alert-condition",
 		})
 		return nil
@@ -434,7 +449,7 @@ func readMetric(dir string, pkg *packages.Package, metric *ast.CallExpr, spec *A
 	if !isScoped {
 		*errs = append(*errs, &Error{
 			Pos:  relPos(dir, pkg.Fset, metric.Pos()),
-			Msg:  "a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)), on tako.Requests / tako.RequestMs, or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / tako.PlatformMetric",
+			Msg:  notAReadingMsg,
 			Rule: "alert-condition",
 		})
 		return false

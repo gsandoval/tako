@@ -154,6 +154,10 @@ contributes no names.
 ## Cloud, mutating
 
 ```
+tako setup [--member <principal>] [--plan] [--yes]
+                       enable the APIs and grant the roles THIS graph needs
+tako datastore create --region <region>
+                       the project's datastore-mode database (location is permanent)
 tako deploy [--plan] [--canary <pct>] [--yes]
 tako promote           send 100% of every service's traffic to latest
 tako rollback          return traffic to the previous revision set
@@ -167,6 +171,38 @@ tako destroy --plan    show what it would delete, delete nothing
 `deploy --plan` stops after the classified plan; `--canary` holds new
 revisions at a traffic percentage. `rollback` is instant for traffic;
 infra shape rolls back via git revert + `tako deploy`.
+
+**`tako setup` is the applying half of preflight.** Preflight has always
+found every gap and printed its fix; setup grants them — the APIs and
+the permission→role pairs *this graph* needs, and no more, so an app
+with no queues asks for nothing about Pub/Sub. It is idempotent and
+meant to be re-run as the app grows a resource. `--member` sets up
+somebody else (a CI service account) instead of you; `--plan` prints
+what it would grant and stops.
+
+The one step it cannot do for you is the first one: granting yourself
+the permission to grant. When setup lacks that, it prints the `gcloud`
+command for whoever owns the project to run — handing the job over
+rather than failing at it.
+
+**`tako datastore create` is separate because its choice is permanent.**
+A datastore-mode database cannot be moved once it exists, so `--region`
+is required here and is neither defaulted nor inherited from
+`TAKO_REGION`, unlike every other region in this CLI — those default
+because deploying again can change them. Pick the region your services
+run in.
+
+```
+$ tako datastore create
+tako datastore create needs --region, and will not pick one for you
+      a Datastore database's location is permanent: it cannot be moved,
+      and every other --region in this CLI defaults because it can be
+      changed by deploying again. Pick the region your services run in.
+```
+
+`destroy` deliberately leaves the database behind ([the cloud
+story](../guide/cloud.md) lists everything in that category), so this is
+a once-per-project command in practice.
 
 ## The confirmation ladder
 

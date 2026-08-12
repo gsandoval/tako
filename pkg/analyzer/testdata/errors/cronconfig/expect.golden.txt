@@ -1,0 +1,2 @@
+app.go:12:70: tako.CronConfig.Timezone does not know the zone "Mars/Olympus" — use an IANA name like "America/Mexico_City" or "Europe/Madrid" (tako/timezone)
+app.go:13:66: tako.CronConfig.Deadline takes a constant 15s–30m — Cloud Scheduler's range for an HTTP target; a cron that needs longer wants a tako.Job (tako/deadline)

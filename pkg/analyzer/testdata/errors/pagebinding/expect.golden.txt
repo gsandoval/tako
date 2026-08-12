@@ -1,0 +1,1 @@
+app.go:12:2: PageReq field Title has no path:/query:/form: tag — pages receive browser forms, not JSON bodies (tako/page-binding)

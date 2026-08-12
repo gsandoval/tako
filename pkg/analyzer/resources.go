@@ -613,11 +613,18 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 // extractLock validates one tako.Lock declaration (W8): a constant
 // name and — deliberately — no options: the lease policy (30s TTL,
 // ttl/3 heartbeats, 2s campaigns) is framework-owned in v0.
+//
+// "No options" is the SIGNATURE's job, not a rule's: tako.Lock takes one
+// string and nothing else, so extra arguments never reach analysis —
+// they are a compile error first. This used to also refuse them as
+// tako/invalid-option, which could not fire for any input that compiles
+// and could not be given a golden fixture for the same reason. Removed
+// with the last live use of that rule id, which errors.md had already
+// described as gone.
 func extractLock(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
 	if name.Name == "_" || len(call.Args) < 1 {
 		return nil
 	}
-	bad := false
 	lockName, err := constString(pkg, call.Args[0])
 	if err != nil {
 		*errs = append(*errs, &Error{
@@ -626,17 +633,6 @@ func extractLock(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 				describeExpr(call.Args[0])),
 			Rule: "const-name",
 		})
-		return nil
-	}
-	for _, opt := range call.Args[1:] {
-		*errs = append(*errs, &Error{
-			Pos:  relPos(dir, pkg.Fset, opt.Pos()),
-			Msg:  "tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned",
-			Rule: "invalid-option",
-		})
-		bad = true
-	}
-	if bad {
 		return nil
 	}
 	return &Resource{

@@ -87,3 +87,17 @@ var (
 	WholeFraction = tako.Alert(tako.WhenAbove(
 		tako.Requests(Photos).Fraction(), 0.5, tako.Window{For: time.Minute}), oncall)
 )
+
+// Two ways to hand a condition something it cannot read, and the reason
+// they are both here: they are different code paths (an argument that is
+// not a call, and a call to something that is not a reading) answering
+// one question, and they answered it with two different menus until the
+// message became one string.
+var reading = hits.Rate()
+
+func indirect() tako.Metric { return hits.Rate() }
+
+var (
+	FromVar  = tako.Alert(tako.WhenAbove(reading, 1, tako.Window{For: time.Minute}), oncall)
+	FromFunc = tako.Alert(tako.WhenAbove(indirect(), 1, tako.Window{For: time.Minute}), oncall)
+)

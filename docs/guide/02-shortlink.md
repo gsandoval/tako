@@ -31,7 +31,8 @@ composite indexes automatically, per query.
 `if` makes two shapes, and both get an index — a composite serves only
 queries that constrain its leading properties, so the narrow one would
 otherwise have none and answer 500 in production while every local test
-passed. Helpers work too:
+passed. Helpers work too — this one is journal's, from
+[chapter 4](04-journal.md):
 
 ```go
 func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {

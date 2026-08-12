@@ -1,0 +1,2 @@
+app.go:10:24: job "reindex" already has handler Reindex (app.go:9) — a job has exactly one body (tako/one-job-handler)
+app.go:13:22: tako.Runner must bind a job declared as a package-level var in this module (tako/job-binding)

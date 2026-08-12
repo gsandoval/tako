@@ -105,6 +105,25 @@ treatment; they carry a `cron=`/`job=`/`handler=` attribute naming what
 ran, since an execution is not a request from a client and has no
 platform request entry to nest under.
 
+**A refused delivery or cron trigger says so, at `WARNING`.** The
+platform's request log shows a 403 and cannot say whose it was — Cloud
+Run refusing a caller with no `run.invoker` grant and tako refusing a
+token whose audience is stale look identical from outside the container,
+and they have different fixes. So tako narrates its own:
+
+```json
+{"severity":"WARNING","message":"tako refused this delivery",
+ "handler":"countClick","status":403,
+ "reason":"delivery rejected: token audience is not this service",
+ "expected_audience":"https://shortlink-countclick-….run.app",
+ "expected_invoker":"shortlink-countclick-sa@….iam.gserviceaccount.com"}
+```
+
+The two expectations are in the line because comparing them against
+the deliverer's own OIDC configuration is the fix; neither is a secret.
+A `403` in the request log with no such line beside it is the
+platform's refusal, not tako's.
+
 ## Local
 
 Secrets come from `.env` in the module dir (`name=value` lines),

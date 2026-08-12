@@ -61,10 +61,11 @@ just as for queues.
 ## Cloud
 
 One Pub/Sub topic; one OIDC push subscription **per subscriber
-service** (each subscriber is its own private Cloud Run service),
-each carrying local's failure semantics — as the deploy summary puts
-it, *"redelivery: 5 attempts with backoff, then dead-letter"* — into
-its own per-service dead-letter topic. `tako dlq` lists and drains
+service** (each subscriber is its own private Cloud Run service, and
+its `/_tako/api/push` route verifies the delivery's token as well —
+see [queue.md](queue.md)), each carrying local's failure semantics — as
+the deploy summary puts it, *"redelivery: 5 attempts with backoff, then
+dead-letter"* — into its own per-service dead-letter topic. `tako dlq` lists and drains
 them per service, exactly as for workers ([queue.md](queue.md)).
 
 Idle topics and scale-to-zero subscribers cost nothing to sit there;

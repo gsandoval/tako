@@ -1,0 +1,1 @@
+app.go:9:5: job "reindex" has no body — bind one with tako.Runner (tako/job-binding)

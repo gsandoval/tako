@@ -58,11 +58,13 @@ product surface here.
 ## Deploy it
 
 ```
+tako setup  --project <your-project>    # once: the APIs and roles this app needs
 tako deploy --project <your-project>
 ```
 
-Preflight tells you anything missing (APIs, permissions) with the
-exact command to fix it; the plan lists what will exist; the ✓ line
-is your URL. `tako destroy` (typed name) removes it all. That cycle —
+Preflight tells you anything still missing (APIs, permissions) with the
+exact command to fix it — `tako setup` is what applies that list, and
+[the cloud story](cloud.md) has the rest of the one-time setup; the plan
+lists what will exist; the ✓ line is your URL. `tako destroy` (typed name) removes it all. That cycle —
 plan, apply, converge, destroy — is the same for every example after
 this one; only the graph grows.

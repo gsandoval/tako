@@ -37,6 +37,7 @@ source.
 | `const-route` | a route is a variable or a call | [api.md](api.md) |
 | `const-name` | a resource name is a variable | [entity.md](entity.md) |
 | `const-query-field` | a query field name is a variable | [entity.md](entity.md) |
+| `const-role` | a role name is a variable or a call | [auth.md](auth.md) |
 | `unexported-req` | a request type is unexported | [api.md](api.md) |
 
 ```
@@ -44,8 +45,51 @@ tako.API must initialize a package-level var — handlers declared inside functi
 tako.API route must be a string constant — routes are read at analysis time, not run time; got variable "route"
 tako.Entity name must be a string constant — names are read at analysis time, not run time; got variable "n"
 query field must be a string constant — indexes are derived at analysis time; got variable "f"
+tako.Role takes a string constant — the role name is read at analysis time so a route's door can be named in the graph; got a call expression
 request type greetReq must be exported — generated services construct it outside the package
 ```
+
+## A declared name becomes a real name
+
+A resource name is not a label: it becomes a GCS bucket, a Pub/Sub topic
+or a Cloud Tasks queue, and those charsets are not Go's. The
+intersection is lowercase letters, digits and hyphens, so tako refuses a
+name it would have to mangle rather than deploying something you did not
+write.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `resource-name` | a bucket, queue or topic name is not usable as a physical name | [bucket.md](bucket.md) |
+
+```
+tako.Bucket name "Photo Uploads" is not usable as a physical name — use lowercase letters, digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit
+tako.Queue name "thumbs_v2" is not usable as a physical name — use lowercase letters, digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit
+```
+
+Only names that travel to a physical resource are held to it. A counter
+or a histogram is a metric label — `tako.Histogram("thumb_ms")` keeps
+its underscore.
+
+## A route has to be able to answer
+
+Two routes can be individually fine and impossible together, and the
+failure is at startup rather than at analysis — which is the worst place
+for it.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `route-conflict` | two routes in one service are a pair Go's router refuses | [api.md](api.md) |
+| `reserved-prefix` | a route is inside `/_tako/`, which the framework answers first | [api.md](api.md) |
+
+```
+SetRole cannot be mounted beside a route this service already declares: POST /moderate/{id}/retract — Go's router refuses a pair where neither pattern is more specific, and the service panics at startup. Make one of them narrower (a literal segment beats a wildcard) or move one to a different path
+route "GET /_tako/sneaky" is inside /_tako/, which tako reserves for the endpoints it injects (session, sign-in, cron, signed URLs, push) — the framework answers that namespace before this app's routes, so Sneaky would never run; choose a path outside it
+```
+
+Both are refusals tako makes on the platform's behalf: `net/http`'s mux
+panics on an ambiguous pair, and `/_tako/` is where the session,
+sign-in, cron, signed-URL and push endpoints live — a route there would
+compile, deploy, and never be reached.
 
 ## Request binding
 
@@ -206,9 +250,79 @@ traffic Timeout must be at least one second; got 500ms
 traffic SessionAffinity must be tako.ToggleInherit, tako.ToggleOn, or tako.ToggleOff
 traffic sets nothing — drop the Traffic field or pin at least one setting
 service mixedfootprint cannot carry both footprint (cpu 2) from Sweep and footprint (cpu 4, memory 2Gi) from Purge — one service scales one way; split the packages or align the footprints
-service X cannot be both latency (Web) and batch (Sweep) — one service scales one way; split the packages or align the profiles
-service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) from Api — one service answers one way; split the packages or align the settings
+service mixedprofile cannot be both latency (Web) and batch (Sweep) — one service scales one way; split the packages or align the profiles
+service mixedtraffic-work cannot carry both traffic (http/2 end to end) from Work and traffic (timeout 45s) from mixedtraffic.Svc — one service answers one way; split the packages or align the settings
 ```
+
+## A door has to be nameable
+
+`tako.Role` and `tako.Policy` are declarations like any other: the
+generated service names them from outside the package, `tako gen graph`
+prints them beside the route they guard, and the dev sign-in page offers
+the roles. All four of those need a name — so a door assembled inline is
+refused, not because it would not work, but because nothing could say
+what it is.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `role-var` | a route names a role that is not a declared var | [auth.md](auth.md) |
+| `unexported-role` | a role var is not exported | [auth.md](auth.md) |
+| `empty-role` | `tako.RequireRole()` names no role | [auth.md](auth.md) |
+| `policy-var` | a route names a policy that is not a declared var | [auth.md](auth.md) |
+| `unexported-policy` | a policy var is not exported | [auth.md](auth.md) |
+| `policy-private` | a route sets both `Allow` and `Private` | [calls.md](calls.md) |
+
+```
+Desk names a role that is not a declared var in this package — write `var Editor = tako.Role("editor")` and pass Editor; a call expression cannot be printed beside the door or offered by the dev sign-in page
+role moderator must be exported — the generated service names it from outside the package; rename it Moderator
+Nobody = tako.RequireRole() needs at least one role — a door with no key refuses everyone, and does it silently
+Inline names a policy that is not a declared var in this package — write `var Editors = tako.Policy(editorAllowed)` and set Allow: Editors; a call expression cannot be named by the generated service, printed by `tako gen graph`, or shared by a second route
+policy editors must be exported — the generated service names it from outside the package; rename it Editors
+Internal sets both Allow and Private — a policy authorizes a signed-in user, and a private route is reached by another service with no session, so every call would be refused; drop one
+```
+
+`empty-role` and `policy-private` are the two that describe a *working*
+app. A door with no key compiles and refuses every visitor; a private
+route with a policy compiles and refuses every caller. Both would look
+like an authorization bug in someone else's code for as long as it took
+to find them.
+
+## Alerts read declarations, not strings
+
+An alert is a query tako writes for you, from the declaration you named.
+Everything below is a query that Cloud Monitoring would accept and that
+would match nothing — the worst failure an alert can have, because an
+alert that never fires and an alert on a healthy system look identical.
+
+| Rule | Fires when | Page |
+|---|---|---|
+| `alert-condition` | a condition's metric is not a tako reading | [alerts.md](alerts.md) |
+| `alert-subject` | a preset watches the wrong kind of handler | [alerts.md](alerts.md) |
+| `channel-binding` | a destination is not a declared channel var | [alerts.md](alerts.md) |
+| `window` | a `Window`/`QueueWatch` is out of Cloud Monitoring's range, or missing | [alerts.md](alerts.md) |
+| `quantile` | a percentile is not a constant between 0 and 1 | [alerts.md](alerts.md) |
+| `status-class` | a status matcher names a code instead of a class | [alerts.md](alerts.md) |
+| `scoped-label` | a matcher repeats a label tako already writes | [alerts.md](alerts.md) |
+
+```
+a condition's metric must be a tako reading — a method on a Counter or Histogram (uploads.Rate(), thumbMs.Percentile(0.99)), on tako.Requests / tako.RequestMs, or tako.ServiceMetric / tako.ServicePercentile / tako.ServiceInstances / tako.QueueMetric / tako.PlatformMetric
+tako.CronMissed watches a cron, but alerts.Work is a worker
+tako.Alert destinations must be channels declared as package-level vars in this module (tako.AlertEmail, tako.AlertWebhook, tako.AlertTopic)
+a Window's Every must be between 1m and 25h — Cloud Monitoring refuses anything else; got 30s
+a threshold Window's For cannot exceed 24h — Cloud Monitoring refuses longer; got 172800s
+a Count reading needs a period — write tako.Window{Every: …}; how long you are counting over IS the count, so there is no default worth guessing
+tako.QueueBacklogged needs a sustain window — write tako.QueueWatch{For: …}; a queue crosses any depth for an instant, so how long it stays there IS the alert
+tako.Percentile quantile must be between 0 and 1 exclusive — 0.99 is the 99th percentile, not 99; got 99
+tako records a status CLASS, not a code — Status("503") matches nothing; use one of 1xx, 2xx, 3xx, 4xx or 5xx
+tako.ServiceMetric already matches service_name for the target you named — a second matcher on the same label matches nothing, and the deployed name is env-prefixed so it cannot be written by hand; drop it
+tako.Requests(…).Fraction() with no Status is every request over every request, which is always 1 — narrow it, e.g. Requests(x).Status("5xx").Fraction()
+```
+
+`scoped-label` is the subtlest of the group. PromQL accepts
+`service_name="shop"` beside the `service_name` tako already writes,
+matches neither, and reports a well-formed empty result — and the
+deployed name is env-prefixed anyway, so the label you would have to
+write by hand is not the one you know.
 
 ## Entities
 

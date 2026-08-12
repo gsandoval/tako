@@ -1,0 +1,1 @@
+app.go:7:5: status page status must be exported — the generated service registers it by name from outside the package; rename it Status (tako/unexported-status)

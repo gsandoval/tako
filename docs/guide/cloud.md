@@ -82,7 +82,29 @@ Friction scales with irreversibility (also in `tako --help`):
 
 ## One-time project setup
 
-Most setup is automated: APIs probed by preflight, Identity Platform
+Two commands come before your first deploy, and both are once per
+project:
+
+```
+tako setup                              enable the APIs and grant the roles this app needs
+tako datastore create --region us-central1   only if the app declares a tako.Entity
+```
+
+`tako setup` is the applying half of preflight: it reads your graph and
+enables exactly the APIs and grants exactly the permission→role pairs
+*that* graph needs, so an app with no queues asks for nothing about
+Pub/Sub. It is idempotent — re-run it when the app grows a resource —
+and `--member` points it at a CI service account instead of you. If you
+cannot grant yet, it prints the `gcloud` command for whoever owns the
+project: granting yourself the permission to grant is the one step
+nobody can bootstrap.
+
+`tako datastore create` is separate from everything else because its
+choice cannot be undone — a database's location is permanent, so
+`--region` is required and never defaulted. `destroy` leaves the
+database behind for the same reason.
+
+The rest is automated: APIs probed by preflight, Identity Platform
 initialized, the email provider enabled when declared, sign-in
 domains registered per deploy.
 

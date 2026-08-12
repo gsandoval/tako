@@ -1,0 +1,1 @@
+app.go:10:5: service mixedprofile cannot be both latency (Web) and batch (Sweep) — one service scales one way; split the packages or align the profiles (tako/mixed-profile)

@@ -64,8 +64,10 @@ Your data — local unless you type a project:
 
 Cloud, read-only:
   tako logs [service] [--since 15m]
-  tako metrics <search> [--limit 20]
                        recent logs for the deployed services
+  tako metrics <search> [--limit 20]
+                       search the project's metric descriptors for a type
+                       to name in tako.ServiceMetric / tako.PlatformMetric
   tako dlq [service]   peek dead-lettered messages per async service
 
 Cloud, mutating (see the confirmation ladder below):

@@ -107,8 +107,17 @@ laptop instead of in production, and the seed reproduces the run.
 
 Each queue becomes a Pub/Sub topic; the worker becomes its own Cloud
 Run service (the partition rule: each async handler is alone in its
-own) fed by an OIDC push subscription to `/_tako/api/push` — private, so
-curl gets 403 at Google's front door. Failure semantics match local,
+own) fed by an OIDC push subscription to `/_tako/api/push`. Two
+independent doors: the service is private, so curl gets 403 at Google's
+front door, **and** the route verifies the delivery itself — the
+Google-signed token's audience (this service) and identity (this
+service's own SA), injected at deploy as
+`TAKO_PUSH_AUDIENCE`/`TAKO_PUSH_INVOKER`, exactly as the
+[cron](cron.md) route does. The second door is the one that matters:
+"the service happens to be private" is a fact computed in another
+package, and one graph change away from being false. A refused delivery
+is logged at `WARNING` with the reason and both expectations, because
+the caller is Pub/Sub and reads nothing. Failure semantics match local,
 as the deploy summary states: *"redelivery: 5 attempts with backoff,
 then dead-letter"* (exponential, 10s–300s). `tako.Permanent`
 short-circuits straight to the service's dead-letter topic, which

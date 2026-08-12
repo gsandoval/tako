@@ -1,0 +1,1 @@
+app.go:13:5: service mixedtraffic-work cannot carry both traffic (http/2 end to end) from Work and traffic (timeout 45s) from mixedtraffic.Svc — one service answers one way; split the packages or align the settings (tako/mixed-traffic)
