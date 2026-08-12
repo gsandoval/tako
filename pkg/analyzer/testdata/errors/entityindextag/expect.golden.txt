@@ -1,0 +1,1 @@
+app.go:15:2: field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags (tako/entity-index)

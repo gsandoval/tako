@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/entitytag"
 	"golang.org/x/tools/go/packages"
 )
 
@@ -170,7 +171,7 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 	bad := false
 	for i := range st.NumFields() {
 		f := st.Field(i)
-		switch tagValue(st.Tag(i), "entity") {
+		switch entitytag.Kind(st.Tag(i)) {
 		case "id":
 			idCount++
 			if f.Type().String() != "string" {
@@ -183,19 +184,31 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 				bad = true
 			}
 		case "index":
+			// json:"-" keeps the field out of the document, so an index on
+			// it matches nothing — silently. The SDK refuses this when it
+			// reads the tags at first use; refused here too, because an
+			// analyzer error names the file and line and arrives before a
+			// deploy provisions a composite index on a property no
+			// document has (item 43).
+			if entitytag.Omitted(st.Tag(i)) {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, f.Pos()),
+					Msg: fmt.Sprintf("field %s is tagged entity:\"index\" but json:\"-\" keeps it "+
+						"out of the stored document — an index on a field nothing writes matches "+
+						"nothing, silently; drop one of the two tags", f.Name()),
+					Rule: "entity-index",
+				})
+				bad = true
+				continue
+			}
 			et.declared = append(et.declared, f.Name())
 			et.indexed[f.Name()] = true
-			// Datastore property names are the marshaled (json) names —
-			// the same rule the SDK's jsonName applies at runtime.
-			et.wire[f.Name()] = f.Name()
-			if tag := tagValue(st.Tag(i), "json"); tag != "" && tag != "-" {
-				if i := strings.IndexByte(tag, ','); i >= 0 {
-					tag = tag[:i]
-				}
-				if tag != "" {
-					et.wire[f.Name()] = tag
-				}
-			}
+			// Datastore property names are the MARSHALED names, and which
+			// name that is comes from internal/entitytag — the same
+			// reading the SDK's write path uses, so the index this
+			// provisions and the property the document carries cannot
+			// drift apart (item 43).
+			et.wire[f.Name()] = entitytag.Name(st.Tag(i), f.Name())
 		}
 	}
 	if idCount != 1 {
@@ -503,11 +516,6 @@ func entityQueryMethod(pkg *packages.Package, call *ast.CallExpr) (string, strin
 		return "", ""
 	}
 	return fn.Name(), named.TypeArgs().At(0).String()
-}
-
-// tagValue reads one key from a raw struct tag.
-func tagValue(rawTag, key string) string {
-	return tagOf(rawTag).Get(key)
 }
 
 // extractQueue validates one tako.Queue declaration.

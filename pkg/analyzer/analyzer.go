@@ -342,14 +342,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	}
 	for key, et := range entities {
 		res := &graph.Resources[entityRes[key]]
-		fields := 0
 		for _, f := range et.declared { // derived indexes, struct order
 			if et.used[f] {
 				res.Indexes = append(res.Indexes, f)
-				fields++
 			}
 		}
-		_ = fields
 		// Composite indexes derive PER QUERY SHAPE (R0): one tuple per
 		// function that queries this entity — filters in struct order,
 		// then OrderBys in call order — deduped; single-field shapes

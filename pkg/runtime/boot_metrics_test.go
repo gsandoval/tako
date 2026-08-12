@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	tako "github.com/gsandoval/tako"
-	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/internal/hooks"
+	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 

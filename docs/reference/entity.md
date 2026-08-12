@@ -250,7 +250,14 @@ app.go:8:2: entity id field Slug must be a string; got int (tako/entity-id)
 app.go:7:31: tako.Entity name must be a string constant — names are read at analysis time, not run time; got variable "n" (tako/const-name)
 app.go:17:32: query field must be a string constant — indexes are derived at analysis time; got variable "f" (tako/const-query-field)
 app.go:18:9: query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable (tako/unindexed-query)
+app.go:15:2: field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags (tako/entity-index)
 ```
+
+An index follows the MARSHALED name, so `json:"owner_id"` is indexed
+and queried as `owner_id`. `json:"-"` is the one spelling that removes
+the field from the document, and indexing it is refused above;
+`json:"-,"` is not that spelling — it names the property `-`, and is
+indexed under that name.
 
 At run time: `Put` with an empty id fails with `tako: entity "links":
 id field Slug is empty`; outside a wired app, calls panic with

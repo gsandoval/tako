@@ -23,13 +23,13 @@ func TestSafeNextAdmitsOnlySameOriginPaths(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"",
-		"write",                 // relative: not ours to resolve
-		"https://evil.example",  //
-		"//evil.example",        // protocol-relative IS absolute to a browser
-		`/\evil.example`,        // browsers normalise \ to / right after a slash
-		"/\t/evil.example",      // control chars are stripped first, leaving //
-		"javascript:alert(1)",   //
-		"\n/write",              //
+		"write",                // relative: not ours to resolve
+		"https://evil.example", //
+		"//evil.example",       // protocol-relative IS absolute to a browser
+		`/\evil.example`,       // browsers normalise \ to / right after a slash
+		"/\t/evil.example",     // control chars are stripped first, leaving //
+		"javascript:alert(1)",  //
+		"\n/write",             //
 	} {
 		if got := safeNext(bad); got != "/" {
 			t.Errorf("safeNext(%q) = %q, want %q", bad, got, "/")

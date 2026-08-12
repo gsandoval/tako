@@ -44,3 +44,24 @@ func TestARenamedIndexUsesTheMarshaledName(t *testing.T) {
 		t.Errorf("indexed fields = %v, want [owner_id]", fields)
 	}
 }
+
+// Item 43: json:"-," is not the skip — encoding/json stores the field
+// under the name "-". The schema used to read it as the Go field name
+// while the analyzer read it as "-", which is the same silent no-match
+// the refusal above exists to prevent, arrived at by disagreement rather
+// than by contradiction. Both now read internal/entitytag.
+type oddlyNamedIndex struct {
+	ID    string `entity:"id"`
+	Owner string `entity:"index" json:"-,"`
+}
+
+func TestAnIndexNamedDashFollowsEncodingJSON(t *testing.T) {
+	h := Entity[oddlyNamedIndex]("item43")
+	fields, err := h.indexedFields()
+	if err != nil {
+		t.Fatalf(`json:"-," was refused as if it were the skip: %v`, err)
+	}
+	if len(fields) != 1 || fields[0] != "-" {
+		t.Errorf(`indexed fields = %v, want [-] — the name json.Marshal actually emits`, fields)
+	}
+}

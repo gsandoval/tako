@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 
+	"github.com/gsandoval/tako/internal/entitytag"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends"
 )
@@ -167,10 +168,10 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 		s := &entitySchema{indexed: map[string]string{}}
 		for i := range t.NumField() {
 			f := t.Field(i)
-			switch f.Tag.Get("entity") {
+			switch entitytag.Kind(string(f.Tag)) {
 			case "id":
 				s.idField = f.Name
-				s.idJSON = jsonName(f)
+				s.idJSON = entitytag.Name(string(f.Tag), f.Name)
 			case "index":
 				// A field the document does not carry cannot be
 				// indexed, and the failure is silent: the write declares
@@ -178,14 +179,14 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 				// on it, and Datastore answers nothing without erroring.
 				// That is the exact shape FL20 exists to remove, so it
 				// is refused where the tags are read.
-				if omitted(f) {
+				if entitytag.Omitted(string(f.Tag)) {
 					e.schemaErr = fmt.Errorf("tako: entity %q: field %s is tagged entity:\"index\" "+
 						"but json:\"-\" keeps it out of the stored document — an index on a field "+
 						"nothing writes matches nothing, silently. Drop one of the two tags.",
 						e.name, f.Name)
 					return
 				}
-				s.indexed[f.Name] = jsonName(f)
+				s.indexed[f.Name] = entitytag.Name(string(f.Tag), f.Name)
 			}
 		}
 		if s.idField == "" {
@@ -200,31 +201,6 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 		e.schema = s
 	})
 	return e.schema, e.schemaErr
-}
-
-// omitted reports whether encoding/json will leave this field out of
-// the document entirely — json:"-", and only that spelling ("-," names
-// a field actually called "-").
-func omitted(f reflect.StructField) bool {
-	return f.Tag.Get("json") == "-"
-}
-
-func jsonName(f reflect.StructField) string {
-	tag, ok := f.Tag.Lookup("json")
-	if !ok {
-		return f.Name
-	}
-	name := tag
-	for i := 0; i < len(tag); i++ {
-		if tag[i] == ',' {
-			name = tag[:i]
-			break
-		}
-	}
-	if name == "" || name == "-" {
-		return f.Name
-	}
-	return name
 }
 
 // EntityQuery builds a query against one entity store. Builder methods

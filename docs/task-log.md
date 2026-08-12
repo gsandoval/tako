@@ -22907,3 +22907,172 @@ because "not found" also happens to name the path.
 **Shipped.** Agent-side validation complete; the human row is unwritten, and
 the consumer's own move — `git mv` its templates into two directories and turn
 its prefix test into a path test — is that app's task, not this one.
+
+## Items 49 and 43 — the two the last walk left behind (2026-08-12)
+
+Both were discovered work, both filed by the walks that found them rather
+than planned, and both turned out to be one sentence wide and worth more
+than that.
+
+## 49 — a refused trigger said nothing
+
+`verifyPushCaller` and `CronDispatch` answered the caller and logged
+nothing. The caller is Pub/Sub or Cloud Scheduler, which reads no
+message and asks no questions, so the refusal reached nobody: `tako
+logs` showed the platform's request line and that was the whole record.
+
+**Why that costs an operator real time:** tako's 403 and Cloud Run's 403
+are the same three digits from outside the container, and they are
+different problems with different fixes — a stale audience after a
+service URL change versus a missing `run.invoker` grant. This item was
+filed from the inside of that ambiguity: twenty minutes of CR3's own
+live validation went to establishing that fresh 403s were the platform's
+front door and not the new check.
+
+### What each refusal carries now
+
+```
+WARN tako refused this delivery handler=countClick status=403
+  reason="delivery rejected: token audience is not this service"
+  expected_audience=https://shortlink-countclick-119764066724.us-central1.run.app
+  expected_invoker=shortlink-countclick-sa@tako-test-01.iam.gserviceaccount.com
+
+WARN tako refused this cron trigger cron=nightly status=401
+  reason="cron triggers carry an OIDC bearer token"
+  expected_audience=... expected_invoker=...
+```
+
+Three deliberate choices:
+
+- **WARNING, not ERROR.** A refused delivery is not the service failing;
+  it is the service working. But it must be findable by severity next to
+  the platform's own lines, which INFO would not be.
+- **The expectations travel in the log**, not only in the response body,
+  because comparing them against the deliverer's own `oidcToken` config
+  IS the remediation. Neither is a secret: a service URL and an SA email,
+  both readable from the deploy by anyone who can read the logs.
+- **`reason.Error()`, not the error.** A JSON handler marshals a bare
+  `errors.errorString` as `{}`, so logging the error value itself would
+  have shipped a line with the reason silently missing — in the cloud
+  only, where the JSON handler is installed and nobody is watching a
+  terminal.
+
+`logRefusal` is one function for both routes, for the same reason
+`verifyGoogleToken` is one function for both routes: a second copy is
+how one of them ends up quieter than the other. Cron grew a
+`verifyCronCaller` mirroring `verifyPushCaller` so the two routes have
+one shape.
+
+The unknown-cron 404 is narrated too — it means the schedule outlived
+the handler, and it is the one refusal below whose test cannot be
+written: reaching it requires a token Google signed, so it is covered by
+inspection only. Said plainly rather than left to look covered.
+
+**Statuses and check order are untouched** and now noted as item 50:
+push answers 500 for a missing identity and cron answers 403, and cron
+checks the token before the identity while push checks the identity
+first. Both are pre-existing, neither is wrong, and changing a status
+inside a logging fix is how a logging fix breaks a retry policy.
+
+## 43 — two readings of one struct tag
+
+Filed as "not a bug, but nothing enforces it": the analyzer derives
+composite indexes from the tags via `go/types`, the SDK writes documents
+from the same tags via `reflect`, and nothing held the two readings
+together.
+
+**Examined, it was already a bug — twice.**
+
+| tag | analyzer said | runtime said | encoding/json says |
+|---|---|---|---|
+| `json:"-,"` | property `-` | property `Owner` | **`-`** |
+| `json:"a\"b"` | property `a"b` | property `a"b` | **`Owner`** |
+| `json:"-"` + `entity:"index"` | indexed, property `Owner` | refused | not stored at all |
+
+The first two are the silent failure FL20 exists to remove, arrived at
+by disagreement instead of contradiction: an index provisioned on one
+property name while the document carries another matches nothing, and
+Datastore answers an empty result without erroring. The third is a
+divergence my own CR/FL20 work introduced — the SDK started refusing
+`entity:"index"` + `json:"-"` and the analyzer kept accepting it, so the
+failure moved from analysis time (a file and a line) to first store use
+in a deployed service, with composite indexes already provisioned on a
+property no document has.
+
+### The fix: one reading, and encoding/json as the oracle
+
+`internal/entitytag` — `Kind`, `Name`, `Omitted`, taking the raw tag
+string, which is what both callers already hold. Not a shared type
+(there cannot be one across `go/types` and `reflect`), a shared **rule**.
+
+The test is the part worth keeping. It does not re-read the spec; it
+builds a struct via `reflect.StructOf` carrying the tag under test,
+marshals it, and asserts `Name` reports **the key that actually came
+out**:
+
+```go
+{`json:"-,"`,     "NOT the skip: a field named literally -"},
+{`json:"a\"b"`,   "a quote is not legal: encoding/json ignores the whole name"},
+{`json:"a b"`,    "a space is legal in a json name, surprisingly"},
+```
+
+A rule derived from reading the documentation would have agreed with
+itself and still been wrong. The value is deliberately non-zero, because
+with a zero one `omitempty` drops the field and every tag carrying it
+reads as a skip — the first version of this test failed that way and was
+telling the truth about the oracle, not about the rule.
+
+`validName` mirrors `encoding/json`'s `isValidTag` character set,
+including the space it allows and the quote it does not.
+
+And the analyzer now refuses the contradiction the SDK refuses:
+
+```
+app.go:15:2: field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags (tako/entity-index)
+```
+
+New rule id `entity-index`, documented in `docs/reference/errors.md` and
+`docs/reference/entity.md`. **This is a new refusal an existing app
+could hit** — flagged as such for the human rather than folded in
+quietly; the text mirrors the SDK's already-approved one almost word for
+word.
+
+### Validation
+
+```
+internal/entitytag     3 tests; the old runtime rule fails 2 cases, the old analyzer rule fails 1
+pkg/runtime            5 new tests, all 5 fail before item 49's change
+root package           1 new test (json:"-," indexed as "-")
+pkg/analyzer           1 new golden fixture, entityindextag
+go test ./...          19 packages ok
+go vet ./...           clean
+gofmt -l               clean (3 committed test files had drifted; reformatted)
+tako test              blog gallery hello journal shop shortlink siren — all ok,
+                       against a CLI rebuilt with the new analyzer
+```
+
+The golden carries exactly one error for a fixture with two odd tags,
+which is the point: `json:"-,"` beside it is accepted and indexed under
+`-`, so the corner is handled rather than blanket-refused.
+
+Mutation proofs, both directions: reinstating `name == "-"` (the old
+runtime rule) fails the oracle on `json:"-,"` and `json:"-,omitempty"`;
+dropping `validName` (the old analyzer rule) fails it on `json:"a\"b"`.
+
+### Also done, in passing
+
+- Dead `fields` counter in `analyzer.go` (incremented, then `_ = fields`).
+- `tagValue` in `resources.go`, unused once `entitytag.Kind` replaced it.
+
+### Discovered work
+
+- **50. Push and cron refuse in two shapes.** A missing identity is 500
+  on the push route and 403 on the cron route, and cron checks the
+  bearer token before the identity while push checks the identity first.
+  Neither is wrong; they should agree, and the honest status for tako's
+  own missing configuration is 500 on both.
+
+### Verdict
+
+**Shipped.** Agent-side validation complete. The human rows for the CR
+series, Z6, FL21 and these two are all still unwritten.

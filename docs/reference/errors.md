@@ -215,6 +215,7 @@ service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) f
 | Rule | Fires when | Page |
 |---|---|---|
 | `entity-id` | the id field is missing, duplicated, or not a string | [entity.md](entity.md) |
+| `entity-index` | an indexed field is one `json:"-"` keeps out of the document | [entity.md](entity.md) |
 | `unindexed-query` | a query filters or orders on an untagged field | [entity.md](entity.md) |
 | `query-shapes` | one function assembles a query from too many conditional filters | [entity.md](entity.md) |
 | `query-escapes` | a query is built somewhere tako cannot follow it | [entity.md](entity.md) |
@@ -222,6 +223,7 @@ service X cannot carry both traffic (timeout 45s) from Web and traffic (http2) f
 ```
 entity type Link must have exactly one field tagged entity:"id"
 entity id field Slug must be a string; got int
+field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags
 query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable
 query orders by Link.Hits, but Hits is not indexed — tag it entity:"index" to make it orderable
 search assembles one query from 6 conditional filters — that is 64 composite indexes for a single function, and Datastore allows 200 in a project; split it into separate queries whose filters are unconditional

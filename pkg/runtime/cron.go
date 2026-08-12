@@ -103,18 +103,18 @@ func CronDispatch() http.Handler {
 		// or all crons share a metric series and CronMissed cannot tell
 		// a dead cron from a healthy one beside it.
 		RefineRoute(r, routes.CronRoute(name))
-		token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if !ok {
-			http.Error(w, "cron triggers carry an OIDC bearer token", http.StatusUnauthorized)
-			return
-		}
-		if err := verifyGoogleIDToken(r.Context(), token); err != nil {
-			http.Error(w, "cron trigger rejected: "+err.Error(), http.StatusForbidden)
+		if status, err := verifyCronCaller(r, name); err != nil {
+			http.Error(w, err.Error(), status)
 			return
 		}
 		v, found := cronHandlers.Load(name)
 		if !found {
-			http.Error(w, fmt.Sprintf("no cron named %q in this service", name), http.StatusNotFound)
+			// Narrated for the same reason the auth refusals are: a 404 from
+			// tako and a 404 from Cloud Run's own router are the same three
+			// digits, and this one means the schedule outlived the handler.
+			err := fmt.Errorf("no cron named %q in this service", name)
+			logRefusal(slog.Default().With("cron", name), "cron trigger", http.StatusNotFound, err)
+			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
 		start := time.Now()
@@ -181,15 +181,57 @@ func googleSigningKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
 	return keys, nil
 }
 
-// verifyGoogleIDToken checks a Google-signed OIDC token against this
-// service's deploy-injected expectations.
-func verifyGoogleIDToken(ctx context.Context, token string) error {
-	audience := os.Getenv("TAKO_CRON_AUDIENCE")
-	invoker := os.Getenv("TAKO_CRON_INVOKER")
-	if audience == "" || invoker == "" {
-		return errors.New("this service has no cron trigger identity configured")
+// verifyCronCaller authenticates a Cloud Scheduler trigger against this
+// service's deploy-injected expectations, mirroring verifyPushCaller:
+// same token shape, same expectation pair, same refusal narration. Two
+// differences are deliberate and both are this route's existing
+// behaviour, left alone inside a logging fix and noted as item 50: there
+// is no local skip (locally the in-process ticker drives crons, so this
+// route only ever hears strangers), and the checks run token-first, so a
+// service that is BOTH unconfigured and unaddressed answers 401 rather
+// than push's 500.
+func verifyCronCaller(r *http.Request, name string) (int, error) {
+	audience, invoker := os.Getenv("TAKO_CRON_AUDIENCE"), os.Getenv("TAKO_CRON_INVOKER")
+	refuse := func(status int, err error) (int, error) {
+		logRefusal(slog.Default().With("cron", name), "cron trigger", status, err,
+			"expected_audience", audience, "expected_invoker", invoker)
+		return status, err
 	}
-	return verifyGoogleToken(ctx, token, audience, invoker)
+	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
+	if !ok {
+		return refuse(http.StatusUnauthorized, errors.New("cron triggers carry an OIDC bearer token"))
+	}
+	if audience == "" || invoker == "" {
+		return refuse(http.StatusForbidden, errors.New(
+			"cron trigger rejected: this service has no cron trigger identity configured"))
+	}
+	if err := verifyGoogleToken(r.Context(), token, audience, invoker); err != nil {
+		return refuse(http.StatusForbidden, fmt.Errorf("cron trigger rejected: %v", err))
+	}
+	return 0, nil
+}
+
+// logRefusal narrates a refused trigger: WARNING severity, the reason,
+// and whatever the route can offer toward fixing it (item 49).
+//
+// Without it the only trace is the platform's own request line, and
+// tako's 403 is indistinguishable from Cloud Run's from outside the
+// container — a stale audience after a service URL change and a missing
+// run.invoker grant look identical while having different fixes. The
+// expectations travel in the log rather than only in the response body
+// because the caller is Pub/Sub or Scheduler, which reads nothing; and
+// comparing them against the deliverer's own OIDC config IS the
+// remediation. Neither is a secret: a service URL and an SA email, both
+// readable from the deploy.
+//
+// One implementation for both routes, for the reason verifyGoogleToken
+// is one implementation: a second copy is how one route ends up quieter
+// than the other.
+func logRefusal(log *slog.Logger, what string, status int, reason error, extra ...any) {
+	// reason.Error(), not the error: a JSON handler marshals a bare
+	// errors.errorString as {} and the reason vanishes.
+	log.Warn("tako refused this "+what,
+		append([]any{"status", status, "reason", reason.Error()}, extra...)...)
 }
 
 // verifyGoogleToken is the check itself, with the expectations passed

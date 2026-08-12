@@ -115,23 +115,30 @@ func gcsNotification(attrs map[string]string, data []byte) ([]byte, bool) {
 // is nothing to sign a token with and no GCP within reach of tako dev,
 // so a local backend skips the check; the endpoint is on 127.0.0.1 and
 // its only caller is the in-process dispatcher.
-func verifyPushCaller(r *http.Request) (int, error) {
+// It narrates every refusal (item 49): the caller of a refused delivery
+// is Pub/Sub, so the response body reaches nobody who can act on it.
+func verifyPushCaller(r *http.Request, handler string) (int, error) {
 	if isLocalBackend() {
 		return 0, nil
 	}
 	audience, invoker := os.Getenv("TAKO_PUSH_AUDIENCE"), os.Getenv("TAKO_PUSH_INVOKER")
+	refuse := func(status int, err error) (int, error) {
+		logRefusal(slog.Default().With("handler", handler), "delivery", status, err,
+			"expected_audience", audience, "expected_invoker", invoker)
+		return status, err
+	}
 	if audience == "" || invoker == "" {
-		return http.StatusInternalServerError, errors.New(
-			"this service has no push identity — tako deploy injects TAKO_PUSH_AUDIENCE and " +
-				"TAKO_PUSH_INVOKER for every worker and subscriber, so this is a tako bug; " +
-				"re-run tako deploy, and file it if it persists")
+		return refuse(http.StatusInternalServerError, errors.New(
+			"this service has no push identity — tako deploy injects TAKO_PUSH_AUDIENCE and "+
+				"TAKO_PUSH_INVOKER for every worker and subscriber, so this is a tako bug; "+
+				"re-run tako deploy, and file it if it persists"))
 	}
 	token, ok := strings.CutPrefix(r.Header.Get("Authorization"), "Bearer ")
 	if !ok {
-		return http.StatusUnauthorized, errors.New("deliveries carry an OIDC bearer token")
+		return refuse(http.StatusUnauthorized, errors.New("deliveries carry an OIDC bearer token"))
 	}
 	if err := verifyGoogleToken(r.Context(), token, audience, invoker); err != nil {
-		return http.StatusForbidden, fmt.Errorf("delivery rejected: %v", err)
+		return refuse(http.StatusForbidden, fmt.Errorf("delivery rejected: %v", err))
 	}
 	return 0, nil
 }
@@ -157,7 +164,7 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 		panic("tako: PushHandler before Boot")
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if status, err := verifyPushCaller(r); err != nil {
+		if status, err := verifyPushCaller(r, name); err != nil {
 			http.Error(w, err.Error(), status)
 			return
 		}
