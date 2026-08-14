@@ -61,6 +61,7 @@
     func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).UseTemplates(ctx Ctx, set *TemplateSet) error
     func (*TemplateErrors).Error() string
+    func (*TemplateSet).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*TemplateSet).Render(ctx Ctx, template string, data any) (HTML, error)
     func (*TestApp).Advance(d time.Duration)
     func (*TestApp).AdvanceCron(cron Handler)

@@ -160,6 +160,29 @@ func (set *TemplateSet) Render(ctx Ctx, template string, data any) (HTML, error)
 	return HTML{markup: markup}, nil
 }
 
+// Fragment renders the named template on its own, without the
+// candidate's layout — exactly as SiteHandle.Fragment would, against
+// this set instead of the one currently serving.
+//
+// Use it for the surfaces an app serves as fragments. Render would not
+// refuse one, and that is the point: it renders the layout with an
+// empty "content" block, executes nothing of the fragment, and reports
+// success — so an htmx surface checked the wrong way is a surface not
+// checked at all.
+func (set *TemplateSet) Fragment(ctx Ctx, template string, data any) (HTML, error) {
+	if hooks.RenderTemplateSetFragment == nil {
+		return HTML{}, errors.New("tako: site templates are not wired — Fragment works in generated services (tako dev / deploy), not bare tests")
+	}
+	if set == nil {
+		return HTML{}, errors.New("tako: this template set was never prepared")
+	}
+	markup, err := hooks.RenderTemplateSetFragment(ctx, set.impl, template, data)
+	if err != nil {
+		return HTML{}, err
+	}
+	return HTML{markup: markup, fragment: true}, nil
+}
+
 // UseTemplates publishes a prepared set: every render after it uses the
 // new templates, and every render already under way finishes against the
 // set it started with.

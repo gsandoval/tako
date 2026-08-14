@@ -271,3 +271,85 @@ func htmlMarkup(h tako.HTML) []byte {
 	markup, _, _, _ := hooks.HTMLParts(h)
 	return markup
 }
+
+// FL27: the candidate check could not reach a fragment, and said so by
+// reporting success.
+//
+// TemplateSet.Render renders the layout with the named template filling
+// its "content" block. Handed a FRAGMENT — which defines no content —
+// it renders an empty shell and returns nil, so an app validating its
+// htmx surfaces against a candidate was told every one of them was fine
+// without executing a single line of them. That is worse than not
+// having the check, and site.md tells people to run exactly that loop
+// over "every surface you would be sorry to break".
+func TestTheTrapThisFixes(t *testing.T) {
+	liveSite(t, map[string]string{"layout.html": shell, "home.html": `{{ define "content" }}live{{ end }}`})
+	// A fragment whose partial went missing: parses, cannot render.
+	candidate := templateFS(map[string]string{
+		"layout.html":        shell,
+		"admin/preview.html": `<div>{{ template "site/card.html" . }}</div>`,
+	})
+	set, err := prepareTemplates(candidate)
+	if err != nil {
+		t.Fatalf("the candidate did not parse, so this proves nothing: %v", err)
+	}
+
+	// The old way: no error, and an empty document.
+	out, err := renderTemplateSet(context.Background(), set, "admin/preview.html", nil)
+	if err != nil || strings.Contains(string(out), "card") {
+		t.Fatalf("the premise changed: Render on a fragment gave %q, %v", out, err)
+	}
+
+	// The fix: executing the fragment itself finds what Render could not.
+	if _, err := renderTemplateSetFragment(context.Background(), set, "admin/preview.html", nil); err == nil {
+		t.Fatal("a fragment whose {{ template }} target is gone rendered clean — the check " +
+			"an app runs over its htmx surfaces would pass and then break them")
+	} else if !strings.Contains(err.Error(), "card.html") {
+		t.Errorf("the failure does not name the missing template: %v", err)
+	}
+}
+
+func TestACandidateFragmentRendersWithoutTheShell(t *testing.T) {
+	liveSite(t, map[string]string{"layout.html": shell, "home.html": `{{ define "content" }}live{{ end }}`})
+	set, err := prepareTemplates(templateFS(map[string]string{
+		"layout.html":        shell,
+		"admin/preview.html": `<div>candidate fragment</div>`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := renderTemplateSetFragment(context.Background(), set, "admin/preview.html", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(out); !strings.Contains(got, "candidate fragment") || strings.Contains(got, "doctype") {
+		t.Errorf("fragment render = %q, want the fragment's own markup and no shell", got)
+	}
+	// And publishing is still a separate act.
+	live, err := renderSite(context.Background(), "home.html", nil)
+	if err != nil || !strings.Contains(string(live), "live") {
+		t.Fatalf("rendering a candidate fragment disturbed the live set: %q, %v", live, err)
+	}
+}
+
+// The SDK's own pair, so the seam is proved wired the way Render's is.
+func TestTheSDKPathRendersACandidateFragment(t *testing.T) {
+	liveSite(t, map[string]string{"layout.html": shell, "home.html": `{{ define "content" }}live{{ end }}`})
+	site := tako.Site("web")
+	ctx := &requestCtx{Context: context.Background()}
+
+	set, err := site.PrepareTemplates(ctx, templateFS(map[string]string{
+		"layout.html":        shell,
+		"admin/preview.html": `<div>through the SDK</div>`,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	frag, err := set.Fragment(ctx, "admin/preview.html", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(htmlMarkup(frag)); !strings.Contains(got, "through the SDK") || strings.Contains(got, "doctype") {
+		t.Errorf("candidate fragment = %q", got)
+	}
+}

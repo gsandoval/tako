@@ -24303,3 +24303,67 @@ tako test        all seven examples ok
 2026-08-10, and the reason nobody could find it is now fixed too. Their
 `internal/target` workaround can go whenever they like — three lines
 that set environment variables to configure a library.
+
+## FL27 — the fragment the candidate check could not reach (2026-08-14)
+
+Two consumer findings against FL23, both correct, both mine.
+
+### 1. Checking a fragment reported success without executing it
+
+`renderTemplateSet` hard-coded the layout as root, so a fragment handed
+to `TemplateSet.Render` rendered the shell with an empty `content`
+block — a fragment defines none — and returned nil. Probed before
+fixing:
+
+```
+err  = <nil>
+body = "<!doctype html><html><body></body></html>"
+```
+
+So it was not that the eight htmx surfaces could not be checked; it was
+that **checking them passed**. That is worse than the gap, and
+`site.md` tells people to run exactly that loop over "every surface you
+would be sorry to break".
+
+`TemplateSet.Fragment` mirrors `SiteHandle.Fragment` the way
+`TemplateSet.Render` mirrors `SiteHandle.Render` — two entry points in
+the runtime and two hooks, for the same reason `renderSite` and
+`renderFragment` are two. Parse errors were never the gap:
+`PrepareTemplates` refuses on any parse failure anywhere in the tree.
+What is now reachable is the execute-time case — a fragment whose
+`{{ template }}` target went missing.
+
+The test that matters asserts the OLD behaviour as the premise and then
+the new call catching what it could not, so it fails today by passing.
+
+### 2. "Load its stored set at boot" named an affordance tako lacks
+
+There is no startup callback in the surface — `grep -iE
+"onstart|startup|func Boot" docs/api/surface.txt` finds nothing — and
+`PrepareTemplates` needs a `Ctx` and a wired site, both of which arrive
+with the first request. The recommendation could not be followed.
+
+`site.md` now describes the lazy shape that works: the first render in a
+process notices its stored generation is newer than the one it serves,
+publishes once, and answers. With the sketch, because "be lazy" without
+the shape is the same kind of advice as the sentence it replaces.
+
+The per-instance limit is unchanged — only how an app converges after a
+restart, which is the app's job and now says so: "there is no hook that
+would decide for it."
+
+### Validation
+
+```
+pkg/runtime    3 new tests (the trap, a fragment rendering shell-free,
+               the SDK path); the first fails today by SUCCEEDING
+go test ./...  19 packages ok · -race ok · vet, gofmt clean
+tako test      all seven examples ok
+API            one method: (*TemplateSet).Fragment
+```
+
+### Verdict
+
+**Shipped.** Filed by the app consuming FL23 within hours of it landing,
+which is the fastest a design mistake has ever come back — and both
+halves were promises the feature made and could not keep.

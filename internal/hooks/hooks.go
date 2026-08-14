@@ -184,8 +184,15 @@ var PrepareTemplates func(fsys fs.FS) (any, error)
 // UseTemplates publishes a prepared set atomically.
 var UseTemplates func(set any) error
 
-// RenderTemplateSet renders against a prepared set without publishing it.
+// RenderTemplateSet renders a PAGE against a prepared set without
+// publishing it; RenderTemplateSetFragment renders a fragment, which is
+// the same split site.Render and site.Fragment already have. A fragment
+// handed to the page one renders an empty shell and reports success
+// (FL27), so the two are not interchangeable.
 var RenderTemplateSet func(ctx context.Context, set any, name string, data any) ([]byte, error)
+
+// RenderTemplateSetFragment renders a fragment against a prepared set.
+var RenderTemplateSetFragment func(ctx context.Context, set any, name string, data any) ([]byte, error)
 
 // RenderMarkdown renders markdown under the site's declared posture
 // (sanitized unless WithTrustedHTML) — site.Markdown calls through.

@@ -116,6 +116,7 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 	hooks.PrepareTemplates = prepareTemplates
 	hooks.UseTemplates = useTemplates
 	hooks.RenderTemplateSet = renderTemplateSet
+	hooks.RenderTemplateSetFragment = renderTemplateSetFragment
 	siteTrustedHTML = opts.TrustedHTML
 	hooks.RenderMarkdown = func(src string) ([]byte, error) {
 		return RenderMarkdown(src, siteTrustedHTML)
@@ -576,13 +577,36 @@ func useTemplates(candidate any) error {
 	return nil
 }
 
-// renderTemplateSet renders against a candidate WITHOUT publishing it —
-// how an app proves a set renders before an editor's mistake reaches a
-// reader.
+// renderTemplateSet and renderTemplateSetFragment render against a
+// candidate WITHOUT publishing it — how an app proves a set renders
+// before an editor's mistake reaches a reader.
+//
+// Two of them for the reason there are two of renderSite and
+// renderFragment: a page renders inside the shell and a fragment renders
+// itself. Handing a fragment to the page one is not a smaller check, it
+// is a check that passes without executing the fragment at all — the
+// layout renders, its "content" block is empty because a fragment
+// defines none, and nothing reports a thing (FL27).
 func renderTemplateSet(ctx context.Context, candidate any, name string, data any) ([]byte, error) {
-	set, ok := candidate.(*siteSet)
-	if !ok || set == nil {
-		return nil, errors.New("tako: Render needs a set from PrepareTemplates on this site")
+	set, err := candidateSet(candidate, "Render")
+	if err != nil {
+		return nil, err
 	}
 	return renderIn(set, ctx, name, true, data)
+}
+
+func renderTemplateSetFragment(ctx context.Context, candidate any, name string, data any) ([]byte, error) {
+	set, err := candidateSet(candidate, "Fragment")
+	if err != nil {
+		return nil, err
+	}
+	return renderIn(set, ctx, name, false, data)
+}
+
+func candidateSet(candidate any, verb string) (*siteSet, error) {
+	set, ok := candidate.(*siteSet)
+	if !ok || set == nil {
+		return nil, errors.New("tako: " + verb + " needs a set from PrepareTemplates on this site")
+	}
+	return set, nil
 }

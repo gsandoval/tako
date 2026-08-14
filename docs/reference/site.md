@@ -201,10 +201,16 @@ if err != nil {
 }
 
 // Prove it RENDERS before anyone reads it — see below for why parsing is
-// not enough. Render every surface you would be sorry to break.
-for _, page := range publicSurfaces {
+// not enough. Every surface you would be sorry to break, and each one
+// the way it is served: Render for pages, Fragment for fragments.
+for _, page := range publicPages {
     if _, err := set.Render(ctx, page, sampleData(page)); err != nil {
         return site.Fragment(ctx, "admin/errors.html", map[string]string{page: err.Error()})
+    }
+}
+for _, frag := range publicFragments {
+    if _, err := set.Fragment(ctx, frag, sampleData(frag)); err != nil {
+        return site.Fragment(ctx, "admin/errors.html", map[string]string{frag: err.Error()})
     }
 }
 
@@ -219,6 +225,12 @@ break it exists to prevent. `TemplateSet.Render` renders against the
 candidate without publishing it, and it is the same call `site.Render`
 makes, so what you prove is what visitors get.
 
+**Check a fragment with `Fragment`, not `Render`.** `Render` puts the
+named template inside the layout, so handed a fragment — which defines
+no `content` block — it renders an empty shell, executes nothing of the
+fragment, and returns no error. A surface checked the wrong way is a
+surface not checked at all.
+
 `PrepareTemplates` refuses a candidate with any parse error and names
 **every** template that failed, so an editor hears about all their
 mistakes on one save. Nothing is published unless you publish it, and a
@@ -227,11 +239,31 @@ render already under way finishes against the set it started with.
 **The swap is per instance, and this is the part to design around.** It
 replaces the set in the process that served the request. A service
 running more than one instance leaves the others serving what they
-booted with until they restart — so an app that lets editors write
-templates should **load its stored set at boot**, which makes a restart
-converge rather than revert. Tako has no "tell every instance"
-mechanism; if an editor must never see their change flicker, run that
-service at one instance.
+booted with until they restart, and a restart brings back the templates
+the binary shipped with.
+
+Converging is the app's job, and tako has no startup callback to hang it
+on: `PrepareTemplates` needs a `Ctx` and a wired site, both of which
+arrive with the first request. So the shape that works is **lazy** — the
+first render in a process notices its stored generation is newer than
+the one it is serving and publishes it, once, before answering:
+
+```go
+func currentTemplates(ctx tako.Ctx) error {
+    want, err := settings.Get(ctx, "templates")   // the app's own record
+    if err != nil || want.Generation == loaded.Load() {
+        return err
+    }
+    set, err := site.PrepareTemplates(ctx, storedFS(ctx, want.Generation))
+    ...
+    loaded.Store(want.Generation)
+    return site.UseTemplates(ctx, set)
+}
+```
+
+Tako has no "tell every instance" mechanism either; if an editor must
+never see their change flicker between instances, run that service at
+one instance.
 
 `PrepareTemplates` and `UseTemplates` are also not atomic as a pair: two
 editors saving at once can have the second publish and the first then
@@ -240,7 +272,8 @@ saving in your app — a [lock](lock.md) around the read-modify-publish is
 enough.
 
 Tako never stores a replaced set. The app owns its storage, decides what
-a draft is, and reloads at boot.
+a draft is, and decides when to reload — there is no hook that would
+decide for it.
 
 ## Local
 
