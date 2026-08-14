@@ -2,6 +2,10 @@ package tako
 
 import (
 	"errors"
+	"fmt"
+	"io/fs"
+	"sort"
+	"strings"
 
 	"github.com/gsandoval/tako/internal/hooks"
 )
@@ -105,4 +109,100 @@ func Redirect(target string) (HTML, error) {
 // and a client-side navigation is not a cacheable response about a URL.
 func RedirectPermanent(target string) (HTML, error) {
 	return HTML{redirect: target, status: 301}, nil
+}
+
+// PrepareTemplates parses fsys as a complete candidate template set and
+// returns it WITHOUT installing it. The set is the whole of
+// <site>/templates: a candidate is a set, not a file, because templates
+// reference each other.
+//
+// A candidate with any parse error is refused whole, and the error is a
+// *TemplateErrors naming every template that failed — an editor gets all
+// their mistakes at once rather than one per save.
+//
+// Parsing clean is NOT proof the set renders: Go resolves
+// {{ template "card.html" }} at execute time, so a set that lost a
+// partial parses perfectly and fails on the first page that uses it.
+// That is what TemplateSet.Render is for — render every surface you
+// care about against the candidate, and call UseTemplates only if they
+// all come back.
+func (s *SiteHandle) PrepareTemplates(ctx Ctx, fsys fs.FS) (*TemplateSet, error) {
+	if hooks.PrepareTemplates == nil {
+		return nil, errors.New("tako: site templates are not wired — PrepareTemplates works in generated services (tako dev / deploy), not bare tests")
+	}
+	set, err := hooks.PrepareTemplates(fsys)
+	if err != nil {
+		return nil, err
+	}
+	return &TemplateSet{impl: set}, nil
+}
+
+// TemplateSet is a parsed candidate set, not yet serving. Render it to
+// find out whether it works; UseTemplates publishes it.
+type TemplateSet struct {
+	impl any
+}
+
+// Render renders the named template inside the candidate's layout,
+// exactly as SiteHandle.Render would — against this set instead of the
+// one currently serving, and without publishing anything.
+func (set *TemplateSet) Render(ctx Ctx, template string, data any) (HTML, error) {
+	if hooks.RenderTemplateSet == nil {
+		return HTML{}, errors.New("tako: site templates are not wired — Render works in generated services (tako dev / deploy), not bare tests")
+	}
+	if set == nil {
+		return HTML{}, errors.New("tako: this template set was never prepared")
+	}
+	markup, err := hooks.RenderTemplateSet(ctx, set.impl, template, data)
+	if err != nil {
+		return HTML{}, err
+	}
+	return HTML{markup: markup}, nil
+}
+
+// UseTemplates publishes a prepared set: every render after it uses the
+// new templates, and every render already under way finishes against the
+// set it started with.
+//
+// The swap is per PROCESS. A deployed service that scales to more than
+// one instance publishes into the instance that served this request, and
+// the others keep serving what they booted with until they restart —
+// which is why an app that replaces templates should load its stored set
+// at boot, so a restart converges rather than reverting.
+func (s *SiteHandle) UseTemplates(ctx Ctx, set *TemplateSet) error {
+	if hooks.UseTemplates == nil {
+		return errors.New("tako: site templates are not wired — UseTemplates works in generated services (tako dev / deploy), not bare tests")
+	}
+	if set == nil {
+		return errors.New("tako: UseTemplates needs a set from PrepareTemplates")
+	}
+	return hooks.UseTemplates(set.impl)
+}
+
+// TemplateErrors reports which templates in a refused candidate set
+// failed to parse, and why. Keyed by path relative to templates/ — the
+// name the editor typed, and the name Render takes.
+//
+// The values are strings rather than errors because their destination is
+// a person: an admin renders them back to whoever made the mistake, and
+// often serializes them on the way.
+type TemplateErrors struct {
+	Failed map[string]string
+}
+
+func (e *TemplateErrors) Error() string {
+	names := make([]string, 0, len(e.Failed))
+	for name := range e.Failed {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 1 {
+		return fmt.Sprintf("template %s: %s", names[0], e.Failed[names[0]])
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d templates did not parse, and none of the set was published:", len(names))
+	for _, name := range names {
+		fmt.Fprintf(&b, "\n  %s: %s", name, e.Failed[name])
+	}
+	return b.String()
 }

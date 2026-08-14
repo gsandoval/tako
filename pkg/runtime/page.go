@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"sync/atomic"
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
@@ -77,10 +78,31 @@ const csrfCookie = "__tako_csrf"
 // csrfRejection is the exact 403 text — product UX, pinned by tests.
 const csrfRejection = "CSRF token missing or invalid — forms need {{ csrf }}"
 
-// siteTemplates is the parsed template set: one pre-parsed clone per
-// page template, each sharing layout.html. Parsed once per process
-// (dev restarts per cycle; embedded content is immutable per binary).
-var siteTemplates map[string]*template.Template
+// siteSet is the whole parsed template registry as ONE value: the
+// templates, the per-template parse errors, whether the set has a shell,
+// and the setup failure that makes the whole thing unrenderable.
+//
+// One value because they are read together and must never be mixed
+// (FL23). renderNamed used to read siteParseErrors and then
+// siteTemplates from two package vars, so a set arriving between those
+// two lines could answer "template not found" for a template that had
+// just been installed, or report a parse error belonging to the set
+// before it.
+//
+// A siteSet is IMMUTABLE once published. Every field is built into
+// locals and the whole thing is stored in one atomic write, so a reader
+// either sees the old set entirely or the new one entirely.
+type siteSet struct {
+	templates map[string]*template.Template
+	parseErrs map[string]error
+	setupErr  error
+	hasLayout bool
+}
+
+// currentSet is the published set. Loaded once per render, which is what
+// lets an in-flight render finish against the set it started with even
+// as a newer one is published under it.
+var currentSet atomic.Pointer[siteSet]
 
 // RegisterSiteTemplates parses <site>/templates for site.Render:
 // layout.html is the shell, every other *.html fills its "content"
@@ -91,33 +113,49 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 	fallbackNotFound = opts.NotFound
 	hooks.RenderSite = renderSite
 	hooks.RenderFragment = renderFragment
+	hooks.PrepareTemplates = prepareTemplates
+	hooks.UseTemplates = useTemplates
+	hooks.RenderTemplateSet = renderTemplateSet
 	siteTrustedHTML = opts.TrustedHTML
 	hooks.RenderMarkdown = func(src string) ([]byte, error) {
 		return RenderMarkdown(src, siteTrustedHTML)
 	}
-	siteTemplates = map[string]*template.Template{}
-	siteParseErrors = map[string]error{}
+	// Boot is prepare-then-use, so there is ONE parser and the set a
+	// deployed service starts with is built exactly the way a replacement
+	// is. A boot-time failure publishes the set carrying it, because
+	// "the site has no templates/" has to reach a render as an error and
+	// not as an empty registry that answers "not found" for everything.
+	currentSet.Store(parseSiteTemplates(fsys))
+}
 
+// parseSiteTemplates builds a complete set from fsys. It touches no
+// package state: everything lands in locals and the caller decides
+// whether the result is ever published (FL23). That is what makes a
+// candidate set possible — and it is also why a half-built registry can
+// no longer be observed, which a mutex alone would not have fixed.
+func parseSiteTemplates(fsys fs.FS) *siteSet {
+	set := &siteSet{
+		templates: map[string]*template.Template{},
+		parseErrs: map[string]error{},
+	}
 	if _, err := fs.ReadDir(fsys, "templates"); err != nil {
 		// Not "web/templates/…": the site directory is whatever tako.Site
 		// was given, and naming a path this app may not have sends the
 		// reader looking for the wrong thing.
-		siteSetupError = errors.New("the site has no templates/ directory — site.Render needs templates/layout.html inside the declared site directory, plus one file per page")
-		return
+		set.setupErr = errors.New("the site has no templates/ directory — site.Render needs templates/layout.html inside the declared site directory, plus one file per page")
+		return set
 	}
 	// layout.html is OPTIONAL: a site whose shell comes from a static
 	// generator (Hugo, etc.) renders only FRAGMENTS — site.Render is
 	// what needs the shell, and says so at call time.
 	layout := template.New("layout.html").Funcs(siteFuncs())
-	siteHasLayout = false
 	if _, statErr := fs.Stat(fsys, "templates/layout.html"); statErr == nil {
 		if _, layoutErr := layout.ParseFS(fsys, "templates/layout.html"); layoutErr != nil {
-			siteSetupError = fmt.Errorf("site templates: %v (layout.html is the shell every page renders inside)", layoutErr)
-			return
+			set.setupErr = fmt.Errorf("site templates: %v (layout.html is the shell every page renders inside)", layoutErr)
+			return set
 		}
-		siteHasLayout = true
+		set.hasLayout = true
 	}
-	siteSetupError = nil
 
 	// Two tiers: PAGES define the layout's "content" block (each gets
 	// its own clone — their block names would collide in one set);
@@ -154,7 +192,7 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 		}
 		raw, readErr := fs.ReadFile(fsys, p)
 		if readErr != nil {
-			siteParseErrors[name] = readErr
+			set.parseErrs[name] = readErr
 			return nil
 		}
 		if definesContent(string(raw)) {
@@ -165,18 +203,18 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 		return nil
 	})
 	if walkErr != nil {
-		siteSetupError = fmt.Errorf("site templates: %v", walkErr)
-		return
+		set.setupErr = fmt.Errorf("site templates: %v", walkErr)
+		return set
 	}
 
 	for _, t := range partials {
 		if _, err := layout.New(t.name).Parse(t.src); err != nil {
-			siteParseErrors[t.name] = err
+			set.parseErrs[t.name] = err
 		}
 	}
 	for _, t := range partials {
-		if siteParseErrors[t.name] == nil {
-			siteTemplates[t.name] = layout // fragments render from the shared base
+		if set.parseErrs[t.name] == nil {
+			set.templates[t.name] = layout // fragments render from the shared base
 		}
 	}
 	for _, p := range pages {
@@ -185,48 +223,59 @@ func RegisterSiteTemplates(fsys fs.FS, opts SiteOptions) {
 			_, err = t.New(p.name).Parse(p.src)
 		}
 		if err != nil {
-			siteParseErrors[p.name] = err
+			set.parseErrs[p.name] = err
 			continue
 		}
-		siteTemplates[p.name] = t
+		set.templates[p.name] = t
 	}
+	return set
 }
 
 var definesContentRe = regexp.MustCompile(`\{\{-?\s*(define|block)\s+"content"`)
 
 func definesContent(src string) bool { return definesContentRe.MatchString(src) }
 
-var (
-	siteParseErrors = map[string]error{}
-	siteSetupError  error
-	// siteHasLayout gates site.Render: fragments never need the shell.
-	siteHasLayout bool
-	// siteTrustedHTML is the site's declared markdown posture
-	// (WithTrustedHTML): sanitized by default, raw when opted out.
-	siteTrustedHTML bool
-)
+// siteTrustedHTML is the site's declared markdown posture
+// (WithTrustedHTML): sanitized by default, raw when opted out. It is
+// declaration-time configuration rather than part of the set — swapping
+// templates never changes a site's markdown posture.
+var siteTrustedHTML bool
 
 func renderSite(ctx context.Context, name string, data any) ([]byte, error) {
-	if siteSetupError == nil && !siteHasLayout {
-		return nil, errors.New("site.Render needs templates/layout.html (the shell every page renders inside) — a site whose shell is generated (Hugo, etc.) renders fragments via site.Fragment instead")
-	}
-	return renderNamed(ctx, name, "layout.html", data)
+	return renderIn(currentSet.Load(), ctx, name, true, data)
 }
 
 // renderFragment executes the named template itself — no layout, the
 // htmx partial path. Same template set, same funcs, same escaping.
 func renderFragment(ctx context.Context, name string, data any) ([]byte, error) {
-	return renderNamed(ctx, name, name, data)
+	return renderIn(currentSet.Load(), ctx, name, false, data)
 }
 
-func renderNamed(ctx context.Context, name, root string, data any) ([]byte, error) {
-	if siteSetupError != nil {
-		return nil, siteSetupError
+// renderIn renders from ONE set, handed in. Every caller loads the
+// published pointer exactly once (or brings a candidate), so a render
+// finishes against the set it started with (FL23).
+func renderIn(set *siteSet, ctx context.Context, name string, withLayout bool, data any) ([]byte, error) {
+	if set == nil {
+		return nil, errors.New("tako: site templates are not registered — a generated service registers them at boot")
 	}
-	if err, ok := siteParseErrors[name]; ok {
+	if withLayout && set.setupErr == nil && !set.hasLayout {
+		return nil, errors.New("site.Render needs templates/layout.html (the shell every page renders inside) — a site whose shell is generated (Hugo, etc.) renders fragments via site.Fragment instead")
+	}
+	root := name
+	if withLayout {
+		root = "layout.html"
+	}
+	return renderNamed(set, ctx, name, root, data)
+}
+
+func renderNamed(set *siteSet, ctx context.Context, name, root string, data any) ([]byte, error) {
+	if set.setupErr != nil {
+		return nil, set.setupErr
+	}
+	if err, ok := set.parseErrs[name]; ok {
 		return nil, fmt.Errorf("template %s: %v", name, err)
 	}
-	t, ok := siteTemplates[name]
+	t, ok := set.templates[name]
 	if !ok {
 		return nil, fmt.Errorf("template %s not found under web/templates/ (templates parse at startup; the layout is layout.html)", name)
 	}
@@ -489,4 +538,51 @@ func cacheControl(maxAge int) string {
 		return "no-cache"
 	}
 	return fmt.Sprintf("public, max-age=%d", maxAge)
+}
+
+// --- replacing the set at run time (FL23) -----------------------------
+//
+// An app that lets an editor write a template needs three things, and
+// the middle one is the reason this is not a single call: a candidate
+// must be RENDERABLE before it is published, not merely parseable. Go
+// resolves {{ template "x" }} at execute time, so a set that lost a
+// partial parses perfectly and fails on the first page that uses it.
+
+// prepareTemplates parses a candidate set and hands it back unpublished.
+// A set with any parse error is refused whole — publishing a partial set
+// would install exactly the "template not found" this exists to prevent.
+func prepareTemplates(fsys fs.FS) (any, error) {
+	set := parseSiteTemplates(fsys)
+	if set.setupErr != nil {
+		return nil, set.setupErr
+	}
+	if len(set.parseErrs) > 0 {
+		failed := make(map[string]string, len(set.parseErrs))
+		for name, err := range set.parseErrs {
+			failed[name] = err.Error()
+		}
+		return nil, &tako.TemplateErrors{Failed: failed}
+	}
+	return set, nil
+}
+
+// useTemplates publishes a prepared set in one atomic write.
+func useTemplates(candidate any) error {
+	set, ok := candidate.(*siteSet)
+	if !ok || set == nil {
+		return errors.New("tako: UseTemplates needs a set from PrepareTemplates on this site")
+	}
+	currentSet.Store(set)
+	return nil
+}
+
+// renderTemplateSet renders against a candidate WITHOUT publishing it —
+// how an app proves a set renders before an editor's mistake reaches a
+// reader.
+func renderTemplateSet(ctx context.Context, candidate any, name string, data any) ([]byte, error) {
+	set, ok := candidate.(*siteSet)
+	if !ok || set == nil {
+		return nil, errors.New("tako: Render needs a set from PrepareTemplates on this site")
+	}
+	return renderIn(set, ctx, name, true, data)
 }

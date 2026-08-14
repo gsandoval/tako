@@ -273,6 +273,8 @@ var symbolPage = map[string]string{
 	"RedirectPermanent": "pages.md",
 	"Site":              "site.md",
 	"SiteHandle":        "site.md",
+	"TemplateSet":       "site.md",
+	"TemplateErrors":    "site.md",
 	"SiteConfig":        "site.md",
 	// The pages tako renders on the app's behalf live with the site,
 	// because that is what they wear.

@@ -23439,3 +23439,303 @@ after the generic 403 fails the classification test.
 
 **Shipped and live-validated.** The friction entry is flauta's to close
 in its own log — a tako session never writes there.
+
+## FL23 — a template set that can be replaced (DX proposal, awaiting approval)
+
+Friction filed 2026-08-12, sharpened 2026-08-13, verdict **worth asking
+for** and the only entry in flauta's log with **no app-side workaround
+worth taking**. It blocks M8's last slice: an editor saving a template
+from the admin UI.
+
+### What exists
+
+`RegisterSiteTemplates` parses the set at startup into
+`var siteTemplates map[string]*template.Template`, and `renderSite`
+reads it. **No mutex, no atomic, no re-registration path.** The function
+is exported and idempotent in shape, so calling it again *looks*
+supported; doing it while a request renders is a concurrent map read and
+write, and Go's runtime kills the process for that. Verified at
+`af82c3c`.
+
+Four package-level vars are really one value — `siteTemplates`,
+`siteParseErrors`, `siteSetupError`, `siteHasLayout` — and a swap that
+moved them one at a time could hand a render new templates with old
+parse errors.
+
+### The surface
+
+One method on the declared site:
+
+```go
+// LoadTemplates parses fsys as a complete candidate template set and
+// installs it. All or nothing: if any template fails to parse, the live
+// set is untouched and the error names every file that failed.
+func (s *SiteHandle) LoadTemplates(ctx Ctx, fsys fs.FS) error
+
+// TemplateErrors reports which templates in a refused set failed, and
+// why. Keyed by path relative to templates/ — the name the editor sees.
+type TemplateErrors struct {
+	Failed map[string]string
+}
+```
+
+`Failed` holds strings rather than `error` values on purpose: the admin
+UI's job is to hand them back to whoever typed the mistake, which means
+rendering them and often serializing them.
+
+**The app's half, in the order that matters:**
+
+```go
+func saveTemplate(ctx tako.Ctx, req SaveReq) (tako.HTML, error) {
+	// A candidate SET, not a file: templates reference each other, so
+	// one validated file can still produce a set that will not render.
+	next := templatesWith(current, req.Path, req.Source)
+
+	if err := site.LoadTemplates(ctx, next); err != nil {
+		var bad *tako.TemplateErrors
+		if errors.As(err, &bad) {
+			return site.Fragment(ctx, "admin/template-errors.html", bad.Failed)
+		}
+		return tako.HTML{}, err
+	}
+	// Only now is it worth storing: a set that would not load is not a
+	// draft, it is a broken site nobody has served yet.
+	return site.Fragment(ctx, "admin/saved.html", nil), posts.Put(ctx, req.Path, req.Source)
+}
+```
+
+Validate-then-persist is the shape the all-or-nothing rule exists to
+make possible, which is why the snippet leads with it.
+
+### How it works
+
+The four vars become one immutable struct behind an `atomic.Pointer`:
+
+```go
+type templateSet struct {
+	byName    map[string]*template.Template
+	parseErr  map[string]error
+	setupErr  error
+	hasLayout bool
+}
+var siteSet atomic.Pointer[templateSet]
+```
+
+`renderNamed` loads the pointer **once** and renders from that value, so
+an in-flight render finishes against the set it started with — flauta's
+second requirement, which falls out of the design rather than needing
+machinery. `RegisterSiteTemplates` keeps its signature and becomes the
+boot-time caller of the same parse, so there is one parser and not two.
+
+### Against the six rules
+
+1. **Declared noun** — no new global; a method on the site already
+   declared. 2. **One constructor shape** — no new constructor.
+3. **One method shape** — `(Ctx, …) error`; `Ctx` first because the rule
+says so and because the swap is worth logging with the request that
+caused it. 6. **No primitive owns a general concept** — scoped to the
+handle, not a `tako.Templates` namespace.
+
+Rule 4 (**one verb vocabulary**) is the one it strains: `Load` is a new
+verb beside `Render`/`Fragment`/`Markdown`, and the store verbs
+(`Get`/`Put`/`Delete`) do not fit something with no key. `LoadTemplates`
+reads as what it does. **Flagged rather than settled** — if you prefer
+`SetTemplates` or `ReplaceTemplates`, now is the moment, because it is
+an exported symbol and renaming it later is its own task.
+
+### The thing to rule on: a swap is per-INSTANCE
+
+Cloud Run autoscales, and this replaces the set **in one process**. An
+editor saving a template changes the instance that served their request;
+every other live instance keeps rendering the old set until it restarts.
+With min-instances 1 and a quiet site that is invisible. Under any real
+concurrency it is an editor seeing their change flicker in and out
+depending on which instance answers.
+
+Tako has no mechanism for "tell every instance" and building one is a
+subsystem, not this task. Three honest options:
+
+- **A. Ship it per-instance, document the limit.** The app loads its
+  stored set at boot, so a restart converges, and the window is one
+  deploy or one scale event. Recommended: it unblocks M8, and the
+  alternative to a per-instance swap today is no swap at all.
+- **B. Hold until there is a coherence story** (a lease-driven reload, a
+  topic every instance subscribes to). Correct, and it is a milestone,
+  not a slice.
+- **C. Ship A, and make the limit structural** — a note in the reference
+  plus a `SiteConfig` field that pins the site's service to
+  `MaxInstances: 1` while template editing is on. Cheap, honest, and it
+  makes the tradeoff the app's decision rather than a footnote.
+
+I recommend **A**, with C's documentation but not C's field: pinning
+instances from a template feature couples two unrelated things, and an
+app that wants max=1 can already say so.
+
+### Scope
+
+`pkg/runtime/page.go` (the set struct, the atomic, one parser),
+`site.go` (`LoadTemplates`, `TemplateErrors`), `docs/reference/site.md`,
+`docs/api/surface.txt` via the lock.
+
+**Non-goals**: persistence (tako never stores a swapped set — the app
+owns its storage and reloads at boot); per-file swaps; a watcher; a
+separate validate-only call, since a failed `LoadTemplates` already
+validates without changing anything; any change to `tako dev`'s reload.
+
+### Tests
+
+- **The crash that exists today**: concurrent renders + a re-register
+  under `-race`. Fails now, passes after.
+- All-or-nothing: a candidate with one broken template is refused whole,
+  and the live set still renders the page that was already working.
+- `TemplateErrors.Failed` is keyed by path, with every failure present —
+  not just the first.
+- An in-flight render finishes against its own set (swap mid-render).
+- The boot path is unchanged: existing site tests stay green untouched.
+
+### Gate
+
+Automated tier is the `-race` test. Scripted tier: `tako dev` on the
+journal example, edit a template through a test handler, watch a
+subsequent request render the new one and a broken candidate leave the
+old one serving.
+
+**Status: superseded by the amendment below; approved 2026-08-14 with ruling A.**
+
+### FL23 — amended before it was built: the gate above is on the wrong property
+
+The proposal gates publication on **parsing**, and parsing is not the
+property that matters. Go resolves `{{ template "site/card.html" }}` at
+EXECUTE time, not parse time — measured, not assumed:
+
+```
+parse error:   <nil>
+execute error: html/template:page.html:1:22: no such template "site/card.html"
+```
+
+So a candidate set that lost a partial parses perfectly and fails on the
+first page that uses it. `LoadTemplates` would have waved it through and
+the site would have 500'd — through the gate built to prevent exactly
+that. The point came from flauta's own read of the same file, and it is
+correct.
+
+**The shape that follows**, adopted over the one above: a candidate must
+be *renderable* before it is published, which means it has to exist as a
+value the app can render against.
+
+```go
+func (s *SiteHandle) PrepareTemplates(ctx Ctx, fsys fs.FS) (*TemplateSet, error)
+func (set *TemplateSet) Render(ctx Ctx, name string, data any) (HTML, error)
+func (s *SiteHandle) UseTemplates(ctx Ctx, set *TemplateSet) error
+```
+
+flauta renders its thirteen public surfaces against the candidate and
+publishes only if all thirteen come back. Three notes on the diff from
+flauta's version of this sketch:
+
+- **`Ctx` first on all three** (rule 3), where the sketch omitted it on
+  `PrepareTemplates`, and `UseTemplates` returns `error` where the sketch
+  returned nothing — which also gives it somewhere to refuse a nil or
+  foreign set instead of panicking inside a later render.
+- This is **better on rule 4** than `LoadTemplates` was: `TemplateSet.Render`
+  is the verb the site already has, with the signature it already has, so
+  the feature adds no new vocabulary.
+- `TemplateSet.Render` incidentally gives markup-from-a-candidate without
+  opening a general `HTML`-from-bytes constructor.
+
+Unchanged from the proposal: the atomic swap, the single load per render,
+`RegisterSiteTemplates` keeping its signature as prepare-then-use, the
+`-race` test, and every non-goal.
+
+**Ruling A (owner, 2026-08-14): ship it per-instance and document the
+limit.** A publish replaces the set in the process that served the
+request; other instances keep theirs until they restart. The app loads
+its stored set at boot, so a restart converges.
+
+**One hazard the split introduces**, worth stating where the feature is
+described rather than discovering it in production: prepare-then-use is
+not atomic as a pair. Two editors saving at once can have B publish and
+then A publish a set prepared before B's edit, silently reverting it.
+Last-writer-wins is correct for `Use` alone; serializing save is the
+app's business, and it is cheap there.
+
+### FL23 — shipped (2026-08-14)
+
+Built to the amended shape, ruling A.
+
+**The registry is one value.** `siteSet` holds the templates, the
+per-template parse errors, the setup error and `hasLayout`;
+`parseSiteTemplates` builds it entirely in locals and returns it, and
+`currentSet atomic.Pointer[siteSet]` is the only published state. Every
+render loads the pointer once. `RegisterSiteTemplates` keeps its
+signature and is now the boot-time caller of the same parser, so a
+deployed service's first set is built exactly the way a replacement is.
+
+The torn read is gone with it: `renderNamed` used to read
+`siteParseErrors` and then `siteTemplates`, so a set landing between
+those two lines could report a parse error from the set before it.
+
+**Three calls**, `Ctx` first on all three, per the amendment:
+`SiteHandle.PrepareTemplates`, `TemplateSet.Render`,
+`SiteHandle.UseTemplates`, plus `TemplateErrors{Failed map[string]string}`.
+The SDK lock and `docs/api/surface.txt` carry exactly those six lines and
+nothing else.
+
+**Live, through `tako dev` and generated code**, on a scratch app (no
+example touched — a page that prepares from a directory, renders the
+candidate, and publishes only if it rendered):
+
+```
+### 1. before
+<h1>ORIGINAL</h1> card v1
+### 2. publish alt/ (good candidate)
+<h1>REPLACED</h1> card v2
+### 3. after — a fresh request
+<h1>REPLACED</h1> card v2
+### 4. publish broken/ — parses fine, card.html deleted
+candidate refused: template home.html: html/template:home.html:1:51: no such template "card.html"
+### 5. the live site after the refusal
+<h1>REPLACED</h1> card v2
+```
+
+Step 4 is the whole argument for the three-part shape in one line: that
+candidate **parses**, and only rendering it finds the missing partial.
+The single-call design in the original proposal would have published it.
+(The walk also met the CSRF gate on the POST and had to carry `_csrf` —
+which is the framework working.)
+
+**Tests** — `pkg/runtime/templateswap_test.go`, 7 cases: the race
+(8 readers, 200 publishes, under `-race`), publish-replaces-what-renders,
+all-or-nothing naming every failure, the parses-but-cannot-render case,
+an in-flight render keeping its own set, a foreign set refused, and one
+that goes through the SDK surface rather than the runtime's internals —
+because a correct implementation behind an unwired hook is a feature
+nobody can call.
+
+**The before state is not a failing test, it is a dead process.** Run in
+a worktree at `af82c3c`:
+
+```
+fatal error: concurrent map read and map write
+github.com/gsandoval/tako/pkg/runtime.renderNamed(…) page.go:229
+github.com/gsandoval/tako/pkg/runtime.renderSite(…) page.go:213
+```
+
+**Validation**
+
+```
+go test ./...          19 packages ok · vet, gofmt clean
+go test ./pkg/runtime -race   ok
+tako test              all seven examples ok
+docs                   site.md's new section; symbolPage maps the two new types
+```
+
+The scratch app needed `go get …/pkg/runtime` before `tako dev` would
+resolve — which is not a gap: `tako new` already does exactly that
+(`cmd/tako/new.go:135`), and hand-writing the go.mod skipped it.
+
+### Verdict
+
+**Shipped and validated.** Flauta's entry is theirs to close. The
+per-instance limit and the prepare/use race are documented in
+`site.md` where the feature is described, not in a footnote.

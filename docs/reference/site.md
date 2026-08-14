@@ -182,6 +182,66 @@ templates ride Hugo's `static/` dir into `public/templates/` so one
 build feeds both worlds. Only `site.Render` needs the layout, and it
 says so at call time.
 
+## Replacing the templates while it runs
+
+Templates parse once at boot, which is right for a site whose templates
+ride the binary — and wrong for an app whose *editors* write them. Three
+calls replace the set in a running service:
+
+```go
+// The candidate is a SET, not a file: templates reference each other, so
+// one validated file can still produce a set that will not render.
+set, err := site.PrepareTemplates(ctx, next)
+if err != nil {
+    var bad *tako.TemplateErrors
+    if errors.As(err, &bad) {
+        return site.Fragment(ctx, "admin/errors.html", bad.Failed)  // path → why
+    }
+    return tako.HTML{}, err
+}
+
+// Prove it RENDERS before anyone reads it — see below for why parsing is
+// not enough. Render every surface you would be sorry to break.
+for _, page := range publicSurfaces {
+    if _, err := set.Render(ctx, page, sampleData(page)); err != nil {
+        return site.Fragment(ctx, "admin/errors.html", map[string]string{page: err.Error()})
+    }
+}
+
+return tako.HTML{}, site.UseTemplates(ctx, set)
+```
+
+**Why rendering is a separate step.** Go resolves
+`{{ template "card.html" }}` at *execute* time, not parse time. A
+candidate that lost a partial parses perfectly and fails on the first
+page that uses it — so a gate on parsing alone would publish exactly the
+break it exists to prevent. `TemplateSet.Render` renders against the
+candidate without publishing it, and it is the same call `site.Render`
+makes, so what you prove is what visitors get.
+
+`PrepareTemplates` refuses a candidate with any parse error and names
+**every** template that failed, so an editor hears about all their
+mistakes on one save. Nothing is published unless you publish it, and a
+render already under way finishes against the set it started with.
+
+**The swap is per instance, and this is the part to design around.** It
+replaces the set in the process that served the request. A service
+running more than one instance leaves the others serving what they
+booted with until they restart — so an app that lets editors write
+templates should **load its stored set at boot**, which makes a restart
+converge rather than revert. Tako has no "tell every instance"
+mechanism; if an editor must never see their change flicker, run that
+service at one instance.
+
+`PrepareTemplates` and `UseTemplates` are also not atomic as a pair: two
+editors saving at once can have the second publish and the first then
+publish a set prepared before it, silently reverting them. Serialize
+saving in your app — a [lock](lock.md) around the read-modify-publish is
+enough.
+
+Tako never stores a replaced set. The app owns its storage, decides what
+a draft is, and reloads at boot.
+
 ## Local
 
 `tako dev` serves the directory from disk. `SiteConfig.Build` commands

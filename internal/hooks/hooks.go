@@ -6,6 +6,7 @@ package hooks
 
 import (
 	"context"
+	"io/fs"
 	"net/http"
 	"sync"
 
@@ -167,6 +168,24 @@ var RenderFragment func(ctx context.Context, name string, data any) ([]byte, err
 // what lets Redirect stay untouched and a bare HTML{} stay not-a-
 // redirect.
 var HTMLParts func(h any) (markup []byte, redirect string, status int, fragment bool)
+
+// PrepareTemplates, UseTemplates and RenderTemplateSet are the
+// replaceable-template-set seam (FL23): pkg/runtime sets them, the SDK's
+// SiteHandle calls through. The set travels as `any` for the same reason
+// HTMLParts does — the concrete type is the runtime's, and naming it
+// here would invert the dependency.
+//
+// Split into three because a candidate has to be RENDERED before it is
+// published: Go resolves {{ template "x" }} at execute time, so parsing
+// clean says nothing about whether a page whose partial went missing
+// will render.
+var PrepareTemplates func(fsys fs.FS) (any, error)
+
+// UseTemplates publishes a prepared set atomically.
+var UseTemplates func(set any) error
+
+// RenderTemplateSet renders against a prepared set without publishing it.
+var RenderTemplateSet func(ctx context.Context, set any, name string, data any) ([]byte, error)
 
 // RenderMarkdown renders markdown under the site's declared posture
 // (sanitized unless WithTrustedHTML) — site.Markdown calls through.

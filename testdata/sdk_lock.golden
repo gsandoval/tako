@@ -57,7 +57,11 @@
     func (*ServiceHandle).Domain() string
     func (*SiteHandle).Fragment(ctx Ctx, template string, data any) (HTML, error)
     func (*SiteHandle).Markdown(ctx Ctx, src string) (HTML, error)
+    func (*SiteHandle).PrepareTemplates(ctx Ctx, fsys io/fs.FS) (*TemplateSet, error)
     func (*SiteHandle).Render(ctx Ctx, template string, data any) (HTML, error)
+    func (*SiteHandle).UseTemplates(ctx Ctx, set *TemplateSet) error
+    func (*TemplateErrors).Error() string
+    func (*TemplateSet).Render(ctx Ctx, template string, data any) (HTML, error)
     func (*TestApp).Advance(d time.Duration)
     func (*TestApp).AdvanceCron(cron Handler)
     func (*TestApp).Chaos()
@@ -221,6 +225,8 @@ type SiteHandle struct{}
 type Status struct{Code int; Path string; RequestID string; Message string; Policy string}
 type StatusHandle struct{}
 type Target interface{alertTarget() metricRef}
+type TemplateErrors struct{Failed map[string]string}
+type TemplateSet struct{}
 type TestApp struct{}
 type Toggle int
 type TopicHandle[T any] struct{}
