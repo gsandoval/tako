@@ -129,6 +129,20 @@ func (c *usersCmd) cloudErr(err error) error {
 	case strings.Contains(msg, "CONFIGURATION_NOT_FOUND"):
 		return fmt.Errorf("Identity Platform is not initialized on %s — tako deploy initializes it\n"+
 			"      when the app declares tako.Auth. Deploy once, then re-run.", c.target.project)
+	// Billing attribution, not permission — and it must be told apart
+	// from the role case below, which is the mistake this command used to
+	// make: it named a grant that changes nothing (FL22).
+	case strings.Contains(msg, "serviceusage.services.use"):
+		return fmt.Errorf("cannot bill identitytoolkit calls to %s — grant:\n"+
+			"        gcloud projects add-iam-policy-binding %s \\\n"+
+			"          --member user:$(gcloud config get account) \\\n"+
+			"          --role roles/serviceusage.serviceUsageConsumer",
+			c.target.project, c.target.project)
+	case strings.Contains(msg, "quota project"):
+		return fmt.Errorf("identitytoolkit.googleapis.com needs a billing project on %s and this\n"+
+			"      credential carries none — tako sends one for user credentials from\n"+
+			"      `gcloud auth application-default login`. On a service-account key file,\n"+
+			"      use ADC instead, or set GOOGLE_CLOUD_QUOTA_PROJECT.", c.target.project)
 	case strings.Contains(msg, "HTTP 403") || strings.Contains(msg, "permission denied"):
 		return fmt.Errorf("you lack identitytoolkit.admin on %s — grant it once:\n"+
 			"        gcloud projects add-iam-policy-binding %s \\\n"+

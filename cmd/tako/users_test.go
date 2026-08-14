@@ -376,6 +376,15 @@ func TestEachCloudRefusalNamesItsOwnRemedy(t *testing.T) {
 		{"HTTP 400: CONFIGURATION_NOT_FOUND", "Identity Platform is not initialized on acme-prod-4821"},
 		{"HTTP 403 from identitytoolkit: caller lacks permission", "--role roles/identitytoolkit.admin"},
 		{"HTTP 401 from identitytoolkit", "gcloud auth application-default login"},
+		// FL22: two more that wear a 403 and are not about a role at
+		// all. The first is what a credential without
+		// serviceusage.services.use meets now that tako sends the
+		// billing header; the second is what identitytoolkit answered
+		// before it sent one. Both used to be reported as a missing
+		// identitytoolkit.admin, which is a grant that changes nothing.
+		{"HTTP 403: Permission denied on serviceusage.services.use", "--role roles/serviceusage.serviceUsageConsumer"},
+		{"HTTP 403: The identitytoolkit.googleapis.com API requires a quota project, which is not set by default.",
+			"needs a billing project on acme-prod-4821"},
 	} {
 		got := c.cloudErr(errors.New(tc.raw))
 		if got == nil || !strings.Contains(got.Error(), tc.want) {

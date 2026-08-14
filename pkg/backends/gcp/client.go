@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 
+	"golang.org/x/oauth2"
 	"golang.org/x/oauth2/google"
 )
 
@@ -45,6 +46,10 @@ type Client struct {
 	// Base redirects every API host at one server, for tests. Empty
 	// (production's only value) means the real hosts.
 	Base string
+	// quotaProject is the project API calls are billed to, sent as
+	// x-goog-user-project. It is set ONLY for user credentials — see
+	// quotaProjectOf, which is where the reasoning lives.
+	quotaProject string
 }
 
 // url builds one API URL. path is a format string appended to the host.
@@ -60,11 +65,46 @@ func (c *Client) url(host, path string, args ...any) string {
 
 // New authenticates via ADC (on Cloud Run: the service's own SA).
 func New(ctx context.Context, opts Options) (*Client, error) {
-	hc, err := google.DefaultClient(ctx, "https://www.googleapis.com/auth/cloud-platform")
+	creds, err := google.FindDefaultCredentials(ctx, "https://www.googleapis.com/auth/cloud-platform")
 	if err != nil {
 		return nil, fmt.Errorf("cannot authenticate to Google Cloud: %v", err)
 	}
-	return &Client{HC: hc, Opts: opts}, nil
+	return &Client{
+		HC:           oauth2.NewClient(ctx, creds.TokenSource),
+		Opts:         opts,
+		quotaProject: quotaProjectOf(creds.JSON, opts.Project),
+	}, nil
+}
+
+// quotaProjectOf decides whether this credential needs to be told which
+// project to bill, and it answers yes for exactly one kind (FL22).
+//
+// A credential from `gcloud auth application-default login` carries no
+// project of its own, so Google bills the call to the project behind
+// gcloud's shared OAuth client — shared with every gcloud user on earth.
+// Most APIs rate-limit that; identitytoolkit refuses it outright, which
+// is how `tako users --project …` came to fail for every operator who
+// followed the runbook. Setting quota_project_id in the credential file
+// changes nothing on its own: it only matters if something sends it as
+// x-goog-user-project, and nothing here did.
+//
+// It is NOT sent for anything else, and that asymmetry is the point.
+// This package is the CLI's client AND every deployed service's client.
+// The header costs serviceusage.services.use on the target, a permission
+// a service's SA deliberately does not hold — grants here derive from
+// the app graph, and no graph asks for that one. Sent unconditionally,
+// this would answer 403 for every runtime call in every deployed
+// service. A metadata credential (Cloud Run) has no JSON at all, and a
+// service-account key already bills to its own project, so both are
+// left alone.
+func quotaProjectOf(credentialJSON []byte, project string) string {
+	var c struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(credentialJSON, &c) != nil || c.Type != "authorized_user" {
+		return ""
+	}
+	return project
 }
 
 // statusError is a non-2xx API answer. Callers translate 404s into the
@@ -98,6 +138,9 @@ func (c *Client) do(ctx context.Context, method, url string, in, out any) error 
 	}
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.quotaProject != "" {
+		req.Header.Set("X-Goog-User-Project", c.quotaProject)
 	}
 	resp, err := c.HC.Do(req)
 	if err != nil {

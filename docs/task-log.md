@@ -7981,7 +7981,7 @@ around it by exercising `body()` alone). Worth doing; not mid-gate.
 
 ## U2 — DX proposal (metrics export + graceful shutdown) — 2026-08-01
 
-**Status: awaiting approval.** Two halves, one slice, in this order —
+**Status: approved 2026-08-14 ("Approved, build it") — shipped, see below.** Two halves, one slice, in this order —
 U2a exists because U2b needs it, and the user directed it explicitly
 ("this sigterm issue might also result in going into a lame duck mode
 where inflight requests finish being processed and then no more
@@ -23231,3 +23231,211 @@ new tests              3, all mutation-proofed in both directions
 **Shipped.** Agent-side validation complete. What a test cannot reach is
 still the human's: whether the new sections read as well as the ones they
 sit beside.
+
+## FL22 — `tako users` bills its own API calls (DX proposal, awaiting approval)
+
+Friction filed 2026-08-11 by flauta, verdict **promote-to-tako-task**: the
+command the runbook names for making the first editor does not work for
+the credentials an operator has.
+
+```
+$ tako users list --project tako-test-03
+tako: this service may not list accounts on tako-test-03 — auth.Users() derives
+      roles/identitytoolkit.admin at deploy time, so re-run tako deploy if this
+      service started using it since the last one (The identitytoolkit.googleapis.com
+      API requires a quota project, which is not set by default.)
+```
+
+Two things are wrong there and they are separate bugs.
+
+### 1. The call is unbilled, and FL19 already fixed this once
+
+`gcloud auth application-default login` mints a credential with no quota
+project, so Google bills the call to the project behind gcloud's own
+shared OAuth client. identitytoolkit refuses outright rather than
+rate-limiting. The fix is the header FL19 added — and FL19 added it to
+`pkg/provision/gcp/gcp.go:274`, which `tako deploy` uses. **`tako users`
+goes through a different client**, `pkg/backends/gcp/client.go`'s `do`,
+which sets `Content-Type` and nothing else. Same defect, second copy;
+the copy an operator is told to run.
+
+`gcloud auth application-default set-quota-project` does not help,
+because the credential file's `quota_project_id` only matters if
+something sends it as `x-goog-user-project`. Nothing did.
+
+### 2. The 403 is misdiagnosed as a missing role
+
+`UserStore.explain` (`users.go:267`) maps every 403 to "you lack
+`identitytoolkit.admin`", and `usersCmd.cloudErr` says the same. flauta
+granted the role; it changed nothing, because the refusal is about
+billing attribution. A message that names the wrong fix costs more than
+no message.
+
+### The proposal
+
+**Send the header only for user credentials.** `New` learns the
+credential type once, via `google.FindDefaultCredentials`, and records a
+quota project only when the credential JSON is `"type":
+"authorized_user"`:
+
+```go
+// quotaProject is the project API calls are billed to, and it is set
+// ONLY for user credentials. On Cloud Run the credential comes from the
+// metadata server and bills correctly already — and a deployed service
+// must not start sending a header that costs serviceusage.services.use,
+// a permission its derived least-privilege SA deliberately does not
+// have. The header would turn every runtime call into a 403.
+quotaProject string
+```
+
+That asymmetry is why this is not simply FL19's line pasted into a
+second file: `pkg/provision/gcp` is CLI-only, while
+`pkg/backends/gcp` is shared by the CLI **and** every deployed service.
+Unconditional here would break the runtime.
+
+**After:**
+
+```
+$ tako users list --project tako-test-03
+EMAIL                      ROLES     DISABLED  CREATED
+editor@1dos3porti.com      editor    no        2026-08-11
+```
+
+**And the 403s tell the truth.** Two new branches ahead of the generic
+one, in `UserStore.explain` and mirrored by `cloudErr`:
+
+```
+tako: cannot bill identitytoolkit calls to tako-test-03 — grant:
+        gcloud projects add-iam-policy-binding tako-test-03 \
+          --member user:$(gcloud config get account) \
+          --role roles/serviceusage.serviceUsageConsumer
+```
+
+```
+tako: identitytoolkit.googleapis.com needs a billing project on tako-test-03 and this
+      credential carries none — tako sends one for user credentials from
+      `gcloud auth application-default login`. On a service-account key file, use
+      ADC instead, or set GOOGLE_CLOUD_QUOTA_PROJECT.
+```
+
+The first text is deliberately the one `pkg/provision/gcp/gcp.go:399`
+already prints for the same denial, word for word: one refusal, one
+remediation, whichever command met it.
+
+### Cloud errors & permissions
+
+- `serviceusage.services.use` on the target is what the header costs.
+  It is already in the documented deployer bundle as
+  `roles/serviceusage.serviceUsageConsumer`
+  (`docs/tako-cloud-permissions.md:69`, added by FL19), so a deployer who
+  followed the setup doc has it, and `tako setup` grants it. An operator
+  who only ever runs `tako users` may not — hence the first branch above.
+- 401 (unauthenticated), `SERVICE_DISABLED`, `CONFIGURATION_NOT_FOUND`
+  and a genuine `identitytoolkit.admin` 403 keep their current texts and
+  their current order; the new branches go ahead of the generic 403 only.
+- Nothing changes for a deployed service: metadata credentials carry no
+  JSON, so `quotaProject` stays empty and no header is sent.
+
+### Scope
+
+`pkg/backends/gcp/client.go` (`New`, `do`), `pkg/backends/gcp/users.go`
+(`explain`), `cmd/tako/usersboot.go` (`cloudErr`),
+`docs/reference/cli.md` and `docs/tako-cloud-permissions.md`.
+
+**Non-goals**: `tako secrets --project`, which already goes through
+`provision/gcp.NewClient` and has the header; any change to the runtime
+path; any new flag. `GOOGLE_CLOUD_QUOTA_PROJECT` is named in an error
+text only — reading it is a separate ask if anyone wants it.
+
+### Tests
+
+A fake identitytoolkit server asserting the header is present for a
+user credential and **absent** for a metadata/SA one (the regression
+that would break every deployed service), plus a `cloudErr` table for
+the two new branches and the four existing ones. The header assertion
+fails before the change; the absence assertion passes before and after,
+which is the point of writing it.
+
+### Gate
+
+Fake-server tests are the automated tier. The live tier is
+`tako users list --project <p>` under a real `gcloud auth
+application-default login` — the exact command flauta could not run.
+
+**Status: awaiting approval.**
+
+### FL22 — shipped, and validated against the project that filed it
+
+Built as proposed, nothing added.
+
+**The header.** `New` now uses `google.FindDefaultCredentials` and keeps
+`quotaProject`, set by `quotaProjectOf` only for a credential whose JSON
+says `"type": "authorized_user"`. `do` sends `X-Goog-User-Project` when
+it is set. Twelve lines and a long comment, because the comment is the
+part that keeps someone from "simplifying" it into FL19's unconditional
+version and taking every deployed service down.
+
+**The diagnosis.** Two branches ahead of the generic 403, in the store's
+`explain` and in the CLI's `cloudErr`: one for a
+`serviceusage.services.use` denial (the grant, worded exactly as
+`pkg/provision/gcp/gcp.go:399` already words it) and one for a call with
+no billing project at all. Neither is a role problem, and both used to
+be answered with a role.
+
+**Live, from `examples/journal`, against flauta's own staging project,
+with the operator's real `gcloud auth application-default login`
+credential (`type: authorized_user`):**
+
+```
+### BEFORE — tako at 9eb87dc, built in a worktree at HEAD
+$ tako users list --project tako-test-03
+tako users · cloud · tako-test-03 / prod
+tako: tako: this service may not list accounts on tako-test-03 — auth.Users() derives
+roles/identitytoolkit.admin at deploy time, so re-run tako deploy if this service started
+using it since the last one (Your application is authenticating by using local Application
+Default Credentials. The identitytoolkit.googleapis.com API requires a quota project, which
+is not set by default. …)
+
+### AFTER — FL22
+$ tako users list --project tako-test-03
+tako users · cloud · tako-test-03 / prod
+  ID                            EMAIL            NAME  ROLES
+  ckxEf7zgJyMkEsvCaqZ9pTlXL253  e2e@flauta.test
+  1 account
+```
+
+The BEFORE reproduces flauta's report word for word, including the
+misdiagnosis. The AFTER lists the account flauta's own e2e suite made.
+Worth noting for the credential file: it already carried
+`quota_project_id: tako-test-03`, and that is precisely what did not
+help — the value only matters if something sends it as a header.
+
+**Validation**
+
+```
+pkg/backends/gcp      4 new tests (header present, header ABSENT, credential
+                      types, the classification ladder)
+cmd/tako              2 new rows on the refusal table, beside the four that
+                      must keep working
+go test ./...         19 packages ok · go vet, gofmt clean
+tako test             all seven examples ok
+live                  the transcript above, tako-test-03
+```
+
+Mutation-proofed three ways: dropping the header fails the billing test;
+sending it unconditionally fails the deployed-service test with "the
+header costs serviceusage.services.use…"; moving the billing branches
+after the generic 403 fails the classification test.
+
+### Discovered work
+
+- **51. A store error reaches the operator prefixed twice.** The BEFORE
+  transcript reads `tako: tako: this service may not…`: the store's
+  `explain` prefixes, and the CLI prefixes again for anything its own
+  ladder does not rewrite. Cosmetic, pre-existing, and visible in every
+  unclassified cloud failure.
+
+### Verdict
+
+**Shipped and live-validated.** The friction entry is flauta's to close
+in its own log — a tako session never writes there.

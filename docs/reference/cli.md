@@ -89,8 +89,17 @@ set and a did-you-mean; deleting against a project asks you to type the
 email, and deleting locally does not (`.tako/data` is the reset story).
 
 `tako dev` holds `.tako/data` while it runs — stop it first. Against a
-project you need `roles/identitytoolkit.admin`; the refusal prints the
-grant.
+project you need `roles/identitytoolkit.admin` **and**
+`roles/serviceusage.serviceUsageConsumer`; each refusal prints its own
+grant, and they are not interchangeable — the second is about which
+project the call is billed to, not about who may make it.
+
+That second one is why `tako users` sends `x-goog-user-project` when
+your credential comes from `gcloud auth application-default login`:
+identitytoolkit refuses a call with no billing project outright. It is
+sent only for user credentials — a deployed service bills correctly
+through its own identity, and must not need a permission its derived
+grants never asked for.
 
 ```
 tako secrets                          what this app declares, and which have a value

@@ -263,6 +263,21 @@ func (s *UserStore) explain(err error, what string) error {
 	switch {
 	case se.Code == http.StatusForbidden && containsAny(se.Body, "SERVICE_DISABLED", "has not been used in project", "is disabled"):
 		return fmt.Errorf("tako: the Identity Platform API is not enabled on %s — enable identitytoolkit.googleapis.com (tako deploy does this; a service running against a project it did not provision does not get it)", s.c.Opts.Project)
+	// The two billing-attribution refusals, ahead of the generic 403
+	// because they wear the same status and have nothing to do with a
+	// role. Granting identitytoolkit.admin for either changes nothing,
+	// which is what the old message sent an operator off to do (FL22).
+	case se.Code == http.StatusForbidden && strings.Contains(se.Body, "serviceusage.services.use"):
+		return fmt.Errorf("tako: cannot bill identitytoolkit calls to %s — grant:\n"+
+			"        gcloud projects add-iam-policy-binding %s \\\n"+
+			"          --member user:$(gcloud config get account) \\\n"+
+			"          --role roles/serviceusage.serviceUsageConsumer",
+			s.c.Opts.Project, s.c.Opts.Project)
+	case containsAny(se.Body, "requires a quota project", "quota project"):
+		return fmt.Errorf("tako: identitytoolkit.googleapis.com needs a billing project on %s and this "+
+			"credential carries none — tako sends one for user credentials from "+
+			"`gcloud auth application-default login`. On a service-account key file, use ADC "+
+			"instead, or set GOOGLE_CLOUD_QUOTA_PROJECT.", s.c.Opts.Project)
 	case se.Code == http.StatusForbidden || se.Code == http.StatusUnauthorized:
 		return fmt.Errorf("tako: this service may not %s on %s — auth.Users() derives roles/identitytoolkit.admin at deploy time, so re-run tako deploy if this service started using it since the last one (%s)", what, s.c.Opts.Project, se.Body)
 	}

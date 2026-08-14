@@ -66,7 +66,7 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/cloudscheduler.admin` | crons (C-async) |
 | `roles/monitoring.alertPolicyEditor` | `tako.Alert` policies (Y1) |
 | `roles/monitoring.notificationChannelEditor` | `tako.AlertEmail`/`AlertWebhook`/`AlertTopic` channels (Y1) |
-| `roles/serviceusage.serviceUsageConsumer` | bill tako's API calls to the target project, not to gcloud's shared client (FL19) |
+| `roles/serviceusage.serviceUsageConsumer` | bill tako's API calls to the target project, not to gcloud's shared client (FL19; `tako users` too, FL22 — identitytoolkit refuses an unbilled call outright rather than rate-limiting it) |
 | `roles/identitytoolkit.admin` | `tako users` against a project: create the first admin, hand out roles (SC1) |
 | `roles/resourcemanager.projectIamAdmin` | write the DERIVED runtime grants — every service's own identity gets its edges from the graph, and that is a policy write on the project |
 | `roles/serviceusage.serviceUsageAdmin` | needed by `tako setup` itself, to turn the APIs above on |
