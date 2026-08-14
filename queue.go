@@ -50,7 +50,7 @@ func queueBackend(ctx Ctx) backends.Queue {
 		return a.Dispatcher
 	}
 	if hooks.Queue == nil {
-		panic("tako: no queue backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("queue"))
 	}
 	return hooks.Queue
 }

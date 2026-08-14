@@ -133,7 +133,8 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
   — configuration is read at analysis time, not run time; got cfg
   (tako/config-literal)`
 - `Run` in a bare test panics: `tako: no queue backend wired — run via
-  tako dev, a generated service, or tako.NewTestApp`
+  tako dev, a generated service, or tako.NewTestApp; a tool that reaches
+  a deployed app calls runtime.BootGCPWith first`
 - Missing env in the cloud: `job "settle" has no execution target —
   tako deploy injects TAKO_JOB_* from the graph's Run edges, so this is
   a tako bug (re-run tako deploy, and file it if it persists)`

@@ -410,9 +410,11 @@ Four other kinds of message look similar and are not this:
   (`gcloud services enable …`) and are described in
   [the cloud story](../guide/cloud.md).
 - **Panics from unwired backends** — `tako: no entity backend wired —
-  run via tako dev, a generated service, or tako.NewTestApp`. You get
-  these calling a resource from a bare `go test` with no app booted;
-  [testing.md](testing.md) explains what boots what.
+  run via tako dev, a generated service, or tako.NewTestApp; a tool that
+  reaches a deployed app calls runtime.BootGCPWith first`. You get these
+  calling a resource from a bare `go test` with no app booted;
+  [testing.md](testing.md) explains what boots what, and
+  [the cloud story](../guide/cloud.md) covers the fourth way.
 
 ## Not yet
 

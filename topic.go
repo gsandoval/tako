@@ -50,7 +50,7 @@ func topicBackend(ctx Ctx) backends.Topic {
 		return a.Dispatcher.Topics()
 	}
 	if hooks.Topic == nil {
-		panic("tako: no topic backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("topic"))
 	}
 	return hooks.Topic
 }

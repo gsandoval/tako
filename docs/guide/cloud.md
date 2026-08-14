@@ -142,6 +142,58 @@ provision here (a load balancer, edge CDN), what it would cost, and what
 would make tako change mechanisms are all in
 [domain-options.md](../domain-options.md).
 
+## Reaching a deployed app from a tool
+
+A backfill, an importer, an operator script — anything that has to write
+into a deployed store — is not run by `tako dev`, is not a generated
+service, and must not be a test app. It boots the cloud backends itself
+and then uses the same handles the service does:
+
+```go
+func main() {
+	project := flag.String("project", "", "GCP project")
+	env := flag.String("env", "", "prod, or a preview env")
+	flag.Parse()
+
+	if err := runtime.BootGCPWith(gcp.Options{
+		Project: *project, App: "flauta", Env: *env,
+	}); err != nil {
+		log.Fatal(err)
+	}
+
+	// posts, photos, thumbs — the declarations, unchanged
+	if err := posts.Put(ctx, p.Slug, p); err != nil {
+		log.Fatal(err)
+	}
+}
+```
+
+`runtime.BootGCPWith` takes the target as an **argument**, because the
+target of a command-line run is an argument and not an ambient fact. The
+alternative is a program setting `TAKO_PROJECT` in its own environment to
+configure a library, which works and is a shape worth not spreading.
+
+**`Env` is required and never defaulted.** It is the Datastore namespace
+and the prefix on every derived name, so a tool that addressed prod
+because a flag was empty is precisely the accident this signature
+prevents:
+
+```
+tako: BootGCPWith needs Options.Env — project, app and env together name the
+resources a deployed service reads, and env is the Datastore namespace, so it
+is required rather than assumed to be prod
+```
+
+`Project` and `App` are required for the same reason; `Service` is
+optional and only shapes dead-letter topic names, which a tool that
+publishes nothing never reaches. The tool authenticates as you do —
+whatever `gcloud auth application-default login` left behind — so it can
+reach exactly what your own account can.
+
+A generated service still calls `runtime.BootGCP()`, which reads the
+environment the deploy injects. Both boot the same backends; they differ
+only in where the target comes from.
+
 ## What destroy deletes — and deliberately leaves
 
 `tako destroy` (typed app name) deletes everything it created for the

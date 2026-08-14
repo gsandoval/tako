@@ -261,8 +261,7 @@ indexed under that name.
 
 At run time: `Put` with an empty id fails with `tako: entity "links":
 id field Slug is empty`; outside a wired app, calls panic with
-`tako: no entity backend wired — run via tako dev, a generated
-service, or tako.NewTestApp`.
+`tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first`.
 
 ## Not yet
 

@@ -119,7 +119,7 @@ func bucketBackend(ctx Ctx) backends.Bucket {
 		return a.Buckets
 	}
 	if hooks.Bucket == nil {
-		panic("tako: no bucket backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("bucket"))
 	}
 	return hooks.Bucket
 }

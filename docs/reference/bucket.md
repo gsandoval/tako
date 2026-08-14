@@ -150,7 +150,7 @@ pinned over real HTTP in
   `{"error":"upload is 20 bytes; the signed URL allows at most 16"}` (413), and — for chunked
   uploads that hide their length — `{"error":"upload exceeds the signed URL's 16-byte limit"}` (413),
   leaving no object behind.
-- `tako: no bucket backend wired — run via tako dev, a generated service, or tako.NewTestApp` — a panic in bare tests without a
+- `tako: no bucket backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first` — a panic in bare tests without a
   booted app.
 
 ## Not yet

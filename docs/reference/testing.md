@@ -206,7 +206,7 @@ anything that touches a declared resource, and calling one without an
 app is a panic naming the fix:
 
 ```
-tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp
+tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first
 ```
 
 A handful of contracts are the wire or the filesystem rather than app
@@ -230,8 +230,8 @@ tako: TAKO_CHAOS_SEED must be a seed integer, got "yesterday"
 one mechanism, one shape of sentence:
 
 ```
-tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp
-tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp
+tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first
+tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first
 ```
 
 It panics rather than returning an error because these methods' error

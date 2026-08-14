@@ -90,7 +90,7 @@ must tolerate duplicates like any async handler.
 - `tako.Topic name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
 - `queue "jobs" already has worker First (app.go:9) — a queue has exactly one worker; use a Topic for fan-out (tako/one-worker)` —
   the error that sends you here from a queue.
-- `tako: no topic backend wired — run via tako dev, a generated service, or tako.NewTestApp` — a panic from `Publish` in a bare
+- `tako: no topic backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first` — a panic from `Publish` in a bare
   test without a booted app.
 - On the wire, minutes after a fresh deploy: `POST /_tako/api/push → 403 …
   lacks {run.routes.invoke} permission`. IAM propagation, not a

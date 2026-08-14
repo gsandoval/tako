@@ -88,7 +88,7 @@ endpoint, and asserts `Started == false` and an unchanged ledger.
 
 - `tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned (tako/invalid-option)`
 - `tako.Lock name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
-- `tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp` — a panic from `Do` or `TryDo` in a bare test, the same shape every other unwired resource uses.
+- `tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first` — a panic from `Do` or `TryDo` in a bare test, the same shape every other unwired resource uses.
 - `lease "reindex" was lost while held (ttl expired or forcibly taken) — work after the loss point may not have run`
 
 ## Not yet

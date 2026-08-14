@@ -426,7 +426,7 @@ func entityBackend(ctx Ctx) backends.Entity {
 		return a.Entity
 	}
 	if hooks.Entity == nil {
-		panic("tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("entity"))
 	}
 	return hooks.Entity
 }

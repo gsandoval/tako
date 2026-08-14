@@ -203,3 +203,82 @@ func explained(msg string) bool {
 	}
 	return false
 }
+
+// The other family of texts the docs quote verbatim: the panic a
+// resource raises when no backend is wired. Ten copies across eight
+// reference pages, and DOC1's checker reaches none of them — it covers
+// analyzer errors and CLI commands, both of which live somewhere a test
+// can enumerate. These live in the SDK, so changing one silently rots
+// every page that quotes it (FL26 changed all ten at once, which is
+// what prompted this).
+//
+// The docs wrap them across lines, so both sides are compared with
+// whitespace collapsed.
+var unwiredQuote = regexp.MustCompile(`tako: no (\w+) backend wired`)
+
+func TestTheDocsQuoteTheRealUnwiredPanic(t *testing.T) {
+	// The one true sentence, read from the SDK rather than repeated here.
+	src, err := os.ReadFile(filepath.Join(repoRoot, "appctx.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := regexp.MustCompile(`(?s)func unwiredPanic\(backend string\) string \{(.*?)\n\}`).FindSubmatch(src)
+	if body == nil {
+		t.Fatal("unwiredPanic is gone or reshaped — this test reads its body to learn the text")
+	}
+	// The text is built as "…" + backend + "…", so each side is read on
+	// its own and its string literals joined — the concatenation is what
+	// makes one sentence out of eight callers.
+	left, right, found := strings.Cut(string(body[1]), "+ backend +")
+	if !found {
+		t.Fatal("unwiredPanic no longer interpolates the backend name")
+	}
+	prefix, suffix := literals(left), literals(right)
+	if prefix == "" || suffix == "" {
+		t.Fatalf("could not read the message halves: %q / %q", prefix, suffix)
+	}
+
+	pages, err := filepath.Glob(filepath.Join(repoRoot, "docs/reference/*.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	quoted := 0
+	for _, page := range pages {
+		raw, err := os.ReadFile(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The whole page, collapsed — the docs wrap these across two and
+		// three lines, and where the wrap falls is not the point.
+		flat := collapse(string(raw))
+		for _, m := range unwiredQuote.FindAllStringSubmatchIndex(flat, -1) {
+			quoted++
+			want := collapse(prefix + flat[m[2]:m[3]] + suffix)
+			if !strings.HasPrefix(flat[m[0]:], want) {
+				end := min(m[0]+len(want)+20, len(flat))
+				t.Errorf("%s quotes a panic the SDK does not raise:\n  got:  %s\n  want: %s",
+					filepath.Base(page), flat[m[0]:end], want)
+			}
+		}
+	}
+	if quoted < 8 {
+		t.Errorf("found only %d quoted panics — the extraction stopped working, not the docs", quoted)
+	}
+	t.Logf("%d quoted copies across the reference, all matching the SDK", quoted)
+}
+
+// collapse makes a line-wrapped markdown quote comparable with a Go
+// string: runs of whitespace become one space.
+func collapse(s string) string {
+	return strings.Join(strings.Fields(strings.ReplaceAll(s, "`", "")), " ")
+}
+
+// literals joins the Go string literals in a fragment of source, which
+// is what a multi-line concatenated message looks like on the page.
+func literals(src string) string {
+	var b strings.Builder
+	for _, m := range regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(src, -1) {
+		b.WriteString(m[1])
+	}
+	return b.String()
+}

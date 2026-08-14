@@ -73,7 +73,8 @@ wrong-typed one is a type error.
 A non-constant name is the same `tako/const-name` analysis error every
 resource gets (see [entity.md](entity.md)). Outside a wired app:
 `tako: no cache backend wired — run via tako dev, a generated service,
-or tako.NewTestApp`.
+or tako.NewTestApp; a tool that reaches a deployed app calls
+runtime.BootGCPWith first`.
 
 ## Not yet
 

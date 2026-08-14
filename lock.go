@@ -30,7 +30,7 @@ type LockHandle struct {
 // it on return. fn's Ctx is cancelled if the lock is lost mid-flight.
 func (l *LockHandle) Do(ctx Ctx, fn func(Ctx) error) error {
 	if hooks.Lease == nil {
-		panic("tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("lease"))
 	}
 	return backends.DoLease(ctx, hooks.Lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))
@@ -41,7 +41,7 @@ func (l *LockHandle) Do(ctx Ctx, fn func(Ctx) error) error {
 // whether it ran; it returns (false, nil) when someone else holds the lock.
 func (l *LockHandle) TryDo(ctx Ctx, fn func(Ctx) error) (bool, error) {
 	if hooks.Lease == nil {
-		panic("tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("lease"))
 	}
 	return backends.TryDoLease(ctx, hooks.Lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))

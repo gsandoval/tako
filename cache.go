@@ -82,7 +82,7 @@ func cacheBackend(ctx Ctx) backends.Cache {
 		return a.Cache
 	}
 	if hooks.Cache == nil {
-		panic("tako: no cache backend wired — run via tako dev, a generated service, or tako.NewTestApp")
+		panic(unwiredPanic("cache"))
 	}
 	return hooks.Cache
 }

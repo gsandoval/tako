@@ -24150,3 +24150,156 @@ someone finds later.
 belongs to the next cloud walk. flauta's entry is theirs to close; their
 `TestMediaServeDeclaresNoFreshnessLifetime` needs no change, because
 this adds a validator and touches nothing about `MaxAge`.
+
+## FL26 — BootGCP's argument form (DX proposal)
+
+**The feature flauta asked for already exists.** They filed this on
+2026-08-09; `runtime.BootGCPWith(gcp.Options)` shipped on **2026-08-10**
+as SC5 (`60416ba`), and its doc comment makes their own argument almost
+word for word:
+
+```go
+// It exists because the target of a CLI run is an argument, not an
+// ambient fact. An app that needs a tool writing into its deployed
+// store — a backfill, an importer, an operator script — had to set
+// TAKO_PROJECT and friends in its own process and then call BootGCP,
+// which is a program mutating its environment to configure a library.
+// Three lines, and honest enough, but a shape worth not spreading.
+```
+
+`Env` is required rather than defaulted, for the reason the entry would
+have wanted: it is the Datastore namespace and the prefix on every
+derived name, so a tool that silently addressed prod because a field was
+empty is the accident the signature prevents. This is the second time
+tako has shipped ahead of flauta's log (FL15–FL19 was the first), and
+the entry is theirs to close.
+
+**So there is no feature to build. There is a gap, and it is a
+documentation one:**
+
+- `BootGCPWith` appears in **no guide or reference page**. `grep -rn
+  BootGCP docs/guide docs/reference` is empty. It is discoverable only
+  by reading `pkg/runtime` — which is how flauta found `BootGCP` in the
+  first place.
+- Eight panic messages name the ways to get a backend, and the list is
+  now incomplete for exactly the reader who needs the fourth:
+
+  ```
+  tako: no entity backend wired — run via tako dev, a generated service, or tako.NewTestApp
+  ```
+
+  A tool author writing into a deployed store hits this, and every
+  option it names is wrong for them.
+
+### The proposal
+
+**1. A section in `guide/cloud.md`** — "Reaching a deployed app from a
+tool" — with the whole shape:
+
+```go
+func main() {
+	project := flag.String("project", "", "")
+	env := flag.String("env", "", "")
+	flag.Parse()
+	if err := runtime.BootGCPWith(gcp.Options{
+		Project: *project, App: "flauta", Env: *env,
+	}); err != nil {
+		log.Fatal(err)
+	}
+	// photos.Put, posts.Query — the same handles the service uses
+}
+```
+
+…and the sentence that matters: the tool addresses whatever `--env` says,
+because env is the namespace, so there is no "default" that could be
+prod by accident.
+
+**2. The eight messages gain the fourth way**, identically:
+
+```
+tako: no entity backend wired — run via tako dev, a generated service, or
+tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first
+```
+
+Eight copies is the risk here — they are a family and have to stay one
+sentence, so they move to a single helper that takes the backend's name.
+
+**3. A test that keeps the docs' copies honest.** Four reference pages
+quote these texts verbatim (`bucket.md`, `entity.md`, `errors.md`,
+`testing.md`). DOC1's checker covers analyzer errors and CLI commands
+only, so changing a panic text today silently rots four pages. The same
+mechanism extends to it: every `tako: no … backend wired` line quoted in
+the docs must match one the SDK can actually panic with.
+
+### Scope
+
+`bucket.go`, `cache.go`, `entity.go`, `job.go`, `lock.go`, `queue.go`,
+`topic.go` (the message helper), `docs/guide/cloud.md`,
+`docs/reference/{bucket,entity,errors,testing}.md`,
+`pkg/docserver/rules_test.go` (the new check).
+
+**Non-goals**: any change to `BootGCPWith` or `BootGCP` — the API is
+right and shipped; a `tako run <tool>` CLI wrapper (no example demands
+one); exporting anything new.
+
+### Gate
+
+Automated. The doc-quote test fails before the messages change and
+passes after, in both directions.
+
+**Status: approved 2026-08-14 ("Approved, build it") — shipped, see below.**
+
+### FL26 — shipped (2026-08-14)
+
+No feature was built, because the feature exists. What shipped is the
+documentation that was missing and the message that was misleading.
+
+**One sentence, one place.** The eight panics now call
+`unwiredPanic(backend)` in `appctx.go`. They were eight copies of one
+sentence, which is how the entity one ends up saying something the queue
+one does not — the same shape as `verifyGoogleToken`, `entitytag` and
+`cronMissedLookback` before it. The sentence gained its fourth way:
+
+```
+tako: no entity backend wired — run via tako dev, a generated service, or
+tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first
+```
+
+Every option the old text named was wrong for the reader who writes a
+backfill, and that reader is the one who hits it furthest from home.
+
+**`guide/cloud.md` gained "Reaching a deployed app from a tool"** — the
+whole `main()`, the reason the target is an argument, and the refusal
+text for a missing `Env`, which is the field that must never default
+because it is the Datastore namespace.
+
+**Ten doc copies, not the four I estimated**, across
+`bucket.md`, `cache.md`, `entity.md`, `errors.md`, `job.md`, `lock.md`,
+`testing.md` (three) and `topic.md`. Three of them wrap across lines
+differently, which is exactly why the check compares collapsed text.
+
+**The check itself** reads the SDK's own function, splits it at
+`+ backend +`, and rebuilds the sentence per backend — so the docs are
+held to the message the code raises rather than to a copy of it. It
+found all ten and passes; mutation-proofed both directions: rewording the
+SDK message fails all ten pages at once, and rewording a single page
+fails that page alone.
+
+That gap is the same class DOC1 closed for analyzer errors and CLI
+commands, in the one place DOC1's machinery could not see: these texts
+live in the SDK, not in a rule table or a dispatch switch.
+
+### Validation
+
+```
+go test ./...    19 packages ok · vet, gofmt clean
+pkg/docserver    1 new check, 10 quoted copies verified, proofed both ways
+tako test        all seven examples ok
+```
+
+### Verdict
+
+**Shipped.** flauta's entry can be closed twice over: the feature landed
+2026-08-10, and the reason nobody could find it is now fixed too. Their
+`internal/target` workaround can go whenever they like — three lines
+that set environment variables to configure a library.
