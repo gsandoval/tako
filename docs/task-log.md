@@ -7981,7 +7981,7 @@ around it by exercising `body()` alone). Worth doing; not mid-gate.
 
 ## U2 — DX proposal (metrics export + graceful shutdown) — 2026-08-01
 
-**Status: approved 2026-08-14 ("Approved, build it") — shipped, see below.** Two halves, one slice, in this order —
+**Status: awaiting approval.** Two halves, one slice, in this order —
 U2a exists because U2b needs it, and the user directed it explicitly
 ("this sigterm issue might also result in going into a lame duck mode
 where inflight requests finish being processed and then no more
@@ -23232,7 +23232,7 @@ new tests              3, all mutation-proofed in both directions
 still the human's: whether the new sections read as well as the ones they
 sit beside.
 
-## FL22 — `tako users` bills its own API calls (DX proposal, awaiting approval)
+## FL22 — `tako users` bills its own API calls (DX proposal)
 
 Friction filed 2026-08-11 by flauta, verdict **promote-to-tako-task**: the
 command the runbook names for making the first editor does not work for
@@ -23362,7 +23362,7 @@ Fake-server tests are the automated tier. The live tier is
 `tako users list --project <p>` under a real `gcloud auth
 application-default login` — the exact command flauta could not run.
 
-**Status: awaiting approval.**
+**Status: approved 2026-08-14 ("Approved, build it") — shipped, see below.**
 
 ### FL22 — shipped, and validated against the project that filed it
 
@@ -23440,7 +23440,7 @@ after the generic 403 fails the classification test.
 **Shipped and live-validated.** The friction entry is flauta's to close
 in its own log — a tako session never writes there.
 
-## FL23 — a template set that can be replaced (DX proposal, awaiting approval)
+## FL23 — a template set that can be replaced (DX proposal)
 
 Friction filed 2026-08-12, sharpened 2026-08-13, verdict **worth asking
 for** and the only entry in flauta's log with **no app-side workaround
@@ -23740,7 +23740,7 @@ resolve — which is not a gap: `tako new` already does exactly that
 per-instance limit and the prepare/use race are documented in
 `site.md` where the feature is described, not in a footnote.
 
-## FL24 — CronMissed derives a lookback Cloud Monitoring refuses (DX proposal, awaiting approval)
+## FL24 — CronMissed derives a lookback Cloud Monitoring refuses (DX proposal)
 
 Friction filed 2026-08-11, workaround-fine but **worth asking for**: the
 one cron whose silent failure is invisible — *"a backup that quietly
