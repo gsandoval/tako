@@ -34,6 +34,12 @@ type BlobData struct {
 	ContentType string
 	// Size is the stream length in bytes, or -1 when unknown.
 	Size int64
+	// ETag identifies these bytes, for revalidation. Each backend
+	// supplies its own form — GCS its object etag, local a size and
+	// mtime — and the only contract is that it CHANGES when the object
+	// is rewritten. Empty means the backend has none to offer, and the
+	// response simply carries no validator.
+	ETag string
 }
 
 // ObjectMeta describes one stored object. The json tags are the wire

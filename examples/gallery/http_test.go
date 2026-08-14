@@ -720,3 +720,61 @@ func TestThePermalinkResolvesAPhotoForItsOwner(t *testing.T) {
 		t.Errorf("another owner's permalink → %d, want 404", res2.StatusCode)
 	}
 }
+
+// FL25: a stored object answers a conditional request, so a reader on a
+// slow network pays for a photograph once. This is the whole chain with
+// nothing hand-built — the local bucket's validator, through
+// photos.Get, through the blob response — because serveImage is one
+// line (`return photos.Get(ctx, req.ID)`) and that is exactly the shape
+// this has to work for.
+func TestADownloadedImageCanBeRevalidated(t *testing.T) {
+	_, srv := serve(t)
+	src := pngBytes(t)
+
+	body, ct := multipartBody(t, "cat", "cat.png", src, "image/png")
+	res, err := srv.Client().Post(srv.URL+"/api/photos", ct, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var p Photo
+	if err := json.NewDecoder(res.Body).Decode(&p); err != nil {
+		t.Fatal(err)
+	}
+
+	url := srv.URL + "/api/photos/" + p.ID + "/image"
+	first, err := srv.Client().Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Body.Close()
+	_, _ = io.ReadAll(first.Body)
+	etag := first.Header.Get("ETag")
+	if etag == "" {
+		t.Fatal("a stored image carries no ETag, so no-cache means every view downloads it again")
+	}
+
+	// The reader comes back holding it.
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("If-None-Match", etag)
+	second, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer second.Body.Close()
+	if second.StatusCode != http.StatusNotModified {
+		t.Fatalf("conditional GET = %d, want 304", second.StatusCode)
+	}
+	if n, _ := io.Copy(io.Discard, second.Body); n != 0 {
+		t.Errorf("304 carried %d bytes", n)
+	}
+
+	// The other half — a REPLACED object stops matching — is not
+	// reachable here: gallery mints a new id per upload, so no route
+	// rewrites an object in place. It is pinned where it can be, in the
+	// backend conformance suite ("rewriting an object changes its etag")
+	// and in pkg/runtime's non-matching case.
+}

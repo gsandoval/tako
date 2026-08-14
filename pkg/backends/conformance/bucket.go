@@ -31,6 +31,61 @@ func RunBucket(t *testing.T, open func(t *testing.T) backends.Bucket) {
 		return buf.String()
 	}
 
+	// FL25: a stored object carries a validator, so a reader can ask
+	// "still this one?" instead of downloading 758 KB it already has.
+	//
+	// The two backends cannot produce the SAME string and should not
+	// pretend to — GCS hands over its own etag, local derives one from
+	// size and mtime — so what the contract pins is the property that
+	// makes a validator worth sending.
+	t.Run("a stored object has an etag", func(t *testing.T) {
+		s := open(t)
+		if err := s.Put(ctx, "photos", "harvest", blob("original", "image/jpeg")); err != nil {
+			t.Fatal(err)
+		}
+		got, err := s.Get(ctx, "photos", "harvest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		read(t, got)
+		if got.ETag == "" {
+			t.Fatal("no ETag on a stored object — without one a blob response can only say " +
+				"no-cache, which means fetch it all again rather than ask first")
+		}
+	})
+
+	t.Run("rewriting an object changes its etag", func(t *testing.T) {
+		s := open(t)
+		if err := s.Put(ctx, "photos", "harvest", blob("original", "image/jpeg")); err != nil {
+			t.Fatal(err)
+		}
+		first, err := s.Get(ctx, "photos", "harvest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		read(t, first)
+
+		if err := s.Put(ctx, "photos", "harvest", blob("replaced, and larger", "image/jpeg")); err != nil {
+			t.Fatal(err)
+		}
+		second, err := s.Get(ctx, "photos", "harvest")
+		if err != nil {
+			t.Fatal(err)
+		}
+		read(t, second)
+
+		if second.ETag == first.ETag {
+			t.Fatalf("the etag survived a rewrite (%q) — a reader holding the old one would be "+
+				"told 304 and keep showing the replaced image forever", first.ETag)
+		}
+	})
+
+	// Deliberately NOT asserted: that re-putting identical bytes keeps the
+	// etag. A GCS generation changes and local's mtime changes, so
+	// requiring stability there would be a lie about both backends. A
+	// validator has to change when the bytes change; it is free to change
+	// at other times too, at the cost of one extra download.
+
 	t.Run("put get roundtrip with content type", func(t *testing.T) {
 		s := open(t)
 		if err := s.Put(ctx, "photos", "cat", blob("meow", "image/jpeg")); err != nil {

@@ -31,7 +31,9 @@ func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
 	if err != nil {
 		return Blob{}, mapNotFound(err)
 	}
-	return Blob{Reader: data.Reader, ContentType: data.ContentType, Size: data.Size}, nil
+	// The ETag rides along, so a handler that returns this blob answers
+	// If-None-Match without knowing the header exists (FL25).
+	return Blob{Reader: data.Reader, ContentType: data.ContentType, Size: data.Size, ETag: data.ETag}, nil
 }
 
 // Put stores blob under key, replacing any existing object.

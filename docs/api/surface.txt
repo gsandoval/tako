@@ -175,7 +175,7 @@ type AlertHandle struct{}
 type AuthConfig struct{Google bool; Password bool}
 type AuthEvent struct{}
 type AuthHandle struct{Registered AuthEvent; FirstSignIn AuthEvent}
-type Blob struct{Reader io.Reader; ContentType string; Size int64}
+type Blob struct{Reader io.Reader; ContentType string; Size int64; ETag string}
 type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}
 type Build struct{Command string; Out string}

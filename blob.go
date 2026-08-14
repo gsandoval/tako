@@ -15,6 +15,19 @@ type Blob struct {
 	ContentType string
 	// Size is the blob's length in bytes, or -1 when unknown.
 	Size int64
+	// ETag identifies these bytes, so a reader can revalidate instead of
+	// downloading again: tako sends it, and answers 304 Not Modified when
+	// the request's If-None-Match matches.
+	//
+	// bucket.Get fills it in, so a handler that streams a stored object
+	// gets this for free. Set it yourself for bytes you build — a resize,
+	// a rendered document — and make it change whenever the bytes do.
+	// That is the whole contract, and it is the one thing tako cannot
+	// check for you: an ETag that outlives its bytes serves the old ones
+	// to anyone holding it.
+	//
+	// Empty sends no validator, which is what every blob did before.
+	ETag string
 }
 
 // ObjectInfo describes an object in a Bucket. It is the payload of bucket

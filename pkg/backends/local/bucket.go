@@ -85,7 +85,17 @@ func (s *BucketStore) Get(ctx context.Context, bucket, key string) (backends.Blo
 		return backends.BlobData{}, err
 	}
 	ct, _ := os.ReadFile(s.metaPath(bucket, key))
-	return backends.BlobData{Reader: f, ContentType: string(ct), Size: info.Size()}, nil
+	return backends.BlobData{
+		Reader:      f,
+		ContentType: string(ct),
+		Size:        info.Size(),
+		// Size and mtime, which is what every static file server has
+		// used for thirty years — not a content hash, because hashing
+		// here would read the whole file a second time on every request
+		// in the dev loop, and the property that matters (it changes
+		// when the object is rewritten) holds either way.
+		ETag: fmt.Sprintf("%q", fmt.Sprintf("%x-%x", info.Size(), info.ModTime().UnixNano())),
+	}, nil
 }
 
 func (s *BucketStore) Put(ctx context.Context, bucket, key string, data backends.BlobData) error {

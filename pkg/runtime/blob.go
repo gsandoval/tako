@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 
 	tako "github.com/gsandoval/tako"
 )
@@ -69,9 +70,6 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		}
 		h := w.Header()
 		h.Set("Content-Type", ct)
-		if blob.Size >= 0 {
-			h.Set("Content-Length", strconv.FormatInt(blob.Size, 10))
-		}
 		// A blob is the one response whose BYTES came from outside the
 		// program — an upload, usually, stored and handed back. That
 		// makes the declared type a claim about someone else's data,
@@ -83,13 +81,61 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		// answered by omission before this — so nothing starts being
 		// cached that was not asked to be.
 		h.Set("Cache-Control", cacheControl(conf.maxAge))
-		if blob.Reader != nil {
-			_, _ = io.Copy(w, blob.Reader)
-			if c, ok := blob.Reader.(io.Closer); ok {
-				_ = c.Close()
+		// The validator, and the answer to a reader that already has
+		// these bytes (FL25). The site path has always done this for
+		// static files; a blob route sent nothing, so no-cache meant
+		// "download it all again" rather than "ask first" — 758 KB of
+		// photograph per view, over whatever network the reader is on.
+		//
+		// Route.MaxAge cannot do this job: a lifetime keeps serving a
+		// REPLACED object until it expires, while a validator changes
+		// with the bytes.
+		if blob.ETag != "" {
+			h.Set("ETag", blob.ETag)
+			if etagMatches(r.Header.Get("If-None-Match"), blob.ETag) {
+				// No body, no Content-Length describing one, and the
+				// reader closed: a GCS response body left open is a
+				// leaked connection.
+				closeBlob(blob.Reader)
+				w.WriteHeader(http.StatusNotModified)
+				return
 			}
 		}
+		if blob.Size >= 0 {
+			h.Set("Content-Length", strconv.FormatInt(blob.Size, 10))
+		}
+		if blob.Reader != nil {
+			_, _ = io.Copy(w, blob.Reader)
+			closeBlob(blob.Reader)
+		}
 	})
+}
+
+func closeBlob(r io.Reader) {
+	if c, ok := r.(io.Closer); ok {
+		_ = c.Close()
+	}
+}
+
+// etagMatches implements If-None-Match against one entity tag: a
+// comma-separated list, "*" for "any representation I hold", and the
+// weak comparison RFC 9110 requires here — W/"x" and "x" identify the
+// same bytes for revalidation, and only a Range request needs the strong
+// form, which tako does not serve.
+func etagMatches(header, etag string) bool {
+	if header == "" || etag == "" {
+		return false
+	}
+	if strings.TrimSpace(header) == "*" {
+		return true
+	}
+	want := strings.TrimPrefix(etag, "W/")
+	for _, candidate := range strings.Split(header, ",") {
+		if strings.TrimPrefix(strings.TrimSpace(candidate), "W/") == want {
+			return true
+		}
+	}
+	return false
 }
 
 // FormBlob binds a multipart form file field as a tako.Blob, streaming

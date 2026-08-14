@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
@@ -32,6 +33,11 @@ type objectMeta struct {
 	Size        string `json:"size"` // GCS serializes int64 as string
 	ContentType string `json:"contentType"`
 	Updated     string `json:"updated"`
+	// ETag is GCS's own validator for these bytes, and it is already in
+	// the metadata response Get fetches before it opens the stream — so
+	// serving it costs no extra request, and it is the same value a
+	// direct GCS download would have sent (FL25).
+	ETag string `json:"etag"`
 }
 
 func (m objectMeta) toMeta() backends.ObjectMeta {
@@ -89,7 +95,7 @@ func (s *BucketStore) Get(ctx context.Context, bucket, key string) (backends.Blo
 		return backends.BlobData{}, &statusError{Code: resp.StatusCode, Body: "download failed", URL: req.URL.Path}
 	}
 	m := meta.toMeta()
-	return backends.BlobData{Reader: resp.Body, ContentType: m.ContentType, Size: m.Size}, nil
+	return backends.BlobData{Reader: resp.Body, ContentType: m.ContentType, Size: m.Size, ETag: quotedETag(meta.ETag)}, nil
 }
 
 func (s *BucketStore) Exists(ctx context.Context, bucket, key string) (bool, error) {
@@ -129,4 +135,17 @@ func (s *BucketStore) List(ctx context.Context, bucket, prefix string) ([]backen
 		}
 		pageToken = page.NextPageToken
 	}
+}
+
+// quotedETag makes GCS's etag a legal HTTP one. The JSON field arrives
+// unquoted (CPjXxdGl6PkCEAE=) while the header form is quoted, and an
+// unquoted ETag is one no browser will send back in If-None-Match.
+func quotedETag(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, `"`) || strings.HasPrefix(raw, "W/") {
+		return raw
+	}
+	return `"` + raw + `"`
 }

@@ -38,7 +38,8 @@ func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 ### The headers a blob answers with
 
 `Content-Type` from the blob, `Content-Length` when the size is known,
-and `X-Content-Type-Options: nosniff` always — a blob is the one
+`ETag` when the blob carries one (see below), and
+`X-Content-Type-Options: nosniff` always — a blob is the one
 response whose bytes came from outside the program, so the declared
 type is a claim about someone else's data and the browser must not go
 looking past it.
@@ -57,6 +58,32 @@ Pair a long `MaxAge` with a URL that changes when the bytes do. If a
 stored object is ever replaced **in place** under a URL that stays the
 same, leave `MaxAge` off: the failure is a stale image under a
 published page, with no error anywhere to notice.
+
+**That case is what `Blob.ETag` is for.** A lifetime says "do not ask
+again for a day"; a validator says "ask, cheaply". `bucket.Get` fills the
+field in from the stored object, so a handler that streams what was
+uploaded revalidates without writing a line:
+
+```go
+func serveMedia(ctx tako.Ctx, req MediaReq) (tako.Blob, error) {
+    return media.Get(ctx, req.Key)   // the ETag rides along
+}
+```
+
+Tako sends it and answers `304 Not Modified` when the request's
+`If-None-Match` matches — no body, and the reader closed. A replaced
+object has different bytes, so it has a different ETag, so the reader
+gets the new one: none of `MaxAge`'s risk, and `no-cache` starts meaning
+"ask first" instead of "download it all again".
+
+Set `ETag` yourself for bytes you build — a resize, a rendered
+document — and make it change whenever the bytes do. That contract is
+the one thing tako cannot check for you. A blob with no ETag behaves
+exactly as before: no header, no 304.
+
+What this does not save is the fetch from the bucket into your service:
+the handler still runs. The hop it saves is the one that costs — your
+service to a phone on a mobile network.
 
 For large files, skip the service entirely: `SignedPut` returns a URL
 the browser PUTs to directly — no 32MB request cap, no proxying —
