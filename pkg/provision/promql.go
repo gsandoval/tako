@@ -73,11 +73,16 @@ func promDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", secs)
 }
 
-// retestAllowed reports whether a condition with this lookback may carry
-// a duration. Google refuses a retest window past 1d1h (measured).
-const maxRetestLookback = 25 * time.Hour
+// maxCustomLookback is Cloud Monitoring's ceiling on a PromQL lookback
+// over a custom.googleapis.com metric — 1d1h, measured. Past it the API
+// answers 400 at policy creation, so it bounds two things: whether a
+// condition may carry a retest window, and how far back an absence can
+// look at all (FL24).
+const maxCustomLookback = 25 * time.Hour
 
-func retestAllowed(lookback time.Duration) bool { return lookback <= maxRetestLookback }
+// retestAllowed reports whether a condition with this lookback may carry
+// a duration.
+func retestAllowed(lookback time.Duration) bool { return lookback <= maxCustomLookback }
 
 // counterQuery is the reading of a cumulative counter over a window.
 // `increase` and `rate` handle resets; `delta` does not, and tako's

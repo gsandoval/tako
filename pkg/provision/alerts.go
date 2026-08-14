@@ -20,6 +20,7 @@ import (
 
 	"github.com/gsandoval/tako/internal/metrics"
 	"github.com/gsandoval/tako/internal/routes"
+	"github.com/gsandoval/tako/internal/schedule"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -140,7 +141,20 @@ func alertQuery(cfg Config, g *analyzer.AppGraph, a *analyzer.AlertCondition) (s
 			// default that had nothing to do with it. A wrong number
 			// that looks deliberate is worse than the [0s] it replaced,
 			// because [0s] would at least have been refused.
-			lookback = 2 * cronPeriod(g, a.SubjectVar)
+			lookback = cronMissedLookback(g, a)
+			// Capped, because twice a daily schedule is 48h and Cloud
+			// Monitoring refuses any lookback past 1d1h on a custom
+			// metric — which is what tako.Requests is. The cap is not the
+			// quiet clamping tako refuses to do to a value someone WROTE
+			// (see Delivery's "tako will not quietly clamp yours"): this
+			// is tako's own default, and it stays visible, because the
+			// plan and `tako alerts` both print the lookback.
+			//
+			// Up to a daily cron the cap still leaves slack — 24h of
+			// schedule against a 25h window is one missed run plus an
+			// hour. Slower than daily has no window that works at all,
+			// and the analyzer refuses it rather than deriving something
+			// that would fire between healthy runs.
 		}
 		if lookback == 0 {
 			// Nothing to derive from. The reduction period is the only
@@ -562,12 +576,45 @@ func cronRoute(g *analyzer.AppGraph, v string) string {
 
 // cronPeriod is a cron's schedule as a duration, for deriving a
 // CronMissed lookback.
+// cronMissedLookback is how far back a CronMissed condition looks: the
+// explicit Window.For when there is one, else twice the schedule capped
+// at the API's ceiling.
+//
+// One function because two callers need the number — the PromQL and the
+// incident documentation the policy opens — and they each derived it.
+// The cap landing on only one of them meant a policy that asked about
+// 25h beside a page that told the responder 48h.
+func cronMissedLookback(g *analyzer.AppGraph, a *analyzer.AlertCondition) time.Duration {
+	if forSeconds := time.Duration(a.ForSeconds) * time.Second; forSeconds > 0 {
+		return forSeconds
+	}
+	return min(2*cronPeriod(g, a.SubjectVar), maxCustomLookback)
+}
+
+// cronPeriod is how long this cron waits between runs.
+//
+// It walks the PARSED schedule twice rather than reading the string,
+// because the string form is not one grammar: `every 6h` is a duration
+// and `*/5 * * * *` is not. Trimming "every " and calling ParseDuration
+// understood the first and silently answered 24h for every one of the
+// second — so a five-minutely cron and a weekly one were both "daily",
+// and both derived a 48h lookback the API refuses (FL24).
+//
+// Two Nexts from a fixed instant give the true interval for every form
+// tako accepts, including the irregular ones: 5m, 24h, 168h, 720h.
 func cronPeriod(g *analyzer.AppGraph, v string) time.Duration {
 	for _, h := range g.Handlers {
 		if h.Var == v && h.Schedule != "" {
-			if d, err := time.ParseDuration(strings.TrimPrefix(h.Schedule, "every ")); err == nil {
-				return d
+			sched, err := schedule.Parse(h.Schedule)
+			if err != nil {
+				break // the analyzer refuses these; the fallback is a floor
 			}
+			// A fixed reference, so the derived window is the same on
+			// every machine and every deploy. Sunday 00:00 UTC is the
+			// start of the widest cycle any accepted schedule has.
+			base := time.Date(2000, 1, 2, 0, 0, 0, 0, time.UTC)
+			first := sched.Next(base)
+			return sched.Next(first).Sub(first)
 		}
 	}
 	return 24 * time.Hour

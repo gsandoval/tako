@@ -47,13 +47,16 @@ func query(t *testing.T, a *analyzer.AlertCondition) (string, bool) {
 // under conditionAbsent's 23h30m ceiling, and the reason Absent compiles
 // to PromQL.
 func TestCronMissedDoublesTheScheduleItReads(t *testing.T) {
+	// Twice the schedule, capped at what Cloud Monitoring accepts on a
+	// custom metric. A daily cron used to derive 48h here, which is the
+	// number that failed the deploy with HTTP 400 (FL24).
 	daily, retest := query(t, &analyzer.AlertCondition{
 		Op: "absent", Reading: "cron_missed", SubjectKind: "cron", SubjectVar: "gallery.Cleanup"})
-	if !strings.Contains(daily, "[172800s]") {
-		t.Errorf("daily cron lookback = %q, want 48h", daily)
+	if !strings.Contains(daily, "[90000s]") {
+		t.Errorf("daily cron lookback = %q, want 25h", daily)
 	}
-	if retest {
-		t.Error("a 48h lookback must forbid a retest window — the API refuses it")
+	if !retest {
+		t.Error("a 25h lookback still allows a retest window — 1d1h is the ceiling, inclusive")
 	}
 	if !strings.Contains(daily, `route="/_tako/api/cron/Cleanup"`) {
 		t.Errorf("cron route not derived from the variable: %q", daily)

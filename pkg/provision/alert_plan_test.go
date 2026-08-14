@@ -56,12 +56,17 @@ func TestAlertsReachTheDesiredPlan(t *testing.T) {
 		t.Errorf("pubsub channel target = %v, want the full env-prefixed topic path", got)
 	}
 	q := pols[0].Spec["query"].(string)
-	if !strings.Contains(q, "absent_over_time(") || !strings.Contains(q, "[172800s]") {
-		t.Errorf("query = %q, want a 48h absence (twice the daily schedule)", q)
+	// 25h, not 48h: twice a daily schedule is past the 1d1h ceiling Cloud
+	// Monitoring puts on a custom metric, and a policy carrying it is
+	// refused at creation (FL24). The cap is one missed run plus an hour.
+	if !strings.Contains(q, "absent_over_time(") || !strings.Contains(q, "[90000s]") {
+		t.Errorf("query = %q, want a 25h absence (twice daily, capped at the API's ceiling)", q)
 	}
-	// A 48h lookback forbids a retest window, so no duration is planned.
+	// No duration, and not because the API refuses one at this lookback —
+	// it allows it at 1d1h. This condition simply declares no For to
+	// retest with: the window IS the absence.
 	if _, present := pols[0].Spec["duration"]; present {
-		t.Errorf("duration planned with a 48h lookback — the API refuses it: %v", pols[0].Spec)
+		t.Errorf("a duration was planned for a condition that declares no For: %v", pols[0].Spec)
 	}
 	if got := pols[0].Spec["channels"]; got != "oncall,bus" {
 		t.Errorf("channels = %v, want the short var names both adapters key on", got)

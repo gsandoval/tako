@@ -611,9 +611,15 @@ func CronFailed(cron Handler, times int, w ...Window) Condition {
 }
 
 // CronMissed fires when a cron has not run at all for twice its own
-// schedule — a 6-hourly job gets a 12-hour lookback, a daily one 26
-// hours. tako reads the schedule from the declaration, so there is no
-// interval to repeat and no chance of the two disagreeing.
+// schedule, capped at 25 hours — a 6-hourly job gets a 12-hour lookback,
+// a daily one 25. tako reads the schedule from the declaration, so there
+// is no interval to repeat and no chance of the two disagreeing.
+//
+// The cap is Cloud Monitoring's: it refuses a lookback past 1d1h on a
+// custom metric, and tako's request metric is one. A cron slower than
+// daily therefore has no window that works — anything the API accepts is
+// shorter than the cron's own interval — and the analyzer refuses that
+// alert rather than deploying a policy Google will reject.
 //
 // It catches a schedule that never fired AND a run that never arrived.
 // It does NOT catch a run that arrived and failed: that is CronFailed.

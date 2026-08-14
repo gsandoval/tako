@@ -129,8 +129,11 @@ func TestDurationsReadTheWayTheyWereDeclared(t *testing.T) {
 	if !strings.Contains(d.Content, "every 24h") {
 		t.Errorf("schedule not rendered from the declaration:\n%s", d.Content)
 	}
-	// 48h is twice the schedule — the derived default lookback.
-	if !strings.Contains(d.Content, "in the last 48h") {
+	// 25h: twice the schedule, capped at the ceiling Cloud Monitoring
+	// puts on a custom metric (FL24). The responder's page and the
+	// policy's query state the same number because they derive it from
+	// the same function — they did not always.
+	if !strings.Contains(d.Content, "in the last 25h") {
 		t.Errorf("lookback not stated:\n%s", d.Content)
 	}
 }

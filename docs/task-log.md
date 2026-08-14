@@ -23739,3 +23739,229 @@ resolve — which is not a gap: `tako new` already does exactly that
 **Shipped and validated.** Flauta's entry is theirs to close. The
 per-instance limit and the prepare/use race are documented in
 `site.md` where the feature is described, not in a footnote.
+
+## FL24 — CronMissed derives a lookback Cloud Monitoring refuses (DX proposal, awaiting approval)
+
+Friction filed 2026-08-11, workaround-fine but **worth asking for**: the
+one cron whose silent failure is invisible — *"a backup that quietly
+stops running looks exactly like a backup that is running"* — could not
+be alerted on. The deploy died at the last resource:
+
+```
+tako: create alert policy BackupMissed: create the alert policy:
+custom.googleapis.com metrics are not supported in PromQL alerts with
+lookback windows longer than 1d1h. (HTTP 400 from monitoring.googleapis.com)
+```
+
+### It is worse than the report
+
+`CronMissed` derives its lookback as twice the schedule, from
+`cronPeriod` (`pkg/provision/alerts.go:565`):
+
+```go
+if d, err := time.ParseDuration(strings.TrimPrefix(h.Schedule, "every ")); err == nil {
+	return d
+}
+return 24 * time.Hour
+```
+
+That parses `every 6h`. It does not parse a **cron expression**, and
+`tako.Cron` accepts those — so `*/5 * * * *` falls through to the 24h
+fallback and gets a **48h lookback**. Measured, by walking the parsed
+schedule twice from a fixed instant:
+
+| schedule | true period | `cronPeriod` today | derived lookback |
+|---|---|---|---|
+| `every 6h` | 6h | 6h | 12h ✓ |
+| `*/5 * * * *` | **5m** | 24h | **48h ✗ refused** |
+| `0 3 * * *` | **24h** | 24h | **48h ✗ refused** |
+| `0 0 * * 0` | **168h** | 24h | **48h ✗ refused** |
+
+So it is not "daily or slower" — **every cron declared with a cron
+expression** is undeployable with `CronMissed`, including a
+five-minutely one, where the derived alert would also have taken two
+days to notice a stopped job.
+
+And tako already knew the number: `maxRetestLookback = 25 * time.Hour`
+(`promql.go:78`), used to decide whether a *retest* window is allowed
+and never applied to the lookback itself.
+
+### The proposal
+
+**1. Derive the period from the schedule, not from a prefix.**
+`schedule.Parse` already exists and `Next` is exact for every form tako
+accepts; two calls give the period (5m, 24h, 168h in the table above).
+The 24h fallback stays for a schedule that will not parse, which the
+analyzer refuses anyway.
+
+**2. Cap the derived lookback at Cloud Monitoring's ceiling.**
+
+```go
+lookback = min(2*cronPeriod(g, a.SubjectVar), maxCustomLookback)  // 25h
+```
+
+Capping tako's OWN derivation is not the thing tako refuses to do
+elsewhere — `Delivery` says "tako will not quietly clamp yours" about a
+value the user wrote. This is the default, and it stays visible: `tako
+alerts` and the deploy plan both print the lookback, so a daily cron
+reads `no data for 25h0m0s` rather than a number that fails at apply.
+
+For every cron up to daily the cap still leaves slack: a 24h cron gets
+25h, which is one missed run plus an hour — the window flauta ended up
+choosing by hand.
+
+**3. Refuse, at analysis time, what cannot be expressed.** A cron slower
+than daily has no legal window: 25h is the ceiling, and anything under
+its own period fires between healthy runs.
+
+```
+app.go:31:24: tako.CronMissed watches a cron that runs every 168h0m0s, and absence over
+that long cannot be expressed — Cloud Monitoring refuses a lookback past 25h on a custom
+metric, and any window it accepts is shorter than this cron's own interval, so the alert
+would fire between healthy runs. Run the cron at least daily and watch that, or check
+freshness inside a daily cron that can fail (tako/window)
+```
+
+**4. Refuse an explicit `Window{For: …}` past 25h on an absence.** Today
+the analyzer checks `For` only for threshold conditions
+(`alerts.go:757` is gated on `spec.Op != "absent"`), which is exactly
+how an unbounded absence window reaches a deploy:
+
+```
+a Window's For on an absence cannot exceed 25h — Cloud Monitoring refuses a longer
+lookback on a custom metric; got 172800s (tako/window)
+```
+
+**5. Fix two documentation claims, which disagree with the code and with
+each other.** `alert.go:613` says a daily cron "gets… 26 hours"; the
+code computes 48; `alerts.md:116` says 48. After this change the true
+rule is "twice the schedule, capped at 25h", and all three say that.
+
+### Scope
+
+`pkg/provision/alerts.go` (`cronPeriod`, the cap), `pkg/provision/promql.go`
+(the constant serves both uses), `pkg/analyzer/alerts.go` (two refusals),
+`alert.go` doc comment, `docs/reference/alerts.md`, plus a golden fixture
+for each new refusal.
+
+**Non-goals**: any other reading's lookback (only `cron_missed` derives
+one); a non-PromQL alert path for long absences; a `CronStale`-style
+freshness primitive — if long-interval absence deserves first-class
+support it is its own feature, and no example demands it.
+
+### Tests
+
+- The period table above, as a unit test over `cronPeriod`: `every 6h`,
+  `*/5 * * * *`, `0 3 * * *`, `0 0 * * 0`.
+- A daily cron's rendered PromQL carries `[90000s]` and not `[172800s]`
+  — the deploy-refusing number, pinned so it cannot come back.
+- Golden fixtures for both refusals (weekly `CronMissed`, and an
+  explicit 48h `For` on an absence).
+- The existing alerts goldens must move only where intended: a
+  cron-expression cron's lookback changes because it was wrong.
+
+### Gate
+
+Automated only. The live tier would be a deploy of an alert policy that
+Google accepts, which is worth doing on the next cloud walk rather than
+standing up a project for one policy — the failure this fixes is an
+HTTP 400 at apply, and the unit test pins the exact number Google
+rejected.
+
+**Status: approved 2026-08-14 ("Approved, build it") — shipped, see below.**
+
+### FL24 — shipped (2026-08-14)
+
+Built as proposed, plus one divergence the work uncovered.
+
+**The period is read from the parsed schedule**, two `Next` calls from a
+fixed instant, so every form tako accepts gives its true interval. The
+old prefix-trim answered 24h for all of them:
+
+```
+every 6h        6h    (was 6h)
+*/5 * * * *     5m    (was 24h → a 48h lookback on a five-minutely cron)
+0 3 * * *       24h   (was 24h)
+0 0 * * 0       168h  (was 24h)
+```
+
+**The derived lookback is capped** at `maxCustomLookback` — the 25h
+constant that already existed in `promql.go` for the retest decision and
+had never been applied to the lookback itself. A daily cron now renders
+`[90000s]`, not the `[172800s]` in flauta's HTTP 400.
+
+**Two refusals**, both at analysis time, with fixtures:
+
+```
+app.go:13:28: tako.CronMissed watches a cron that runs every 168h, and absence over that long
+cannot be expressed — Cloud Monitoring refuses a lookback past 25h on a custom metric, and any
+window it accepts is shorter than this cron's own interval, so the alert would fire between
+healthy runs. Run the cron at least daily and watch that, or check freshness inside a daily
+cron that can fail (tako/window)
+
+app.go:16:23: a Window's For on an absence cannot exceed 25h — Cloud Monitoring refuses a
+longer lookback on a custom metric; got 172800s (tako/window)
+```
+
+The second is the check that already existed for thresholds and was
+gated on `spec.Op != "absent"` — the gate is what let an absence window
+through to a deploy.
+
+### The divergence the work uncovered
+
+The incident documentation derived the lookback **again**, in
+`alertdoc.go`, from its own `2 * cronPeriod`. Capping only the query
+would have shipped a policy asking about 25h beside the page it opens
+telling the responder 48h. Both now call one `cronMissedLookback`:
+
+```
+query:  …}[90000s])
+page:   **No run of cron `Cleanup` has reached `gallery` in the last 25h.**
+```
+
+That is the third time this shape has turned up in a fortnight —
+`verifyGoogleToken`, `entitytag`, and now this — and each time the second
+copy was the one that was wrong.
+
+### Documentation, which had three claims and no two agreeing
+
+`alert.go` said a daily cron gets "26 hours", the code computed 48, and
+`alerts.md` said 48. All three now say twice the schedule capped at 25h,
+and both docs state why a slower-than-daily cron is refused.
+
+### Validation
+
+```
+pkg/provision   3 new tests (the period table, the capped daily lookback,
+                a cron expression's real period); 3 existing expectations
+                moved, each one an assertion on the number that failed
+go test ./...   19 packages ok · vet, gofmt clean
+tako test       all seven examples ok
+fixtures        cronmissedlong, absencewindow
+```
+
+The three moved expectations are worth naming, since a test changing with
+the code it tests deserves an argument: `alerts_test.go` asserted
+`[172800s]` for a daily cron, `alert_plan_test.go` asserted the same in
+the plan, and `alertdoc_test.go` asserted "in the last 48h". All three
+encoded the deploy-refusing number as correct.
+
+### Discovered work
+
+- **52. An absence condition is described as "sustained".** `tako alerts`
+  prints `evaluated every 1m0s, sustained 5m0s` for a `CronMissed` with
+  an explicit window, but on an absence `For` is the lookback, not a
+  sustain — "no data for 5m0s" is what it means. Wording only, in
+  `describe.go`.
+
+### Gate
+
+Automated. The live tier — a policy Google accepts on a daily cron —
+belongs to the next cloud walk; the unit tests pin the exact number that
+drew the 400.
+
+### Verdict
+
+**Shipped.** flauta's entry is theirs to close, and their workaround (a
+daily backup with an explicit 25h window) needs no undoing: it is what
+the derived default now produces on its own.

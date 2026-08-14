@@ -114,9 +114,12 @@ overrides the default. The defaults are defaults, not a ceiling.
 Three are worth reading twice:
 
 - **`CronMissed` needs no interval.** A 6-hourly cron gets a 12-hour
-  lookback and a daily one 48 hours, read from the schedule in the
-  declaration — so there is no second copy of the interval to disagree
-  with the first. It catches a schedule that never fired *and* a run
+  lookback and a daily one 25 hours — twice the schedule, capped at the
+  1d1h ceiling Cloud Monitoring puts on a custom metric — read from the
+  schedule in the declaration, so there is no second copy of the interval
+  to disagree with the first. A cron slower than daily is refused at
+  analysis time: every window the API accepts is shorter than the cron's
+  own interval, so the alert would fire between healthy runs. It catches a schedule that never fired *and* a run
   that never arrived. It does **not** catch a run that arrived and
   failed: that is `CronFailed`.
 - **The four queue situations are two constructors and one boolean.**
@@ -335,7 +338,8 @@ is no defensible default for that, so leaving it zero is an analysis
 error rather than a silent guess.
 
 On an `Absent` condition, `For` is the **lookback** instead — "no data
-for 26 hours" — because absence has nothing to sustain.
+for 25 hours" — because absence has nothing to sustain. It cannot exceed
+25h for the same reason the derived one cannot.
 
 The knobs are exposed rather than hidden because which period a metric
 is reduced over changes what the alert *means*.

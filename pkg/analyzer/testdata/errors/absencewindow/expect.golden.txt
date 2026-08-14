@@ -1,0 +1,1 @@
+app.go:16:23: a Window's For on an absence cannot exceed 25h — Cloud Monitoring refuses a longer lookback on a custom metric; got 172800s (tako/window)

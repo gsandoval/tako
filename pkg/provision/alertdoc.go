@@ -66,10 +66,7 @@ func documentationFor(cfg Config, g *analyzer.AppGraph, r analyzer.Resource) ale
 
 	switch a.Reading {
 	case "cron_missed":
-		lookback := window
-		if lookback == 0 {
-			lookback = 2 * cronPeriod(g, a.SubjectVar)
-		}
+		lookback := cronMissedLookback(g, a)
 		fmt.Fprintf(&b, "**No run of cron `%s` has reached `%s` in the last %s.**\n\n",
 			subject, cfg.Name(service), humanDuration(lookback))
 		b.WriteString("Either the schedule never fired, or it fired and the service never answered.\n")

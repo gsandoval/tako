@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/metrics"
+	"github.com/gsandoval/tako/internal/schedule"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -376,6 +377,7 @@ func conditionSpec(dir string, pkg *packages.Package, cond *ast.CallExpr, ctor s
 			return spec
 		}
 		readWindow(dir, pkg, windowArgs, spec, errs)
+		checkAbsenceLookback(dir, pkg, cond, spec, handlersByVar, errs)
 		return spec
 	}
 
@@ -770,4 +772,80 @@ func constFloat(pkg *packages.Package, e ast.Expr) float64 {
 	}
 	f, _ := constant.Float64Val(constant.ToFloat(tv.Value))
 	return f
+}
+
+// maxCustomLookback is Cloud Monitoring's ceiling on a PromQL lookback
+// over a custom.googleapis.com metric — 1d1h, measured. tako's request
+// metric is one, so every absence condition lives under it.
+const maxCustomLookback = 25 * time.Hour
+
+// checkAbsenceLookback refuses the two absence windows Cloud Monitoring
+// will reject at policy creation (FL24). Both used to be found by
+// deploying: the API answers 400 on the last resource, after everything
+// else in the app is already live.
+//
+// The threshold form of this check has existed since Y1 and is gated on
+// `spec.Op != "absent"` — which is exactly the shape that let an absence
+// window past.
+func checkAbsenceLookback(dir string, pkg *packages.Package, cond *ast.CallExpr,
+	spec *AlertCondition, handlersByVar map[string]*Handler, errs *ErrorList) {
+
+	if spec == nil || spec.Op != "absent" {
+		return
+	}
+	at := relPos(dir, pkg.Fset, cond.Pos())
+
+	// An explicit window past the ceiling.
+	if forSeconds := time.Duration(spec.ForSeconds) * time.Second; forSeconds > maxCustomLookback {
+		*errs = append(*errs, &Error{
+			Pos: at,
+			Msg: fmt.Sprintf("a Window's For on an absence cannot exceed 25h — Cloud Monitoring "+
+				"refuses a longer lookback on a custom metric; got %ds", spec.ForSeconds),
+			Rule: "window",
+		})
+		return
+	}
+	if spec.Reading != "cron_missed" || spec.ForSeconds > 0 {
+		return
+	}
+	// A derived window, for a cron whose own interval leaves none that
+	// works: the ceiling is 25h and anything under the cron's period
+	// fires between healthy runs.
+	h, found := handlersByVar[spec.SubjectVar]
+	if !found || h.Schedule == "" {
+		return
+	}
+	period, err := schedulePeriod(h.Schedule)
+	if err != nil || period <= 24*time.Hour {
+		return
+	}
+	*errs = append(*errs, &Error{
+		Pos: at,
+		Msg: fmt.Sprintf("tako.CronMissed watches a cron that runs every %s, and absence over that "+
+			"long cannot be expressed — Cloud Monitoring refuses a lookback past 25h on a custom "+
+			"metric, and any window it accepts is shorter than this cron's own interval, so the "+
+			"alert would fire between healthy runs. Run the cron at least daily and watch that, or "+
+			"check freshness inside a daily cron that can fail", humanPeriod(period)),
+		Rule: "window",
+	})
+}
+
+// schedulePeriod is how long a schedule waits between runs, walked from
+// the parsed form: `every 6h` is a duration and `*/5 * * * *` is not, so
+// reading the string is not enough (the provisioner derives it the same
+// way, and used to get 24h for every cron expression).
+func schedulePeriod(s string) (time.Duration, error) {
+	sched, err := schedule.Parse(s)
+	if err != nil {
+		return 0, err
+	}
+	base := time.Date(2000, 1, 2, 0, 0, 0, 0, time.UTC)
+	first := sched.Next(base)
+	return sched.Next(first).Sub(first), nil
+}
+
+// humanPeriod renders a period the way the declaration reads, so "168h"
+// rather than Go's "168h0m0s".
+func humanPeriod(d time.Duration) string {
+	return strings.TrimSuffix(strings.TrimSuffix(d.String(), "0s"), "0m")
 }
