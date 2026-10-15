@@ -2,6 +2,8 @@
 
 Write Go. Get a cloud.
 
+📖 **Documentation:** [tako.memo.engineer](https://tako.memo.engineer)
+
 Tako is a Go framework over Google Cloud Run: business logic as plain
 Go packages — APIs, background workers, server-rendered websites —
 with a CLI that runs everything locally in one process (no Docker, no

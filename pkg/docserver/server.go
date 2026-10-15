@@ -21,8 +21,9 @@ const DefaultPort = 8090
 
 // Options is the whole surface of `tako docs`.
 type Options struct {
-	Port int
-	Open bool
+	Port      int
+	Open      bool
+	ExportDir string
 }
 
 const footer = "These pages ship inside the tako binary: they describe the SDK this binary compiles against."
@@ -33,6 +34,15 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return err
 	}
+
+	if opts.ExportDir != "" {
+		if err := Export(site, opts.ExportDir); err != nil {
+			return err
+		}
+		fmt.Printf("✓ exported docs to %s (%s)\n", opts.ExportDir, site.Counts())
+		return nil
+	}
+
 	port := opts.Port
 	if port == 0 {
 		port = DefaultPort

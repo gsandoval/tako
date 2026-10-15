@@ -43,7 +43,7 @@ Local — nothing outside this directory is touched:
                        what every declared alert compiles to: the PromQL,
                        the notification sentence, and the constructor it
                        came from — so a preset can be read and forked
-  tako docs [--port 8090] [--open]
+  tako docs [--port 8090] [--open] [--export <dir>]
                        serve the guide, the reference and the SDK's
                        exported signatures from this binary — no
                        network, no checkout needed

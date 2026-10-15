@@ -34,13 +34,20 @@ func runDocs(args []string) error {
 		case a == "--open":
 			opts.Open = true
 			continue
+		case a == "--export" && i+1 < len(args):
+			i++
+			opts.ExportDir = args[i]
+			continue
+		case strings.HasPrefix(a, "--export="):
+			opts.ExportDir = strings.TrimPrefix(a, "--export=")
+			continue
 		case a == "--port" && i+1 < len(args):
 			i++
 			raw = args[i]
 		case strings.HasPrefix(a, "--port="):
 			raw = strings.TrimPrefix(a, "--port=")
 		default:
-			return fmt.Errorf("unknown flag %q (tako docs accepts --port <n> and --open)", a)
+			return fmt.Errorf("unknown flag %q (tako docs accepts --port <n>, --open, and --export <dir>)", a)
 		}
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
