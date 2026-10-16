@@ -295,14 +295,14 @@ var tmpl = template.Must(template.New("docs").Parse(`
     </div>
 
     <p class="memo-hero-desc">
-      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent directly in your Go code, run the entire stack locally in one process, and let Tako derive the cloud automatically.
+      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent in your Go code, run the whole stack locally in one process, and let Tako derive the cloud.
     </p>
 
     <div class="memo-actions">
       <a href="/guide/01-hello" class="m-btn m-btn-primary">
         <span class="btn-dot"></span> Get Started (5 min)
       </a>
-      <a href="/reference/" class="m-btn m-btn-secondary">Explore Primitives</a>
+      <a href="/reference/" class="m-btn m-btn-secondary">Explore Reference</a>
       <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer" class="m-btn m-btn-secondary">GitHub ↗</a>
       <a href="/guide/local" class="m-btn m-btn-link">The Local Story →</a>
     </div>
@@ -320,41 +320,79 @@ var tmpl = template.Must(template.New("docs").Parse(`
     <div class="memo-section-header">// 0x01 Core Primitives (Declared Nouns)</div>
     <h2 class="memo-section-title">The Declared Vocabulary</h2>
     <p class="memo-section-sub">
-      No comment directives, no reflection in the request path. Six interface rules reduce common cloud patterns to typed Go constructors.
+      Package-level Go declarations, checked by a static analyzer before anything builds. No comment directives, no reflection in the request path, no YAML on the side.
     </p>
 
     <div class="memo-project-grid">
       <a href="/reference/api" class="memo-card card-blue">
         <div class="card-top">
           <span class="card-id">PRM-01</span>
-          <span class="badge badge-blue">HTTP API</span>
+          <span class="badge badge-blue">HTTP & RPC</span>
           <span class="card-status">LOCKED</span>
         </div>
-        <h3 class="card-title"><code>tako.API</code></h3>
-        <p class="card-desc">Type-safe JSON endpoints with compile-time path and query tag binding. Refuses untyped reflection in the request path.</p>
+        <h3 class="card-title"><code>tako.API</code> &amp; <code>.Call</code></h3>
+        <p class="card-desc">Typed JSON endpoints with path and query binding. Export the var and another package calls it directly as a private Cloud Run service — no protobufs or client codegen.</p>
         <div class="card-tags">
           <span class="tag">Cloud Run</span>
-          <span class="tag">HTTP/2</span>
-          <span class="tag">Path Tags</span>
+          <span class="tag">Route.Private</span>
+          <span class="tag">TS Client</span>
         </div>
         <div class="card-footer-meta">
-          <span>Local: In-process mux</span>
-          <span>Cloud: Cloud Run service</span>
+          <span>Local: Direct call</span>
+          <span>Cloud: Cloud Run + IAM</span>
+        </div>
+      </a>
+
+      <a href="/reference/site" class="memo-card card-cyan">
+        <div class="card-top">
+          <span class="card-id">PRM-02</span>
+          <span class="badge badge-cyan">WEB &amp; HTMX</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.Site</code> &amp; <code>Page</code></h3>
+        <p class="card-desc">Server-rendered HTML templates, CSRF-checked forms, and HTMX fragments — or an Astro/Hugo build embedded in the binary. Same origin as your API, so CORS never comes up.</p>
+        <div class="card-tags">
+          <span class="tag">HTMX</span>
+          <span class="tag">Astro / Hugo</span>
+          <span class="tag">Custom Domain</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: Live reload</span>
+          <span>Cloud: Cloud Run + TLS</span>
+        </div>
+      </a>
+
+      <a href="/reference/auth" class="memo-card card-emerald">
+        <div class="card-top">
+          <span class="card-id">PRM-03</span>
+          <span class="badge badge-emerald">IDENTITY</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.Auth</code></h3>
+        <p class="card-desc">One declaration mounts sign-in, revocable server-side sessions, and CSRF tokens. Refuses tokens from undeclared providers and injects a one-click persona bar locally.</p>
+        <div class="card-tags">
+          <span class="tag">Identity Platform</span>
+          <span class="tag">Sessions</span>
+          <span class="tag">Dev Bar</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: Persona dev bar</span>
+          <span>Cloud: Identity Platform</span>
         </div>
       </a>
 
       <a href="/reference/entity" class="memo-card card-emerald">
         <div class="card-top">
-          <span class="card-id">PRM-02</span>
+          <span class="card-id">PRM-04</span>
           <span class="badge badge-emerald">DATASTORE</span>
           <span class="card-status">LOCKED</span>
         </div>
         <h3 class="card-title"><code>tako.Entity[T]</code></h3>
-        <p class="card-desc">Typed document storage with atomic transactional mutations, derived secondary indexes, and zero SQL schema drift.</p>
+        <p class="card-desc">Typed document storage with transactions and queries. The analyzer reads your <code>.Where()</code> and <code>.Order()</code> calls and derives the composite indexes for you.</p>
         <div class="card-tags">
           <span class="tag">Datastore</span>
           <span class="tag">bbolt</span>
-          <span class="tag">Transactions</span>
+          <span class="tag">Derived Indexes</span>
         </div>
         <div class="card-footer-meta">
           <span>Local: .tako/data/entity.db</span>
@@ -362,79 +400,155 @@ var tmpl = template.Must(template.New("docs").Parse(`
         </div>
       </a>
 
-      <a href="/reference/queue" class="memo-card card-purple">
-        <div class="card-top">
-          <span class="card-id">PRM-03</span>
-          <span class="badge badge-purple">WORK QUEUE</span>
-          <span class="card-status">LOCKED</span>
-        </div>
-        <h3 class="card-title"><code>tako.Queue[T]</code></h3>
-        <p class="card-desc">Competing-consumer asynchronous work queue. Dispatches background jobs with automatic retry pacing and dead-lettering.</p>
-        <div class="card-tags">
-          <span class="tag">Cloud Tasks</span>
-          <span class="tag">Channels</span>
-          <span class="tag">At-Least-Once</span>
-        </div>
-        <div class="card-footer-meta">
-          <span>Local: Go Channels</span>
-          <span>Cloud: Cloud Tasks</span>
-        </div>
-      </a>
-
       <a href="/reference/bucket" class="memo-card card-amber">
         <div class="card-top">
-          <span class="card-id">PRM-04</span>
-          <span class="badge badge-amber">OBJECT STORAGE</span>
+          <span class="card-id">PRM-05</span>
+          <span class="badge badge-amber">BLOBS</span>
           <span class="card-status">LOCKED</span>
         </div>
         <h3 class="card-title"><code>tako.Bucket</code></h3>
-        <p class="card-desc">Blob and object storage with presigned upload and download URLs, streaming I/O, and auto-provisioned bucket permissions.</p>
+        <p class="card-desc">Object storage with streaming I/O, presigned upload/download URLs, and upload notifications. Bucket IAM is scoped to the handlers that actually touch it.</p>
         <div class="card-tags">
           <span class="tag">Cloud Storage</span>
           <span class="tag">Signed URLs</span>
-          <span class="tag">Blob</span>
+          <span class="tag">Upload Events</span>
         </div>
         <div class="card-footer-meta">
           <span>Local: .tako/data/buckets/</span>
-          <span>Cloud: Google Cloud Storage</span>
+          <span>Cloud: Cloud Storage</span>
         </div>
       </a>
 
-      <a href="/reference/topic" class="memo-card card-pink">
-        <div class="card-top">
-          <span class="card-id">PRM-05</span>
-          <span class="badge badge-pink">PUB/SUB</span>
-          <span class="card-status">LOCKED</span>
-        </div>
-        <h3 class="card-title"><code>tako.Topic[T]</code></h3>
-        <p class="card-desc">Event broadcast fan-out delivering messages to multiple independent subscriber services with OIDC authentication.</p>
-        <div class="card-tags">
-          <span class="tag">Pub/Sub</span>
-          <span class="tag">Fan-out</span>
-          <span class="tag">OIDC Tokens</span>
-        </div>
-        <div class="card-footer-meta">
-          <span>Local: In-process Dispatcher</span>
-          <span>Cloud: GCP Pub/Sub Topic</span>
-        </div>
-      </a>
-
-      <a href="/reference/site" class="memo-card card-cyan">
+      <a href="/reference/queue" class="memo-card card-purple">
         <div class="card-top">
           <span class="card-id">PRM-06</span>
-          <span class="badge badge-cyan">FULL-STACK WEB</span>
+          <span class="badge badge-purple">ASYNC &amp; EVENTS</span>
           <span class="card-status">LOCKED</span>
         </div>
-        <h3 class="card-title"><code>tako.Site</code></h3>
-        <p class="card-desc">Server-rendered templates (HTML + HTMX fragments) or Hugo/Astro builds embedded into the same binary — one origin, zero CORS.</p>
+        <h3 class="card-title"><code>Queue[T]</code> &amp; <code>Topic[T]</code></h3>
+        <p class="card-desc">Competing workers via Queue and fan-out broadcasts via Topic. Locally they are channels calling your functions, so a breakpoint steps straight across the publish.</p>
         <div class="card-tags">
-          <span class="tag">HTMX</span>
-          <span class="tag">Templates</span>
-          <span class="tag">Custom Domain</span>
+          <span class="tag">Cloud Tasks</span>
+          <span class="tag">Pub/Sub</span>
+          <span class="tag">Dead Letters</span>
         </div>
         <div class="card-footer-meta">
-          <span>Local: Dev Live Reload</span>
-          <span>Cloud: Cloud Run + CDN</span>
+          <span>Local: Go channels</span>
+          <span>Cloud: Tasks &amp; Pub/Sub</span>
+        </div>
+      </a>
+
+      <a href="/reference/cron" class="memo-card card-pink">
+        <div class="card-top">
+          <span class="card-id">PRM-07</span>
+          <span class="badge badge-pink">SCHEDULER</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.Cron</code></h3>
+        <p class="card-desc">Scheduled handlers checked at compile time against Cloud Scheduler's grammar. Turn on <code>Singleflight</code> and overlapping runs collapse to one across all instances.</p>
+        <div class="card-tags">
+          <span class="tag">Cloud Scheduler</span>
+          <span class="tag">Singleflight</span>
+          <span class="tag">Timezones</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: In-process ticker</span>
+          <span>Cloud: Cloud Scheduler</span>
+        </div>
+      </a>
+
+      <a href="/reference/singleton" class="memo-card card-amber">
+        <div class="card-top">
+          <span class="card-id">PRM-08</span>
+          <span class="badge badge-amber">COORDINATION</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>Singleton</code> &amp; <code>Lock</code></h3>
+        <p class="card-desc">Distributed 30s leases with fencing tokens, and <code>Singleton</code> loops guaranteed to run on at most one instance — even mid-deploy while two revisions are live.</p>
+        <div class="card-tags">
+          <span class="tag">Fenced Leases</span>
+          <span class="tag">Exactly-One</span>
+          <span class="tag">CAS</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: Lease table</span>
+          <span>Cloud: Datastore CAS</span>
+        </div>
+      </a>
+
+      <a href="/reference/job" class="memo-card card-blue">
+        <div class="card-top">
+          <span class="card-id">PRM-09</span>
+          <span class="badge badge-blue">BATCH COMPUTE</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.Job[T]</code> + <code>Runner</code></h3>
+        <p class="card-desc">Work that outlives request timeouts. Hands off to a Cloud Run Job with optional parallel task sharding — <code>ctx.Task()</code> gives each shard its index and count.</p>
+        <div class="card-tags">
+          <span class="tag">Cloud Run Jobs</span>
+          <span class="tag">Parallel Shards</span>
+          <span class="tag">No Timeout</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: Joined goroutines</span>
+          <span>Cloud: Cloud Run Job</span>
+        </div>
+      </a>
+
+      <a href="/reference/observability" class="memo-card card-cyan">
+        <div class="card-top">
+          <span class="card-id">PRM-10</span>
+          <span class="badge badge-cyan">OBSERVABILITY</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>Secret</code>, <code>Counter</code> &amp; <code>Logs</code></h3>
+        <p class="card-desc">Secrets resolve at boot — if one is unset, the binary refuses to start, so <code>Value()</code> never fails mid-request. Metrics never block; logs carry <code>req</code>, <code>job</code>, or <code>cron</code> IDs.</p>
+        <div class="card-tags">
+          <span class="tag">Secret Manager</span>
+          <span class="tag">Monitoring</span>
+          <span class="tag">slog</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: .env &amp; console</span>
+          <span>Cloud: Secret Mgr &amp; GCM</span>
+        </div>
+      </a>
+
+      <a href="/reference/alerts" class="memo-card card-pink">
+        <div class="card-top">
+          <span class="card-id">PRM-11</span>
+          <span class="badge badge-pink">ALERTING</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.Alert</code></h3>
+        <p class="card-desc">Paging conditions (<code>QueueBacklogged</code>, <code>CronMissed</code>, <code>RequestsErroring</code>, <code>SingletonDown</code>) declared in Go. An alert nobody receives does not compile.</p>
+        <div class="card-tags">
+          <span class="tag">PromQL</span>
+          <span class="tag">On-Call</span>
+          <span class="tag">tako alerts</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: tako alerts CLI</span>
+          <span>Cloud: Monitoring Policy</span>
+        </div>
+      </a>
+
+      <a href="/reference/testing" class="memo-card card-purple">
+        <div class="card-top">
+          <span class="card-id">PRM-12</span>
+          <span class="badge badge-purple">TESTING &amp; CHAOS</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>tako.NewTestApp</code></h3>
+        <p class="card-desc">Boot the whole app in <code>go test</code> with fresh in-memory state. Sign in test users, drain queues, advance a fake clock past TTLs, and turn on chaos mode to test delivery order.</p>
+        <div class="card-tags">
+          <span class="tag">Fake Clock</span>
+          <span class="tag">Chaos Mode</span>
+          <span class="tag">Zero Docker</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: go test / tako test</span>
+          <span>Cloud: Conformance suite</span>
         </div>
       </a>
     </div>
@@ -450,16 +564,16 @@ var tmpl = template.Must(template.New("docs").Parse(`
           <span class="pill-dot dot-emerald"></span>
           <span class="panel-tag">THE LOCAL STORY</span>
         </div>
-        <h3>Zero Emulators. Zero Docker.</h3>
+        <h3>One Process. No Emulators. No Docker.</h3>
         <p>
-          <code>tako dev</code> runs your entire application graph inside a single native Go process. Queues and topics map to in-memory channels, so your debugger steps straight across queue and worker boundaries without network latency or container restarts.
+          <code>tako dev</code> runs your whole application graph in one ordinary Go process. Queues and topics are channels calling your functions, so a breakpoint steps straight from publish into the worker. Delete <code>.tako/data</code> and you're back to a clean slate.
         </p>
         <div class="panel-stat-row">
           <div class="p-stat"><strong>1</strong> process</div>
           <div class="p-stat"><strong>0</strong> emulators</div>
           <div class="p-stat"><strong>.tako/data</strong> total reset</div>
         </div>
-        <span class="panel-link">Read local development guide →</span>
+        <span class="panel-link">Read the local story →</span>
       </a>
 
       <a href="/guide/cloud" class="story-panel cloud-panel">
@@ -467,33 +581,33 @@ var tmpl = template.Must(template.New("docs").Parse(`
           <span class="pill-dot dot-blue"></span>
           <span class="panel-tag">THE CLOUD STORY</span>
         </div>
-        <h3>Derived Least-Privilege Cloud.</h3>
+        <h3>No State File. Derived Least-Privilege IAM.</h3>
         <p>
-          <code>tako deploy</code> statically inspects which handlers touch which resources, and generates classified plans with exact IAM bindings. Removing code revokes permissions automatically. No Terraform state files, no YAML manifests.
+          <code>tako deploy</code> reads the live GCP project, diffs it against your code, and prints a classified plan before touching anything. Each service gets its own service account, granted only the resources its handlers actually touch. Delete the code and the next deploy revokes the grant.
         </p>
         <div class="panel-stat-row">
           <div class="p-stat"><strong>0</strong> YAML files</div>
-          <div class="p-stat"><strong>100%</strong> AST-derived IAM</div>
+          <div class="p-stat"><strong>100%</strong> code-derived IAM</div>
           <div class="p-stat"><strong>Stateless</strong> convergence</div>
         </div>
-        <span class="panel-link">Read Google Cloud reconciliation →</span>
+        <span class="panel-link">Read the cloud story →</span>
       </a>
     </div>
   </section>
 
   <section class="memo-section">
     <div class="memo-section-header">// 0x03 Worked Examples</div>
-    <h2 class="memo-section-title">Six Progressive Tutorials</h2>
+    <h2 class="memo-section-title">Six Progressive Examples</h2>
     <p class="memo-section-sub">
-      Every example app is a complete tutorial chapter and an integral part of the continuous conformance test suite.
+      Six working apps in the order the framework grows. Every example is both a chapter in the guide and a test target in the conformance suite.
     </p>
 
     <div class="tutorial-list">
       <a href="/guide/01-hello" class="tutorial-item">
         <div class="t-num">01</div>
         <div class="t-body">
-          <div class="t-title">hello — APIs, Request Binding, & Dev Loop</div>
-          <div class="t-desc">The minimal 5-minute setup. Endpoints, path/query tags, hot reload, and your first Cloud Run deployment.</div>
+          <div class="t-title">hello — APIs, Request Binding, &amp; First Deploy</div>
+          <div class="t-desc">A 20-line service: path and query tags, hot reload with tako dev, and your first deploy to Cloud Run.</div>
         </div>
         <div class="t-tags"><span class="tag">Endpoints</span><span class="tag">Binding</span></div>
       </a>
@@ -501,8 +615,8 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/guide/02-shortlink" class="tutorial-item">
         <div class="t-num">02</div>
         <div class="t-body">
-          <div class="t-title">shortlink — Entities, Transactions, & Queues</div>
-          <div class="t-desc">Transactional counters, background workers, and verifying exactly-once state effects under chaos testing.</div>
+          <div class="t-title">shortlink — Entities, Transactions, &amp; Queues</div>
+          <div class="t-desc">Transactional writes, background click counting over a queue, and proving idempotency under chaos delivery.</div>
         </div>
         <div class="t-tags"><span class="tag">Datastore</span><span class="tag">Cloud Tasks</span></div>
       </a>
@@ -510,8 +624,8 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/guide/03-gallery" class="tutorial-item">
         <div class="t-num">03</div>
         <div class="t-body">
-          <div class="t-title">gallery — Buckets, Event Fan-out, & Crons</div>
-          <div class="t-desc">GCS image uploads via signed URLs, Pub/Sub event fan-out, dead-letter recovery, and scheduled locks.</div>
+          <div class="t-title">gallery — Buckets, Signed URLs, Fan-Out, &amp; Crons</div>
+          <div class="t-desc">Direct-to-bucket uploads, Pub/Sub thumbnail workers, dead-letter replay, scheduled cleanup, secrets, and locks.</div>
         </div>
         <div class="t-tags"><span class="tag">GCS</span><span class="tag">Pub/Sub</span><span class="tag">Cron</span></div>
       </a>
@@ -519,8 +633,8 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/guide/04-journal" class="tutorial-item">
         <div class="t-num">04</div>
         <div class="t-body">
-          <div class="t-title">journal — Server-Rendered Site, HTMX, & Google Auth</div>
-          <div class="t-desc">Full web application: HTML templates, CSRF security, sanitized markdown rendering, and Google Sign-In.</div>
+          <div class="t-title">journal — Server-Rendered Pages, HTMX, &amp; Google Sign-In</div>
+          <div class="t-desc">HTML templates, CSRF-checked forms, HTMX partial responses, sanitized markdown, and Google auth with the local dev bar.</div>
         </div>
         <div class="t-tags"><span class="tag">HTMX</span><span class="tag">Auth</span></div>
       </a>
@@ -528,19 +642,19 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/guide/05-shop" class="tutorial-item">
         <div class="t-num">05</div>
         <div class="t-body">
-          <div class="t-title">shop — Multi-Service RPC, TypeScript, & Jobs</div>
-          <div class="t-desc">Multiple private Cloud Run services, typed cross-service calls, generated TypeScript clients, and batch compute jobs.</div>
+          <div class="t-title">shop — Multi-Service RPC, TypeScript Client, &amp; Jobs</div>
+          <div class="t-desc">Package = service: private Cloud Run services, typed cross-service calls, a generated TypeScript client, batch jobs, and a singleton invoicer.</div>
         </div>
-        <div class="t-tags"><span class="tag">RPC</span><span class="tag">Jobs</span></div>
+        <div class="t-tags"><span class="tag">RPC</span><span class="tag">Jobs</span><span class="tag">Singleton</span></div>
       </a>
 
       <a href="/guide/06-blog" class="tutorial-item">
         <div class="t-num">06</div>
         <div class="t-body">
-          <div class="t-title">blog — Hugo Jamstack with Dynamic Islands</div>
-          <div class="t-desc">Hugo builds the static documentation/blog shell while Tako handles dynamic comments and fragment endpoints.</div>
+          <div class="t-title">blog — Hugo Static Site with Dynamic HTMX Islands</div>
+          <div class="t-desc">Hugo builds the static pages while Tako runs the build loop and serves live comment fragments from the same origin.</div>
         </div>
-        <div class="t-tags"><span class="tag">Hugo</span><span class="tag">Jamstack</span></div>
+        <div class="t-tags"><span class="tag">Hugo</span><span class="tag">Islands</span></div>
       </a>
     </div>
   </section>
