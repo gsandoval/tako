@@ -170,7 +170,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					errs = append(errs, &Error{
 						Pos:  pos,
 						Msg:  "entity name must be a non-empty string literal",
-						Rule: "non-const-name",
+						Rule: "const-name",
 					})
 				}
 
@@ -192,19 +192,19 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 						errs = append(errs, &Error{
 							Pos:  pos,
 							Msg:  fmt.Sprintf("entity %q type %s must have exactly one field tagged `entity:\"id\"`", resName, gv.TypeArg),
-							Rule: "entity-missing-id",
+							Rule: "entity-id",
 						})
 					} else if len(idFields) > 1 {
 						errs = append(errs, &Error{
 							Pos:  pos,
 							Msg:  fmt.Sprintf("entity %q type %s has multiple fields tagged `entity:\"id\"`", resName, gv.TypeArg),
-							Rule: "entity-bad-id",
+							Rule: "entity-id",
 						})
 					} else if idFields[0].Type != "str" && idFields[0].Type != "string" {
 						errs = append(errs, &Error{
 							Pos:  pos,
 							Msg:  fmt.Sprintf("entity %q id field %s must have type str (got %s)", resName, idFields[0].Name, idFields[0].Type),
-							Rule: "entity-bad-id",
+							Rule: "entity-id",
 						})
 					}
 				}
@@ -228,7 +228,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					errs = append(errs, &Error{
 						Pos:  pos,
 						Msg:  fmt.Sprintf("%s name must be a non-empty string literal", ctor),
-						Rule: "non-const-name",
+						Rule: "const-name",
 					})
 				}
 				res := Resource{
@@ -258,7 +258,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					errs = append(errs, &Error{
 						Pos:  pos,
 						Msg:  fmt.Sprintf("tako.%s route must be a non-empty string literal", ctor),
-						Rule: "non-const-name",
+						Rule: "const-name",
 					})
 				}
 
@@ -306,7 +306,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 									errs = append(errs, &Error{
 										Pos:  pos,
 										Msg:  fmt.Sprintf("request struct %s specifies path %q not found in route %q", reqType, p, route),
-										Rule: "route-param-mismatch",
+										Rule: "route-params",
 									})
 								}
 							} else if q := tag.Get("query"); q != "" {
@@ -331,7 +331,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 								errs = append(errs, &Error{
 									Pos:  pos,
 									Msg:  fmt.Sprintf("route parameter %q has no matching field in request struct %s", rp, reqType),
-									Rule: "route-param-mismatch",
+									Rule: "route-params",
 								})
 							}
 						}

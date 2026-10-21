@@ -87,8 +87,8 @@ type BadLink struct {
 	if len(errList) == 0 {
 		t.Fatalf("expected at least one diagnostic")
 	}
-	if errList[0].Rule != "entity-missing-id" {
-		t.Fatalf("expected rule entity-missing-id, got %s", errList[0].Rule)
+	if errList[0].Rule != "entity-id" {
+		t.Fatalf("expected rule entity-id, got %s", errList[0].Rule)
 	}
 }
 
@@ -117,8 +117,8 @@ type BadIdLink struct {
 	if !ok || len(errList) == 0 {
 		t.Fatalf("expected ErrorList, got: %v", err)
 	}
-	if errList[0].Rule != "entity-bad-id" {
-		t.Fatalf("expected rule entity-bad-id, got %s", errList[0].Rule)
+	if errList[0].Rule != "entity-id" {
+		t.Fatalf("expected rule entity-id, got %s", errList[0].Rule)
 	}
 }
 
@@ -153,13 +153,13 @@ fn handle_get(ctx: tako.Ctx, req: Req) -> str! {
 	}
 	var hasMismatch bool
 	for _, e := range errList {
-		if e.Rule == "route-param-mismatch" {
+		if e.Rule == "route-params" {
 			hasMismatch = true
 			break
 		}
 	}
 	if !hasMismatch {
-		t.Fatalf("expected route-param-mismatch, got: %v", errList)
+		t.Fatalf("expected route-params, got: %v", errList)
 	}
 }
 
