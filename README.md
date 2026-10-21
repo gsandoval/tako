@@ -1,15 +1,18 @@
 # Tako
 
-Write Go. Get a cloud.
+Write Go or cfire. Get a cloud.
 
 📖 **Documentation:** [tako.memo.engineer](https://tako.memo.engineer)
 
-Tako is a Go framework over Google Cloud Run: business logic as plain
-Go packages — APIs, background workers, server-rendered websites —
-with a CLI that runs everything locally in one process (no Docker, no
+Tako is a polyglot cloud framework over Google Cloud Run: write business
+logic as plain **Go** packages or native **cfire** (`.cf`) systems
+packages — APIs, background workers, server-rendered websites — with a
+CLI that runs everything locally in one process (no Docker, no
 emulators) and derives the whole cloud from your code (no Terraform,
 no YAML, no Dockerfiles). Infrastructure, wiring, and least-privilege
 IAM come from static analysis of the declarations you already wrote.
+
+### Go
 
 ```go
 package hello
@@ -36,6 +39,34 @@ type Greeting struct {
 }
 ```
 
+### cfire (C++23 systems language)
+
+```cfire
+package hello
+
+import "core:tako"
+import "core:str"
+
+Greet := tako.api("GET /greet/{name}", greet_handler)
+
+type GreetReq struct {
+    name: str  `path:"name"`
+    loud: bool `query:"loud"`
+}
+
+type Greeting struct {
+    message: str `json:"message"`
+}
+
+fn greet_handler(ctx: tako.Ctx, req: GreetReq) -> Greeting! {
+    mut msg := "Hello, " + req.name + "!"
+    if req.loud {
+        msg = str.to_upper(msg)
+    }
+    return Greeting{message: msg}
+}
+```
+
 ## Five minutes to a URL
 
 **0. Install** (Go 1.26+):
@@ -51,13 +82,19 @@ the exact path, and make sure it's on your `PATH`.
 
 **1. A project** (~1 min):
 
+For **Go**:
 ```
 mkdir hello && cd hello
 go mod init hello
 go get github.com/gsandoval/tako
 ```
+Save the Go snippet above as `hello.go` (add `"strings"` to the imports).
 
-Save the file above as `hello.go` (add `"strings"` to the imports).
+For **cfire** (requires `cfire` on your `PATH`):
+```
+mkdir hello-cf && cd hello-cf
+```
+Save the cfire snippet above as `hello.cf` (no `go.mod` needed — Tako detects `.cf` projects automatically).
 
 **2. Run it locally** (~30 s):
 
@@ -106,7 +143,7 @@ asks you to type the app's name.
 
 ## Where to next
 
-The framework grows through six worked examples — each one is a
+The framework grows through seven worked chapters — each one is a
 tutorial chapter and part of the test suite:
 
 | | Adds |
@@ -117,6 +154,7 @@ tutorial chapter and part of the test suite:
 | [journal](docs/guide/04-journal.md) | server-rendered site, htmx fragments, sanitized markdown, Google sign-in |
 | [shop](docs/guide/05-shop.md) | generated TypeScript client, private services + typed calls, jobs, singletons |
 | [blog](docs/guide/06-blog.md) | Hugo-built static site, htmx islands calling tako fragments |
+| [cfire](docs/guide/07-cfire.md) | native `.cf` systems apps (`cfire-hello`, `cfire-shortlink`, `cfire-gallery`), C-archive runtime, distroless C++23 deploys |
 
 Plus the two stories: [local](docs/guide/local.md) (what dev/test
 actually run) and [cloud](docs/guide/cloud.md) (what deploy creates,
@@ -124,13 +162,13 @@ the permissions model, the one manual setup step, what destroy
 leaves). And when you need one feature's whole answer — declare, use,
 local, cloud, test, errors — enter the
 [feature reference](docs/reference/README.md) sideways: one page per
-feature, every page the same shape.
+feature, every page the same shape (including the [cfire SDK reference](docs/reference/cfire.md)).
 
 ## The opinions, briefly
 
 - **Declarations are code.** Package-level vars via constructors —
   no comment directives, no reflection in the request path, generated
-  code you can read.
+  code you can read (`.tako/gen/<service>/main.go` or `main.cf`).
 - **Local is in-process.** One binary, breakpoints across every
   boundary; a shared conformance suite — not emulators — keeps local
   and GCP honest with each other.

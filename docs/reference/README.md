@@ -98,6 +98,8 @@ Two consequences worth knowing:
   fake clock, chaos mode
 - [client-ts.md](client-ts.md) — `tako gen client ts`: the generated
   TypeScript client
+- [cfire.md](cfire.md) — `import "core:tako"`: the native C++23 systems
+  SDK, `libtako` C-archive bridge, and distroless container builds
 - [cli.md](cli.md) — the command surface and the confirmation ladder
 - [errors.md](errors.md) — every analysis rule tako can refuse with,
   and what each one protects

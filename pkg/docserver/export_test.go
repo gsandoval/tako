@@ -24,9 +24,13 @@ func TestExportGeneratesCompleteStaticSite(t *testing.T) {
 		"guide/index.html",
 		"guide/01-hello/index.html",
 		"guide/01-hello.html",
+		"guide/07-cfire/index.html",
+		"guide/07-cfire.html",
 		"reference/index.html",
 		"reference/entity/index.html",
 		"reference/entity.html",
+		"reference/cfire/index.html",
+		"reference/cfire.html",
 	} {
 		p := filepath.Join(tmpDir, rel)
 		data, err := os.ReadFile(p)

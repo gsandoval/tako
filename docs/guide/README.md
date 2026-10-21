@@ -1,12 +1,13 @@
 # The Tako guide
 
-Tako is a Go framework over Google Cloud Run: you write pure business
-logic — APIs, workers, websites — as ordinary Go packages, and the
-`tako` CLI runs it locally and provisions it onto GCP. No Terraform,
-no Dockerfiles, no YAML: the analyzer reads your declarations and
-derives the infrastructure, the IAM, and the wiring.
+Tako is a polyglot cloud framework over Google Cloud Run: you write pure
+business logic — APIs, workers, websites — as ordinary Go packages or
+native **cfire** (`.cf`) systems packages, and the `tako` CLI runs it
+locally and provisions it onto GCP. No Terraform, no Dockerfiles, no
+YAML: the analyzer reads your declarations and derives the
+infrastructure, the IAM, and the wiring.
 
-The guide is the six examples, in the order the framework grows:
+The guide is the seven chapters, in the order the framework grows:
 
 1. **[hello](01-hello.md)** — APIs, request binding, the dev loop,
    your first deploy.
@@ -22,6 +23,9 @@ The guide is the six examples, in the order the framework grows:
 6. **[blog](06-blog.md)** — a Hugo-built static site with htmx
    islands: the generator owns the pages, tako runs the build and
    serves the dynamic fragments.
+7. **[cfire](07-cfire.md)** — native C++23 `.cf` systems apps on Tako
+   (`cfire-hello`, `cfire-shortlink`, `cfire-gallery`), the `libtako`
+   C-archive bridge, and distroless C++23 container deploys.
 
 Two stories frame everything:
 

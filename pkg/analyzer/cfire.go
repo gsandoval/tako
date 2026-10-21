@@ -85,11 +85,38 @@ type cfireOutlineGlobal struct {
 	Args    []string `json:"args"`
 }
 
+type cfireOutlineParam struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Intent    string `json:"intent"`
+	Signature string `json:"signature"`
+}
+
+func (p *cfireOutlineParam) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		p.Signature = s
+		parts := strings.SplitN(s, ":", 2)
+		if len(parts) == 2 {
+			p.Name = strings.TrimSpace(parts[0])
+			p.Type = strings.TrimSpace(parts[1])
+		}
+		return nil
+	}
+	type alias cfireOutlineParam
+	var obj alias
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return err
+	}
+	*p = cfireOutlineParam(obj)
+	return nil
+}
+
 type cfireOutlineFunc struct {
-	Name    string   `json:"name"`
-	Params  []string `json:"params"`
-	Returns string   `json:"returns"`
-	Async   bool     `json:"async"`
+	Name    string              `json:"name"`
+	Params  []cfireOutlineParam `json:"params"`
+	Returns string              `json:"returns"`
+	Async   bool                `json:"async"`
 }
 
 var pathParamRegex = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
@@ -266,16 +293,12 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				var bindings []Binding
 				fn, fnFound := funcsByName[handlerName]
 				if fnFound {
-					resType = fn.Returns
-					// Extract req type from params: "ctx: tako::Ctx", "req: GreetReq"
+					resType = strings.TrimSuffix(fn.Returns, "!")
 					for _, param := range fn.Params {
-						parts := strings.SplitN(param, ":", 2)
-						if len(parts) == 2 {
-							pName := strings.TrimSpace(parts[0])
-							pType := strings.TrimSpace(parts[1])
-							if pName == "req" || (!strings.Contains(pType, "Ctx") && !strings.Contains(pType, "ctx")) {
-								reqType = pType
-							}
+						pName := strings.TrimSpace(param.Name)
+						pType := strings.TrimSpace(param.Type)
+						if pName == "req" || (!strings.Contains(pType, "Ctx") && !strings.Contains(pType, "ctx")) {
+							reqType = pType
 						}
 					}
 				}
