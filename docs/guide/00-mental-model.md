@@ -52,7 +52,7 @@ Every Tako command (`tako check`, `tako dev`, `tako test`, `tako build`,
    plus a per-package test harness (`tako_harness_test.go` or
    `tako_harness.cf`) mapped into `tako test`.
 
-**Go (`app.go`):**
+**Go** (`app.go`)
 ```go
 package shortlink
 
@@ -63,7 +63,7 @@ var Clicks  = tako.Queue[Click]("clicks")
 var GetLink = tako.API("GET /links/{code}", getLink)
 ```
 
-**cfire (`shortlink.cf`):**
+**cfire** (`shortlink.cf`)
 ```cfire
 package shortlink
 
@@ -213,7 +213,7 @@ Every `tako.API` / `tako.api` and `tako.Page` / `tako.page` handler
 takes `(ctx: tako.Ctx, req: Req)` where `Req` is a declared struct (or
 `struct{}` in Go):
 
-**Go:**
+**Go**
 ```go
 type GreetReq struct {
 	Name string `path:"name"`
@@ -228,7 +228,7 @@ func greet(ctx tako.Ctx, req GreetReq) (Greeting, error) {
 }
 ```
 
-**cfire:**
+**cfire**
 ```cfire
 type GreetReq struct {
     name: str  `path:"name"`

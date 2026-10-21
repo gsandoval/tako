@@ -64,10 +64,24 @@ header {
 header .brand { font-weight:700; letter-spacing:-.02em; font-size:1.05rem; }
 header a { color:var(--dim); text-decoration:none; font-size:.92rem; font-weight:500; transition:color .15s ease; }
 header a.on, header a:hover { color:var(--ink); font-weight:600; }
-header .header-right { margin-left:auto; display:flex; align-items:center; }
+header .header-right { margin-left:auto; display:flex; align-items:center; gap:.65rem; }
 header .github-link { display:inline-flex; align-items:center; gap:.4rem; color:var(--dim); font-size:.84rem; font-weight:500; text-decoration:none; padding:.22rem .6rem; border-radius:6px; border:1px solid var(--rule); background:var(--surface); transition:all .15s ease; font-family:var(--font-mono); }
 header .github-link:hover { color:var(--ink); border-color:var(--ink); text-decoration:none; }
 header .github-link svg { flex-shrink:0; }
+
+/* Unified Go / cfire Code Block Switch */
+.code-tabs { max-width:54rem; margin:1rem 0; border:1px solid var(--rule); border-radius:6px; background:var(--surface); overflow:hidden; }
+.code-tabs-bar { display:flex; align-items:center; justify-content:space-between; gap:.75rem; padding:.38rem .7rem; background:var(--surface-alt); border-bottom:1px solid var(--rule); flex-wrap:wrap; }
+.code-tabs-switch, .header-lang-switch { display:inline-flex; align-items:center; background:var(--rule); padding:2px; border-radius:5px; gap:2px; }
+.code-tab-btn, .header-lang-btn { border:0; background:transparent; color:var(--dim); font:600 .75rem/1 var(--font-mono); padding:.26rem .62rem; border-radius:4px; cursor:pointer; transition:all .12s ease; }
+.code-tab-btn:hover, .header-lang-btn:hover { color:var(--ink); }
+.code-tab-btn.on, .header-lang-btn.on { background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.06); }
+.code-tabs-meta { font-size:.8rem; color:var(--dim); margin-left:auto; }
+.code-tab-caption { display:none; }
+.code-tab-caption.on { display:inline; }
+.code-tab-pane { display:none; }
+.code-tab-pane.on { display:block; }
+.code-tab-pane pre { margin:0; border:0; border-radius:0; max-width:none; }
 
 .layout { display:flex; align-items:flex-start; gap:2.5rem; max-width:72rem; margin:0 auto; padding:0 1.4rem; }
 nav.side {
@@ -268,6 +282,10 @@ var tmpl = template.Must(template.New("docs").Parse(`
   <a href="/reference/"{{if eq .Section "reference"}} class="on"{{end}}>reference</a>
   <a href="/api"{{if eq .Section "api"}} class="on"{{end}}>api</a>
   <div class="header-right">
+    <div class="header-lang-switch" role="tablist" aria-label="Preferred code language" title="Switch all code examples between Go and cfire">
+      <button type="button" class="header-lang-btn on" data-lang="go" role="tab" aria-selected="true">Go</button>
+      <button type="button" class="header-lang-btn" data-lang="cfire" role="tab" aria-selected="false">cfire</button>
+    </div>
     <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub Repository">
       <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
       <span>GitHub</span>
@@ -280,6 +298,51 @@ var tmpl = template.Must(template.New("docs").Parse(`
 
 {{define "foot"}}<footer>{{.Footer}} · <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer">GitHub</a></footer></main></div>
 <script type="module">
+const STORAGE_KEY = 'tako-doc-lang';
+function setDocLang(lang, anchorEl) {
+  if (lang !== 'go' && lang !== 'cfire') lang = 'go';
+  const prevTop = anchorEl ? anchorEl.getBoundingClientRect().top : null;
+  for (const tabs of document.querySelectorAll('.code-tabs')) {
+    tabs.setAttribute('data-active-lang', lang);
+    for (const btn of tabs.querySelectorAll('.code-tab-btn')) {
+      const active = btn.getAttribute('data-lang') === lang;
+      btn.classList.toggle('on', active);
+      btn.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    for (const cap of tabs.querySelectorAll('.code-tab-caption')) {
+      cap.classList.toggle('on', cap.getAttribute('data-lang') === lang);
+    }
+    for (const pane of tabs.querySelectorAll('.code-tab-pane')) {
+      pane.classList.toggle('on', pane.getAttribute('data-lang') === lang);
+    }
+  }
+  for (const hbtn of document.querySelectorAll('.header-lang-btn')) {
+    const active = hbtn.getAttribute('data-lang') === lang;
+    hbtn.classList.toggle('on', active);
+    hbtn.setAttribute('aria-selected', active ? 'true' : 'false');
+  }
+  try { localStorage.setItem(STORAGE_KEY, lang); } catch (_) {}
+  if (anchorEl && prevTop !== null) {
+    const nextTop = anchorEl.getBoundingClientRect().top;
+    window.scrollBy(0, nextTop - prevTop);
+  }
+}
+
+const urlLang = new URLSearchParams(window.location.search).get('lang');
+let initialLang = 'go';
+try {
+  initialLang = urlLang || localStorage.getItem(STORAGE_KEY) || 'go';
+} catch (_) {}
+setDocLang(initialLang, null);
+
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest('.code-tab-btn, .header-lang-btn');
+  if (!btn) return;
+  const lang = btn.getAttribute('data-lang');
+  const anchor = btn.closest('.code-tabs');
+  setDocLang(lang, anchor);
+});
+
 const blocks = document.querySelectorAll('pre > code.language-mermaid');
 if (blocks.length > 0) {
   const nodes = [];

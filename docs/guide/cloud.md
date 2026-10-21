@@ -162,6 +162,7 @@ into a deployed store — is not run by `tako dev`, is not a generated
 service, and must not be a test app. It boots the cloud backends itself
 and then uses the same handles the service does:
 
+**Go**
 ```go
 func main() {
 	project := flag.String("project", "", "GCP project")
@@ -178,6 +179,16 @@ func main() {
 	if err := posts.Put(ctx, p.Slug, p); err != nil {
 		log.Fatal(err)
 	}
+}
+```
+
+**cfire**
+```cfire
+fn main() -> i32 {
+    tako.boot()
+    ctx := tako.background_ctx()
+    try Posts.put(ctx, p)
+    return 0
 }
 ```
 

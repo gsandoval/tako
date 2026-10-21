@@ -323,6 +323,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				}
 
 				// Inspect path and query bindings from ReqType
+				var hasBody bool
 				if reqType != "" {
 					if st, ok := typesByName[reqType]; ok {
 						routeParamMatches := pathParamRegex.FindAllStringSubmatch(route, -1)
@@ -365,6 +366,9 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 									Name:  fm,
 									Type:  fld.Type,
 								})
+								if tag.Get("json") != "" {
+									hasBody = true
+								}
 							} else if h := tag.Get("header"); h != "" {
 								bindings = append(bindings, Binding{
 									Field: fld.Name,
@@ -372,6 +376,8 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 									Name:  h,
 									Type:  fld.Type,
 								})
+							} else {
+								hasBody = true
 							}
 						}
 
@@ -397,6 +403,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					ReqRef:   reqType,
 					ResRef:   resType,
 					Bindings: bindings,
+					HasBody:  hasBody,
 					Pos:      pos,
 				}
 				graph.Handlers = append(graph.Handlers, h)
@@ -407,6 +414,29 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				if len(gv.Args) > 0 {
 					queueBinding = gv.Args[0]
 				}
+				var reqType string
+				for _, r := range graph.Resources {
+					if r.Var == queueBinding || r.Name == queueBinding {
+						if r.Name != "" {
+							queueBinding = r.Name
+						}
+						if r.Type != "" {
+							reqType = r.Type
+						}
+						break
+					}
+				}
+				if len(gv.Args) > 1 {
+					if fn, ok := funcsByName[gv.Args[1]]; ok {
+						for _, param := range fn.Params {
+							pName := strings.TrimSpace(param.Name)
+							pType := strings.TrimSpace(param.Type)
+							if pName != "ctx" && !strings.Contains(pType, "Ctx") {
+								reqType = pType
+							}
+						}
+					}
+				}
 				svcName := strings.ToLower(gv.Name)
 				h := Handler{
 					Kind:    "worker",
@@ -414,6 +444,8 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Package: pkgName,
 					Service: svcName,
 					Binding: queueBinding,
+					ReqType: reqType,
+					ReqRef:  reqType,
 					Pos:     pos,
 				}
 				workerHandlers = append(workerHandlers, h)
@@ -424,6 +456,29 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				if len(gv.Args) > 0 {
 					topicBinding = gv.Args[0]
 				}
+				var reqType string
+				for _, r := range graph.Resources {
+					if r.Var == topicBinding || r.Name == topicBinding {
+						if r.Name != "" {
+							topicBinding = r.Name
+						}
+						if r.Type != "" {
+							reqType = r.Type
+						}
+						break
+					}
+				}
+				if len(gv.Args) > 1 {
+					if fn, ok := funcsByName[gv.Args[1]]; ok {
+						for _, param := range fn.Params {
+							pName := strings.TrimSpace(param.Name)
+							pType := strings.TrimSpace(param.Type)
+							if pName != "ctx" && !strings.Contains(pType, "Ctx") {
+								reqType = pType
+							}
+						}
+					}
+				}
 				svcName := strings.ToLower(gv.Name)
 				h := Handler{
 					Kind:        "subscribe",
@@ -432,6 +487,8 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Service:     svcName,
 					Binding:     topicBinding,
 					BindingKind: "topic",
+					ReqType:     reqType,
+					ReqRef:      reqType,
 					Pos:         pos,
 				}
 				graph.Handlers = append(graph.Handlers, h)
@@ -458,6 +515,29 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				if len(gv.Args) > 0 {
 					jobBinding = gv.Args[0]
 				}
+				var reqType string
+				for _, r := range graph.Resources {
+					if r.Var == jobBinding || r.Name == jobBinding {
+						if r.Name != "" {
+							jobBinding = r.Name
+						}
+						if r.Type != "" {
+							reqType = r.Type
+						}
+						break
+					}
+				}
+				if len(gv.Args) > 1 {
+					if fn, ok := funcsByName[gv.Args[1]]; ok {
+						for _, param := range fn.Params {
+							pName := strings.TrimSpace(param.Name)
+							pType := strings.TrimSpace(param.Type)
+							if pName != "ctx" && !strings.Contains(pType, "Ctx") {
+								reqType = pType
+							}
+						}
+					}
+				}
 				svcName := strings.ToLower(gv.Name)
 				h := Handler{
 					Kind:    "job",
@@ -465,6 +545,8 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Package: pkgName,
 					Service: svcName,
 					Binding: jobBinding,
+					ReqType: reqType,
+					ReqRef:  reqType,
 					Pos:     pos,
 				}
 				workerHandlers = append(workerHandlers, h)

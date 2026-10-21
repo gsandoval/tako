@@ -38,7 +38,7 @@ type GreetReq struct {
     loud: bool `query:"loud"`
 }
 
-greet(ctx: tako.Ctx, req: GreetReq) -> Greeting! {
+fn greet(ctx: tako.Ctx, req: GreetReq) -> Greeting! {
     if req.name == "nobody" {
         return Err(tako.not_found("nobody is not here"))
     }

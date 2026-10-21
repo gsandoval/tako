@@ -1,0 +1,17 @@
+package blog
+
+import "core:tako"
+
+test "blog add and list comments" {
+    app := tako.new_test_app()
+    cmt := try add_comment(app.ctx(), AddCommentReq{
+        post: "/posts/welcome",
+        name: "Ada",
+        body: "Great post!",
+    })
+    assert_eq(cmt.id, "cmt_1")
+    assert_eq(cmt.name, "Ada")
+
+    list := try list_comments(app.ctx(), ListCommentsReq{post: "/posts/welcome"})
+    assert_eq(list.len, 0)
+}

@@ -47,6 +47,7 @@ of a failed run, the schedule itself is the retry.
 
 ### Timezone and deadline
 
+**Go**
 ```go
 var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans,
 	tako.CronConfig{
@@ -54,6 +55,11 @@ var Cleanup = tako.Cron("0 9 * * *", cleanupOrphans,
 		Timezone:     "America/Mexico_City",
 		Deadline:     10 * time.Minute,
 	})
+```
+
+**cfire**
+```cfire
+Cleanup := tako.cron("0 9 * * *", cleanup_orphans)
 ```
 
 Schedules run in **UTC** unless `CronConfig.Timezone` says otherwise — nine
@@ -125,6 +131,7 @@ Tests own scheduled time: `app.AdvanceCron(Cleanup)` fires one run
 synchronously, by handler function name. Singleflight is testable by
 occupying the cron's lease — named `cron-<handler>` — and firing:
 
+**Go**
 ```go
 go func() {
     done <- tako.Lock("cron-cleanupOrphans").Do(ctx, func(tako.Ctx) error {
@@ -135,6 +142,12 @@ go func() {
 }()
 <-holding
 app.AdvanceCron(Cleanup) // collapses into the held run
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+try prune_expired(app.ctx())
 ```
 
 ([examples/gallery/coordination_test.go](../../examples/gallery/coordination_test.go))

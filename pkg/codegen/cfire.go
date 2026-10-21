@@ -26,7 +26,7 @@ func GenerateCfire(g *analyzer.AppGraph, dir string) ([]string, error) {
 		fmt.Fprintf(&b, "package main\n\n")
 		fmt.Fprintf(&b, "import \"core:tako\"\n")
 		fmt.Fprintf(&b, "import \"core:json\"\n")
-		fmt.Fprintf(&b, "import %s \"../..\"\n\n", svc.Package)
+		fmt.Fprintf(&b, "import \"../../..\" as %s\n\n", svc.Package)
 
 		fmt.Fprintf(&b, "fn main() -> i32 {\n")
 		fmt.Fprintf(&b, "    tako.boot()\n\n")
@@ -58,17 +58,21 @@ func GenerateCfire(g *analyzer.AppGraph, dir string) ([]string, error) {
 				fmt.Fprintf(&b, "        decoded := try %s(req)\n", decName)
 				fmt.Fprintf(&b, "        ctx := tako.ctx_from_req(req)\n")
 				fmt.Fprintf(&b, "        res := try %s.%s(ctx, decoded)\n", svc.Package, analyzer.ShortVar(h))
-				fmt.Fprintf(&b, "        return tako.json_res(200, json.stringify_struct(res))\n")
+				fmt.Fprintf(&b, "        return tako.json_res(200, json.stringify(res))\n")
 				fmt.Fprintf(&b, "    }, tako.MountOpts{})\n\n")
-			} else if h.Kind == "worker" {
-				fmt.Fprintf(&b, "    // worker %s (%s)\n", analyzer.ShortVar(h), h.Binding)
+			} else if h.Kind == "worker" || h.Kind == "subscribe" || h.Kind == "job" {
+				msgType := h.ReqType
+				if msgType == "" {
+					msgType = h.Binding
+				}
+				fmt.Fprintf(&b, "    // %s %s (%s)\n", h.Kind, analyzer.ShortVar(h), h.Binding)
 				fmt.Fprintf(&b, "    tako.register_worker(%q, %q, |ctx: tako.Ctx, payload: str| -> void! {\n",
 					analyzer.ShortVar(h), h.Binding)
-				fmt.Fprintf(&b, "        msg := try json.parse_struct[%s.%s](payload)\n", svc.Package, h.Binding)
+				fmt.Fprintf(&b, "        msg := try json.parse[%s.%s](payload)\n", svc.Package, msgType)
 				fmt.Fprintf(&b, "        try %s.%s(ctx, msg)\n", svc.Package, analyzer.ShortVar(h))
 				fmt.Fprintf(&b, "    })\n\n")
-			} else if h.Kind == "cron" {
-				fmt.Fprintf(&b, "    // cron %s (%s)\n", analyzer.ShortVar(h), h.Schedule)
+			} else if h.Kind == "cron" || h.Kind == "singleton" {
+				fmt.Fprintf(&b, "    // %s %s (%s)\n", h.Kind, analyzer.ShortVar(h), h.Schedule)
 				fmt.Fprintf(&b, "    tako.register_cron(%q, %q, true, |ctx: tako.Ctx| -> void! {\n",
 					analyzer.ShortVar(h), h.Schedule)
 				fmt.Fprintf(&b, "        try %s.%s(ctx)\n", svc.Package, analyzer.ShortVar(h))
@@ -83,18 +87,36 @@ func GenerateCfire(g *analyzer.AppGraph, dir string) ([]string, error) {
 		for _, h := range decoders {
 			decName := fmt.Sprintf("decode_%s", analyzer.ShortVar(h))
 			fmt.Fprintf(&b, "fn %s(req: tako.HttpReq) -> %s.%s! {\n", decName, svc.Package, h.ReqType)
-			fmt.Fprintf(&b, "    mut out := %s.%s{}\n", svc.Package, h.ReqType)
+			fmt.Fprintf(&b, "    mut req_out := %s.%s{}\n", svc.Package, h.ReqType)
 			if h.HasBody {
 				fmt.Fprintf(&b, "    if req.body != \"\" {\n")
-				fmt.Fprintf(&b, "        out = try json.parse_struct[%s.%s](req.body)\n", svc.Package, h.ReqType)
+				fmt.Fprintf(&b, "        req_out = try json.parse[%s.%s](req.body)\n", svc.Package, h.ReqType)
 				fmt.Fprintf(&b, "    }\n")
 			}
 			for _, bind := range h.Bindings {
-				if bind.Kind == "path" {
-					fmt.Fprintf(&b, "    out.%s = req.path_string(%q)\n", bind.Field, bind.Name)
+				switch bind.Kind {
+				case "path":
+					fmt.Fprintf(&b, "    req_out.%s = req.path_string(%q)\n", bind.Field, bind.Name)
+				case "query":
+					switch bind.Type {
+					case "bool":
+						fmt.Fprintf(&b, "    req_out.%s = req.query_bool(%q)\n", bind.Field, bind.Name)
+					case "i64", "i32", "int", "int64":
+						fmt.Fprintf(&b, "    req_out.%s = req.query_i64(%q)\n", bind.Field, bind.Name)
+					case "f64", "f32", "float64":
+						fmt.Fprintf(&b, "    req_out.%s = req.query_f64(%q)\n", bind.Field, bind.Name)
+					default:
+						fmt.Fprintf(&b, "    req_out.%s = req.query_string(%q)\n", bind.Field, bind.Name)
+					}
+				case "form":
+					fmt.Fprintf(&b, "    if req.form_string(%q) != \"\" {\n", bind.Name)
+					fmt.Fprintf(&b, "        req_out.%s = req.form_string(%q)\n", bind.Field, bind.Name)
+					fmt.Fprintf(&b, "    }\n")
+				case "header":
+					fmt.Fprintf(&b, "    req_out.%s = req.header_string(%q)\n", bind.Field, bind.Name)
 				}
 			}
-			fmt.Fprintf(&b, "    return out\n")
+			fmt.Fprintf(&b, "    return req_out\n")
 			fmt.Fprintf(&b, "}\n\n")
 		}
 

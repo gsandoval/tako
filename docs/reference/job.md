@@ -24,7 +24,7 @@ Settle = tako.Runner(settle, runSettle)
 ```cfire
 SettleJob := tako.job[SettleParams]("settle")
 
-Settle := tako.runner("SettleJob", run_settle)
+Settle := tako.runner(SettleJob, run_settle)
 ```
 
 ```mermaid
@@ -70,6 +70,7 @@ job has exactly one body. Options on `JobHandler`:
 Trigger it from any handler — api, worker, cron — with
 `handle.Run(ctx, params)`:
 
+**Go**
 ```go
 // startSettle HANDS OFF and returns immediately — the job is compute
 // you walk away from; the report entity is where its result lands.
@@ -81,12 +82,23 @@ func startSettle(ctx tako.Ctx, req SettleReq) (SettleStarted, error) {
 }
 ```
 
+**cfire**
+```cfire
+fn start_settle(ctx: tako.Ctx, req: SettleParams) -> DailyReport! {
+    _ := try SettleJob.run(ctx, req)
+    rep := DailyReport{id: req.day, orders: 1, total_cents: 1000, settled_at: ctx.now_unix()}
+    try Reports.put(ctx, rep)
+    return rep
+}
+```
+
 `Run` returns once the execution is handed off — queued locally, a
 Cloud Run Job execution created in the cloud. It never waits for
 completion.
 
 ### Retries and timeout
 
+**Go**
 ```go
 var Settle = tako.Runner(settle, runSettle,
 	tako.RunnerConfig{
@@ -95,6 +107,11 @@ var Settle = tako.Runner(settle, runSettle,
 		Timeout:   2 * time.Hour,
 		Footprint: tako.Footprint{Memory: "4Gi"},
 	})
+```
+
+**cfire**
+```cfire
+Settle := tako.runner(SettleJob, run_settle)
 ```
 
 `RunnerConfig.Attempts` sets how many times a failed task is retried before the
@@ -141,11 +158,19 @@ The shop pattern ([api_test.go](../../examples/shop/api_test.go),
 `TestSettleJobRunsToCompletion`): trigger through the api, wait for the
 tracked execution, read the result entity:
 
+**Go**
 ```go
 started, res := postJSON[SettleStarted](t, alice, srv.URL+"/api/settle", SettleReq{Day: "2026-07-27"})
 if err := runtime.WaitIdle(30 * time.Second); err != nil {
 	t.Fatal(err)
 }
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+rep := try start_settle(app.ctx(), SettleParams{day: "2026-07-27", throttle_ms: 0})
+assert_eq(rep.id, "2026-07-27")
 ```
 
 ## Errors you'll meet

@@ -32,7 +32,7 @@ type Link struct {
     created_at: i64 `entity:"index" json:"created_at"`
 }
 
-ProcessClick := tako.worker("Clicks", process_click)
+ProcessClick := tako.worker(Clicks, process_click)
 PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 
@@ -103,11 +103,11 @@ err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
 
 **cfire**
 ```cfire
-try Links.tx(ctx, |tx| -> bool! {
-    cur := try tx.get(evt.code)
-    updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
-    try tx.put(evt.code, updated)
-    return Ok(true)
+try Links.tx(ctx, |tx| {
+    mut cur := try tx.get(evt.code)
+    cur.clicks += 1
+    try tx.put(cur)
+    return
 })
 ```
 

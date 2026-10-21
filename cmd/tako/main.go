@@ -297,7 +297,11 @@ func runTest(args []string) error {
 
 	prior := map[string][]byte{}
 	for _, svc := range graph.Services {
-		raw, err := os.ReadFile(filepath.Join(dir, ".tako", "gen", svc.Name, "main.go"))
+		mainFile := "main.go"
+		if analyzer.IsCfireProject(dir) {
+			mainFile = "main.cf"
+		}
+		raw, err := os.ReadFile(filepath.Join(dir, ".tako", "gen", svc.Name, mainFile))
 		if err == nil {
 			prior[svc.Name] = raw
 		}

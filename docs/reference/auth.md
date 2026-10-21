@@ -84,9 +84,17 @@ Email/password guarantees whatever the project was configured to
 require, which your app cannot see, so the claim is handed to you
 rather than assumed:
 
+**Go**
 ```go
 if !ctx.User().EmailVerified {
 	return tako.HTML{}, tako.Errorf(403, "this address is not verified")
+}
+```
+
+**cfire**
+```cfire
+if ctx.user_email() == "" {
+    return Err(tako.forbidden("authentication required"))
 }
 ```
 
@@ -95,13 +103,26 @@ guaranteed. On public routes use `ctx.MaybeUser()` — calling `User()`
 on an unauthenticated request panics. From
 [examples/journal](../../examples/journal/app.go):
 
+**Go**
 ```go
 Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
 ```
 
+**cfire**
+```cfire
+CreatePost := tako.api("POST /api/posts", create_post)
+ReadPost   := tako.page("GET /posts/{slug}", read_post)
+```
+
+**Go**
 ```go
 p := Post{ID: tako.NewID(), Owner: ctx.User().ID, Title: req.Title, ...}
+```
+
+**cfire**
+```cfire
+p := Post{slug: req.slug, author_id: ctx.user_id(), title: req.title, body: req.body, published: true, created: ctx.now_unix()}
 ```
 
 Ownership is the handler's own rule, not the framework's: journal's
@@ -119,6 +140,7 @@ See [calls.md](calls.md).
 Authentication says somebody signed in. **Which** of the people who
 signed in may use a route is a policy — declared, like everything else:
 
+**Go**
 ```go
 var Moderators = tako.Policy(moderator)
 
@@ -132,9 +154,27 @@ func moderator(ctx tako.Ctx, u tako.User) error {
 }
 ```
 
+**cfire**
+```cfire
+Moderator := tako.role("moderator")
+
+fn check_moderator(ctx: tako.Ctx) -> void! {
+    if !ctx.has_role("moderator") {
+        return Err(tako.forbidden("the moderation desk is limited to this journal's moderators"))
+    }
+}
+```
+
+**Go**
 ```go
 Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
 Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+```
+
+**cfire**
+```cfire
+Moderate := tako.page("GET /moderate", moderate_page)
+Retract  := tako.page("POST /moderate/{id}/retract", retract_post)
 ```
 
 One policy serves as many routes as share the door, and the handlers
@@ -177,11 +217,18 @@ may read the callee's entity store. Callers can test the verdict with
 A role is a NAME an identity carries into the request, and the only
 thing tako knows about it. Declare it, then put a door behind it:
 
+**Go**
 ```go
 var Moderator  = tako.Role("moderator")
 var Moderators = tako.RequireRole(Moderator)          // any-of, if you pass several
 
 var Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
+```
+
+**cfire**
+```cfire
+Moderator := tako.role("moderator")
+Moderate  := tako.page("GET /moderate", moderate_page)
 ```
 
 `RequireRole` returns an ordinary policy, so it goes exactly where a
@@ -191,8 +238,16 @@ needs two roles at once, or a role plus something else, is a
 
 Elsewhere, ask the user:
 
+**Go**
 ```go
 if ctx.User().HasRole(Moderator) { … }   // for the one extra button
+```
+
+**cfire**
+```cfire
+if ctx.has_role("moderator") {
+    // moderator-only branch
+}
 ```
 
 The refusal names the role, because a role name is not a secret and
@@ -227,6 +282,7 @@ GET /moderate → Moderate 🔒 Moderators (moderator) (app.go:189)
 
 Creating accounts and handing out roles, from Go:
 
+**Go**
 ```go
 users := auth.Users()
 
@@ -241,6 +297,12 @@ err = users.Delete(ctx, u.ID)
 
 u, err = users.ByEmail(ctx, "ana@example.com")
 page, err := users.List(ctx).Limit(50).Page("")   // page.Next is the cursor
+```
+
+**cfire**
+```cfire
+Auth      := tako.auth("password")
+Moderator := tako.role("moderator")
 ```
 
 | | |
@@ -352,6 +414,7 @@ Derived from what your code calls, per service:
 
 ### The two account events
 
+**Go**
 ```go
 var (
 	OnRegistered  = tako.Subscribe(auth.Registered, openAccount)
@@ -359,6 +422,16 @@ var (
 )
 
 func openAccount(ctx tako.Ctx, u tako.User) error { … }
+```
+
+**cfire**
+```cfire
+Registered   := tako.topic[UserEvent]("auth-registered")
+OnRegistered := tako.subscribe(Registered, open_account)
+
+fn open_account(ctx: tako.Ctx, u: UserEvent) -> void! {
+    ctx.log_info("opened account for " + u.email)
+}
 ```
 
 | | fires when |
@@ -397,6 +470,7 @@ Several things answer 403 on a guarded route: your policy, a stale CSRF
 token, a handler's own refusal. `Status.Policy` names the policy that
 refused and is empty for everything tako answers on its own account:
 
+**Go**
 ```go
 func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 	heading := statusHeadings[s.Code]   // 403 → "That form expired"
@@ -404,6 +478,13 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 		heading = "Not your desk"
 	}
 	...
+}
+```
+
+**cfire**
+```cfire
+fn status_page(ctx: tako.Ctx, req: EmptyReq) -> str! {
+    return "<h1>Not your desk</h1>"
 }
 ```
 
@@ -466,8 +547,15 @@ past its free tier.
 Shop's [api_test.go](../../examples/shop/api_test.go) signs in the way
 the dev bar does — post `dev_user` with a cookie jar:
 
+**Go**
 ```go
 res, err := c.PostForm(srv.URL+"/_tako/api/session", url.Values{"dev_user": {name}})
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+ctx := app.with_user("alice", "alice@example.test")
 ```
 
 then asserts the 401 text on anonymous writes, owner scoping, and that

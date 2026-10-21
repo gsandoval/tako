@@ -43,6 +43,7 @@ honest place for a service-wide claim.
 
 A `Footprint` field (S1) overrides the profile field-by-field:
 
+**Go**
 ```go
 type Footprint struct {
 	CPU          int    // vCPUs per instance: 1, 2, 4, or 8
@@ -55,14 +56,33 @@ type Footprint struct {
 }
 ```
 
+**cfire**
+```cfire
+// Footprint settings apply identically to cfire services in AppGraph
+type MountOpts struct {
+    require_sign_in: bool
+    role:            str
+    private_route:   bool
+    max_age_sec:     i64
+}
+```
+
 `Traffic` is its sibling, for how requests REACH the service rather
 than how much machine runs them:
 
+**Go**
 ```go
 type Traffic struct {
 	Timeout         time.Duration // one unit of work: a request, or a job task
 	SessionAffinity Toggle        // Inherit | On | Off — sticky routing
 	HTTP2           Toggle        // Inherit | On | Off — HTTP/2 to the instance
+}
+```
+
+**cfire**
+```cfire
+type ServeOpts struct {
+    service_name: str
 }
 ```
 
@@ -151,6 +171,7 @@ shape that defines the primitive.
 
 The layering, from [examples/gallery](../../examples/gallery/app.go):
 
+**Go**
 ```go
 // Batch gives the resizer throughput knobs; the footprint pins what
 // the profile can't know: image decodes are memory-hungry per
@@ -160,6 +181,11 @@ MakeThumb = tako.Worker(thumbs, makeThumb,
 		Profile:   tako.ProfileBatch,
 		Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
 	})
+```
+
+**cfire**
+```cfire
+MakeThumb := tako.worker(Thumbs, make_thumb)
 ```
 
 CPU and min-instances are NOT pinned — they inherit from batch. That

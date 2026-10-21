@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -273,4 +274,48 @@ func TestEveryMermaidDiagramAvoidsEscapedQuotesAndHTMLTagPlaceholders(t *testing
 		t.Fatal("expected at least one mermaid diagram across embedded docs")
 	}
 }
+
+var (
+	missingFnRe      = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*\s*\(.*\)\s*(->\s*[^\{]+)?\{\s*$`)
+	stringResourceRe = regexp.MustCompile(`tako\.(worker|runner|subscribe)\("`)
+)
+
+func TestEveryCodeBlockUsesUnifiedGoCfireSwitchAndValidCfireSyntax(t *testing.T) {
+	site := built(t)
+	totalTabs := 0
+	for _, p := range append(append([]*Page{}, site.Guide...), site.Reference...) {
+		goBlocks := strings.Count(p.Body, `<code class="language-go">`)
+		cfireBlocks := strings.Count(p.Body, `<code class="language-cfire">`)
+		tabBlocks := strings.Count(p.Body, `<div class="code-tabs"`)
+		if goBlocks != cfireBlocks || goBlocks != tabBlocks {
+			t.Errorf("%s has %d Go blocks, %d cfire blocks, and %d unified .code-tabs switches (all must match)",
+				p.File, goBlocks, cfireBlocks, tabBlocks)
+		}
+		if strings.Contains(p.Body, "<p><strong>Go</strong></p>") || strings.Contains(p.Body, "<p><strong>cfire</strong></p>") {
+			t.Errorf("%s still contains unmerged <p><strong>Go</strong></p> or <p><strong>cfire</strong></p> label paragraphs", p.File)
+		}
+		totalTabs += tabBlocks
+
+		parts := strings.Split(p.Body, `<code class="language-cfire">`)
+		for i := 1; i < len(parts); i++ {
+			raw, _, _ := strings.Cut(parts[i], "</code>")
+			for _, line := range strings.Split(raw, "\n") {
+				trimmed := strings.TrimSpace(line)
+				if missingFnRe.MatchString(trimmed) {
+					t.Errorf("%s cfire block #%d has function definition missing 'fn' keyword: %s", p.File, i, trimmed)
+				}
+				if strings.Contains(trimmed, "Ok(") {
+					t.Errorf("%s cfire block #%d uses invalid 'Ok(...)' wrapper (cfire returns values directly on T!): %s", p.File, i, trimmed)
+				}
+				if stringResourceRe.MatchString(trimmed) {
+					t.Errorf("%s cfire block #%d passes string literal instead of resource identifier to worker/runner/subscribe: %s", p.File, i, trimmed)
+				}
+			}
+		}
+	}
+	if totalTabs == 0 {
+		t.Fatal("expected unified .code-tabs switches across embedded docs")
+	}
+}
+
 

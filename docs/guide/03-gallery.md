@@ -83,8 +83,17 @@ shape downloads the same way.
 instances via a lease; `tako.Lock("reindex")` guards gallery's
 cross-entity repair the same way:
 
+**Go**
 ```go
 ran, err := relock.TryDo(ctx, rebuildFeed)  // false: already running somewhere
+```
+
+**cfire**
+```cfire
+try ReindexLock.with_lease(ctx, 5000, || {
+    try rebuild_feed(ctx)
+    return
+})
 ```
 
 Locks are for critical SECTIONS (rebuilds, external systems) —

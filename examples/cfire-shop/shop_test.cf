@@ -1,0 +1,22 @@
+package shop
+
+import "core:tako"
+
+test "shop add product, place order, and settle" {
+    app := tako.new_test_app()
+    prod := try add_product(app.ctx(), AddProductReq{
+        id:          "prod_1",
+        name:        "Mechanical Keyboard",
+        price_cents: 12000,
+    })
+    assert_eq(prod.id, "prod_1")
+
+    ord := try place_order(app.ctx(), PlaceOrderReq{
+        product_id: "prod_1",
+        qty:        2,
+    })
+    assert_eq(ord.total_cents, 24000)
+
+    rep := try start_settle(app.ctx(), SettleParams{day: "2026-10-21", throttle_ms: 10})
+    assert_eq(rep.id, "2026-10-21")
+}

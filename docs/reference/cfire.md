@@ -10,6 +10,27 @@ Import `"core:tako"` and declare resources and handlers as top-level
 package bindings (from [examples/cfire-shortlink](../../examples/cfire-shortlink/shortlink.cf)
 and [examples/cfire-gallery](../../examples/cfire-gallery/gallery.cf)):
 
+**Go**
+```go
+package shortlink
+
+import "github.com/gsandoval/tako"
+
+var (
+    links   = tako.Entity[Link]("links")
+    clicks  = tako.Queue[ClickEvent]("clicks")
+    hotURLs = tako.Cache[string]("hot-urls", 5*time.Minute)
+    assets  = tako.Bucket("assets")
+    uploads = tako.Counter("uploads_total")
+
+    CreateLink   = tako.API("POST /links", createLink)
+    GetLink      = tako.API("GET /links/{code}", getLink)
+    ProcessClick = tako.Worker(clicks, processClick)
+    PruneExpired = tako.Cron("0 * * * *", pruneExpired)
+)
+```
+
+**cfire**
 ```cfire
 package shortlink
 
@@ -23,7 +44,7 @@ Uploads := tako.counter("uploads_total")
 
 CreateLink   := tako.api("POST /links", create_link)
 GetLink      := tako.api("GET /links/{code}", get_link)
-ProcessClick := tako.worker("Clicks", process_click)
+ProcessClick := tako.worker(Clicks, process_click)
 PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 
@@ -53,6 +74,36 @@ flowchart LR
 Handlers take `ctx: tako.Ctx` as their first parameter and return a
 [fallible result `Res!`](https://cfire.memo.engineer/guide.html#chapter-6) (or `void!` / `bool!` for async workers and cron jobs), using [compile-time struct tags](https://cfire.memo.engineer/guide.html#chapter-5) for request binding and entity indexing:
 
+**Go**
+```go
+func createLink(ctx tako.Ctx, req CreateLinkReq) (Link, error) {
+    if req.URL == "" {
+        return Link{}, tako.Errorf(400, "url is required")
+    }
+    link := Link{
+        Code:      "cfire1",
+        URL:       req.URL,
+        OwnerID:   "anon",
+        Clicks:    0,
+        CreatedAt: ctx.Now().Unix(),
+    }
+    if err := links.Put(ctx, link); err != nil {
+        return Link{}, err
+    }
+    hotURLs.Put(ctx, link.Code, link.URL)
+    _ = clicks.Publish(ctx, ClickEvent{Code: link.Code, TsUnix: link.CreatedAt})
+    return link, nil
+}
+
+func getLink(ctx tako.Ctx, req GetLinkReq) (Link, error) {
+    if url, ok := hotURLs.Get(ctx, req.Code); ok {
+        return Link{Code: req.Code, URL: url}, nil
+    }
+    return links.Get(ctx, req.Code)
+}
+```
+
+**cfire**
 ```cfire
 fn create_link(ctx: tako.Ctx, req: CreateLinkReq) -> Link! {
     if req.url == "" {

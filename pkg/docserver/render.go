@@ -141,7 +141,57 @@ func render(src string, page *Page, byRoute map[string]*Page) (string, map[strin
 	if err := md.Renderer().Render(&buf, source, doc); err != nil {
 		return "", nil, nil, err
 	}
-	return string(policy().SanitizeBytes(buf.Bytes())), anchors, lr.links, nil
+	sanitized := string(policy().SanitizeBytes(buf.Bytes()))
+	return combineCodeTabs(sanitized), anchors, lr.links, nil
+}
+
+var pairedCodeBlocksRe = regexp.MustCompile(
+	`(?s)(?:<p><strong>Go</strong>[ \t]*(.*?)</p>\s*)?` +
+		`(<pre><code class="language-go">.*?</code></pre>)\s*` +
+		`(?:<p><strong>cfire</strong>[ \t]*(.*?)</p>\s*)?` +
+		`(<pre><code class="language-cfire">.*?</code></pre>)`,
+)
+
+// combineCodeTabs merges adjacent Go and cfire code blocks into a single
+// unified code block with a Go / cfire switch.
+func combineCodeTabs(htmlStr string) string {
+	return pairedCodeBlocksRe.ReplaceAllStringFunc(htmlStr, func(m string) string {
+		sub := pairedCodeBlocksRe.FindStringSubmatch(m)
+		if len(sub) < 5 {
+			return m
+		}
+		goMeta := strings.TrimSpace(sub[1])
+		goPre := sub[2]
+		cfireMeta := strings.TrimSpace(sub[3])
+		cfirePre := sub[4]
+
+		var b strings.Builder
+		b.WriteString(`<div class="code-tabs" data-active-lang="go">`)
+		b.WriteString(`<div class="code-tabs-bar">`)
+		b.WriteString(`<div class="code-tabs-switch" role="tablist" aria-label="Code language">`)
+		b.WriteString(`<button type="button" class="code-tab-btn on" data-lang="go" role="tab" aria-selected="true">Go</button>`)
+		b.WriteString(`<button type="button" class="code-tab-btn" data-lang="cfire" role="tab" aria-selected="false">cfire</button>`)
+		b.WriteString(`</div>`)
+		if goMeta != "" || cfireMeta != "" {
+			b.WriteString(`<div class="code-tabs-meta">`)
+			b.WriteString(`<span class="code-tab-caption on" data-lang="go">`)
+			b.WriteString(goMeta)
+			b.WriteString(`</span>`)
+			b.WriteString(`<span class="code-tab-caption" data-lang="cfire">`)
+			b.WriteString(cfireMeta)
+			b.WriteString(`</span>`)
+			b.WriteString(`</div>`)
+		}
+		b.WriteString(`</div>`)
+		b.WriteString(`<div class="code-tab-pane on" data-lang="go">`)
+		b.WriteString(goPre)
+		b.WriteString(`</div>`)
+		b.WriteString(`<div class="code-tab-pane" data-lang="cfire">`)
+		b.WriteString(cfirePre)
+		b.WriteString(`</div>`)
+		b.WriteString(`</div>`)
+		return b.String()
+	})
 }
 
 // linkRenderer replaces goldmark's link rendering. It is registered at a

@@ -34,6 +34,12 @@ func EnsureLibTako(dir string, goos, goarch string) (archivePath string, headerD
 
 	// Build via go build -buildmode=c-archive
 	cmd := exec.Command("go", "build", "-trimpath", "-buildmode=c-archive", "-o", archivePath, "github.com/gsandoval/tako/cmd/libtako")
+	if sdkDir := GetCfireIncludeDir(); sdkDir != "" {
+		takoRoot := filepath.Dir(filepath.Dir(filepath.Dir(sdkDir)))
+		if _, statErr := os.Stat(filepath.Join(takoRoot, "go.mod")); statErr == nil {
+			cmd.Dir = takoRoot
+		}
+	}
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1", "GOOS="+goos, "GOARCH="+goarch)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", "", fmt.Errorf("build libtako failed: %w: %s", err, string(out))

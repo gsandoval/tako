@@ -42,9 +42,9 @@ ran, err := relock.TryDo(ctx, func(ctx tako.Ctx) error { ... }) // one attempt
 
 **cfire**
 ```cfire
-try ReindexLock.with_lease(ctx, 5000, || -> bool! {
+try ReindexLock.with_lease(ctx, 5000, || {
     // critical section guarded by lease
-    return Ok(true)
+    return
 })
 ```
 
@@ -55,6 +55,7 @@ right answer, not an error. Gallery's reindex uses `TryDo` because a
 caller finding a rebuild mid-flight should collapse into it, not
 queue another:
 
+**Go**
 ```go
 ran, err := relock.TryDo(ctx, func(ctx tako.Ctx) error {
     var err error
@@ -62,6 +63,15 @@ ran, err := relock.TryDo(ctx, func(ctx tako.Ctx) error {
     return err
 })
 return ReindexRes{Started: ran, Run: run}, err
+```
+
+**cfire**
+```cfire
+try ReindexLock.with_lease(ctx, 5000, || {
+    try rebuild(ctx)
+    return
+})
+return ReindexRes{started: true}
 ```
 
 **Loss cancels ctx**: while `fn` runs the lease is heartbeated, and a

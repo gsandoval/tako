@@ -88,10 +88,16 @@ tag; from outside a browser, pass `baseUrl` and the session cookie via
 Shop's [api_test.go](../../examples/shop/api_test.go) pins the
 committed client to the generator's output — drift cannot merge:
 
+**Go**
 ```go
 if !bytes.Equal(content, committed) {
     t.Fatal("web/src/api.ts is stale — regenerate: tako gen client ts --out web/src/api.ts")
 }
+```
+
+**cfire**
+```cfire
+assert_eq(content, committed, "web/src/api.ts is stale — regenerate: tako gen client ts --out web/src/api.ts")
 ```
 
 ## Errors you'll meet

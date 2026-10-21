@@ -69,6 +69,7 @@ Some answers are not yours. A mistyped URL, a post that is gone, an
 expired form, a handler that failed — tako produces those itself, and
 `tako.StatusPage` is how they still look like your site:
 
+**Go**
 ```go
 var Status = tako.StatusPage(status)
 
@@ -76,6 +77,15 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 	return site.Render(ctx, "status.html", StatusView{
 		Code: s.Code, RequestID: s.RequestID, Total: postCount(ctx),
 	})
+}
+```
+
+**cfire**
+```cfire
+Status := tako.page("GET /_status", status_page)
+
+fn status_page(ctx: tako.Ctx, req: EmptyReq) -> str! {
+    return "<main><h1>Status</h1></main>"
 }
 ```
 
@@ -89,11 +99,20 @@ template is all you need ([blog](06-blog.md) uses it).
 
 ## One handler, both worlds
 
+**Go**
 ```go
 if ctx.IsHTMX() {
     return site.Fragment(ctx, "post-card.html", p) // swap into the list
 }
 return tako.Redirect("/p/" + p.ID)                 // no-JS fallback: 303
+```
+
+**cfire**
+```cfire
+if req.header_string("HX-Request") == "true" {
+    return "<article class=\"post-card\">" + p.title + "</article>"
+}
+return "<meta http-equiv=\"refresh\" content=\"0;url=/posts/" + p.slug + "\">"
 ```
 
 `Fragment` renders without the layout; `Redirect` automatically emits
@@ -124,12 +143,21 @@ Ownership answers "may this user touch THIS post". The moderation desk
 asks a different question — "who may see everyone else's drafts" — and
 that one belongs to the route:
 
+**Go**
 ```go
 var Moderator  = tako.Role("moderator")
 var Moderators = tako.RequireRole(Moderator)
 
 Moderate = tako.Page("GET /moderate", moderate, tako.Route{Allow: Moderators})
 Retract  = tako.Page("POST /moderate/{id}/retract", retract, tako.Route{Allow: Moderators})
+```
+
+**cfire**
+```cfire
+Moderator := tako.role("moderator")
+
+Moderate := tako.page("GET /moderate", moderate_page)
+Retract  := tako.page("POST /moderate/{id}/retract", retract_post)
 ```
 
 `retract` then contains no authorization at all — the door is the

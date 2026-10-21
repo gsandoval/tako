@@ -11,6 +11,7 @@ be sync, and their costs are surfaced, never hidden.
 
 From [examples/shop/billing](../../examples/shop/billing/billing.go):
 
+**Go**
 ```go
 // Charge is the RPC surface: an EXPORTED Endpoint var, callable from
 // other service packages as billing.Charge.Call(ctx, req) — typed,
@@ -20,14 +21,25 @@ From [examples/shop/billing](../../examples/shop/billing/billing.go):
 var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 ```
 
+**cfire**
+```cfire
+Charge := tako.api("POST /charge", charge_order)
+```
+
 `Route.Private` is IAM-only ingress, **not** network-internal — a settled
 decision; VPC anything is a later explicit opt-in. Private and public
 routes cannot share a package (Cloud Run enforces ingress per service).
 
 ## Use
 
+**Go**
 ```go
 receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{OrderID: o.ID, AmountCents: o.TotalCents})
+```
+
+**cfire**
+```cfire
+receipt := try charge_order(ctx, ChargeReq{order_id: o.id, amount_cents: o.total_cents})
 ```
 
 The hop is deliberately visible at the call site. Typed errors cross
@@ -94,12 +106,20 @@ Deploy prices sync hops honestly (`warnCallEdges` in cmd/tako/deploy.go):
 Call across in-process and assert the typed error and the propagated
 user — [billing_test.go](../../examples/shop/billing_test.go):
 
+**Go**
 ```go
 _, err := billing.Charge.Call(ctx, billing.ChargeReq{OrderID: "o1", AmountCents: 0})
 he, ok := err.(interface{ HTTPStatus() int })
 if !ok || he.HTTPStatus() != 422 || !strings.Contains(err.Error(), "amount must be positive") {
 	t.Fatalf("err = %v — billing's 422 must be the caller's 422", err)
 }
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+res := try charge_order(app.ctx(), ChargeReq{order_id: "o1", amount_cents: 500})
+assert_eq(res.order_id, "o1")
 ```
 
 ## Errors you'll meet

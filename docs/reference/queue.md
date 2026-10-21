@@ -16,7 +16,7 @@ var CountClick = tako.Worker(clicks, countClick)
 ```cfire
 Clicks := tako.queue[ClickEvent]("clicks")
 
-ProcessClick := tako.worker("Clicks", process_click)
+ProcessClick := tako.worker(Clicks, process_click)
 ```
 
 ```mermaid
@@ -24,7 +24,7 @@ flowchart LR
     Pub["Publisher Handler\n(clicks.Publish / Clicks.publish)"]
     Q[["Queue: clicks\n(In-Proc Channel or Pub/Sub / Cloud Tasks)"]]
     W["Worker Service: CountClick / ProcessClick\n(POST /_tako/api/push)"]
-    Ack["204 Ack\n(Ok(true) / nil)"]
+    Ack["204 Ack\n(void! / nil)"]
     Retry["500 Retry w/ Backoff\n(5 attempts, 10s–300s)"]
     DLQ[("Dead-Letter Queue\n(tako dlq --replay / --ack)")]
 
@@ -45,12 +45,18 @@ pointer to the fix (see below). `tako.Worker` accepts `Compute.Profile`
 and `Compute.Footprint` to shape the compute its service gets
 ([footprint.md](footprint.md)); gallery's resizer uses both:
 
+**Go**
 ```go
 MakeThumb = tako.Worker(thumbs, makeThumb,
     tako.Compute{
         Profile:   tako.ProfileBatch,
         Footprint: tako.Footprint{Memory: "4Gi", Concurrency: 4, MaxInstances: 5},
     })
+```
+
+**cfire**
+```cfire
+MakeThumb := tako.worker(Thumbs, make_thumb)
 ```
 
 ## Use
@@ -76,14 +82,13 @@ func makeThumb(ctx tako.Ctx, job ThumbJob) error {
 
 **cfire**
 ```cfire
-process_click(ctx: tako.Ctx, evt: ClickEvent) -> bool! {
-    try Links.tx(ctx, |tx| -> bool! {
-        cur := try tx.get(evt.code)
-        updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
-        try tx.put(evt.code, updated)
-        return Ok(true)
+fn process_click(ctx: tako.Ctx, evt: ClickEvent) -> void! {
+    try Links.tx(ctx, |tx| {
+        mut cur := try tx.get(evt.code)
+        cur.clicks += 1
+        try tx.put(cur)
+        return
     })
-    return Ok(true)
 }
 ```
 
@@ -101,6 +106,7 @@ the cloud (T3).
 Every queue and topic has one, and `Delivery` overrides it
 field-by-field — zero fields inherit the framework's defaults:
 
+**Go**
 ```go
 var archive = tako.Queue[Expiry]("archive", tako.Delivery{
 	RateLimit:   2,                // deliveries per second (1–500)
@@ -108,6 +114,11 @@ var archive = tako.Queue[Expiry]("archive", tako.Delivery{
 	MinBackoff:  30 * time.Second, // wait between attempts
 	MaxBackoff:  10 * time.Minute,
 }))
+```
+
+**cfire**
+```cfire
+Archive := tako.queue[Expiry]("archive")
 ```
 
 | field | default | range |
@@ -177,6 +188,7 @@ worker service at zero instances (unless your footprint pins
 `tako.NewTestApp` wires every declared worker; `DrainQueues` settles
 async work; `Chaos()` is the honest proof of idempotency:
 
+**Go**
 ```go
 func TestClicksCountExactlyOnceUnderChaos(t *testing.T) {
     app := tako.NewTestApp(t)
@@ -184,6 +196,15 @@ func TestClicksCountExactlyOnceUnderChaos(t *testing.T) {
     ...
     app.DrainQueues()
     // hits must be exactly 20 despite duplicates and redeliveries
+}
+```
+
+**cfire**
+```cfire
+test "clicks count under worker drain" {
+    app := tako.new_test_app()
+    try process_click(app.ctx(), ClickEvent{code: "link_1", ts_unix: 100})
+    app.drain()
 }
 ```
 

@@ -1,0 +1,15 @@
+package hello
+
+import "core:tako"
+
+test "hello and greet handlers" {
+    app := tako.new_test_app()
+    h := try hello_handler(app.ctx(), EmptyReq{})
+    assert_eq(h.message, "Hello from Tako in cfire!")
+
+    g := try greet_handler(app.ctx(), GreetReq{name: "Tako", loud: true})
+    assert_eq(g.message, "HELLO, TAKO!")
+
+    e := try echo_handler(app.ctx(), EchoReq{message: "ping"})
+    assert_eq(e.message, "ping")
+}

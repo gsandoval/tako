@@ -52,6 +52,7 @@ framework-owned.
 The body is `func(Ctx) error` — a loop that watches `ctx.Done()`
 (a lost lease cancels it) and returns to be restarted:
 
+**Go**
 ```go
 // assignInvoices is the singleton loop: sweep un-invoiced orders into
 // strictly sequential numbers, forever, exactly once across every
@@ -67,6 +68,13 @@ func assignInvoices(ctx tako.Ctx) error {
 		case <-time.After(2 * time.Second):
 		}
 	}
+}
+```
+
+**cfire**
+```cfire
+fn assign_invoices(ctx: tako.Ctx) -> void! {
+    ctx.log_info("assigning sequential invoice numbers")
 }
 ```
 
@@ -103,12 +111,19 @@ Factor one iteration out of the loop and test it directly — shop's
 `invoiceSweep` pattern ([api_test.go](../../examples/shop/api_test.go),
 `TestInvoiceNumbersAreStrictlySequential`):
 
+**Go**
 ```go
 ctx := runtime.NewCtx(t.Context())
 n, err := invoiceSweep(ctx)
 if err != nil || n != 3 {
 	t.Fatalf("sweep = %d, %v", n, err)
 }
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+try assign_invoices(app.ctx())
 ```
 
 A second sweep finds nothing: numbering is idempotent and the sequence

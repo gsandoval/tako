@@ -11,6 +11,24 @@ Three canonical `.cf` examples mirror the Go progression, and all seven examples
 - [examples/cfire-blog](../../examples/cfire-blog/blog.cf) — static site with dynamic htmx comment fragments.
 - [examples/cfire-siren](../../examples/cfire-siren/siren.cf) — counters, histograms, and alert metrics.
 
+**Go**
+```go
+package shortlink
+
+import "github.com/gsandoval/tako"
+
+var (
+    links   = tako.Entity[Link]("links")
+    clicks  = tako.Queue[ClickEvent]("clicks")
+    hotURLs = tako.Cache[string]("hot-urls", 5*time.Minute)
+
+    GetLink      = tako.API("GET /links/{code}", getLink)
+    ProcessClick = tako.Worker(clicks, processClick)
+    PruneExpired = tako.Cron("0 * * * *", pruneExpired)
+)
+```
+
+**cfire**
 ```cfire
 package shortlink
 
@@ -38,7 +56,7 @@ Clicks  := tako.queue[ClickEvent]("clicks")
 HotUrls := tako.cache[str]("hot-urls")
 
 GetLink      := tako.api("GET /links/{code}", get_link)
-ProcessClick := tako.worker("Clicks", process_click)
+ProcessClick := tako.worker(Clicks, process_click)
 PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 

@@ -59,9 +59,17 @@ group is: every box carries the same name and the handler receives all
 of them. No JavaScript assembles the list, so bulk selection keeps
 working with scripting off.
 
+**Go**
 ```go
 type UnpublishReq struct {
 	Selected []string `form:"selected"`
+}
+```
+
+**cfire**
+```cfire
+type UnpublishReq struct {
+    selected: str `form:"selected"`
 }
 ```
 
@@ -75,11 +83,20 @@ alone, for htmx partials. `tako.Redirect(target)` is
 POST-redirect-GET. One handler serves both worlds with one visible
 branch:
 
+**Go**
 ```go
 if ctx.IsHTMX() {
 	return site.Fragment(ctx, "post-card.html", p)
 }
 return tako.Redirect("/p/" + p.ID) // POST-redirect-GET (303)
+```
+
+**cfire**
+```cfire
+if req.header_string("HX-Request") == "true" {
+    return "<article class=\"post-card\">" + p.title + "</article>"
+}
+return "<meta http-equiv=\"refresh\" content=\"0;url=/posts/" + p.slug + "\">"
 ```
 
 ### Redirect vs RedirectPermanent
@@ -91,6 +108,7 @@ which is what a POST-redirect-GET is.
 the URL. Use it when a resource moved, so crawlers update their index
 and shared links survive:
 
+**Go**
 ```go
 func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
 	p, err := posts.Get(ctx, req.ID)
@@ -101,6 +119,13 @@ func read(ctx tako.Ctx, req ReadReq) (tako.HTML, error) {
 		return tako.HTML{}, tako.NotFound()
 	}
 	...
+}
+```
+
+**cfire**
+```cfire
+fn read_post(ctx: tako.Ctx, req: PostReq) -> Post! {
+    return try Posts.get(ctx, req.slug)
 }
 ```
 
@@ -152,11 +177,19 @@ fragments skip the document headers. Under htmx a redirect is 200 +
 User-style: a cookie-jarred client, the token scraped from the form
 ([examples/journal](../../examples/journal/pages_test.go)):
 
+**Go**
 ```go
 var tokenRe = regexp.MustCompile(`name="_csrf" value="([0-9a-f]+)"`)
 
 form := url.Values{"title": {"First post"}, "body": {"Hello, journal."}, "_csrf": {token}}
 res, err := c.PostForm(srv.URL+"/p", form)
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+created := try create_post(app.ctx(), CreatePostReq{slug: "first", title: "First post", body: "Hello, journal."})
+assert_eq(created.slug, "first")
 ```
 
 Assert the 303 and its `Location`; post with `HX-Request: true` and
@@ -212,10 +245,16 @@ billed read per visitor per page.
 
 `Route.MaxAge` says otherwise, per route:
 
+**Go**
 ```go
 var Article = tako.Page("GET /{section}/{slug}", article, tako.Route{
 	MaxAge: 5 * time.Minute,
 })
+```
+
+**cfire**
+```cfire
+Article := tako.page("GET /{section}/{slug}", read_article)
 ```
 
 That renders `Cache-Control: public, max-age=300`. Zero — every route

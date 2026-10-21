@@ -59,9 +59,9 @@ func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 
 **cfire**
 ```cfire
-download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
+fn download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
     obj := try Images.get(ctx, req.id)
-    return Ok(obj)
+    return obj
 }
 ```
 
@@ -77,11 +77,17 @@ looking past it.
 Caching is opt-in per route, the same `MaxAge` a page declares. Without
 it a blob answers `no-cache`:
 
+**Go**
 ```go
 // Derived from bytes that never change, and requested once per photo
 // per scroll — so it says how long a shared cache may keep it.
 var Thumb = tako.API("GET /api/photos/{id}/thumb", thumb,
     tako.Route{MaxAge: 24 * time.Hour})
+```
+
+**cfire**
+```cfire
+Thumb := tako.api("GET /api/photos/{id}/thumb", get_thumb)
 ```
 
 Pair a long `MaxAge` with a URL that changes when the bytes do. If a
@@ -94,9 +100,17 @@ again for a day"; a validator says "ask, cheaply". `bucket.Get` fills the
 field in from the stored object, so a handler that streams what was
 uploaded revalidates without writing a line:
 
+**Go**
 ```go
 func serveMedia(ctx tako.Ctx, req MediaReq) (tako.Blob, error) {
     return media.Get(ctx, req.Key)   // the ETag rides along
+}
+```
+
+**cfire**
+```cfire
+fn serve_media(ctx: tako.Ctx, req: MediaReq) -> tako.Blob! {
+    return try Media.get(ctx, req.key)
 }
 ```
 
@@ -126,11 +140,18 @@ the PUT **must carry the matching header** — `PutPolicy.Headers`
 builds it from the same options, and both backends refuse a PUT
 without it (local says so with a pointer; GCS fails the signature):
 
+**Go**
 ```go
 var uploadLimits = tako.PutPolicy{ContentType: "image/*", MaxSize: 20 << 20}
 
 url, err := photos.SignedPut(ctx, p.ID, 15*time.Minute, uploadLimits...)
 ticket := UploadTicket{UploadURL: url, UploadHeaders: uploadLimits.Headers()}
+```
+
+**cfire**
+```cfire
+url := try Photos.signed_url(ctx, p.id, "PUT", 900)
+ticket := UploadTicket{upload_url: url}
 ```
 
 **Every successful write fires `Uploaded`** — through-service `Put` or

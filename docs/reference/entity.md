@@ -86,11 +86,17 @@ for descending; `All`, `First`, `Iter`, or `Count` execute.
 
 `Count` returns how many entities match, and **ignores `Limit`**:
 
+**Go**
 ```go
 list, err := posts.Query(ctx).Where("Published", "=", true).
 	OrderBy("-Created").Limit(50).All()
 total, err := posts.Query(ctx).Where("Published", "=", true).Count()
 // "Showing 50 of 214"
+```
+
+**cfire**
+```cfire
+list := try Posts.query().where("published", "=", "true").order_by("-created").limit(50).all(ctx)
 ```
 
 That is the decision, not an oversight. `Limit` shapes a page; the total
@@ -108,11 +114,18 @@ suite holds the two to the same answers, filters included.
 `Page(cursor)` returns one page and where to resume. The empty string
 starts at the beginning; an empty returned cursor is the last page:
 
+**Go**
 ```go
 page, err := photos.Query(ctx).Where("Ready", "=", true).
 	OrderBy("-Created").Limit(20).Page(req.Cursor)
 
 return PhotoPage{Photos: page.Items, Cursor: page.Cursor}, nil
+```
+
+**cfire**
+```cfire
+items := try Photos.query().where("ready", "=", "true").order_by("-created").limit(20).all(ctx)
+return PhotoPage{photos: items}
 ```
 
 **`OrderBy` and `Limit` are both required**, and `Page` refuses without
@@ -165,11 +178,11 @@ err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
 
 **cfire**
 ```cfire
-try Links.tx(ctx, |tx| -> bool! {
-    cur := try tx.get(evt.code)
-    updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
-    try tx.put(evt.code, updated)
-    return Ok(true)
+try Links.tx(ctx, |tx| {
+    mut cur := try tx.get(evt.code)
+    cur.clicks += 1
+    try tx.put(cur)
+    return
 })
 ```
 
@@ -202,10 +215,19 @@ names. The one query in [examples/blog](../../examples/blog/app.go) —
 **A query built across a branch is more than one shape**, and each gets
 its own index:
 
+**Go**
 ```go
 q := photos.Query(ctx).Where("Ready", "=", true)
 if owner != "" {
 	q = q.Where("Owner", "=", owner)
+}
+```
+
+**cfire**
+```cfire
+mut q := Photos.query().where("ready", "=", "true")
+if owner != "" {
+    q = q.where("owner_id", "=", owner)
 }
 ```
 
@@ -221,12 +243,18 @@ that cannot occur is derived too — over-indexing is the safe direction.
 takes or returns an `*EntityQuery[T]` is a fragment of somebody's
 query, not a query of its own:
 
+**Go**
 ```go
 func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {
 	return q.Where("Published", "=", true)
 }
 
 list, err := published(posts.Query(ctx)).OrderBy("-Created").Limit(50).All()
+```
+
+**cfire**
+```cfire
+list := try Posts.query().where("published", "=", "true").order_by("-created").limit(50).all(ctx)
 ```
 
 The fragment's filter is folded into each caller at the position it is
@@ -272,10 +300,18 @@ indexes are derivable, never data. Entity data only ever goes behind
 `tako.NewTestApp` boots fresh in-process backends per test — two apps
 share nothing. From [examples/shortlink](../../examples/shortlink/app_test.go):
 
+**Go**
 ```go
 app := tako.NewTestApp(t)
 ctx := app.Ctx()
 _, err := Create.Call(ctx, CreateReq{Slug: "gh", URL: "https://github.com"})
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+created := try create_link(app.ctx(), CreateLinkReq{url: "https://github.com"})
+assert_eq(created.url, "https://github.com")
 ```
 
 Assert against the store directly (`links.Get(ctx, "gh")`) — absence

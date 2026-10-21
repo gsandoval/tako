@@ -19,6 +19,16 @@ var web = tako.Service(
 )
 ```
 
+**cfire**
+```cfire
+package blog
+
+import "core:tako"
+
+Site     := tako.site("./site/public")
+Comments := tako.page("GET /frag/comments", list_comments)
+```
+
 In both Go and `cfire`, a package with handlers and no explicit service config deploys as a service named after the package (e.g. `package shop` in [examples/cfire-shop](../../examples/cfire-shop/shop.cf) deploys its synchronous endpoints as `shop` and carves out `shop-settle` and `shop-invoicer`).
 
 One per package (`tako/one-service`), no per-handler binding — the same
@@ -55,6 +65,7 @@ services carved out of the same package for each `Worker`, `Subscribe`,
 `JobHandler` and `Singleton`: those are one handler each, so the handler
 IS the service and remains the honest place for their settings.
 
+**Go**
 ```go
 // The app service's settings.
 var api = tako.Service(tako.ServiceConfig{Profile: tako.ProfileLatency})
@@ -67,6 +78,12 @@ var MakeThumb = tako.Worker(thumbs, makeThumb,
 	})
 ```
 
+**cfire**
+```cfire
+UploadPhoto := tako.api("POST /photos", upload_photo)
+MakeThumb   := tako.worker(Thumbs, make_thumb)
+```
+
 | setting | `tako.Service` | Worker / Subscribe / Job / Singleton | API / Page |
 |---|---|---|---|
 | `ServiceConfig.Domain` | yes | no — nothing public to answer on | no |
@@ -75,10 +92,16 @@ var MakeThumb = tako.Worker(thumbs, makeThumb,
 
 ## Where it is running
 
+**Go**
 ```go
 if tako.Environment() == tako.EnvLocal {
 	v.DevUsers = devIdentities   // the local sign-in strip
 }
+```
+
+**cfire**
+```cfire
+ctx.log_info("running handler in active environment")
 ```
 
 `tako.Environment()` returns `tako.EnvLocal` under `tako dev`, `tako
@@ -114,10 +137,16 @@ NAME does show up in `tako gen graph` and the dev banner.
 
 Assert it on the graph — this is an analyzer-level declaration:
 
+**Go**
 ```go
 graph, _ := analyzer.Analyze(analyzer.Config{Dir: "."})
 // graph.Services[i].Name == "blog-web"
 // graph.Services[i].Domain == "blog.example.com"
+```
+
+**cfire**
+```cfire
+// `tako gen graph` inspects both Go and cfire packages into the same AppGraph
 ```
 
 ## Errors you'll meet

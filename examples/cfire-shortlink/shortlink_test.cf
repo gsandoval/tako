@@ -1,0 +1,15 @@
+package shortlink
+
+import "core:tako"
+
+test "shortlink create, get, and click worker" {
+    app := tako.new_test_app()
+    created := try create_link(app.ctx(), CreateLinkReq{url: "https://tako.memo.engineer"})
+    assert_eq(created.code, "link_1")
+    assert_eq(created.url, "https://tako.memo.engineer")
+    assert_eq(created.clicks, 0)
+
+    try process_click(app.ctx(), ClickEvent{code: "link_1", ts_unix: 100})
+    fetched := try get_link(app.ctx(), GetLinkReq{code: "link_1"})
+    assert_eq(fetched.clicks, 1)
+}

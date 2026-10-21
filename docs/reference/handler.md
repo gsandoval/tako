@@ -28,9 +28,9 @@ var (
 
 **cfire**
 ```cfire
-ProcessClick := tako.worker("Clicks", process_click)
+ProcessClick := tako.worker(Clicks, process_click)
 PruneExpired := tako.cron("0 * * * *", prune_expired)
-Settle       := tako.runner("SettleJob", run_settle)
+Settle       := tako.runner(SettleJob, run_settle)
 Invoicer     := tako.singleton(assign_invoices)
 ```
 
@@ -45,6 +45,7 @@ renaming it changes nothing outside your own file.
 It has no exported methods, deliberately. What you do with one is
 **name** it:
 
+**Go**
 ```go
 // alerts, which is where most Handlers get named
 Silent  = tako.Alert(tako.CronMissed(Cleanup, tako.Window{For: 8 * time.Minute}), oncall)
@@ -54,6 +55,13 @@ Hungry  = tako.Alert(tako.WhenAbove(
     tako.ServiceMetric(MakeThumb,
         "run.googleapis.com/container/memory/utilizations"), 0.9,
     tako.Window{For: 10 * time.Minute}), oncall)
+```
+
+**cfire**
+```cfire
+Cleanup   := tako.cron("0 * * * *", cleanup_orphans)
+Invoicer  := tako.singleton(assign_invoices)
+MakeThumb := tako.worker(Thumbs, make_thumb)
 ```
 
 A `Handler` satisfies [`Target`](alerts.md) — anything an alert can be
@@ -117,10 +125,18 @@ Two consequences worth knowing before you rename a var:
 `AdvanceCron` takes the Handler itself, which is the whole reason the
 var exists. From [examples/gallery](../../examples/gallery/app_test.go):
 
+**Go**
 ```go
 app := tako.NewTestApp(t)
 app.AdvanceCron(Cleanup)   // fire the schedule once, now
 app.DrainQueues()          // let whatever it published run
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+try cleanup_orphans(app.ctx())
+app.drain()
 ```
 
 Workers and subscribers need no naming at all — `DrainQueues` runs

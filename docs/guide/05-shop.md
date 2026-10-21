@@ -18,7 +18,7 @@ Products  := tako.entity[Product]("products")
 Orders    := tako.entity[Order]("orders")
 SettleJob := tako.job[SettleParams]("settle")
 
-Settle   := tako.runner("SettleJob", run_settle)
+Settle   := tako.runner(SettleJob, run_settle)
 Invoicer := tako.singleton(assign_invoices)
 ```
 
@@ -55,12 +55,22 @@ fetch. Private endpoints are EXCLUDED with the reason printed.
 
 ## Services by mkdir (§ typed calls)
 
+**Go**
 ```go
 // billing/billing.go — a new package, therefore a new service
 var Charge = tako.API("POST /charge", charge, tako.Route{Private: true})
 
 // shop/app.go
 receipt, err := billing.Charge.Call(ctx, billing.ChargeReq{...})
+```
+
+**cfire**
+```cfire
+// billing/billing.cf — a separate package and service
+Charge := tako.api("POST /charge", charge_order)
+
+// shop/shop.cf
+prod := try Products.get(ctx, req.product_id)
 ```
 
 `Route.Private` closes the front door: browsers and curl get 403 from
@@ -76,11 +86,20 @@ Calls never silently retry, and the deploy prices sync hops honestly
 
 ## Jobs — compute that outlives requests
 
+**Go**
 ```go
 var settle = tako.Job[SettleParams]("settle")
 var Settle = tako.Runner(settle, runSettle)
 
 settle.Run(ctx, SettleParams{Day: day})   // hands off, returns now
+```
+
+**cfire**
+```cfire
+SettleJob := tako.job[SettleParams]("settle")
+Settle    := tako.runner(SettleJob, run_settle)
+
+_ := try SettleJob.run(ctx, SettleParams{day: day, throttle_ms: 0})
 ```
 
 In the cloud that's a Cloud Run JOB — no request timeout exists; a
@@ -98,8 +117,14 @@ leader, no lock, retry-safe.
 
 ## Singleton — exactly one, everywhere
 
+**Go**
 ```go
 var Invoicer = tako.Singleton(assignInvoices)
+```
+
+**cfire**
+```cfire
+Invoicer := tako.singleton(assign_invoices)
 ```
 
 Bookkeeping-grade invoice numbers are strictly sequential — genuinely

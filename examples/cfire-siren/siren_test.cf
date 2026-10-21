@@ -1,0 +1,15 @@
+package siren
+
+import "core:tako"
+
+test "siren handlers and worker" {
+    app := tako.new_test_app()
+    res := try boom_handler(app.ctx(), BoomReq{rate: 0.0})
+    assert_eq(res, "ok")
+
+    slow := try slow_handler(app.ctx(), SlowReq{ms: 15})
+    assert_eq(slow, "slept")
+
+    queued := try flood_handler(app.ctx(), FloodReq{n: 1, fail: "none"})
+    assert_eq(queued, "queued")
+}

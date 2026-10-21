@@ -10,6 +10,7 @@ can all declare it.
 `ServiceConfig{Domain: fqdn}` goes on [`tako.Service`](service.md), the
 package's app-service declaration. Both of these are complete:
 
+**Go**
 ```go
 // A site's service.
 var (
@@ -27,6 +28,15 @@ var (
 )
 ```
 
+**cfire**
+```cfire
+Site := tako.site("./site/public")
+
+Create  := tako.api("POST /api/links", create_link)
+Resolve := tako.api("GET /api/links/{slug}", resolve_link)
+List    := tako.api("GET /api/links", list_links)
+```
+
 **One declaration addresses every route in the service.** No endpoint
 carries the claim, because none of them is a more honest place to put it
 than any other — that is exactly why `tako.Service` exists.
@@ -42,10 +52,18 @@ still refused ([`tako/config-literal`](errors.md)), and the deploy plan
 is still computed without running your app. But the app can read back
 what it declared:
 
+**Go**
 ```go
 var web = tako.Service(tako.ServiceConfig{Domain: "example.com"})
 
 func canonical(path string) string { return "https://" + web.Domain() + path }
+```
+
+**cfire**
+```cfire
+fn canonical(path: str) -> str {
+    return "https://example.com" + path
+}
 ```
 
 Absolute URLs are the reason — canonical tags, RSS `<link>` elements,
@@ -161,9 +179,15 @@ inert locally, which is why it is safe to leave in your code.
 The declaration is analyzer-level, so assert it on the graph rather than
 over HTTP:
 
+**Go**
 ```go
 graph, _ := analyzer.Analyze(analyzer.Config{Dir: "."})
 // graph.Services[i].Domain == "api.example.com"
+```
+
+**cfire**
+```cfire
+// `tako gen graph` inspects both Go and cfire packages into the same AppGraph
 ```
 
 `tako gen graph` is the same answer, human-readable.

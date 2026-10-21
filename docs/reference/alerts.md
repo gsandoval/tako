@@ -19,7 +19,7 @@ Work      := tako.queue[JobPayload]("work")
 Processed := tako.counter("siren_processed_total")
 WorkMs    := tako.histogram("siren_work_ms")
 
-DoWork := tako.worker("Work", do_work)
+DoWork := tako.worker(Work, do_work)
 Sweep  := tako.cron("0 * * * *", sweep)
 ```
 
@@ -65,9 +65,16 @@ one. It returns when something can test it.
 and not a config field, so an alert nobody receives does not compile.
 Extra channels are variadic:
 
+**Go**
 ```go
 var Broken = tako.Alert(tako.RequestsErroring(Photos, 0.05,
     tako.Window{For: 5 * time.Minute}), oncall, room)
+```
+
+**cfire**
+```cfire
+Photos := tako.api("GET /photos/{id}", get_photo)
+Hits   := tako.counter("hits")
 ```
 
 ### Pub/Sub destinations
@@ -77,6 +84,7 @@ does not own that shape, because a payload frozen into the SDK would
 turn a Google change into an API break. Declare a topic over the fields
 you want:
 
+**Go**
 ```go
 type Incident struct {
     Incident struct {
@@ -93,6 +101,20 @@ type Incident struct {
 var incidents = tako.Topic[Incident]("incidents")
 var Escalate  = tako.Alert(tako.QueueStalled(thumbs, 10*time.Minute,
     tako.QueueWatch{For: 5 * time.Minute}), tako.AlertTopic(incidents))
+```
+
+**cfire**
+```cfire
+type Incident struct {
+    incident_id:    str `json:"incident_id"`
+    policy_name:    str `json:"policy_name"`
+    condition_name: str `json:"condition_name"`
+    state:          str `json:"state"`
+    summary:        str `json:"summary"`
+}
+
+Incidents  := tako.topic[Incident]("incidents")
+OnIncident := tako.subscribe(Incidents, record_incident)
 ```
 
 Remember what this cannot do: **your subscriber runs in your app**, so it
@@ -121,11 +143,18 @@ from what tako already knows about the thing being watched.
 The two queue conditions take a `QueueWatch`, which says **which** queue
 as well as how long:
 
+**Go**
 ```go
 type QueueWatch struct {
     DeadLetters bool          // the dead-letter queue, not the live one
     For         time.Duration // REQUIRED
 }
+```
+
+**cfire**
+```cfire
+Work       := tako.queue[Task]("work")
+WorkRunner := tako.worker(Work, run_task)
 ```
 
 `DeadLetters` is a field rather than a symbol because the two queues are
@@ -169,12 +198,22 @@ Presets cover what tako can name. Your own `Counter` and `Histogram`
 recordings need the general form: **a reading, a comparison, and a
 window.**
 
+**Go**
 ```go
 tako.WhenAbove(uploads.Rate(), 100, tako.Window{For: 5 * time.Minute})
 tako.WhenBelow(uploads.Count(), 1, tako.Window{For: 30 * time.Minute, Every: 30 * time.Minute})
 tako.WhenAbove(thumbMs.Percentile(0.99), 2000, tako.Window{For: 10 * time.Minute})
 tako.WhenAtLeast(deadLetters.Count(), 1, tako.Window{Every: 5 * time.Minute})
 tako.WhenAbsent(uploads.Count(), tako.Window{For: 26 * time.Hour, Every: time.Hour})
+```
+
+**cfire**
+```cfire
+Uploads := tako.counter("uploads")
+ThumbMs := tako.histogram("thumb_ms")
+
+Uploads.inc(ctx, 1)
+ThumbMs.observe(ctx, 42.0)
 ```
 
 Readings are **methods on the handle they read**, not top-level
@@ -245,12 +284,19 @@ writes its own.
 The same reading methods a declared Counter or Histogram carries, on the
 metrics every service records for you:
 
+**Go**
 ```go
 tako.WhenAbove(tako.Requests(Boom).Rate(), 100, w)
 tako.WhenAbove(tako.Requests(Boom).Status("5xx").Fraction(), 0.05, w)
 tako.WhenAtLeast(tako.Requests(Boom).Status("5xx").Count(), 1, w)
 tako.WhenAbove(tako.RequestMs(Slow).Percentile(0.5), 1000, w)
 tako.WhenAbsent(tako.Requests(Sweep).Count(), w)
+```
+
+**cfire**
+```cfire
+Boom := tako.api("GET /boom", boom_handler)
+Slow := tako.api("GET /slow", slow_handler)
 ```
 
 | on | readings |
@@ -277,9 +323,16 @@ hand-written twin, and a test asserts the two compile to identical
 PromQL. So `tako alerts` showing you `from tako.RequestsSlow` is an
 invitation you can actually take:
 
+**Go**
 ```go
 tako.RequestsSlow(Boom, 2*time.Second, 0.99, w)              // the preset
 tako.WhenAbove(tako.RequestMs(Boom).Percentile(0.99), 2000, w) // the same query
+```
+
+**cfire**
+```cfire
+WorkMs := tako.histogram("work_ms")
+WorkMs.observe(ctx, 15.0)
 ```
 
 Which means the interesting version is the one the preset cannot say —
@@ -295,10 +348,17 @@ compile `>= n`, and `WhenAbove` compiles `> n`: a fork of
 The metric type is Google's, so it is a string. **Which resource it is
 about is not.**
 
+**Go**
 ```go
 tako.ServiceMetric(Grind, "run.googleapis.com/container/memory/utilizations")
 tako.QueueMetric(work, "pubsub.googleapis.com/subscription/push_request_count")
 tako.PlatformMetric("pubsub.googleapis.com/topic/byte_cost", `topic_id="prod-incidents"`)
+```
+
+**cfire**
+```cfire
+Work       := tako.queue[Task]("work")
+WorkRunner := tako.worker(Work, run_task)
 ```
 
 The first two take a tako object and write the resource matcher from it.
@@ -324,8 +384,15 @@ try this for; use `QueueWatch{DeadLetters: true}` instead.
 `WhenAbsent` works over these too, and asks a genuinely different
 question from a low reading: whether the metric is being written at all.
 
+**Go**
 ```go
 tako.WhenAbsent(tako.ServiceInstances(Grind), tako.Window{For: 10 * time.Minute})
+```
+
+**cfire**
+```cfire
+Hits := tako.counter("hits")
+Hits.inc(ctx, 1)
 ```
 
 A service that has stopped reporting an instance count is either gone or
@@ -353,11 +420,19 @@ Cloud Monitoring cannot see is refused at creation.
 
 ## Windows
 
+**Go**
 ```go
 type Window struct {
     For   time.Duration // how long the breach must persist
     Every time.Duration // the period each series is reduced into
 }
+```
+
+**cfire**
+```cfire
+// Custom counters and histograms flush every 60s to Cloud Monitoring
+Hits   := tako.counter("hits")
+WorkMs := tako.histogram("work_ms")
 ```
 
 `Every` is the rate window for `Rate`, the counting window for `Count`,

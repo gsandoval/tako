@@ -39,8 +39,8 @@ return feed.GetOrFill(ctx, feedKey(owner), func(ctx tako.Ctx) ([]Photo, error) {
 **cfire**
 ```cfire
 cached := try HotUrls.get(ctx, req.code)
-if cached is str {
-    return Ok(LinkRes{code: req.code, url: cached, clicks: 0})
+if cached != "" {
+    return LinkRes{code: req.code, url: cached, clicks: 0}
 }
 try HotUrls.set(ctx, link.code, link.url, 300)
 ```

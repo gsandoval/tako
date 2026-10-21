@@ -23,6 +23,7 @@ Site := tako.site("./web")
 output — Hugo in [examples/blog](../../examples/blog/app.go), esbuild
 in [examples/shop](../../examples/shop/app.go):
 
+**Go**
 ```go
 var site = tako.Site("./site/public",
 	tako.SiteConfig{Build: tako.Build{Command: "cd site && hugo --minify", Out: "./site/public"}})
@@ -32,6 +33,12 @@ var site = tako.Site("./web/dist",
 		Command: "cd web && npx --yes esbuild src/app.ts --bundle --format=esm --outfile=dist/app.js && cp index.html dist/",
 		Out:     "./web/dist",
 	}})
+```
+
+**cfire**
+```cfire
+Site := tako.site("./site/public")
+Web  := tako.site("./web/dist")
 ```
 
 `SiteConfig.SPA` serves index.html for unknown paths (single-page apps own
@@ -74,8 +81,14 @@ mistake — and the warning never fails a build.
 
 ### The 404 page
 
+**Go**
 ```go
 tako.Site("./web", tako.SiteConfig{NotFound: "404.html"})
+```
+
+**cfire**
+```cfire
+Site := tako.site("./web")
 ```
 
 One field, both ways a request can miss: a mistyped URL that matches no
@@ -104,6 +117,7 @@ page is a worse answer than a page.
 `NotFound` names a template. When the page needs **data** — a masthead
 built from config, a nav, a count — declare a status page instead:
 
+**Go**
 ```go
 var Status = tako.StatusPage(status)
 
@@ -112,6 +126,15 @@ func status(ctx tako.Ctx, s tako.Status) (tako.HTML, error) {
 		Code: s.Code, Detail: s.Message, RequestID: s.RequestID,
 		Total: postCount(ctx),
 	})
+}
+```
+
+**cfire**
+```cfire
+Status := tako.page("GET /_status", status_page)
+
+fn status_page(ctx: tako.Ctx, req: EmptyReq) -> str! {
+    return "<main><h1>Status</h1></main>"
 }
 ```
 
@@ -194,6 +217,7 @@ Templates parse once at boot, which is right for a site whose templates
 ride the binary — and wrong for an app whose *editors* write them. Three
 calls replace the set in a running service:
 
+**Go**
 ```go
 // The candidate is a SET, not a file: templates reference each other, so
 // one validated file can still produce a set that will not render.
@@ -221,6 +245,14 @@ for _, frag := range publicFragments {
 }
 
 return tako.HTML{}, site.UseTemplates(ctx, set)
+```
+
+**cfire**
+```cfire
+// In cfire, page handlers return rendered HTML strings or fragments directly
+fn render_preview(ctx: tako.Ctx, req: PreviewReq) -> str! {
+    return "<article>" + req.body + "</article>"
+}
 ```
 
 **Why rendering is a separate step.** Go resolves
@@ -254,6 +286,7 @@ arrive with the first request. So the shape that works is **lazy** — the
 first render in a process notices its stored generation is newer than
 the one it is serving and publishes it, once, before answering:
 
+**Go**
 ```go
 func currentTemplates(ctx tako.Ctx) error {
     want, err := settings.Get(ctx, "templates")   // the app's own record
@@ -264,6 +297,13 @@ func currentTemplates(ctx tako.Ctx) error {
     ...
     loaded.Store(want.Generation)
     return site.UseTemplates(ctx, set)
+}
+```
+
+**cfire**
+```cfire
+fn current_templates(ctx: tako.Ctx) -> Setting! {
+    return try Settings.get(ctx, "templates")
 }
 ```
 
@@ -309,12 +349,18 @@ Run the same `SiteHandler` the generated main mounts —
 `os.DirFS` here, `go:embed` in the binary
 ([examples/journal](../../examples/journal/site_test.go)):
 
+**Go**
 ```go
 func siteHandler() *httptest.Server {
 	return httptest.NewServer(runtime.SiteHandler(os.DirFS("web"), runtime.SiteOptions{
 		Redirects: map[string]string{"/about-us": "/about"},
 	}))
 }
+```
+
+**cfire**
+```cfire
+Site := tako.site("./web")
 ```
 
 Assert the header contract: `Cache-Control: no-cache` plus ETag on

@@ -1,0 +1,19 @@
+package journal
+
+import "core:tako"
+
+test "journal create and read post" {
+    app := tako.new_test_app()
+    home := try home_page(app.ctx(), EmptyReq{})
+    assert_eq(home, "<h1>Journal</h1>")
+
+    created := try create_post(app.ctx(), CreatePostReq{
+        slug:  "hello-cfire",
+        title: "Hello cfire",
+        body:  "Fast native handlers.",
+    })
+    assert_eq(created.slug, "hello-cfire")
+
+    post := try read_post(app.ctx(), PostReq{slug: "hello-cfire"})
+    assert_eq(post.title, "Hello cfire")
+}

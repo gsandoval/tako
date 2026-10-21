@@ -63,9 +63,16 @@ WorkMs.observe(ctx, 42.5)
 `ctx.Log()` returns a `*slog.Logger` — the standard library's, not a
 tako type, so anything that takes an `slog.Logger` takes this one:
 
+**Go**
 ```go
 ctx.Log().Info("thumbnail written", "photo", req.PhotoID, "ms", took)
 ctx.Log().Error("notify failed", "err", err)
+```
+
+**cfire**
+```cfire
+ctx.log_info("thumbnail written")
+ctx.log_error("notify failed")
 ```
 
 The logger is **pre-tagged with the execution it belongs to**, which is
@@ -368,9 +375,16 @@ remediation. Whatever else a handler attaches rides along as
 From [examples/gallery](../../examples/gallery/app_test.go) — tests
 provide secrets on the app, no `.env` involved:
 
+**Go**
 ```go
 app := tako.NewTestApp(t)
 app.SetSecret("notifier-key", "nk_test_123")
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+val := try NotifierKey.get(app.ctx())
 ```
 
 Metrics need no test wiring: the test app carries its own sink.

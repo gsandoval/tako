@@ -35,8 +35,14 @@ caches what it parsed.
 
 ### Who sent the request
 
+**Go**
 ```go
 c := ctx.Client()   // c.IP, c.UserAgent
+```
+
+**cfire**
+```cfire
+ip := req.header_string("X-Forwarded-For")
 ```
 
 Two fields, deliberately. Country, device class and browser name are
@@ -68,6 +74,7 @@ it scales — live on [`tako.Service`](service.md) instead, because a
 service has many routes and none of them is a more honest place to put a
 service-wide fact:
 
+**Go**
 ```go
 var (
 	api     = tako.Service(tako.ServiceConfig{Domain: "api.example.com", Profile: tako.ProfileLatency})
@@ -75,6 +82,13 @@ var (
 	Resolve = tako.API("GET /api/links/{slug}", resolve)
 	List    = tako.API("GET /api/links", list)
 )
+```
+
+**cfire**
+```cfire
+Create  := tako.api("POST /api/links", create_link)
+Resolve := tako.api("GET /api/links/{slug}", resolve_link)
+List    := tako.api("GET /api/links", list_links)
 ```
 
 ## Use
@@ -133,9 +147,9 @@ func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 
 **cfire**
 ```cfire
-download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
+fn download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
 	obj := try Images.get(ctx, req.id)
-	return Ok(obj)
+	return obj
 }
 ```
 
@@ -199,6 +213,7 @@ Handlers are directly callable — no server needed
 ([examples/hello](../../examples/hello/hello_test.go); use
 `tako.NewTestApp(t)` and `app.Ctx()` once the app declares resources):
 
+**Go**
 ```go
 got, err := Greet.Call(ctx, GreetReq{Name: "memo", Loud: true})
 
@@ -206,6 +221,13 @@ _, err = Greet.Call(ctx, GreetReq{Name: "nobody"})
 if !tako.IsNotFound(err) {
 	t.Fatalf("err = %v, want IsNotFound", err)
 }
+```
+
+**cfire**
+```cfire
+app := tako.new_test_app()
+got := try greet_handler(app.ctx(), GreetReq{name: "memo", loud: true})
+assert_eq(got.message, "HELLO, MEMO!")
 ```
 
 ## Errors you'll meet

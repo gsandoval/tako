@@ -1,0 +1,14 @@
+package gallery
+
+import "core:tako"
+
+test "gallery upload and get photo" {
+    app := tako.new_test_app()
+    uploaded := try upload_photo(app.ctx(), UploadReq{title: "Sunrise"})
+    assert_eq(uploaded.id, "p_1")
+    assert_eq(uploaded.title, "Sunrise")
+
+    fetched := try get_photo(app.ctx(), PhotoReq{id: "p_1"})
+    assert_eq(fetched.title, "Sunrise")
+    assert_eq(fetched.bytes, 1024)
+}

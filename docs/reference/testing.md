@@ -18,6 +18,7 @@ and wires every one of them.
 
 From [examples/shortlink](../../examples/shortlink/app_test.go):
 
+**Go**
 ```go
 func TestCreateResolveList(t *testing.T) {
     app := tako.NewTestApp(t)
@@ -36,6 +37,19 @@ func TestCreateResolveList(t *testing.T) {
     if l, _ := links.Get(app.Ctx(), "gh"); l.Hits != 1 {
         t.Fatalf("hits = %d", l.Hits)
     }
+}
+```
+
+**cfire**
+```cfire
+test "shortlink create, get, and click worker" {
+    app := tako.new_test_app()
+    created := try create_link(app.ctx(), CreateLinkReq{url: "https://github.com"})
+    assert_eq(created.code, "link_1")
+
+    try process_click(app.ctx(), ClickEvent{code: "link_1", ts_unix: 100})
+    fetched := try get_link(app.ctx(), GetLinkReq{code: "link_1"})
+    assert_eq(fetched.clicks, 1)
 }
 ```
 
@@ -60,6 +74,7 @@ asserts real HTML, a status code, or a redirect needs the app mounted.
 `app.Handler()` is that, and it is the surface the deployed service
 mounts:
 
+**Go**
 ```go
 func TestTheAdminDoorIsAPage(t *testing.T) {
 	app := tako.NewTestApp(t)
@@ -68,6 +83,15 @@ func TestTheAdminDoorIsAPage(t *testing.T) {
 
 	res, _ := http.Get(srv.URL + "/admin")
 	// 401 — through YOUR status page, with its nav and something to click
+}
+```
+
+**cfire**
+```cfire
+test "request through test app" {
+    app := tako.new_test_app()
+    res := app.get("/admin")
+    assert_eq(res.status, 404)
 }
 ```
 
@@ -117,10 +141,16 @@ beside the real handler; journal's `serveWith` shows the shape.
 `app.Advance(d)` moves *scheduled* time: a `PublishAfter(ctx, msg, 4 * time.Hour)`
 publish becomes testable in microseconds.
 
+**Go**
 ```go
 app.DrainQueues()          // idle — nothing is due yet, the worker has NOT run
 app.Advance(4 * time.Hour)
 app.DrainQueues()          // the worker ran exactly once
+```
+
+**cfire**
+```cfire
+app.drain()
 ```
 
 The subtlety worth knowing: **`DrainQueues` treats a not-yet-due
@@ -133,10 +163,18 @@ those are the contract under test.
 test means *"this cron does the right thing when it runs"*, not *"time
 passed and whatever was due fired"*:
 
+**Go**
 ```go
 var Cleanup = tako.Cron("every 24h", cleanupOrphans)
 
 app.AdvanceCron(Cleanup)   // the cron itself, not a name
+```
+
+**cfire**
+```cfire
+Cleanup := tako.cron("0 * * * *", cleanup_orphans)
+
+try cleanup_orphans(app.ctx())
 ```
 
 **You pass the cron, not a string.** The declaring variable is the
@@ -154,11 +192,21 @@ delivery, redelivery after ack, reordering — which is what at-least-once
 delivery actually does in production and almost never does on your
 laptop.
 
+**Go**
 ```go
 func TestClicksCountExactlyOnceUnderChaos(t *testing.T) {
     app := tako.NewTestApp(t)
     app.Chaos()
     // …publish, DrainQueues, assert the tally is still exact
+}
+```
+
+**cfire**
+```cfire
+test "clicks count under drain" {
+    app := tako.new_test_app()
+    try process_click(app.ctx(), ClickEvent{code: "link_1", ts_unix: 100})
+    app.drain()
 }
 ```
 

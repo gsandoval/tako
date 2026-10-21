@@ -20,8 +20,8 @@ var WarmFeed    = tako.Subscribe(ready, warmFeed)
 ```cfire
 Ready := tako.topic[PhotoReady]("photo-ready")
 
-NotifyOwner := tako.subscribe("Ready", notify_owner)
-WarmFeed    := tako.subscribe("Ready", warm_feed)
+NotifyOwner := tako.subscribe(Ready, notify_owner)
+WarmFeed    := tako.subscribe(Ready, warm_feed)
 ```
 
 ```mermaid
