@@ -10,6 +10,7 @@ Documents (read the section you're pointed at, not the whole file):
 - `docs/tako-tech-spec.md` — normative design. Interface rules (Part 1), SDK (Part 2), example app (Part 3), internals (Part 4).
 - `docs/tako-implementation-plan.md` — phase milestones and exit criteria.
 - `docs/tako-agent-plan.md` — the task you are working on. One task per session.
+- `docs/tako-cfire-plan.md` — `cfire` language compatibility specification & vertical-slice agent execution plan (`CF0.1`–`CF5.1`).
 
 ## Normative API
 

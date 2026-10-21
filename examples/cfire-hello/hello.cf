@@ -1,0 +1,45 @@
+package hello
+
+import "core:tako"
+import "core:str"
+
+type Greeting struct {
+    message: str `json:"message"`
+}
+
+type GreetReq struct {
+    name: str `path:"name"`
+    loud: bool `query:"loud"`
+}
+
+type EchoReq struct {
+    message: str `json:"message"`
+}
+
+type EmptyReq struct {}
+
+Hello := tako.api("GET /hello", hello_handler)
+Greet := tako.api("GET /greet/{name}", greet_handler)
+Echo  := tako.api("POST /echo", echo_handler)
+
+fn hello_handler(ctx: tako.Ctx, req: EmptyReq) -> Greeting! {
+    return Greeting{message: "Hello from Tako in cfire!"}
+}
+
+fn greet_handler(ctx: tako.Ctx, req: GreetReq) -> Greeting! {
+    if req.name == "nobody" {
+        return Err(tako.not_found("not found"))
+    }
+    mut msg := "Hello, " + req.name + "!"
+    if req.loud {
+        msg = str.to_upper(msg)
+    }
+    return Greeting{message: msg}
+}
+
+fn echo_handler(ctx: tako.Ctx, req: EchoReq) -> Greeting! {
+    if req.message == "" {
+        return Err(tako.bad_request("message must not be empty"))
+    }
+    return Greeting{message: req.message}
+}

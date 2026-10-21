@@ -186,10 +186,27 @@ func (s *session) cycle(first bool) error {
 	}
 
 	bin := filepath.Join(".tako", "bin", svc.Name)
-	build := exec.Command("go", "build", "-o", bin, "./"+filepath.Join(".tako", "gen", svc.Name))
-	build.Dir = s.dir
-	if out, err := build.CombinedOutput(); err != nil {
-		return fmt.Errorf("build failed:\n%s", strings.TrimSpace(string(out)))
+	if analyzer.IsCfireProject(s.dir) {
+		libPath, _, err := build.EnsureLibTako(s.dir, "", "")
+		if err != nil {
+			return fmt.Errorf("ensuring libtako: %w", err)
+		}
+		mainCf := filepath.Join(".tako", "gen", svc.Name, "main.cf")
+		args := []string{"build", mainCf, "-o", bin, "--link-lib", libPath}
+		if incDir := build.GetCfireIncludeDir(); incDir != "" {
+			args = append(args, "--include", incDir)
+		}
+		cmd := exec.Command("cfire", args...)
+		cmd.Dir = s.dir
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("cfire build failed:\n%s", strings.TrimSpace(string(out)))
+		}
+	} else {
+		build := exec.Command("go", "build", "-o", bin, "./"+filepath.Join(".tako", "gen", svc.Name))
+		build.Dir = s.dir
+		if out, err := build.CombinedOutput(); err != nil {
+			return fmt.Errorf("build failed:\n%s", strings.TrimSpace(string(out)))
+		}
 	}
 
 	if first {

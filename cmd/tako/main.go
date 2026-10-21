@@ -323,6 +323,38 @@ func runTest(args []string) error {
 	}
 	fmt.Printf("  generating  %s%s\n", strings.Join(codegen.Mains(written), ", "), note)
 
+	if analyzer.IsCfireProject(dir) {
+		libPath, _, err := build.EnsureLibTako(dir, "", "")
+		if err != nil {
+			return fmt.Errorf("ensuring libtako: %w", err)
+		}
+		var testFiles []string
+		_ = filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+			if err == nil && !info.IsDir() && strings.HasSuffix(p, "_test.cf") {
+				testFiles = append(testFiles, p)
+			}
+			return nil
+		})
+		if len(testFiles) == 0 {
+			fmt.Println("  no *_test.cf files found")
+			return nil
+		}
+		for _, tf := range testFiles {
+			cfArgs := []string{"test", tf, "--link-lib", libPath}
+			if incDir := build.GetCfireIncludeDir(); incDir != "" {
+				cfArgs = append(cfArgs, "--include", incDir)
+			}
+			cmd := exec.Command("cfire", cfArgs...)
+			cmd.Dir = dir
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Run(); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	// The test harness (AB2): each service's generated harness is mapped
 	// into its package with go's -overlay, so a test can reach the app's
 	// real mounts without generated code entering the source tree.

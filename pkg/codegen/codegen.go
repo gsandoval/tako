@@ -18,6 +18,9 @@ import (
 // and meant to be read: one visible line per endpoint, a plain decode
 // function per request struct, stdlib routing, no reflection.
 func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
+	if analyzer.IsCfireProject(dir) {
+		return GenerateCfire(g, dir)
+	}
 	var written []string
 	for _, svc := range g.Services {
 		var src []byte
@@ -81,7 +84,8 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 func Mains(written []string) []string {
 	out := make([]string, 0, len(written))
 	for _, rel := range written {
-		if filepath.Base(rel) == "main.go" {
+		base := filepath.Base(rel)
+		if base == "main.go" || base == "main.cf" {
 			out = append(out, rel)
 		}
 	}

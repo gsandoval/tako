@@ -36,6 +36,9 @@ import (
 // build time — the produced image pins the digest, never the tag.
 const DefaultBase = "gcr.io/distroless/static-debian12:nonroot"
 
+// DefaultCfireBase is the runtime image for cfire services needing glibc and libstdc++.
+const DefaultCfireBase = "gcr.io/distroless/cc-debian12:nonroot"
+
 // epoch is the fixed timestamp stamped on layers and config —
 // determinism beats honest-but-useless build times (ko does the same).
 var epoch = time.Unix(0, 0).UTC()
@@ -115,6 +118,29 @@ func Service(opts Options, service string) (Result, error) {
 // compile produces the service's static linux/amd64 binary.
 func compile(dir, service string) (path string, size int64, err error) {
 	out := filepath.Join(dir, ".tako", "bin", service+"-linux-amd64")
+	mainCf := filepath.Join(dir, ".tako", "gen", service, "main.cf")
+
+	if _, err := os.Stat(mainCf); err == nil {
+		libPath, _, err := EnsureLibTako(dir, "linux", "amd64")
+		if err != nil {
+			return "", 0, fmt.Errorf("ensuring linux-amd64 libtako: %w", err)
+		}
+		args := []string{"build", mainCf, "-o", out, "--target=x86_64-linux-gnu", "--link-lib", libPath}
+		if incDir := GetCfireIncludeDir(); incDir != "" {
+			args = append(args, "--include", incDir)
+		}
+		cmd := exec.Command("cfire", args...)
+		cmd.Dir = dir
+		if msg, err := cmd.CombinedOutput(); err != nil {
+			return "", 0, fmt.Errorf("cfire build %s: %s", service, strings.TrimSpace(string(msg)))
+		}
+		info, err := os.Stat(out)
+		if err != nil {
+			return "", 0, err
+		}
+		return out, info.Size(), nil
+	}
+
 	cmd := exec.Command("go", "build", "-trimpath", "-ldflags", "-s -w -buildid=", "-o", out,
 		"./"+filepath.Join(".tako", "gen", service))
 	cmd.Dir = dir

@@ -85,6 +85,9 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	if abs, err := filepath.Abs(cfg.Dir); err == nil {
 		cfg.Dir = abs
 	}
+	if IsCfireProject(cfg.Dir) {
+		return analyzeCfire(cfg)
+	}
 	pkgs, err := load(cfg)
 	if err != nil {
 		return nil, err

@@ -1,0 +1,42 @@
+package gallery
+
+import "core:tako"
+
+type Photo struct {
+    id:       str `entity:"id" json:"id"`
+    owner_id: str `entity:"index" json:"owner_id"`
+    title:    str `json:"title"`
+    bytes:    i64 `json:"bytes"`
+}
+
+type UploadReq struct {
+    title: str `json:"title"`
+}
+
+type PhotoReq struct {
+    id: str `path:"id"`
+}
+
+Photos  := tako.entity[Photo]("photos")
+Assets  := tako.bucket("assets")
+Uploads := tako.counter("uploads_total")
+
+UploadPhoto := tako.api("POST /photos", upload_photo)
+GetPhoto    := tako.api("GET /photos/{id}", get_photo)
+
+fn upload_photo(ctx: tako.Ctx, req: UploadReq) -> Photo! {
+    p := Photo{
+        id:       "p_1",
+        owner_id: "user_1",
+        title:    req.title,
+        bytes:    1024,
+    }
+    try Photos.put(ctx, p)
+    Uploads.inc(ctx, 1)
+    return p
+}
+
+fn get_photo(ctx: tako.Ctx, req: PhotoReq) -> Photo! {
+    p := try Photos.get(ctx, req.id)
+    return p
+}

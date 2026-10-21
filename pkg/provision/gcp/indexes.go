@@ -90,13 +90,23 @@ func (d *DatastoreIndexes) live(ctx context.Context) ([]liveIndex, error) {
 		Indexes []liveIndex `json:"indexes"`
 	}
 	if err := d.C.do(ctx, http.MethodGet, u, nil, &out); err != nil {
+		if disabledAPI(err) {
+			return nil, nil
+		}
 		return nil, Classify(err, d.C.Project, "list datastore indexes", "roles/datastore.indexAdmin")
 	}
 	return out.Indexes, nil
 }
 
 func (d *DatastoreIndexes) List(ctx context.Context) ([]provision.Observed, error) {
-	if len(d.Desired) == 0 && len(d.Kinds) == 0 {
+	hasIndexes := false
+	for _, o := range d.Desired {
+		if o.Kind == provision.KindDatastoreIndex {
+			hasIndexes = true
+			break
+		}
+	}
+	if !hasIndexes && len(d.Kinds) == 0 {
 		return nil, nil
 	}
 	live, err := d.live(ctx)

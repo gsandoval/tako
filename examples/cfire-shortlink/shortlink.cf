@@ -1,0 +1,68 @@
+package shortlink
+
+import "core:tako"
+
+type Link struct {
+    code:       str   `entity:"id" json:"code"`
+    url:        str   `json:"url"`
+    owner_id:   str   `entity:"index" json:"owner_id"`
+    clicks:     i64   `entity:"index" json:"clicks"`
+    created_at: i64   `entity:"index" json:"created_at"`
+}
+
+type CreateLinkReq struct {
+    url: str `json:"url"`
+}
+
+type GetLinkReq struct {
+    code: str `path:"code"`
+}
+
+type ClickEvent struct {
+    code:    str `json:"code"`
+    ts_unix: i64 `json:"ts_unix"`
+}
+
+Links   := tako.entity[Link]("links")
+Clicks  := tako.queue[ClickEvent]("clicks")
+HotUrls := tako.cache[str]("hot-urls")
+
+CreateLink   := tako.api("POST /links", create_link)
+GetLink      := tako.api("GET /links/{code}", get_link)
+ProcessClick := tako.worker(Clicks, process_click)
+PruneExpired := tako.cron("0 * * * *", prune_expired)
+
+fn create_link(ctx: tako.Ctx, req: CreateLinkReq) -> Link! {
+    if req.url == "" {
+        return Err(tako.bad_request("url is required"))
+    }
+    link := Link{
+        code:       "link_1",
+        url:        req.url,
+        owner_id:   "guest",
+        clicks:     0,
+        created_at: ctx.now_unix(),
+    }
+    try Links.put(ctx, link)
+    try HotUrls.set(ctx, link.code, link.url, 300)
+    try Clicks.publish(ctx, ClickEvent{code: link.code, ts_unix: link.created_at})
+    return link
+}
+
+fn get_link(ctx: tako.Ctx, req: GetLinkReq) -> Link! {
+    link := try Links.get(ctx, req.code)
+    return link
+}
+
+fn process_click(ctx: tako.Ctx, ev: ClickEvent) -> void! {
+    try Links.tx(ctx, |tx| {
+        mut link := try tx.get(ev.code)
+        link.clicks += 1
+        try tx.put(link)
+        return
+    })
+}
+
+fn prune_expired(ctx: tako.Ctx) -> void! {
+    ctx.log_info("pruning expired links")
+}
