@@ -14,10 +14,10 @@ flowchart LR
     Source["Go (.go) or cfire (.cf)"]
     Analyze["Analyze + Codegen\n(AppGraph + .tako/gen)"]
     Preflight["Preflight\n(Probe APIs & IAM)"]
-    Plan["Stateless Plan\n(+ create / ~ update / ! replace)"]
+    Plan["Stateless Plan\n(create / update / replace)"]
     Build["Container Build & Push\n(distroless/static or distroless/cc)"]
     Apply["Additive Apply\n(Under deploy lease)"]
-    URLs["Live Cloud Run URLs\n+ Security Summary"]
+    URLs["Live Cloud Run URLs\nand Security Summary"]
 
     Source --> Analyze --> Preflight --> Plan --> Build --> Apply --> URLs
 ```

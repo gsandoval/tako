@@ -58,13 +58,13 @@ flowchart LR
     CF["User .cf Source\n(import 'core:tako')"]
     Outline["cfire outline --json"]
     Analyzer["pkg/analyzer\n(BuildCfireGraph)"]
-    Graph["AppGraph JSON"]
+    AppGraph["AppGraph JSON"]
     Codegen["pkg/codegen\n(.tako/gen/{svc}/main.cf)"]
     CfireBuild["cfire build\n(C++23 + sdk/cfire/include/tako.hpp)"]
     LibTako["cmd/libtako\n(libtako-{os}-{arch}.a)"]
     Bin["Native Service Binary\n(local dev or distroless/cc)"]
 
-    CF --> Outline --> Analyzer --> Graph --> Codegen
+    CF --> Outline --> Analyzer --> AppGraph --> Codegen
     CF --> CfireBuild
     Codegen --> CfireBuild
     LibTako --> CfireBuild

@@ -286,7 +286,7 @@ if (blocks.length > 0) {
   for (const code of blocks) {
     const pre = code.parentElement;
     pre.classList.add('mermaid');
-    pre.textContent = code.textContent.replace(/\\n/g, '\n');
+    pre.textContent = code.textContent.replace(/\\n/g, '<br/>');
     nodes.push(pre);
   }
   try {

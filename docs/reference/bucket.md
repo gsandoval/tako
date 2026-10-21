@@ -25,11 +25,11 @@ flowchart LR
     Evt(("Bucket Uploaded Event\n(OBJECT_FINALIZE)"))
     Sub["Subscriber Service: OnUploaded"]
 
-    Client -->|"1a. Request upload URL"| API
-    Client -->|"1b. Direct PUT (SignedPut)"| GCS
+    Client -->|"Step 1a: Request upload URL"| API
+    Client -->|"Step 1b: Direct PUT (SignedPut)"| GCS
     API -->|"Or through-service Put"| GCS
-    GCS -->|"2. Triggers on any write"| Evt
-    Evt -->|"3. Push delivery"| Sub
+    GCS -->|"Step 2: Triggers on any write"| Evt
+    Evt -->|"Step 3: Push delivery"| Sub
 ```
 
 The name must be a string constant (analyzer-enforced). `Uploaded` is

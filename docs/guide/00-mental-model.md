@@ -14,11 +14,11 @@ flowchart LR
 
   subgraph waist1["Compile-Time Waist"]
     analyzer["pkg/analyzer\n(go/types or cfire outline --json)"]
-    graph[("AppGraph JSON\nServices · Resources\nHandlers · IAM Edges · Indexes")]
+    app_graph[("AppGraph JSON\nServices · Resources\nHandlers · IAM Edges · Indexes")]
   end
 
   subgraph consumers["Downstream Consumers"]
-    codegen["pkg/codegen\n.tako/gen/{svc}/main.{go,cf}\n+ test harness"]
+    codegen["pkg/codegen\n.tako/gen/{svc}/main.{go,cf}\nand test harness"]
     reconciler["pkg/provision/gcp\nStateless GCP Reconciler\n(Cloud Run · IAM · Pub/Sub · Indexes)"]
     clientgen["pkg/clientgen\nTyped TypeScript Client"]
   end
@@ -30,10 +30,10 @@ flowchart LR
 
   go_src --> analyzer
   cf_src --> analyzer
-  analyzer --> graph
-  graph --> codegen
-  graph --> reconciler
-  graph --> clientgen
+  analyzer --> app_graph
+  app_graph --> codegen
+  app_graph --> reconciler
+  app_graph --> clientgen
   codegen --> local_rt
   codegen --> cloud_rt
 ```
@@ -162,7 +162,7 @@ Tako has no IAM configuration files and no `index.yaml`:
 
 ```mermaid
 flowchart LR
-  subgraph code["Handler Call Tree & Struct Tags"]
+  subgraph call_tree["Handler Call Tree & Struct Tags"]
     h_create["createLink(ctx, req)\n→ links.Put(ctx, link)\n→ clicks.Publish(ctx, ev)"]
     h_list["listLinks(ctx, req)\n→ links.Query(ctx)\n   .Where('Owner', '=', u)\n   .OrderBy('-Created')"]
     h_work["countClick(ctx, ev)\n→ links.Tx(ctx, ...)"]
@@ -171,7 +171,7 @@ flowchart LR
   subgraph derived["Statically Derived Cloud Artifacts"]
     sa_app["Service Account: shortlink\n• roles/datastore.user (write)\n• roles/pubsub.publisher (clicks)"]
     sa_work["Service Account: shortlink-countclick\n• roles/datastore.user (write)\n• NO pubsub.publisher grant"]
-    idx["Datastore Composite Index\nkind: links\n1. owner (ASC)\n2. created (DESC)"]
+    idx["Datastore Composite Index\nkind: links\n• owner (ASC)\n• created (DESC)"]
   end
 
   h_create --> sa_app

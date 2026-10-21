@@ -256,6 +256,17 @@ func TestEveryMermaidDiagramAvoidsEscapedQuotesAndHTMLTagPlaceholders(t *testing
 			if strings.Contains(raw, "&lt;") || strings.Contains(raw, "<") {
 				t.Errorf("%s mermaid diagram #%d contains angle brackets that DOMPurify strips in htmlLabels mode (use {placeholder} instead):\n%s", p.File, i, raw)
 			}
+			if strings.Contains(raw, "\n    graph[") || strings.Contains(raw, "\n  graph[") || strings.Contains(raw, "--> graph") || strings.Contains(raw, "--> Graph") {
+				t.Errorf("%s mermaid diagram #%d uses reserved keyword 'graph' as a node ID:\n%s", p.File, i, raw)
+			}
+			for _, line := range strings.Split(strings.ReplaceAll(raw, `\n`, "\n"), "\n") {
+				trimmed := strings.TrimSpace(line)
+				for _, badPrefix := range []string{"1. ", "2. ", "3. ", "+ ", "- ", "* "} {
+					if strings.HasPrefix(trimmed, badPrefix) || strings.Contains(trimmed, `"`+badPrefix) || strings.Contains(trimmed, `&#34;`+badPrefix) {
+						t.Errorf("%s mermaid diagram #%d contains line starting with %q which triggers Mermaid v11 'Unsupported markdown: list':\n%s", p.File, i, badPrefix, line)
+					}
+				}
+			}
 		}
 	}
 	if total == 0 {
