@@ -27,7 +27,7 @@ import (
 	"github.com/gsandoval/tako/pkg/codegen"
 )
 
-const newUsage = `tako new <name> [--kind api|site] [--module <path>] [--replace <dir>]
+const newUsage = `tako new <name> [--kind api|site] [--lang go|cfire] [--module <path>] [--replace <dir>]
 
   Creates a directory holding the smallest tako app that runs.
 
@@ -35,6 +35,7 @@ const newUsage = `tako new <name> [--kind api|site] [--module <path>] [--replace
   --kind site   server-rendered pages: the site declaration, a layout,
                 and a page — the files whose absence is otherwise a
                 confusing runtime error
+  --lang        language SDK: go (the default) or cfire
   --module      the Go module path (default: the directory name)
   --replace     develop against a tako checkout instead of a release
 `
@@ -43,11 +44,12 @@ type newOpts struct {
 	dir     string
 	module  string
 	kind    string
+	lang    string
 	replace string
 }
 
 func runNew(args []string) error {
-	opts := newOpts{kind: "api"}
+	opts := newOpts{kind: "api", lang: "go"}
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		if name, value, ok := strings.Cut(arg, "="); ok && strings.HasPrefix(name, "--") {
@@ -55,7 +57,7 @@ func runNew(args []string) error {
 			arg = name
 		}
 		switch arg {
-		case "--kind", "--module", "--replace":
+		case "--kind", "--lang", "--module", "--replace":
 			if i+1 >= len(args) {
 				return fmt.Errorf("%s needs a value", arg)
 			}
@@ -63,6 +65,8 @@ func runNew(args []string) error {
 			switch arg {
 			case "--kind":
 				opts.kind = args[i]
+			case "--lang":
+				opts.lang = args[i]
 			case "--module":
 				opts.module = args[i]
 			case "--replace":
@@ -70,7 +74,7 @@ func runNew(args []string) error {
 			}
 		default:
 			if strings.HasPrefix(arg, "--") {
-				return fmt.Errorf("unknown flag %q (tako new accepts --kind, --module, --replace)", arg)
+				return fmt.Errorf("unknown flag %q (tako new accepts --kind, --lang, --module, --replace)", arg)
 			}
 			if opts.dir != "" {
 				return fmt.Errorf("tako new takes one name, got %q and %q", opts.dir, arg)
@@ -84,6 +88,9 @@ func runNew(args []string) error {
 	}
 	if opts.kind != "api" && opts.kind != "site" {
 		return fmt.Errorf("unknown --kind %q (api or site)", opts.kind)
+	}
+	if opts.lang != "go" && opts.lang != "cfire" {
+		return fmt.Errorf("unknown --lang %q (go or cfire)", opts.lang)
 	}
 	if opts.module == "" {
 		opts.module = filepath.Base(opts.dir)
@@ -129,11 +136,13 @@ func runNew(args []string) error {
 	// command failed with six "missing go.sum entry" lines naming
 	// packages the user has never heard of. Asking for the runtime by
 	// name is what closes it.
-	if err := tidy(opts.dir); err != nil {
-		return unresolvedTako(err, opts, version, dev)
-	}
-	if err := goGet(opts.dir, "github.com/gsandoval/tako/pkg/runtime"); err != nil {
-		return unresolvedTako(err, opts, version, dev)
+	if opts.lang != "cfire" {
+		if err := tidy(opts.dir); err != nil {
+			return unresolvedTako(err, opts, version, dev)
+		}
+		if err := goGet(opts.dir, "github.com/gsandoval/tako/pkg/runtime"); err != nil {
+			return unresolvedTako(err, opts, version, dev)
+		}
 	}
 	if err := generateInto(opts.dir); err != nil {
 		return err
@@ -195,6 +204,13 @@ func released(v string) bool {
 }
 
 func scaffold(opts newOpts, pkg, version string) map[string]string {
+	if opts.lang == "cfire" {
+		return map[string]string{
+			".gitignore": ".tako/\n.cfire/\n.env\n",
+			pkg + ".cf":  cfireApp(pkg),
+			"AGENTS.md":  agentsMD(pkg, "cfire"),
+		}
+	}
 	require := "require github.com/gsandoval/tako " + version + "\n"
 	if opts.replace != "" {
 		abs, err := filepath.Abs(opts.replace)
@@ -210,14 +226,17 @@ func scaffold(opts newOpts, pkg, version string) map[string]string {
 		// scaffold that omitted the line would ship that failure one
 		// project at a time.
 		".gitignore": ".tako/\n.env\n",
+		"AGENTS.md":  agentsMD(pkg, "go"),
 	}
 	if opts.kind == "site" {
 		files[pkg+".go"] = siteApp(pkg)
+		files[pkg+"_test.go"] = siteTest(pkg)
 		files["web/templates/layout.html"] = layoutHTML(opts.module)
 		files["web/templates/home.html"] = homeHTML()
 		return files
 	}
 	files[pkg+".go"] = apiApp(pkg)
+	files[pkg+"_test.go"] = apiTest(pkg)
 	return files
 }
 
@@ -290,7 +309,7 @@ func layoutHTML(title string) string {
   <title>{{ block "title" . }}` + title + `{{ end }}</title>
 </head>
 <body>
-  <main>{{ block "main" . }}{{ end }}</main>
+  <main>{{ block "content" . }}{{ end }}</main>
 </body>
 </html>
 `
@@ -299,10 +318,114 @@ func layoutHTML(title string) string {
 func homeHTML() string {
 	return `{{ define "title" }}{{ .Title }}{{ end }}
 
-{{ define "main" }}
+{{ define "content" }}
   <h1>{{ .Title }}</h1>
   <p>Edit web/templates/home.html and save — tako dev reloads.</p>
 {{ end }}
+`
+}
+
+func apiTest(pkg string) string {
+	return `package ` + pkg + `
+
+import (
+	"testing"
+
+	"github.com/gsandoval/tako"
+)
+
+func TestGreet(t *testing.T) {
+	app := tako.NewTestApp(t)
+
+	got, err := Greet.Call(app.Ctx(), GreetReq{Name: "World"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Message != "Hello, World!" {
+		t.Fatalf("got %q, want %q", got.Message, "Hello, World!")
+	}
+}
+`
+}
+
+func siteTest(pkg string) string {
+	return `package ` + pkg + `
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/gsandoval/tako"
+)
+
+func TestHome(t *testing.T) {
+	app := tako.NewTestApp(t)
+
+	rec := httptest.NewRecorder()
+	app.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /: status %d, want 200", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Hello from Tako!") {
+		t.Fatalf("GET /: unexpected body:\n%s", rec.Body.String())
+	}
+}
+`
+}
+
+func cfireApp(pkg string) string {
+	return `package ` + pkg + `
+
+import "core:tako"
+
+type Greeting struct {
+    message: str ` + "`json:\"message\"`" + `
+}
+
+type GreetReq struct {
+    name: str ` + "`path:\"name\"`" + `
+}
+
+type EmptyReq struct {}
+
+Hello := tako.api("GET /hello", hello_handler)
+Greet := tako.api("GET /greet/{name}", greet_handler)
+
+fn hello_handler(ctx: tako.Ctx, req: EmptyReq) -> Greeting! {
+    return Greeting{message: "Hello from Tako in cfire!"}
+}
+
+fn greet_handler(ctx: tako.Ctx, req: GreetReq) -> Greeting! {
+    if req.name == "nobody" {
+        return Err(tako.not_found("not found"))
+    }
+    return Greeting{message: "Hello, " + req.name + "!"}
+}
+`
+}
+
+func agentsMD(pkg, lang string) string {
+	return `# AGENTS.md — Working with Tako (` + pkg + `)
+
+This application uses **Tako** (` + lang + ` SDK), a statically-analyzed framework over Google Cloud Run.
+
+## Essential Commands
+
+- ` + "`tako check`" + ` (or ` + "`tako check --json`" + `) — Fast (<1s) static analysis, site-shadow check, and code generation under ` + "`.tako/gen/`" + `. Run this after every edit.
+- ` + "`tako test`" + ` — Analyze, regenerate ` + "`.tako/gen/`" + ` (and test harness overlay), and run tests. **Always prefer ` + "`tako test`" + ` over bare ` + "`go test`" + `** whenever routes, handlers, or templates change so ` + "`app.Handler()`" + ` reflects current mounts.
+- ` + "`tako dev`" + ` — Run the local dev server with live reload and local bbolt/filesystem backends under ` + "`.tako/data/`" + `.
+- ` + "`tako gen graph`" + ` (` + "`--json`" + ` | ` + "`--mermaid`" + `) — Inspect the derived services, handlers, resources, composite indexes, and IAM edges.
+- ` + "`tako docs list`" + ` / ` + "`tako docs <topic>`" + ` / ` + "`tako docs search <query>`" + ` — Read embedded documentation and ` + "`tako docs api`" + ` (exported SDK surface) directly in the terminal.
+
+## Static Analysis Rules to Follow
+
+1. **Package-level declarations**: Every handler (` + "`API`" + `, ` + "`Page`" + `, ` + "`Worker`" + `, ` + "`Subscribe`" + `, ` + "`Cron`" + `, ` + "`Runner`" + `, ` + "`Singleton`" + `) and resource (` + "`Entity`" + `, ` + "`Bucket`" + `, ` + "`Queue`" + `, ` + "`Topic`" + `, ` + "`Cache`" + `, ` + "`Secret`" + `, ` + "`Lock`" + `, ` + "`Job`" + `, ` + "`Site`" + `, ` + "`Auth`" + `, ` + "`Role`" + `, ` + "`Policy`" + `) must be declared as a package-level ` + "`var`" + `. Handler vars must be **exported** (` + "`var Hello = ...`" + `).
+2. **Compile-time constants**: Routes, resource names, cron schedules, and entity query field names (` + "`.Where(\"Field\", ...)`" + `, ` + "`.OrderBy(\"-Field\")`" + `) must be string constants.
+3. **Entity struct tags**: Every ` + "`tako.Entity[T]`" + ` struct requires exactly one ` + "`string`" + ` field tagged ` + "`entity:\"id\"`" + `. Fields used in ` + "`.Where`" + ` or ` + "`.OrderBy`" + ` must be tagged ` + "`entity:\"index\"`" + `, and queries take the **Go struct field name**, not the ` + "`json`" + ` tag.
+4. **Request binding**: Exported request structs bind ` + "`path:\"param\"`" + ` (matching ` + "`{param}`" + ` in the route), ` + "`query:\"k\"`" + `, ` + "`form:\"k\"`" + `, or ` + "`tako.Blob`" + ` with ` + "`form:\"file\"`" + `. Untagged fields decode from JSON bodies on non-GET ` + "`tako.API`" + ` routes (` + "`tako.Page`" + ` routes only accept ` + "`path:`" + `, ` + "`query:`" + `, or ` + "`form:`" + ` tags).
+5. **Site templates**: ` + "`web/templates/layout.html`" + ` is the shared shell and must define ` + "`{{ block \"content\" . }}{{ end }}`" + `; each full page template must define ` + "`{{ define \"content\" }}`" + ` so it gets an isolated layout clone.
 `
 }
 

@@ -178,6 +178,8 @@ func TestRoutes(t *testing.T) {
 		{"/reference/", 200, "The feature reference"},
 		{"/reference/entity", 200, "typed entity stores"},
 		{"/api", 200, "Every exported symbol"},
+		{"/llms.txt", 200, "# Tako"},
+		{"/llms-full.txt", 200, "FILE: api/surface.txt"},
 		{"/guide", 301, ""},
 		{"/reference/nope", 404, "No page here"},
 		{"/nope", 404, "No page here"},
@@ -218,4 +220,24 @@ func get(t *testing.T, site *Site, path string) string {
 		t.Fatalf("GET %s: %d", path, rec.Code)
 	}
 	return rec.Body.String()
+}
+
+func TestCLIQueriesAndLLMsTxt(t *testing.T) {
+	site := built(t)
+	list := site.List()
+	for _, want := range []string{"00-mental-model", "entity", "tako docs <topic>", "llms-full.txt"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("Site.List() missing %q", want)
+		}
+	}
+	for _, topic := range []string{"entity", "00-mental-model", "mental-model", "api", "llms", "llms-full"} {
+		out, ok := site.Topic(topic)
+		if !ok || strings.TrimSpace(out) == "" {
+			t.Errorf("Site.Topic(%q) failed", topic)
+		}
+	}
+	search := site.Search("Singleflight")
+	if !strings.Contains(search, "tako docs cron") {
+		t.Errorf("Site.Search(Singleflight) did not match cron:\n%s", search)
+	}
 }

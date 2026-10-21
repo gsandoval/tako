@@ -302,6 +302,7 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/guide/01-hello" class="m-btn m-btn-primary">
         <span class="btn-dot"></span> Get Started (5 min)
       </a>
+      <a href="/guide/00-mental-model" class="m-btn m-btn-secondary">Mental Model</a>
       <a href="/reference/" class="m-btn m-btn-secondary">Explore Reference</a>
       <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer" class="m-btn m-btn-secondary">GitHub ↗</a>
       <a href="/guide/local" class="m-btn m-btn-link">The Local Story →</a>
@@ -350,10 +351,10 @@ var tmpl = template.Must(template.New("docs").Parse(`
           <span class="card-status">LOCKED</span>
         </div>
         <h3 class="card-title"><code>tako.Site</code> &amp; <code>Page</code></h3>
-        <p class="card-desc">Server-rendered HTML templates, CSRF-checked forms, and HTMX fragments — or an Astro/Hugo build embedded in the binary. Same origin as your API, so CORS never comes up.</p>
+        <p class="card-desc">Server-rendered HTML templates, CSRF-checked forms, HTMX fragments, and custom <code>StatusPage</code> handlers — or an Astro/Hugo build embedded in the binary. Same origin as your API, so CORS never comes up.</p>
         <div class="card-tags">
           <span class="tag">HTMX</span>
-          <span class="tag">Astro / Hugo</span>
+          <span class="tag">StatusPage</span>
           <span class="tag">Custom Domain</span>
         </div>
         <div class="card-footer-meta">
@@ -365,14 +366,14 @@ var tmpl = template.Must(template.New("docs").Parse(`
       <a href="/reference/auth" class="memo-card card-emerald">
         <div class="card-top">
           <span class="card-id">PRM-03</span>
-          <span class="badge badge-emerald">IDENTITY</span>
+          <span class="badge badge-emerald">IDENTITY &amp; RBAC</span>
           <span class="card-status">LOCKED</span>
         </div>
-        <h3 class="card-title"><code>tako.Auth</code></h3>
-        <p class="card-desc">One declaration mounts sign-in, revocable server-side sessions, and CSRF tokens. Refuses tokens from undeclared providers and injects a one-click persona bar locally.</p>
+        <h3 class="card-title"><code>Auth</code>, <code>Policy</code> &amp; <code>Role</code></h3>
+        <p class="card-desc">One declaration mounts sign-in, revocable server-side sessions, CSRF tokens, and RBAC policies (<code>RequireRole</code>, <code>auth.Users()</code>). Injects a one-click persona bar locally.</p>
         <div class="card-tags">
           <span class="tag">Identity Platform</span>
-          <span class="tag">Sessions</span>
+          <span class="tag">Policy &amp; Role</span>
           <span class="tag">Dev Bar</span>
         </div>
         <div class="card-footer-meta">
@@ -597,12 +598,21 @@ var tmpl = template.Must(template.New("docs").Parse(`
 
   <section class="memo-section">
     <div class="memo-section-header">// 0x03 Worked Examples</div>
-    <h2 class="memo-section-title">Six Progressive Examples</h2>
+    <h2 class="memo-section-title">Seven Progressive Chapters</h2>
     <p class="memo-section-sub">
-      Six working apps in the order the framework grows. Every example is both a chapter in the guide and a test target in the conformance suite.
+      Start with the mental model, then walk seven working apps in the order the framework grows. Every example is both a chapter in the guide and a test target in the conformance suite.
     </p>
 
     <div class="tutorial-list">
+      <a href="/guide/00-mental-model" class="tutorial-item">
+        <div class="t-num">00</div>
+        <div class="t-body">
+          <div class="t-title">mental model — How Tako Compiles Your Code</div>
+          <div class="t-desc">Static analysis rules, package-as-service partitioning, variable-as-identity, request/error matrices, and the .tako/ directory.</div>
+        </div>
+        <div class="t-tags"><span class="tag">Architecture</span><span class="tag">Rules</span></div>
+      </a>
+
       <a href="/guide/01-hello" class="tutorial-item">
         <div class="t-num">01</div>
         <div class="t-body">
@@ -655,6 +665,15 @@ var tmpl = template.Must(template.New("docs").Parse(`
           <div class="t-desc">Hugo builds the static pages while Tako runs the build loop and serves live comment fragments from the same origin.</div>
         </div>
         <div class="t-tags"><span class="tag">Hugo</span><span class="tag">Islands</span></div>
+      </a>
+
+      <a href="/guide/07-cfire" class="tutorial-item">
+        <div class="t-num">07</div>
+        <div class="t-body">
+          <div class="t-title">cfire — Native C++23 Systems Apps on Tako</div>
+          <div class="t-desc">Write .cf systems packages using import "core:tako", linked via the libtako C-archive bridge into distroless C++23 containers.</div>
+        </div>
+        <div class="t-tags"><span class="tag">C++23</span><span class="tag">cfire</span><span class="tag">libtako</span></div>
       </a>
     </div>
   </section>

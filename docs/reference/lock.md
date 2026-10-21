@@ -14,8 +14,8 @@ var relock = tako.Lock("reindex")
 
 The name must be a string constant (analyzer-enforced) — lock names
 ARE the identity; two declarations of `"reindex"` are the same lock.
-Lock accepts **no options**: the lease policy is framework-owned in
-v0, and the analyzer says exactly that (see Errors).
+Lock accepts **no options**: its signature is `tako.Lock(name string)`,
+and the lease policy is framework-owned in v0.
 
 The mechanism is the spec's §4.4 lease: a named compare-and-swap
 record `{owner, expiry}` with a **30s TTL**, heartbeated every ttl/3
@@ -86,7 +86,6 @@ endpoint, and asserts `Started == false` and an unchanged ledger.
 
 ## Errors you'll meet
 
-- `tako.Lock accepts no options in v0 — the lease policy (30s TTL, heartbeats, campaign cadence) is framework-owned (tako/invalid-option)`
 - `tako.Lock name must be a string constant — names are read at analysis time, not run time; got variable "name" (tako/const-name)`
 - `tako: no lease backend wired — run via tako dev, a generated service, or tako.NewTestApp; a tool that reaches a deployed app calls runtime.BootGCPWith first` — a panic from `Do` or `TryDo` in a bare test, the same shape every other unwired resource uses.
 - `lease "reindex" was lost while held (ttl expired or forcibly taken) — work after the loss point may not have run`

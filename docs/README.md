@@ -5,8 +5,9 @@ Two kinds of thing live here, and they are for different people.
 ## If you are learning tako
 
 Read these. They ship inside the binary — `tako docs` serves them at
-`localhost:8080`, so they are also the version that matches whatever
-tako you have installed.
+`localhost:8090` (or prints any topic in the terminal via
+`tako docs list` / `tako docs <topic>`), so they are also the version
+that matches whatever tako you have installed.
 
 | | |
 |---|---|

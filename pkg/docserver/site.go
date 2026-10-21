@@ -25,13 +25,14 @@ const (
 
 // A Page is one rendered markdown file.
 type Page struct {
-	Section string // "guide" or "reference"
-	Name    string // "01-hello", or "" for the section index
-	Route   string // "/guide/01-hello"
-	File    string // "guide/01-hello.md", relative to docs/
-	Title   string // the H1, with the leading "# " removed
-	Body    string // sanitized HTML
-	Anchors map[string]bool
+	Section  string // "guide" or "reference"
+	Name     string // "01-hello", or "" for the section index
+	Route    string // "/guide/01-hello"
+	File     string // "guide/01-hello.md", relative to docs/
+	Title    string // the H1, with the leading "# " removed
+	Markdown string // raw markdown source
+	Body     string // sanitized HTML
+	Anchors  map[string]bool
 }
 
 // A Site is the whole documentation set, rendered.
@@ -40,6 +41,7 @@ type Site struct {
 	Reference []*Page // in the order reference/README.md groups them
 	byRoute   map[string]*Page
 
+	Surface string   // raw api/surface.txt
 	Symbols []Symbol // every exported symbol, in lock order
 	Groups  []Group  // the api page, grouped the way the reference groups itself
 
@@ -83,10 +85,11 @@ func Build(fsys fs.FS) (*Site, error) {
 			}
 			sources[file] = string(raw)
 			p := &Page{
-				Section: section,
-				Name:    strings.TrimSuffix(e.Name(), ".md"),
-				File:    file,
-				Title:   firstHeading(string(raw)),
+				Section:  section,
+				Name:     strings.TrimSuffix(e.Name(), ".md"),
+				File:     file,
+				Title:    firstHeading(string(raw)),
+				Markdown: string(raw),
 			}
 			if p.Name == "README" {
 				p.Name = ""
@@ -122,6 +125,7 @@ func Build(fsys fs.FS) (*Site, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading the SDK surface: %w", err)
 	}
+	site.Surface = string(surface)
 	site.Symbols, err = parseSurface(string(surface))
 	if err != nil {
 		return nil, err

@@ -47,30 +47,35 @@ Two consequences worth knowing:
 
 ## HTTP
 
-- [api.md](api.md) — `tako.API`: JSON endpoints, request binding
-- [pages.md](pages.md) — `tako.Page`: server-rendered HTML, forms,
-  CSRF, htmx fragments
-- [site.md](site.md) — `tako.Site`: static serving, templates,
-  frontend builds (`SiteConfig.Build`), SPA, redirects
-- [service.md](service.md) — `tako.Service`: the app service declared —
-  its name and its service-wide settings
+- [api.md](api.md) — `tako.API`, `tako.Ctx`, `tako.Route`, `tako.Errorf`,
+  `tako.NotFound`: JSON endpoints, request binding, error status codes
+- [pages.md](pages.md) — `tako.Page`, `tako.HTML`, `tako.Redirect`:
+  server-rendered HTML, forms, CSRF, htmx fragments
+- [site.md](site.md) — `tako.Site`, `tako.StatusPage`, `tako.TemplateSet`:
+  static serving, `"content"` layout cloning, custom `StatusPage`, frontend
+  builds (`SiteConfig.Build`), SPA, redirects
+- [service.md](service.md) — `tako.Service`, `tako.Environment`: the app
+  service declared, service-wide settings, `EnvLocal` vs `EnvCloud`
 - [domains.md](domains.md) — `ServiceConfig.Domain`: a custom domain with
   managed TLS on any service, site or API-only
 
 ## Data
 
-- [entity.md](entity.md) — `tako.Entity`: get/put/query,
-  transactions, derived indexes
+- [entity.md](entity.md) — `tako.Entity`, `tako.NewID`: get/put/query,
+  transactions, derived indexes, cursor pagination
 - [cache.md](cache.md) — `tako.Cache`: per-instance TTL cache
 - [observability.md](observability.md) — `tako.Secret`,
-  `tako.Counter`, `tako.Histogram`, per-endpoint metrics, `tako logs`
-- [alerts.md](alerts.md) — `tako.Alert`: conditions, presets, and
+  `tako.Counter`, `tako.Histogram`, per-endpoint metrics, `tako logs`,
+  `tako secrets`
+- [alerts.md](alerts.md) — `tako.Alert`, `tako.AlertEmail`,
+  `tako.AlertWebhook`, `tako.AlertTopic`: conditions, presets, and
   channels that page someone
 
 ## Async
 
-- [queue.md](queue.md) — `tako.Queue` + `tako.Worker`: at-least-once
-  work, retries, dead letters, chaos testing
+- [queue.md](queue.md) — `tako.Queue` + `tako.Worker`, `tako.Permanent`:
+  at-least-once work, delayed delivery, retries, dead letters (`tako dlq`),
+  chaos testing
 - [topic.md](topic.md) — `tako.Topic` + `tako.Subscribe`: fan-out
   events
 - [bucket.md](bucket.md) — `tako.Bucket`: blobs, signed URLs, upload
@@ -78,7 +83,7 @@ Two consequences worth knowing:
 - [cron.md](cron.md) — `tako.Cron` (+ `CronConfig.Singleflight`)
 - [lock.md](lock.md) — `tako.Lock`: leases, `Do`/`TryDo`
 - [handler.md](handler.md) — `tako.Handler`: the value every
-  background declaration returns, and what you name it for
+  background declaration returns, service partitioning, and what you name it for
 
 ## Compute
 
@@ -92,14 +97,16 @@ Two consequences worth knowing:
 
 ## Edges
 
-- [auth.md](auth.md) — `tako.Auth`: providers, sessions, `Route.SignIn`,
-  the dev bar
+- [auth.md](auth.md) — `tako.Auth`, `tako.Policy`, `tako.Role`,
+  `tako.RequireRole`, `AuthHandle.Users`: providers, sessions, RBAC
+  policies, user directory (`tako users`), the dev bar
 - [testing.md](testing.md) — `tako.NewTestApp`: the test surface, the
   fake clock, chaos mode
 - [client-ts.md](client-ts.md) — `tako gen client ts`: the generated
   TypeScript client
 - [cfire.md](cfire.md) — `import "core:tako"`: the native C++23 systems
   SDK, `libtako` C-archive bridge, and distroless container builds
-- [cli.md](cli.md) — the command surface and the confirmation ladder
+- [cli.md](cli.md) — `tako check`, `tako dev`, `tako test`, `tako deploy`,
+  `tako docs`, and the confirmation ladder
 - [errors.md](errors.md) — every analysis rule tako can refuse with,
   and what each one protects

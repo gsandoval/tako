@@ -40,7 +40,7 @@ func computeConfig(dir string, pkg *packages.Package, args []ast.Expr, errs *Err
 // into their own service (package = service, but each worker scales and
 // grants independently).
 func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, queueVars map[types.Object]string, workersByQueue map[string]*Handler, errs *ErrorList) *Handler {
-	if name.Name == "_" || len(call.Args) < 2 {
+	if !checkHandlerVar("Worker", dir, pkg, name, errs) || len(call.Args) < 2 {
 		return nil
 	}
 	bad := false
@@ -89,7 +89,7 @@ func extractWorker(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 // partition into their own service, and any number may bind one source —
 // fan-out with independent retries is the point (contrast one-worker).
 func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, topicVars, bucketVars map[types.Object]string, errs *ErrorList) *Handler {
-	if name.Name == "_" || len(call.Args) < 2 {
+	if !checkHandlerVar("Subscribe", dir, pkg, name, errs) || len(call.Args) < 2 {
 		return nil
 	}
 	bad := false
@@ -127,7 +127,7 @@ func extractSubscribe(dir string, pkg *packages.Package, name *ast.Ident, call *
 // extractCron validates one tako.Cron declaration. Cron handlers run in
 // the package's app service (spec §4.1 partitioning), not their own.
 func extractCron(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Handler {
-	if name.Name == "_" || len(call.Args) < 2 {
+	if !checkHandlerVar("Cron", dir, pkg, name, errs) || len(call.Args) < 2 {
 		return nil
 	}
 	bad := false
@@ -271,7 +271,7 @@ func resolveQueueVar(pkg *packages.Package, arg ast.Expr, queueVars map[types.Ob
 // deployable (a Cloud Run JOB — no routes, no request timeout), bound
 // to exactly one declared tako.Job.
 func extractRunner(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, jobVars map[types.Object]string, jobsByName map[string]*Handler, errs *ErrorList) *Handler {
-	if name.Name == "_" || len(call.Args) < 2 {
+	if !checkHandlerVar("Runner", dir, pkg, name, errs) || len(call.Args) < 2 {
 		return nil
 	}
 	bad := false
@@ -375,7 +375,7 @@ func extractSingleton(dir string, pkg *packages.Package, name *ast.Ident, call *
 	// tako.Singleton(fn, opts...) — no name argument. The declaring
 	// variable is the identity, the same rule every other service tako
 	// deploys already follows.
-	if name.Name == "_" || len(call.Args) < 1 {
+	if !checkHandlerVar("Singleton", dir, pkg, name, errs) || len(call.Args) < 1 {
 		return nil
 	}
 	bad := false

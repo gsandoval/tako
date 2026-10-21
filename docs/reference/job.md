@@ -33,8 +33,12 @@ job has exactly one body. Options on `JobHandler`:
   locally). Inside the body, `ctx.Task()` reports `(index, count)` —
   shard by them (hash the key, take your share); everywhere else it
   is `(0, 1)`.
-- `RunnerConfig.Footprint` (CPU and Memory only) — task
-  compute; only CPU and Memory apply (see [footprint.md](footprint.md)).
+- `RunnerConfig.Attempts` and `RunnerConfig.Timeout` — per-task retry
+  attempts (default 3, range 0–10) and per-task timeout (default 15m
+  from the batch profile, up to 24h).
+- `RunnerConfig.Profile` and `RunnerConfig.Footprint` (CPU and Memory
+  only) — task compute; only CPU and Memory apply (see
+  [footprint.md](footprint.md)).
 
 ## Use
 
@@ -91,11 +95,13 @@ fixed 200ms backoff), and a failed run dead-letters inspectably under
 `tako deploy` creates a `run job <pkg>-<var>` (shop: `shop-settle`) —
 a Cloud Run Job v2, not a service. Executions run on demand: `Run`
 calls the Jobs API's `runWithOverrides`, handing params over as the
-`--tako-job-params` container arg the generated job main decodes. The
-spec is fixed: `maxRetries: 3`, `timeout: "3600s"`, and there is no
-dead-letter — this is compute, not messaging; Cloud Run retries a
-failed task, then the execution is simply Failed. Task compute comes
-from the batch profile unless a footprint pins CPU/Memory.
+`--tako-job-params` container arg the generated job main decodes.
+`maxRetries` comes from `RunnerConfig.Attempts` (default 3) and the task
+`timeout` comes from `RunnerConfig.Timeout` (default 900s from the batch
+profile); there is no dead-letter — this is compute, not messaging;
+Cloud Run retries a failed task up to `maxRetries`, then the execution
+is simply Failed. Task compute comes from the batch profile unless a
+footprint pins CPU/Memory.
 
 The wiring is derived, never hand-configured: every service that calls
 `Run` gets the job's full resource name injected as `TAKO_JOB_<NAME>`,
@@ -147,6 +153,5 @@ if err := runtime.WaitIdle(30 * time.Second); err != nil {
   inside a parallel task — `(0, 1)` everywhere else — and the local
   runtime runs the full fan-out; shop's settle shards orders by ID
   hash and merges shard subtotals idempotently.)
-- `maxRetries` (3) and the 3600s task timeout are framework-owned, not
-  knobs. For a scheduled job, trigger `handle.Run` from a
+- For a scheduled job, trigger `handle.Run` from a
   [cron](cron.md) handler — scheduled everywhere since T2.

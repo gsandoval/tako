@@ -9,8 +9,9 @@ auth = tako.Auth(tako.AuthConfig{Password: true})    // shop: email/password
 
 One declaration injects the session surface: `POST /_tako/api/session`
 (exchange a sign-in for a session), `DELETE /_tako/api/session` (sign out),
-`GET /_tako/signin` (the framework-owned sign-in page — your
-app just links here), and the form-friendly `POST
+`GET /_tako/signin` (the framework-owned sign-in page — your app just
+links to `/_tako/signin` or `/_tako/signin?next=/path` to return the
+visitor where they started), and the form-friendly `POST
 /_tako/api/session/signout`.
 
 Sessions are **revocable entity records**: the cookie carries only an
@@ -185,11 +186,11 @@ role. Ticking is deliberate: a local session that carried every role
 would make the refusal path — the half of authorization worth walking —
 unreachable in dev.
 
-**They are what the session was minted with.** `tako.User.Roles` comes
-off the session record, so a role granted or revoked elsewhere is not
-picked up mid-session. Granting through `auth.Users()` marks that user's
-sessions stale and the next request refreshes them (AB10b, not yet
-built); until then, a role change takes effect on next sign-in.
+**Live session refresh on role changes.** `tako.User.Roles` is cached
+on the session record, and granting or revoking a role through
+`auth.Users()` (or `tako users grant` / `revoke`) marks that user's live
+sessions stale so their very next request refreshes the roles from the
+store without signing them out.
 
 The name must be a string constant and the var must be exported — it is
 read at analysis time, so `tako gen graph` can print it beside the door:
@@ -236,6 +237,7 @@ tako users create ana@example.com --name Ana --password --role editor
 tako users grant  ana@example.com moderator
 tako users revoke ana@example.com moderator
 tako users disable ana@example.com   sign-in refused, record kept
+tako users enable  ana@example.com   sign-in re-allowed
 tako users delete  ana@example.com   permanent
 ```
 

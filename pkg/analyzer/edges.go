@@ -89,22 +89,30 @@ func accountVerb(pkg *packages.Package, sel *ast.SelectorExpr) string {
 }
 
 // funcArg resolves a handler constructor's function argument to its
-// *types.Func, or nil for anything the scan can't follow (closures).
-func funcArg(pkg *packages.Package, call *ast.CallExpr, idx int) *types.Func {
+// *types.Func and (when written inline as a function literal) its
+// *ast.FuncLit so the edge and query scans can walk closure bodies
+// identically to named functions.
+func funcArg(pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, idx int) (*types.Func, *ast.FuncLit) {
 	if idx >= len(call.Args) {
-		return nil
+		return nil, nil
 	}
 	switch e := call.Args[idx].(type) {
 	case *ast.Ident:
 		if fn, ok := pkg.TypesInfo.Uses[e].(*types.Func); ok {
-			return fn
+			return fn, nil
 		}
 	case *ast.SelectorExpr:
 		if fn, ok := pkg.TypesInfo.Uses[e.Sel].(*types.Func); ok {
-			return fn
+			return fn, nil
+		}
+	case *ast.FuncLit:
+		if tv, ok := pkg.TypesInfo.Types[e]; ok {
+			if sig, ok := tv.Type.(*types.Signature); ok {
+				return types.NewFunc(e.Pos(), pkg.Types, name.Name, sig), e
+			}
 		}
 	}
-	return nil
+	return nil, nil
 }
 
 // deriveEdges computes resource-usage and service-call edges: for each
@@ -114,7 +122,7 @@ func funcArg(pkg *packages.Package, call *ast.CallExpr, idx int) *types.Func {
 // resource var; a `.Call` on another handler's Endpoint var is a call
 // edge (§2.12). Raw cross-package handler-function calls — the hidden
 // RPC boundary — are diagnosed here, where the scan already looks.
-func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
+func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, pkgHandlerLits map[*packages.Package][]*ast.FuncDecl, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
 	// The declared auth resource, if this app has one: account usage
 	// attaches its edges to it, because auth.Users() is how accounts are
 	// reached and tako.Auth is what declares them.
@@ -142,6 +150,72 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 		}
 	}
 
+	scanBody := func(pkg *packages.Package, fn *types.Func, body *ast.BlockStmt) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
+				// endpoint.Call / pkg.Endpoint.Call → a typed
+				// service call (§2.12).
+				if sel.Sel.Name == "Call" {
+					var obj types.Object
+					switch x := sel.X.(type) {
+					case *ast.Ident:
+						obj = pkg.TypesInfo.Uses[x]
+					case *ast.SelectorExpr:
+						obj = pkg.TypesInfo.Uses[x.Sel]
+					}
+					if callee, ok := endpoints[obj]; ok {
+						epRefs[fn] = append(epRefs[fn], callee)
+						return true
+					}
+				}
+				// Accounts are reached through a handle, not
+				// through the declared var, so they are matched
+				// on the receiver's TYPE.
+				if v := accountVerb(pkg, sel); v != "" && authRes != "" {
+					refs[fn] = append(refs[fn], ref{resRef{authRes, "auth"}, v})
+					return true
+				}
+				if id, ok := sel.X.(*ast.Ident); ok {
+					if r, ok := vars[pkg.TypesInfo.Uses[id]]; ok {
+						if v := verbOf(r.kind, sel.Sel.Name); v != "" {
+							refs[fn] = append(refs[fn], ref{r, v})
+							// A delayed publish routes the queue
+							// through Cloud Tasks in the cloud. It
+							// is its own method now, so the call
+							// site names it outright.
+							if r.kind == "queue" && sel.Sel.Name == "PublishAfter" {
+								delayed[r.name] = true
+							}
+						}
+						return true
+					}
+				}
+				if callee, ok := pkg.TypesInfo.Uses[sel.Sel].(*types.Func); ok {
+					if callee.Pkg() == pkg.Types {
+						calls[fn] = append(calls[fn], callee)
+					} else if v, isRoot := rootVarOf[callee]; isRoot {
+						errs = append(errs, &Error{
+							Pos:  relPos(dir, pkg.Fset, call.Pos()),
+							Msg:  fmt.Sprintf("%s is a handler function — cross-service calls go through the Endpoint var (%s.Call(ctx, req)) so the RPC boundary stays visible", callee.Name(), v),
+							Rule: "raw-call",
+						})
+					}
+				}
+				return true
+			}
+			if id, ok := call.Fun.(*ast.Ident); ok {
+				if callee, ok := pkg.TypesInfo.Uses[id].(*types.Func); ok && callee.Pkg() == pkg.Types {
+					calls[fn] = append(calls[fn], callee)
+				}
+			}
+			return true
+		})
+	}
+
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
 			for _, decl := range file.Decls {
@@ -153,69 +227,12 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 				if !ok {
 					continue
 				}
-				ast.Inspect(fd.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					if sel, ok := call.Fun.(*ast.SelectorExpr); ok {
-						// endpoint.Call / pkg.Endpoint.Call → a typed
-						// service call (§2.12).
-						if sel.Sel.Name == "Call" {
-							var obj types.Object
-							switch x := sel.X.(type) {
-							case *ast.Ident:
-								obj = pkg.TypesInfo.Uses[x]
-							case *ast.SelectorExpr:
-								obj = pkg.TypesInfo.Uses[x.Sel]
-							}
-							if callee, ok := endpoints[obj]; ok {
-								epRefs[fn] = append(epRefs[fn], callee)
-								return true
-							}
-						}
-						// Accounts are reached through a handle, not
-						// through the declared var, so they are matched
-						// on the receiver's TYPE.
-						if v := accountVerb(pkg, sel); v != "" && authRes != "" {
-							refs[fn] = append(refs[fn], ref{resRef{authRes, "auth"}, v})
-							return true
-						}
-						if id, ok := sel.X.(*ast.Ident); ok {
-							if r, ok := vars[pkg.TypesInfo.Uses[id]]; ok {
-								if v := verbOf(r.kind, sel.Sel.Name); v != "" {
-									refs[fn] = append(refs[fn], ref{r, v})
-									// A delayed publish routes the queue
-									// through Cloud Tasks in the cloud. It
-									// is its own method now, so the call
-									// site names it outright.
-									if r.kind == "queue" && sel.Sel.Name == "PublishAfter" {
-										delayed[r.name] = true
-									}
-								}
-								return true
-							}
-						}
-						if callee, ok := pkg.TypesInfo.Uses[sel.Sel].(*types.Func); ok {
-							if callee.Pkg() == pkg.Types {
-								calls[fn] = append(calls[fn], callee)
-							} else if v, isRoot := rootVarOf[callee]; isRoot {
-								errs = append(errs, &Error{
-									Pos:  relPos(dir, pkg.Fset, call.Pos()),
-									Msg:  fmt.Sprintf("%s is a handler function — cross-service calls go through the Endpoint var (%s.Call(ctx, req)) so the RPC boundary stays visible", callee.Name(), v),
-									Rule: "raw-call",
-								})
-							}
-						}
-						return true
-					}
-					if id, ok := call.Fun.(*ast.Ident); ok {
-						if callee, ok := pkg.TypesInfo.Uses[id].(*types.Func); ok && callee.Pkg() == pkg.Types {
-							calls[fn] = append(calls[fn], callee)
-						}
-					}
-					return true
-				})
+				scanBody(pkg, fn, fd.Body)
+			}
+		}
+		for _, fd := range pkgHandlerLits[pkg] {
+			if fn := handlerFuncs[pkg.Name+"."+fd.Name.Name]; fn != nil && fd.Body != nil {
+				scanBody(pkg, fn, fd.Body)
 			}
 		}
 	}

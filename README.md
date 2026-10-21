@@ -80,21 +80,21 @@ your working tree. Either way the binary lands in `$GOBIN` (falling
 back to `$GOPATH/bin`, usually `~/go/bin`) — run `make where` to see
 the exact path, and make sure it's on your `PATH`.
 
-**1. A project** (~1 min):
+**1. A project** (~30 s):
 
 For **Go**:
 ```
-mkdir hello && cd hello
-go mod init hello
-go get github.com/gsandoval/tako
+tako new hello
+cd hello
 ```
-Save the Go snippet above as `hello.go` (add `"strings"` to the imports).
+(Or `tako new hello --kind site` for a server-rendered website with a layout and page template.)
 
 For **cfire** (requires `cfire` on your `PATH`):
 ```
-mkdir hello-cf && cd hello-cf
+tako new hello-cf --lang cfire
+cd hello-cf
 ```
-Save the cfire snippet above as `hello.cf` (no `go.mod` needed — Tako detects `.cf` projects automatically).
+`tako new` writes the app, a starter test, `AGENTS.md`, and `.gitignore`, then runs static analysis and codegen so `tako dev` and `tako test` work immediately.
 
 **2. Run it locally** (~30 s):
 
@@ -103,12 +103,11 @@ tako dev
 ```
 
 ```
-curl 'localhost:8080/greet/ada?loud=true'
-{"message":"HELLO, ADA!"}
+curl 'localhost:8080/greet/ada'
+{"message":"Hello, ada!"}
 ```
 
-Edit the handler; it reloads on save. Everything local lives under
-`.tako/` — delete it to reset.
+Edit the handler; it reloads on save. Run `tako check` for sub-second static analysis + codegen, `tako test` to run the test suite against the generated harness, or `tako docs list` to browse the embedded documentation. Everything local lives under `.tako/` — delete it to reset.
 
 **3. Deploy it** (~2–3 min on first run — image build + service
 creation). You need the [gcloud CLI](https://cloud.google.com/sdk)
@@ -116,8 +115,10 @@ authenticated (`gcloud auth application-default login`) and a GCP
 project with billing enabled:
 
 ```
+tako setup --project <your-project-id>
 tako deploy --project <your-project-id>
 ```
+(If your app declares a `tako.Entity`, run `tako datastore create --region us-central1 --project <your-project-id>` once per project before deploying.)
 
 Preflight checks what the app needs and prints the exact command for
 anything missing (like enabling an API). Then a plan of everything

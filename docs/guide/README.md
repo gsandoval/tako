@@ -7,8 +7,16 @@ locally and provisions it onto GCP. No Terraform, no Dockerfiles, no
 YAML: the analyzer reads your declarations and derives the
 infrastructure, the IAM, and the wiring.
 
-The guide is the seven chapters, in the order the framework grows:
+Start with **[0 · mental model](00-mental-model.md)** for the rules the
+static analyzer enforces, how packages map to Cloud Run services, how
+requests bind and errors map to HTTP status codes, and how `.tako/`
+works under the hood.
 
+Then follow the seven progressive chapters, in the order the framework grows:
+
+0. **[mental model](00-mental-model.md)** — static analysis rules,
+   package-as-service partitioning, variable-as-identity, request/error
+   matrices, and `.tako/`.
 1. **[hello](01-hello.md)** — APIs, request binding, the dev loop,
    your first deploy.
 2. **[shortlink](02-shortlink.md)** — entities, transactions, queues

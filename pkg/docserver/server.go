@@ -139,6 +139,14 @@ func Handler(site *Site) http.Handler {
 			Footer:  footer,
 		})
 	})
+	mux.HandleFunc("GET /llms.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(site.LLMsTxt()))
+	})
+	mux.HandleFunc("GET /llms-full.txt", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte(site.LLMsFullTxt()))
+	})
 	mux.HandleFunc("GET /{$}", func(w http.ResponseWriter, r *http.Request) {
 		write(w, "home", view{Style: template.CSS(style), Footer: footer})
 	})

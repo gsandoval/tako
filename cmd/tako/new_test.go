@@ -60,6 +60,8 @@ func TestTheSiteKindWritesTheFilesASiteCannotStartWithout(t *testing.T) {
 		"web/templates/layout.html",
 		"web/templates/home.html",
 		"demo.go",
+		"demo_test.go",
+		"AGENTS.md",
 	} {
 		if _, ok := files[want]; !ok {
 			t.Errorf("a site scaffold without %s starts and then fails at the first page", want)
@@ -68,9 +70,26 @@ func TestTheSiteKindWritesTheFilesASiteCannotStartWithout(t *testing.T) {
 	if !strings.Contains(files["demo.go"], `tako.Site("./web"`) {
 		t.Error("the site kind must declare the site it just wrote templates for")
 	}
-	// The layout is the file tako.Site requires by name.
-	if !strings.Contains(files["web/templates/layout.html"], "{{ block \"main\" . }}") {
-		t.Error("the layout must have a block for a page to fill")
+	// The layout is the file tako.Site requires by name, and "content" is
+	// the block pkg/runtime/page.go clones per page.
+	if !strings.Contains(files["web/templates/layout.html"], "{{ block \"content\" . }}") {
+		t.Error("the layout must have a content block for a page to fill")
+	}
+	if !strings.Contains(files["web/templates/home.html"], "{{ define \"content\" }}") {
+		t.Error("the home page must define the content block so it gets its own layout clone")
+	}
+}
+
+func TestTheCfireScaffoldWritesCfireAppAndAgentsGuide(t *testing.T) {
+	files := scaffold(newOpts{dir: "demo", module: "demo", kind: "api", lang: "cfire"}, "demo", "v1.2.3")
+	if _, ok := files["demo.cf"]; !ok {
+		t.Error("cfire scaffold must write demo.cf")
+	}
+	if _, ok := files["AGENTS.md"]; !ok {
+		t.Error("cfire scaffold must write AGENTS.md")
+	}
+	if _, ok := files["go.mod"]; ok {
+		t.Error("cfire scaffold must not write go.mod")
 	}
 }
 

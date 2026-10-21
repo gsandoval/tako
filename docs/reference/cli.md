@@ -7,9 +7,12 @@ confirmation ladder, flag resolution, errors, and honest limits.
 ## Local — nothing outside this directory is touched
 
 ```
-tako new <name> [--kind api|site] [--module <path>] [--replace <dir>]
-                         write a new app: go.mod, one handler, a
-                         .gitignore — and for a site, the layout and page
+tako new <name> [--kind api|site] [--lang go|cfire] [--module <path>] [--replace <dir>]
+                         write a new app: go.mod (or .cf), one handler,
+                         a test, AGENTS.md, a .gitignore — and for a
+                         site, the layout and page
+tako check [--json]      analyze declarations, check site shadows, and
+                         refresh generated code under .tako/gen/
 tako dev [--chaos]       run the app locally with reload (--chaos: seeded
                          duplicate/reordered deliveries)
 tako test [args]         analyze, refresh generated code and site builds,
@@ -19,32 +22,44 @@ tako gen client ts [--out <path>]
 tako alerts [name] [--env prod]
                          what each declared alert compiles to — PromQL,
                          notification sentence, and the call it came from
-tako docs [--port 8090] [--open]
-                         the guide, the reference and the SDK's exported
-                         signatures, served from this binary
+tako docs [list | <topic> | search <q> | --port 8090 | --open | --export <dir>]
+                         serve, export, or print the guide, the reference
+                         and the SDK's exported signatures from this binary
 tako build [--push <repo>]
 ```
 
-`tako docs` serves the documentation that shipped inside the binary —
-no checkout, no network, nothing fetched. Three sections: the
+`tako docs` serves or prints the documentation that shipped inside the
+binary — no checkout, no network, nothing fetched. Three sections: the
 [guide](../guide/README.md), this [reference](README.md), and an **api**
 page generated from the same lock file the API-freeze test compares
 against, so it cannot quietly lose a symbol. The pages are as old as the
 binary, which is the point: they describe the SDK you are compiling
 against rather than whatever is on main.
 
-Serving is all it does, so there is no subcommand and no `--serve`
-flag — a flag that must always be passed is a flag that should not
-exist. It listens on `127.0.0.1` only.
+With no arguments (or `--port <n>`, `--open`), `tako docs` listens on
+`127.0.0.1:8090` (including `/llms.txt` and `/llms-full.txt`). With
+`--export <dir>`, it writes the static HTML site and LLM bundles to disk.
+And from a terminal or coding agent, `tako docs list`,
+`tako docs <topic>` (e.g. `tako docs entity`, `tako docs api`,
+`tako docs llms.txt`), and `tako docs search <query>` print Markdown
+directly to stdout without starting a server.
 
-`tako new` writes the smallest app that runs, then resolves it and
-generates, so `tako dev` works on the next line rather than the one
-after. `--kind site` adds the pieces a site cannot start without — the
-site declaration, `templates/layout.html`, a page — because their
-absence surfaces as `the site has no templates/ directory`, a message
-about a checkout wearing the costume of a broken app. The `.gitignore`
-carries `.env` from the first commit, which is what `tako secrets set`
-requires before it will write a value.
+`tako check` runs static analysis, site-shadow checks, and `.tako/gen/`
+code generation (including the test harness overlay) in under a second
+without starting the dev server or running the test suite. Pass `--json`
+for structured machine-readable diagnostics (`errors`, `warnings`,
+`written`).
+
+`tako new` writes the smallest app that runs (including a starter test
+and `AGENTS.md`), then resolves it and generates, so `tako dev` and
+`tako test` work on the next line. `--kind site` adds the pieces a site
+cannot start without — the site declaration, `templates/layout.html`
+with `{{ block "content" . }}`, and a page — because their absence
+surfaces as `the site has no templates/ directory`, a message about a
+checkout wearing the costume of a broken app. `--lang cfire` scaffolds a
+native `.cf` application. The `.gitignore` carries `.env` from the first
+commit, which is what `tako secrets set` requires before it will write a
+value.
 
 It refuses a directory that already exists, and removes what it wrote
 if resolution fails: half a project is worse than none.
@@ -270,7 +285,7 @@ meaning "local".
 - Unknown flags name their command's real surface, e.g.
   `unknown flag "--x" (tako gen graph accepts --json or --mermaid)`,
   `unknown flag "--x" (tako gen client ts accepts --out <path>)`,
-  `unknown flag "--x" (tako docs accepts --port <n> and --open)`.
+  `unknown flag "--x" (tako docs accepts --port <n>, --open, and --export <dir>)`.
 - `port 8090 is already in use — pass --port to pick another`
 - `tako gen client generates TypeScript today — run: tako gen client ts`
 - Bare `tako` (or an unknown command) prints the full usage — which
@@ -289,9 +304,4 @@ meaning "local".
   by design, not a missing feature.
 - No per-command `--help`: the single usage screen still fits;
   revisit if the surface grows past one screen.
-- `tako docs` has no search. Find-in-page over one reference page is
-  enough for twenty-four of them, and a search index is a real feature
-  that should wait for a demand. It also does not publish: there is no
-  `--build` that emits HTML for hosting, and nothing about it touches an
-  eventual public docs site.
 - `tako gen client` speaks TypeScript only.

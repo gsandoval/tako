@@ -78,13 +78,15 @@ a test needs no list of handlers to drain.
 
 ## Cloud
 
-**Each Handler becomes its own deployable**, named `<package>-<var>`
-lowercased: `MakeThumb` in package `gallery` deploys as
-`gallery-makethumb`, `Settle` in `shop` as `shop-settle`. Which kind
-depends on the constructor — `Worker`, `Subscribe`, `Cron` and
-`Singleton` become Cloud Run **services**; `Runner` becomes a Cloud Run
-**Job** ([job.md](job.md)). Services are private, reached over
-authenticated push from Pub/Sub or Cloud Scheduler and never from the
+`Worker`, `Subscribe`, `Singleton` and `Runner` each become their own
+deployable, named `<package>-<var>` lowercased: `MakeThumb` in package
+`gallery` deploys as `gallery-makethumb`, `Settle` in `shop` as
+`shop-settle`. `Worker`, `Subscribe` and `Singleton` become Cloud Run
+**services**; `Runner` becomes a Cloud Run **Job** ([job.md](job.md));
+and `Cron` runs inside its package's app service, provisioning a Cloud
+Scheduler job that triggers `/_tako/api/cron/<var>` over OIDC
+([cron.md](cron.md)). Async services are private, reached over
+authenticated push from Pub/Sub or Cloud Tasks and never from the
 internet, and each deployable gets its own service account carrying only
 the permissions its own code edges imply.
 

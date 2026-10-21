@@ -127,8 +127,10 @@ platform's refusal, not tako's.
 ## Local
 
 Secrets come from `.env` in the module dir (`name=value` lines),
-loaded once at boot: `echo 'notifier-key=nk_dev_123' > .env` before
-`tako dev`. A missing one stops the service before it serves.
+loaded once at boot: run `tako secrets` to see which declared secrets
+have a value, and `tako secrets set notifier-key` to set one (read from
+stdin or an echo-off prompt; see [cli.md](cli.md)). A missing secret
+stops the service before it serves.
 
 Locally every `Add`/`Observe` is one structured log line, plus a 📈
 line in the dev console: `📈 uploads +1 (total 3)` for counters,
@@ -136,12 +138,14 @@ line in the dev console: `📈 uploads +1 (total 3)` for counters,
 
 ## Cloud
 
-Secret values are **data the user owns**: tako never creates, writes,
-or deletes secrets. The physical Secret Manager name is env-prefixed
-like every logical name — except `prod`, which uses the bare name
-(`notifier-key`; a `pr-42` env reads `pr-42-notifier-key`). Deploy's
-preflight checks each one exists and, when it doesn't, prints the
-exact create command:
+Secret values are **data the user owns**: `tako deploy` never overwrites
+or deletes them during convergence. Set or remove values explicitly with
+`tako secrets set <name> --project <id>` and
+`tako secrets rm <name> --project <id>` (see [cli.md](cli.md)). The
+physical Secret Manager name is env-prefixed like every logical name —
+except `prod`, which uses the bare name (`notifier-key`; a `pr-42` env
+reads `pr-42-notifier-key`). Deploy's preflight checks each one exists
+and, when it doesn't, prints the exact create command:
 
 ```
 secret pr-42-notifier-key does not exist in my-project — create it: printf '<value>' | gcloud secrets create pr-42-notifier-key --data-file=- --project my-project
@@ -392,5 +396,4 @@ From `tako logs`: `--since wants a duration like 15m, got "soon"`, and
 - Log volume is billed by Cloud Logging like any other. Structured
   lines are slightly larger than the text they replaced; a chatty
   handler on a wide-scaling service is the case to watch.
-- No secret versioning surface: services read `latest` at boot, and
-  tako will not write versions for you (by design, not a gap).
+- Services read the `latest` secret version at boot — use `tako secrets set <name> --project <id>` to add a new version, and instances pick it up as they restart.

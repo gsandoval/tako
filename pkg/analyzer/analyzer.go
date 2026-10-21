@@ -111,6 +111,18 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	endpointVars := map[types.Object]string{} // Endpoint vars (API/Page) → Var, for call edges
 	channelVars := map[types.Object]string{}  // alert destination vars → Var
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
+	pkgHandlerLits := map[*packages.Package][]*ast.FuncDecl{}
+	recordHandlerFunc := func(pkg *packages.Package, v string, d varDecl, idx int) {
+		fn, lit := funcArg(pkg, d.name, d.call, idx)
+		handlerFuncs[v] = fn
+		if lit != nil && lit.Body != nil {
+			pkgHandlerLits[pkg] = append(pkgHandlerLits[pkg], &ast.FuncDecl{
+				Name: d.name,
+				Type: lit.Type,
+				Body: lit.Body,
+			})
+		}
+	}
 	siteOfPackage := map[string]string{}
 	statusOfPackage := map[string]string{}  // package → declaring site var (one per package)
 	sitePackages := map[string]string{}     // package path → package name (service-from-site)
@@ -280,34 +292,34 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			case "API":
 				if h := extractAPI(cfg.Dir, pkg, d.name, d.call, policyVars, policyRoles, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Page":
 				if h := extractPage(cfg.Dir, pkg, d.name, d.call, policyVars, policyRoles, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 					endpointVars[pkg.TypesInfo.Defs[d.name]] = h.Var
 				}
 			case "Worker":
 				if h := extractWorker(cfg.Dir, pkg, d.name, d.call, queueVars, workersByQueue, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 				}
 			case "Subscribe":
 				if h := extractSubscribe(cfg.Dir, pkg, d.name, d.call, topicVars, bucketVars, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 				}
 			case "Cron":
 				if h := extractCron(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 				}
 			case "Runner":
 				if h := extractRunner(cfg.Dir, pkg, d.name, d.call, jobVars, jobsByName, &errs); h != nil {
 					graph.Handlers = append(graph.Handlers, *h)
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 1)
+					recordHandlerFunc(pkg, h.Var, d, 1)
 				}
 			case "Singleton":
 				if h := extractSingleton(cfg.Dir, pkg, d.name, d.call, &errs); h != nil {
@@ -316,11 +328,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					// arg 1 here silently produced NO resource edges,
 					// which means no IAM grants — the singleton would
 					// deploy and then be denied its own datastore.
-					handlerFuncs[h.Var] = funcArg(pkg, d.call, 0)
+					recordHandlerFunc(pkg, h.Var, d, 0)
 				}
 			}
 		}
-		checkPackageLevel(cfg.Dir, pkg, &errs)
+		checkPackageLevel(cfg.Dir, pkg, pkgHandlerLits[pkg], &errs)
 	}
 	// Alerts resolve LAST: a condition names handlers and routes, so
 	// every handler must already be in the graph before a subject can be
@@ -341,7 +353,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		checkQuantiles(cfg.Dir, pkg, &errs)
 	}
 	for _, pkg := range pkgs {
-		scanQueries(cfg.Dir, pkg, entities, &errs)
+		scanQueries(cfg.Dir, pkg, pkgHandlerLits[pkg], entities, &errs)
 	}
 	for key, et := range entities {
 		res := &graph.Resources[entityRes[key]]
@@ -469,7 +481,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	applyDomains(graph, &errs)
 	var edgeErrs ErrorList
 	var delayedQueues map[string]bool
-	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, graph.Handlers)
+	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, pkgHandlerLits, graph.Handlers)
 	for i := range graph.Resources {
 		if graph.Resources[i].Kind == "queue" && delayedQueues[graph.Resources[i].Name] {
 			graph.Resources[i].Delayed = true

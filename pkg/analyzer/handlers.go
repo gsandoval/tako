@@ -48,9 +48,29 @@ func extractPage(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 	return extractRoute("Page", dir, pkg, name, call, policyVars, roleNames, errs)
 }
 
+func checkHandlerVar(ctor, dir string, pkg *packages.Package, name *ast.Ident, errs *ErrorList) bool {
+	if name.Name == "_" {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, name.Pos()),
+			Msg:  fmt.Sprintf("tako.%s must initialize a named package-level var — a blank identifier (_) cannot be registered by the generated service", ctor),
+			Rule: "package-level",
+		})
+		return false
+	}
+	if !name.IsExported() {
+		*errs = append(*errs, &Error{
+			Pos:  relPos(dir, pkg.Fset, name.Pos()),
+			Msg:  fmt.Sprintf("handler %s must be exported — the generated service registers it by name from outside the package; rename it %s", name.Name, strings.ToUpper(name.Name[:1])+name.Name[1:]),
+			Rule: "package-level",
+		})
+		return false
+	}
+	return true
+}
+
 func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, policyVars map[types.Object]string, roleNames map[string][]string, errs *ErrorList) *Handler {
 	var policyRoles []string
-	if name.Name == "_" || len(call.Args) < 2 {
+	if !checkHandlerVar(ctor, dir, pkg, name, errs) || len(call.Args) < 2 {
 		return nil
 	}
 	bad := false
@@ -283,29 +303,58 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 }
 
-// checkPackageLevel reports handler constructors called inside function
-// bodies — declarations the analyzer would never see.
-func checkPackageLevel(dir string, pkg *packages.Package, errs *ErrorList) {
+var handlerCtors = map[string]bool{
+	"API": true, "Page": true, "Worker": true, "Subscribe": true,
+	"Cron": true, "Runner": true, "Singleton": true,
+}
+
+var declCtors = map[string]bool{
+	"Entity": true, "Bucket": true, "Queue": true, "Topic": true,
+	"Cache": true, "Secret": true, "Counter": true, "Histogram": true,
+	"Site": true, "Service": true, "Auth": true, "Policy": true,
+	"RequireRole": true, "Role": true, "StatusPage": true, "Job": true,
+	"Lock": true, "Alert": true, "AlertEmail": true, "AlertTopic": true,
+	"AlertWebhook": true,
+}
+
+// checkPackageLevel reports handler and resource constructors called
+// inside function bodies — declarations the analyzer would never see.
+func checkPackageLevel(dir string, pkg *packages.Package, handlerLits []*ast.FuncDecl, errs *ErrorList) {
+	scanBody := func(body *ast.BlockStmt) {
+		ast.Inspect(body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			ctor := sdkConstructor(pkg, call)
+			if handlerCtors[ctor] {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, call.Pos()),
+					Msg:  fmt.Sprintf("tako.%s must initialize a package-level var — handlers declared inside functions are invisible to analysis", ctor),
+					Rule: "package-level",
+				})
+			} else if declCtors[ctor] {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, call.Pos()),
+					Msg:  fmt.Sprintf("tako.%s must initialize a package-level var — declarations inside functions are invisible to analysis", ctor),
+					Rule: "package-level",
+				})
+			}
+			return true
+		})
+	}
 	for _, file := range pkg.Syntax {
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
 			if !ok || fn.Body == nil {
 				continue
 			}
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				if sdkConstructor(pkg, call) == "API" {
-					*errs = append(*errs, &Error{
-						Pos:  relPos(dir, pkg.Fset, call.Pos()),
-						Msg:  "tako.API must initialize a package-level var — handlers declared inside functions are invisible to analysis",
-						Rule: "package-level",
-					})
-				}
-				return true
-			})
+			scanBody(fn.Body)
+		}
+	}
+	for _, fd := range handlerLits {
+		if fd.Body != nil {
+			scanBody(fd.Body)
 		}
 	}
 }

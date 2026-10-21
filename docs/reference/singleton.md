@@ -23,9 +23,10 @@ Invoicer = tako.Singleton(assignInvoices)
 names when the loop stops running.
 
 `Singleton` takes only its loop: the declaring variable is the identity — `Invoicer` deploys as `shop-invoicer` — which is the same rule that names every other service tako creates. `Singleton`
-accepts a `tako.SingletonConfig` whose Footprint honors only CPU and
-Memory fields — the scaling knobs (min=1/max=1/concurrency=1) are the
-exactly-one machinery and are framework-owned.
+accepts a `tako.SingletonConfig` with `Timeout` and a `Footprint` that
+honors `CPU`, `Memory`, and `StartupBoost` — the scaling knobs
+(min=1/max=1/concurrency=1) are the exactly-one machinery and are
+framework-owned.
 
 ## Use
 
@@ -112,8 +113,6 @@ never rewinds.
   `a singleton footprint sets CPU, Memory and StartupBoost only — min=1
   and concurrency=1 are what keep the loop's host alive and alone
   (tako/footprint)`
-- A non-constant name: `tako.Singleton name must be a string constant —
-  names are read at analysis time, not run time; got …` (tako/const-name)
 
 ## Not yet
 
@@ -122,5 +121,5 @@ never rewinds.
   the observability.
 - The lease TTL (30s) and the 5s restart backoff are framework-owned,
   not knobs.
-- Compute is CPU/Memory only; everything else about the service shape
-  is fixed by design.
+- Compute is CPU, Memory, and StartupBoost only; everything else about
+  the service shape is fixed by design.

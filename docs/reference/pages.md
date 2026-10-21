@@ -109,6 +109,12 @@ sanitizes with bluemonday — an XSS payload vanishes, not escapes;
 `tako.SiteConfig{TrustedHTML: true}` on the Site is the explicit, graph-visible
 opt-out for content that is never user-supplied.
 
+Templates also receive two built-in identity helpers bound to the
+current request: `{{ signedIn }}` (`bool`) and `{{ user }}`
+(`tako.User`, so `{{ user.Email }}` or `{{ user.Name }}` works in
+`layout.html` and any page or partial without threading the user
+through every view struct).
+
 ## Local
 
 `tako dev`, then the browser. `tako.Auth` gives the dev bar: sign in
@@ -167,13 +173,14 @@ in your logs.
 
 ## Not yet
 
-A **404** can wear the site's design —
-`tako.SiteConfig{NotFound: "404.html"}` renders it for both a mistyped
-URL and a handler's `tako.NotFound()`, and [site.md](site.md) has the
-whole story. Every other status still renders as plain text: there is
-no way for a handler to return markup under a 403 or a 402, because
-`tako.HTML` carries no status. The 404 was the one worth a field; the
-rest are waiting for a second app to need them.
+A **404** can wear a static file (`tako.SiteConfig{NotFound: "404.html"}`),
+and **every error status** (401, 403, 404, 405, 500) can render through
+a declared [`tako.StatusPage`](site.md#status-pages)
+using your site's templates (`Status.Code`, `Status.Message`,
+`Status.Policy`, `Status.RequestID`). What a `tako.Page` handler itself
+returns is `tako.HTML` (always 200 OK) or an `error` (such as
+`tako.NotFound()`, `tako.Deny(msg)`, or `tako.Errorf(403, ...)`), which
+then renders through the package's `tako.StatusPage`.
 
 Rendering is Go templates only: static generator output plus Go SSR is
 the v0 model, no Node runtime services.

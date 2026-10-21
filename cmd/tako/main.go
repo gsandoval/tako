@@ -23,12 +23,15 @@ import (
 const usage = `tako — a Go framework over Google Cloud Run
 
 Local — nothing outside this directory is touched:
-  tako new <name> [--kind api|site] [--module <path>] [--replace <dir>]
-                       the smallest tako app that runs: go.mod, a
-                       handler, a .gitignore — and for a site, the
-                       layout and page a site cannot start without
-                       (--replace points at a tako checkout, which is
-                       required until tako is tagged and published)
+  tako new <name> [--kind api|site] [--lang go|cfire] [--module <path>] [--replace <dir>]
+                       the smallest tako app that runs: go.mod (or .cf),
+                       a handler, a test, AGENTS.md, a .gitignore — and
+                       for a site, the layout and page a site cannot
+                       start without (--replace points at a tako
+                       checkout, which is required until tako is tagged
+                       and published)
+  tako check [--json]  analyze declarations, check site shadows, and
+                       refresh generated code under .tako/gen/
   tako dev [--chaos]   run the app locally with reload (--chaos: seeded
                        duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code and site builds,
@@ -43,9 +46,9 @@ Local — nothing outside this directory is touched:
                        what every declared alert compiles to: the PromQL,
                        the notification sentence, and the constructor it
                        came from — so a preset can be read and forked
-  tako docs [--port 8090] [--open] [--export <dir>]
-                       serve the guide, the reference and the SDK's
-                       exported signatures from this binary — no
+  tako docs [list | <topic> | search <q> | --port 8090 | --open | --export <dir>]
+                       serve or print the guide, the reference and the
+                       SDK's exported signatures from this binary — no
                        network, no checkout needed
   tako build [--push <repo>]
                        build digest-pinned distroless images (no Docker
@@ -130,6 +133,10 @@ func main() {
 	switch os.Args[1] {
 	case "new":
 		if err := runNew(os.Args[2:]); err != nil {
+			fail(err)
+		}
+	case "check":
+		if err := runCheck(os.Args[2:]); err != nil {
 			fail(err)
 		}
 	case "dev":

@@ -253,11 +253,14 @@ app.go:18:9: query filters on Link.URL, but URL is not indexed — tag it entity
 app.go:15:2: field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags (tako/entity-index)
 ```
 
-An index follows the MARSHALED name, so `json:"owner_id"` is indexed
-and queried as `owner_id`. `json:"-"` is the one spelling that removes
-the field from the document, and indexing it is refused above;
-`json:"-,"` is not that spelling — it names the property `-`, and is
-indexed under that name.
+In Datastore, a composite index property follows the MARSHALED name
+(`json:"owner_id"` is stored and indexed in Datastore as `owner_id`),
+while `.Where("Owner", ...)` and `.OrderBy("-Owner")` in Go always take
+the **Go struct field name** `Owner` — the analyzer and runtime map the
+struct field name to its marshaled property name automatically.
+`json:"-"` is the one spelling that removes the field from the
+document, and indexing it is refused above; `json:"-,"` is not that
+spelling — it names the property `-`, and is indexed under that name.
 
 At run time: `Put` with an empty id fails with `tako: entity "links":
 id field Slug is empty`; outside a wired app, calls panic with

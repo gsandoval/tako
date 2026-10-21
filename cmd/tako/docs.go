@@ -21,11 +21,37 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/gsandoval/tako/docs"
 	"github.com/gsandoval/tako/pkg/docserver"
 )
 
-// runDocs is `tako docs [--port <n>] [--open]`.
+// runDocs is `tako docs [--port <n>] [--open] [--export <dir>]` or
+// `tako docs <list | topic | search <query>>`.
 func runDocs(args []string) error {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		site, err := docserver.Build(docs.FS)
+		if err != nil {
+			return err
+		}
+		switch args[0] {
+		case "list", "ls":
+			fmt.Print(site.List())
+			return nil
+		case "search":
+			fmt.Print(site.Search(strings.Join(args[1:], " ")))
+			return nil
+		default:
+			if md, ok := site.Topic(args[0]); ok {
+				fmt.Print(md)
+				if !strings.HasSuffix(md, "\n") {
+					fmt.Println()
+				}
+				return nil
+			}
+			return fmt.Errorf("unknown docs topic %q — run `tako docs list` to see available topics or `tako docs search %s`", args[0], args[0])
+		}
+	}
+
 	opts := docserver.Options{}
 	for i := 0; i < len(args); i++ {
 		a := args[i]

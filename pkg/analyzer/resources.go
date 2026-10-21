@@ -18,11 +18,12 @@ import (
 // fields are indexed (and may appear in Where/OrderBy) and which were
 // actually used by queries — the derived index set.
 type entityType struct {
-	display  string            // short type name, e.g. "Link"
-	declared []string          // entity:"index" fields, struct order
-	indexed  map[string]bool   // membership set of declared
-	wire     map[string]string // Go field → marshaled property name (json tag rule)
-	used     map[string]bool   // fields seen in Where/OrderBy call sites
+	display     string            // short type name, e.g. "Link"
+	declared    []string          // entity:"index" fields, struct order
+	indexed     map[string]bool   // membership set of declared
+	wire        map[string]string // Go field → marshaled property name (json tag rule)
+	wireToField map[string]string // marshaled property name → Go field (when json tag differs)
+	used        map[string]bool   // fields seen in Where/OrderBy call sites
 	// chains are the query shapes derived per function (R0), one per
 	// combination of branches that function can take (RC1). A function
 	// whose filters are all unconditional contributes exactly one.
@@ -166,11 +167,16 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 	}
 
 	et := &entityType{display: obj.Name(), indexed: map[string]bool{}, wire: map[string]string{},
-		used: map[string]bool{}}
+		wireToField: map[string]string{}, used: map[string]bool{}}
 	idCount := 0
 	bad := false
 	for i := range st.NumFields() {
 		f := st.Field(i)
+		if !entitytag.Omitted(st.Tag(i)) {
+			if w := entitytag.Name(st.Tag(i), f.Name()); w != "" && w != f.Name() {
+				et.wireToField[w] = f.Name()
+			}
+		}
 		switch entitytag.Kind(st.Tag(i)) {
 		case "id":
 			idCount++
@@ -244,7 +250,7 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 // returning an *EntityQuery, whose modifiers belong to its callers
 // (FL10). Fragments derive nothing themselves; a query tako cannot
 // follow is refused.
-func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityType, errs *ErrorList) {
+func scanQueries(dir string, pkg *packages.Package, handlerLits []*ast.FuncDecl, entities map[string]*entityType, errs *ErrorList) {
 	s := newQueryScan(dir, pkg, entities, errs)
 	// Every declaration is collected, so its own errors are reported
 	// whether or not anything calls it; only NON-fragments expand into
@@ -262,6 +268,15 @@ func scanQueries(dir string, pkg *packages.Package, entities map[string]*entityT
 			for et, m := range mods {
 				expandShapes(dir, pkg, fd, et, m, errs)
 			}
+		}
+	}
+	for _, fd := range handlerLits {
+		if fd.Body == nil {
+			continue
+		}
+		mods := s.modsOf(fd)
+		for et, m := range mods {
+			expandShapes(dir, pkg, fd, et, m, errs)
 		}
 	}
 }
@@ -359,10 +374,15 @@ func (s *queryScan) modsOf(fd *ast.FuncDecl) map[*entityType][]queryMod {
 				}
 			}
 			if !et.indexed[field] {
+				msg := fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
+					verb, et.display, field, field, suffix)
+				if goField, ok := et.wireToField[field]; ok {
+					msg = fmt.Sprintf("query %s %q (the json tag of %s.%s) — Where and OrderBy take the Go struct field name %q, not the json tag",
+						verb, field, et.display, goField, goField)
+				}
 				*errs = append(*errs, &Error{
-					Pos: relPos(dir, pkg.Fset, fieldArg.Pos()),
-					Msg: fmt.Sprintf("query %s %s.%s, but %s is not indexed — tag it entity:\"index\" to make it %s",
-						verb, et.display, field, field, suffix),
+					Pos:  relPos(dir, pkg.Fset, fieldArg.Pos()),
+					Msg:  msg,
 					Rule: "unindexed-query",
 				})
 				return true

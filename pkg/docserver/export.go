@@ -81,7 +81,15 @@ func Export(site *Site, outDir string) error {
 		}
 	}
 
-	// 6. .nojekyll to prevent GitHub Pages from ignoring underscore folders or files
+	// 6. Agent / LLM documentation bundles
+	if err := fetchAndSave("/llms.txt", "llms.txt"); err != nil {
+		return err
+	}
+	if err := fetchAndSave("/llms-full.txt", "llms-full.txt"); err != nil {
+		return err
+	}
+
+	// 7. .nojekyll to prevent GitHub Pages from ignoring underscore folders or files
 	if err := os.WriteFile(filepath.Join(outDir, ".nojekyll"), []byte{}, 0644); err != nil {
 		return err
 	}
