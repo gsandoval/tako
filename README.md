@@ -5,7 +5,7 @@ Write Go or cfire. Get a cloud.
 📖 **Documentation:** [tako.memo.engineer](https://tako.memo.engineer)
 
 Tako is a polyglot cloud framework over Google Cloud Run: write business
-logic as plain **Go** packages or native **cfire** (`.cf`) systems
+logic as plain **Go** packages or native **[cfire](https://cfire.memo.engineer)** (`.cf`) systems
 packages — APIs, background workers, server-rendered websites — with a
 CLI that runs everything locally in one process (no Docker, no
 emulators) and derives the whole cloud from your code (no Terraform,
@@ -40,6 +40,8 @@ type Greeting struct {
 ```
 
 ### cfire (C++23 systems language)
+
+[**cfire**](https://cfire.memo.engineer) ([Language Guide](https://cfire.memo.engineer/guide.html) · [Performance & Comparison](https://cfire.memo.engineer/#benchmarks) · [Stdlib Catalog](https://cfire.memo.engineer/reference.html) · [GitHub](https://github.com/gsandoval/cfire)) lowers 1-to-1 to modern ISO C++23 with zero GC pauses and links directly against Tako's `libtako.a` runtime bridge:
 
 ```cfire
 package hello
@@ -89,7 +91,7 @@ cd hello
 ```
 (Or `tako new hello --kind site` for a server-rendered website with a layout and page template.)
 
-For **cfire** (requires `cfire` on your `PATH`):
+For **cfire** (requires [`cfire`](https://github.com/gsandoval/cfire) on your `PATH`):
 ```
 tako new hello-cf --lang cfire
 cd hello-cf

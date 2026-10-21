@@ -282,15 +282,21 @@ var tmpl = template.Must(template.New("docs").Parse(`
 <script type="module">
 const blocks = document.querySelectorAll('pre > code.language-mermaid');
 if (blocks.length > 0) {
+  const nodes = [];
   for (const code of blocks) {
     const pre = code.parentElement;
     pre.classList.add('mermaid');
-    pre.textContent = code.textContent;
+    pre.textContent = code.textContent.replace(/\\n/g, '\n');
+    nodes.push(pre);
   }
   try {
     const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
     mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'strict' });
-    await mermaid.run({ querySelector: 'pre.mermaid' });
+    for (const node of nodes) {
+      try {
+        await mermaid.run({ nodes: [node] });
+      } catch (_) {}
+    }
   } catch (_) {}
 }
 </script>
@@ -312,7 +318,7 @@ if (blocks.length > 0) {
     </div>
 
     <p class="memo-hero-desc">
-      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent in your <strong>Go</strong> or <strong>cfire</strong> (<code>.cf</code>) code, run the whole stack locally in one process, and let Tako derive the cloud.
+      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent in your <strong>Go</strong> or <strong><a href="https://cfire.memo.engineer" target="_blank" rel="noopener noreferrer">cfire</a></strong> (<code>.cf</code>, <a href="https://cfire.memo.engineer/guide.html#chapter-1" target="_blank" rel="noopener noreferrer">1:1 ISO C++23</a>) code, run the whole stack locally in one process, and let Tako derive the cloud.
     </p>
 
     <div class="memo-actions">

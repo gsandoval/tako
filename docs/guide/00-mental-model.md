@@ -2,14 +2,14 @@
 
 Before diving into the tutorial chapters, this page lays out the core
 rules that govern every Tako application — whether written in **Go**
-(`.go`) or **cfire** (`.cf`) — both for humans reading the architecture
+(`.go`) or **[cfire](https://cfire.memo.engineer)** (`.cf`, lowering 1-to-1 to [ISO C++23](https://cfire.memo.engineer/guide.html#chapter-1)) — both for humans reading the architecture
 and for coding agents writing handler and resource code.
 
 ```mermaid
 flowchart LR
   subgraph src["Your Source Tree"]
-    go_src["Go Packages (*.go)\nimport \"github.com/gsandoval/tako\""]
-    cf_src["cfire Packages (*.cf)\nimport \"core:tako\""]
+    go_src["Go Packages (*.go)\nimport 'github.com/gsandoval/tako'"]
+    cf_src["cfire Packages (*.cf)\nimport 'core:tako'"]
   end
 
   subgraph waist1["Compile-Time Waist"]
@@ -18,7 +18,7 @@ flowchart LR
   end
 
   subgraph consumers["Downstream Consumers"]
-    codegen["pkg/codegen\n.tako/gen/<svc>/main.{go,cf}\n+ test harness"]
+    codegen["pkg/codegen\n.tako/gen/{svc}/main.{go,cf}\n+ test harness"]
     reconciler["pkg/provision/gcp\nStateless GCP Reconciler\n(Cloud Run · IAM · Pub/Sub · Indexes)"]
     clientgen["pkg/clientgen\nTyped TypeScript Client"]
   end
@@ -164,7 +164,7 @@ Tako has no IAM configuration files and no `index.yaml`:
 flowchart LR
   subgraph code["Handler Call Tree & Struct Tags"]
     h_create["createLink(ctx, req)\n→ links.Put(ctx, link)\n→ clicks.Publish(ctx, ev)"]
-    h_list["listLinks(ctx, req)\n→ links.Query(ctx)\n   .Where(\"Owner\", \"=\", u)\n   .OrderBy(\"-Created\")"]
+    h_list["listLinks(ctx, req)\n→ links.Query(ctx)\n   .Where('Owner', '=', u)\n   .OrderBy('-Created')"]
     h_work["countClick(ctx, ev)\n→ links.Tx(ctx, ...)"]
   end
 

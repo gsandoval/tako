@@ -1,6 +1,6 @@
 # 7 · cfire — native C++23 systems apps on Tako
 
-Tako's architecture sits on two narrow waists: a compile-time `AppGraph` JSON contract and a runtime backend interface over opaque bytes. Because neither waist depends on Go's runtime inside your business logic, **cfire** (`.cf`) applications are first-class citizens in Tako alongside Go.
+Tako's architecture sits on two narrow waists: a compile-time `AppGraph` JSON contract and a runtime backend interface over opaque bytes. Because neither waist depends on Go's runtime inside your business logic, **[cfire](https://cfire.memo.engineer)** (`.cf`) applications — which lower 1-to-1 to modern **[ISO C++23](https://cfire.memo.engineer/guide.html#chapter-1)** ([GitHub](https://github.com/gsandoval/cfire)) — are first-class citizens in Tako alongside Go.
 
 Three canonical `.cf` examples mirror the Go progression, and all seven examples have `.cf` counterparts:
 - [examples/cfire-hello](../../examples/cfire-hello/hello.cf) — endpoints, path/query/JSON binding, and typed errors.
@@ -44,24 +44,24 @@ PruneExpired := tako.cron("0 * * * *", prune_expired)
 
 ## Same six rules, native systems performance
 
-A `.cf` application obeys the exact same structural rules as a Go Tako application:
+Because `cfire` lowers [1-to-1 into standard ISO C++23](https://cfire.memo.engineer/guide.html#12-predictable-11-lowering-table) with zero garbage collection inside your handler logic, deterministic RAII memory management, [explicit call-site mutation & move safety](https://cfire.memo.engineer/guide.html#chapter-4), and direct C/C++ header ingestion ([Systems Landscape](https://cfire.memo.engineer/#landscape) · [Performance & Comparison Matrix](https://cfire.memo.engineer/#benchmarks)), you can write latency-critical compute, SIMD JSON pipelines, and native C/C++ library integrations using the [28 built-in `core:*` modules](https://cfire.memo.engineer/reference.html) while obeying the exact same structural rules as a Go Tako application:
 
 - **Top-level declarations:** Resources (`tako.entity`, `tako.queue`, `tako.bucket`, `tako.cache`, `tako.counter`) and handlers (`tako.api`, `tako.worker`, `tako.cron`, `tako.subscribe`) are package-level bindings.
 - **Compile-time constant names:** Resource names, route patterns, and cron schedules must be string literals (`tako/const-name`).
-- **Struct tags drive binding and indexing:** Request structs bind via `path:"..."`, `query:"..."`, `header:"..."`, and `json:"..."` (`tako/route-params`). Entity structs require a single `str` field tagged `entity:"id"` (`tako/entity-id`) and mark filterable fields with `entity:"index"`.
-- **Result & error ergonomics:** Handlers return `Res!` and propagate errors with `try` or return status-coded errors via `Err(tako.not_found("..."))` and `Err(tako.bad_request("..."))`.
+- **Struct tags drive binding and indexing:** Request structs bind via [compile-time struct tags](https://cfire.memo.engineer/guide.html#chapter-5) `path:"..."`, `query:"..."`, `header:"..."`, and `json:"..."` (`tako/route-params`). Entity structs require a single `str` field tagged `entity:"id"` (`tako/entity-id`) and mark filterable fields with `entity:"index"`.
+- **Result & error ergonomics:** Handlers return [value-based fallible results `Res!`](https://cfire.memo.engineer/guide.html#chapter-6) (`std::expected<Res, cfire::Error>`) and propagate errors with `try` or return status-coded errors via `Err(tako.not_found("..."))` and `Err(tako.bad_request("..."))`.
 
 ## How the bridge works
 
 ```mermaid
 flowchart LR
-    CF["User .cf Source\n(import \"core:tako\")"]
+    CF["User .cf Source\n(import 'core:tako')"]
     Outline["cfire outline --json"]
     Analyzer["pkg/analyzer\n(BuildCfireGraph)"]
     Graph["AppGraph JSON"]
-    Codegen["pkg/codegen\n(.tako/gen/<svc>/main.cf)"]
+    Codegen["pkg/codegen\n(.tako/gen/{svc}/main.cf)"]
     CfireBuild["cfire build\n(C++23 + sdk/cfire/include/tako.hpp)"]
-    LibTako["cmd/libtako\n(libtako-<os>-<arch>.a)"]
+    LibTako["cmd/libtako\n(libtako-{os}-{arch}.a)"]
     Bin["Native Service Binary\n(local dev or distroless/cc)"]
 
     CF --> Outline --> Analyzer --> Graph --> Codegen

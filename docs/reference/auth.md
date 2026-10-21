@@ -24,7 +24,7 @@ sequenceDiagram
 
     Browser->>SignIn: POST ID token (Cloud) or dev_user (Local)
     SignIn->>Store: Write revocable session record (7d TTL + CSRF token)
-    SignIn-->>Browser: Set-Cookie: tako_session=<opaque-id>
+    SignIn-->>Browser: Set-Cookie: tako_session={opaque-id}
     Browser->>Gate: POST /p (Cookie + _csrf / X-CSRF-Token)
     Gate->>Store: Load session & verify CSRF + Role policy
     Gate->>Handler: Invoke handler with verified ctx.User()

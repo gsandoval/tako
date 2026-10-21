@@ -1,7 +1,7 @@
 # cfire (`core:tako`) — native C++23 systems SDK
 
-Tako supports writing services in **cfire** (`.cf`), compiling C++23
-business logic into a single binary linked against Tako's Go runtime
+Tako supports writing services in **[cfire](https://cfire.memo.engineer)** (`.cf`), compiling [1-to-1 ISO C++23](https://cfire.memo.engineer/guide.html#chapter-1)
+business logic ([Systems Landscape](https://cfire.memo.engineer/#landscape) · [Performance & Comparison Matrix](https://cfire.memo.engineer/#benchmarks) · [Stdlib Catalog](https://cfire.memo.engineer/reference.html) · [GitHub](https://github.com/gsandoval/cfire)) into a single binary linked against Tako's Go runtime
 and cloud backends via a static C-archive bridge (`libtako.a`).
 
 ## Declare
@@ -35,7 +35,7 @@ Supported constructors mirror the Go SDK:
 flowchart LR
     subgraph CfireBin["Native Service Binary (C++23 + libtako.a)"]
         Handler["User .cf Handler\n(fn(ctx: tako.Ctx, req: Req) -> Res!)"]
-        Generated[".tako/gen/<svc>/main.cf\n(JSON/Path/Query/Form Binder)"]
+        Generated[".tako/gen/{svc}/main.cf\n(JSON/Path/Query/Form Binder)"]
         Header["sdk/cfire/include/tako.hpp\n(RAII wrappers + tako_buf_t)"]
         Cgo["cmd/libtako C-ABI Exports\n(tako_entity_*, tako_queue_*, tako_serve)"]
         Backends["Tako Go Runtime\n(Local bbolt/channels or GCP Datastore/PubSub/GCS)"]
@@ -51,7 +51,7 @@ flowchart LR
 ## Use
 
 Handlers take `ctx: tako.Ctx` as their first parameter and return a
-fallible result `Res!` (or `void!` for async workers and cron jobs):
+[fallible result `Res!`](https://cfire.memo.engineer/guide.html#chapter-6) (or `void!` / `bool!` for async workers and cron jobs), using [compile-time struct tags](https://cfire.memo.engineer/guide.html#chapter-5) for request binding and entity indexing:
 
 ```cfire
 fn create_link(ctx: tako.Ctx, req: CreateLinkReq) -> Link! {

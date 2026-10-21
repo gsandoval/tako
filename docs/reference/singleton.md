@@ -29,7 +29,7 @@ Invoicer := tako.singleton(assign_invoices)
 flowchart LR
     RevA["Revision N Instance\n(min=1 / max=1)"]
     RevB["Revision N+1 Instance\n(During rollout)"]
-    Lease["§4.4 Lease Object\n(leases/run-<app>-<env>-singleton-invoicer\n30s TTL, 10s heartbeat)"]
+    Lease["§4.4 Lease Object\n(leases/run-{app}-{env}-singleton-invoicer\n30s TTL, 10s heartbeat)"]
     Loop["Active Singleton Loop\n(assignInvoices / assign_invoices)"]
 
     RevA -->|"Holds generation token"| Lease

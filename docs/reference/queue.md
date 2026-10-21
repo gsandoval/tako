@@ -31,7 +31,7 @@ flowchart LR
     Pub --> Q --> W
     W -->|"Success"| Ack
     W -->|"Transient Error"| Retry
-    Retry -->|"Attempts < Max"| Q
+    Retry -->|"Attempts under Max"| Q
     Retry -->|"Attempts Exhausted"| DLQ
     W -->|"Permanent Error"| DLQ
 ```

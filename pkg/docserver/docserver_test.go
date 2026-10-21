@@ -241,3 +241,25 @@ func TestCLIQueriesAndLLMsTxt(t *testing.T) {
 		t.Errorf("Site.Search(Singleflight) did not match cron:\n%s", search)
 	}
 }
+
+func TestEveryMermaidDiagramAvoidsEscapedQuotesAndHTMLTagPlaceholders(t *testing.T) {
+	site := built(t)
+	total := 0
+	for _, p := range append(append([]*Page{}, site.Guide...), site.Reference...) {
+		blocks := strings.Split(p.Body, `<code class="language-mermaid">`)
+		for i := 1; i < len(blocks); i++ {
+			total++
+			raw, _, _ := strings.Cut(blocks[i], "</code>")
+			if strings.Contains(raw, `\"`) || strings.Contains(raw, `\&quot;`) {
+				t.Errorf("%s mermaid diagram #%d contains backslash-escaped double quotes (Mermaid v11 lexer does not support \\\" inside quoted labels; use single quotes):\n%s", p.File, i, raw)
+			}
+			if strings.Contains(raw, "&lt;") || strings.Contains(raw, "<") {
+				t.Errorf("%s mermaid diagram #%d contains angle brackets that DOMPurify strips in htmlLabels mode (use {placeholder} instead):\n%s", p.File, i, raw)
+			}
+		}
+	}
+	if total == 0 {
+		t.Fatal("expected at least one mermaid diagram across embedded docs")
+	}
+}
+

@@ -105,7 +105,7 @@ Two consequences worth knowing:
 - [client-ts.md](client-ts.md) — `tako gen client ts`: the generated
   TypeScript client
 - [cfire.md](cfire.md) — `import "core:tako"`: the native C++23 systems
-  SDK, `libtako` C-archive bridge, and distroless container builds
+  SDK ([cfire.memo.engineer](https://cfire.memo.engineer)), `libtako` C-archive bridge, and distroless container builds
 - [cli.md](cli.md) — `tako check`, `tako dev`, `tako test`, `tako deploy`,
   `tako docs`, and the confirmation ladder
 - [errors.md](errors.md) — every analysis rule tako can refuse with,

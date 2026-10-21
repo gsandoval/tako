@@ -2,7 +2,7 @@
 
 Tako is a polyglot cloud framework over Google Cloud Run: you write pure
 business logic — APIs, workers, websites — as ordinary Go packages or
-native **cfire** (`.cf`) systems packages, and the `tako` CLI runs it
+native **[cfire](https://cfire.memo.engineer)** (`.cf`) systems packages, and the `tako` CLI runs it
 locally and provisions it onto GCP. No Terraform, no Dockerfiles, no
 YAML: the analyzer reads your declarations and derives the
 infrastructure, the IAM, and the wiring.
@@ -33,7 +33,9 @@ Then follow the seven progressive chapters, in the order the framework grows:
    serves the dynamic fragments.
 7. **[cfire](07-cfire.md)** — native C++23 `.cf` systems apps on Tako
    (`cfire-hello`, `cfire-shortlink`, `cfire-gallery`), the `libtako`
-   C-archive bridge, and distroless C++23 container deploys.
+   C-archive bridge, and distroless C++23 container deploys (see the
+   [cfire Language Guide](https://cfire.memo.engineer/guide.html) and
+   [Systems Performance & Benchmarks](https://cfire.memo.engineer/#benchmarks)).
 
 Two stories frame everything:
 

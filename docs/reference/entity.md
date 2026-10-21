@@ -36,7 +36,7 @@ type Link struct {
 
 ```mermaid
 flowchart LR
-    Struct["Entity Struct\n(entity:\"id\" + entity:\"index\")"]
+    Struct["Entity Struct\n(entity:'id' + entity:'index')"]
     Query["Static Query Call Sites\n(.Where / .where + .OrderBy / .order_by)"]
     Analyzer["Tako Analyzer\n(tako/entity-id, tako/unindexed-query)"]
     Composite["Derived Composite Indexes\n(+ datastore index in deploy plan)"]
