@@ -6,15 +6,24 @@ static asset — no client framework, no Node in production
 
 ## Declare
 
-Exactly like `tako.API` — a var, a constant route, options
-([examples/journal](../../examples/journal/app.go)) — but the handler
+Exactly like `tako.API` / `tako.api` — a var/binding, a constant route, options
+([examples/journal](../../examples/journal/app.go), [examples/cfire-journal](../../examples/cfire-journal/journal.cf)) — but the handler
 returns `tako.HTML`:
 
+**Go**
 ```go
 var Home    = tako.Page("GET /", home)
 var Read    = tako.Page("GET /p/{id}", read)
 var Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
+```
+
+**cfire**
+```cfire
+Home    := tako.page("GET /", home)
+Read    := tako.page("GET /p/{id}", read_post)
+Save    := tako.page("POST /p", save_post)
+Publish := tako.page("POST /p/{id}/publish", publish_post)
 ```
 
 Page takes the same options as `tako.API` — `Route.SignIn` and
@@ -29,10 +38,19 @@ Pages render through a declared [`tako.Site`](site.md); its
 Req binds exactly like API — `form:` tags cover browser form posts,
 never JSON:
 
+**Go**
 ```go
 type SaveReq struct {
 	Title string `form:"title"`
 	Body  string `form:"body"`
+}
+```
+
+**cfire**
+```cfire
+type SaveReq struct {
+	title: str `form:"title" json:"title"`
+	body:  str `form:"body" json:"body"`
 }
 ```
 

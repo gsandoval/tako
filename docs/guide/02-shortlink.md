@@ -1,8 +1,8 @@
 # 2 · shortlink — state, work, and exactly-once
 
-[examples/shortlink](../../examples/shortlink/app.go) adds the two
-primitives most apps need next: durable state and background work.
+[examples/shortlink](../../examples/shortlink/app.go) (Go) and [examples/cfire-shortlink](../../examples/cfire-shortlink/shortlink.cf) (`cfire`) add the two primitives most apps need next: durable state and background work.
 
+**Go**
 ```go
 var links  = tako.Entity[Link]("links")
 var clicks = tako.Queue[Click]("clicks")
@@ -18,9 +18,44 @@ type Link struct {
 var CountClick = tako.Worker(clicks, countClick)
 ```
 
+**cfire**
+```cfire
+Links   := tako.entity[Link]("links")
+Clicks  := tako.queue[ClickEvent]("clicks")
+HotUrls := tako.cache[str]("hot-urls")
+
+type Link struct {
+    code:       str `entity:"id" json:"code"`
+    url:        str `json:"url"`
+    owner_id:   str `entity:"index" json:"owner_id"`
+    clicks:     i64 `entity:"index" json:"clicks"`
+    created_at: i64 `entity:"index" json:"created_at"`
+}
+
+ProcessClick := tako.worker("Clicks", process_click)
+PruneExpired := tako.cron("0 * * * *", prune_expired)
+```
+
+```mermaid
+flowchart LR
+    API["Sync API Service\n(CreateLink / Resolve / List)"]
+    Cache["Cache: hot-urls"]
+    Store[("Entity: links\n(Composite Index: owner + created)")]
+    Queue[["Queue: clicks"]]
+    Worker["Worker Service: CountClick / ProcessClick"]
+    Cron["Cron Service: Cleanup / PruneExpired"]
+
+    API -->|"Get / Set"| Cache
+    API -->|"Tx / Get / Query"| Store
+    API -->|"Publish"| Queue
+    Queue -->|"At-least-once push"| Worker
+    Worker -->|"Tx / Put"| Store
+    Cron -->|"Query + Delete"| Store
+```
+
 ## Entities
 
-`tako.Entity[T]` is *an* entity store (Datastore in the cloud, bbolt
+`tako.Entity[T]` / `tako.entity[T]` is *an* entity store (Datastore in the cloud, bbolt
 locally) — deliberately not "the database". The struct is the schema:
 `entity:"id"` is the key, `entity:"index"` marks what you may filter
 and order by. Querying an unindexed field is an ANALYSIS error, not a
@@ -34,12 +69,18 @@ otherwise have none and answer 500 in production while every local test
 passed. Helpers work too — this one is journal's, from
 [chapter 4](04-journal.md):
 
+**Go**
 ```go
 func published(q *tako.EntityQuery[Post]) *tako.EntityQuery[Post] {
     return q.Where("Published", "=", true)
 }
 
 list, err := published(posts.Query(ctx)).OrderBy("-Created").Limit(50).All()
+```
+
+**cfire**
+```cfire
+items := try Links.query(ctx).where("owner_id", "=", req.owner_id).order_by("-created_at").limit(20).all()
 ```
 
 A function that takes or returns a query is part of its caller's query,
@@ -49,6 +90,7 @@ than under-indexed silently.
 
 Claiming a slug atomically is a transaction on the store:
 
+**Go**
 ```go
 err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
     if _, err := tx.Get(req.Slug); err == nil {
@@ -56,6 +98,16 @@ err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
     }
     ...
     return tx.Put(link)
+})
+```
+
+**cfire**
+```cfire
+try Links.tx(ctx, |tx| -> bool! {
+    cur := try tx.get(evt.code)
+    updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
+    try tx.put(evt.code, updated)
+    return Ok(true)
 })
 ```
 

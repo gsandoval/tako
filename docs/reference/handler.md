@@ -13,9 +13,10 @@ half of the story is [`Endpoint`](calls.md), which is what `tako.API` and
 ## Declare
 
 You never write the type — you receive it, always into a package-level
-var. From [examples/gallery](../../examples/gallery/app.go) and
-[examples/shop](../../examples/shop/app.go):
+var/binding. From [examples/gallery](../../examples/gallery/app.go),
+[examples/shop](../../examples/shop/app.go), and [examples/cfire-shop](../../examples/cfire-shop/shop.cf):
 
+**Go**
 ```go
 var (
     WarmFeed = tako.Subscribe(ready, warmFeed)
@@ -23,6 +24,14 @@ var (
     Settle   = tako.Runner(settle, runSettle, tako.RunnerConfig{Parallel: 4})
     Invoicer = tako.Singleton(assignInvoices)
 )
+```
+
+**cfire**
+```cfire
+ProcessClick := tako.worker("Clicks", process_click)
+PruneExpired := tako.cron("0 * * * *", prune_expired)
+Settle       := tako.runner("SettleJob", run_settle)
+Invoicer     := tako.singleton(assign_invoices)
 ```
 
 Constructors are side-effect-free records, so declaration order never

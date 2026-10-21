@@ -1,0 +1,122 @@
+package shop
+
+import "core:tako"
+
+type Product struct {
+    id:          str `entity:"id" json:"id"`
+    name:        str `json:"name"`
+    price_cents: i64 `json:"priceCents"`
+}
+
+type Order struct {
+    id:          str  `entity:"id" json:"id"`
+    owner:       str  `entity:"index" json:"owner"`
+    product_id:  str  `json:"productId"`
+    qty:         i64  `json:"qty"`
+    total_cents: i64  `json:"totalCents"`
+    receipt_id:  str  `json:"receiptId"`
+    invoiced:    bool `entity:"index" json:"invoiced"`
+    invoice_no:  i64  `json:"invoiceNo"`
+    created:     i64  `entity:"index" json:"created"`
+}
+
+type SettleParams struct {
+    day:         str `json:"day"`
+    throttle_ms: i64 `json:"throttleMs"`
+}
+
+type DailyReport struct {
+    id:          str `entity:"id" json:"id"`
+    orders:      i64 `json:"orders"`
+    total_cents: i64 `json:"totalCents"`
+    settled_at:  i64 `json:"settledAt"`
+}
+
+type Sequence struct {
+    id:   str `entity:"id" json:"id"`
+    next: i64 `json:"next"`
+}
+
+type GetProductReq struct {
+    id: str `path:"id"`
+}
+
+type AddProductReq struct {
+    id:          str `json:"id"`
+    name:        str `json:"name"`
+    price_cents: i64 `json:"priceCents"`
+}
+
+type PlaceOrderReq struct {
+    product_id: str `json:"productId"`
+    qty:        i64 `json:"qty"`
+}
+
+type EmptyReq struct {}
+
+Products  := tako.entity[Product]("products")
+Orders    := tako.entity[Order]("orders")
+Reports   := tako.entity[DailyReport]("reports")
+Sequences := tako.entity[Sequence]("sequences")
+Site      := tako.site("./web/dist")
+Auth      := tako.auth("password")
+SettleJob := tako.job[SettleParams]("settle")
+
+ListProducts := tako.api("GET /api/products", list_products)
+GetProduct   := tako.api("GET /api/products/{id}", get_product)
+AddProduct   := tako.api("POST /api/products", add_product)
+PlaceOrder   := tako.api("POST /api/orders", place_order)
+ListOrders   := tako.api("GET /api/orders", list_orders)
+StartSettle  := tako.api("POST /api/settle", start_settle)
+
+Settle   := tako.runner(SettleJob, run_settle)
+Invoicer := tako.singleton(assign_invoices)
+
+fn list_products(ctx: tako.Ctx, req: EmptyReq) -> []Product! {
+    return []Product{}
+}
+
+fn get_product(ctx: tako.Ctx, req: GetProductReq) -> Product! {
+    return try Products.get(ctx, req.id)
+}
+
+fn add_product(ctx: tako.Ctx, req: AddProductReq) -> Product! {
+    p := Product{id: req.id, name: req.name, price_cents: req.price_cents}
+    try Products.put(ctx, p)
+    return p
+}
+
+fn place_order(ctx: tako.Ctx, req: PlaceOrderReq) -> Order! {
+    prod := try Products.get(ctx, req.product_id)
+    ord := Order{
+        id:          "ord_1",
+        owner:       "customer_1",
+        product_id:  req.product_id,
+        qty:         req.qty,
+        total_cents: prod.price_cents * req.qty,
+        receipt_id:  "rcpt_1",
+        invoiced:    false,
+        invoice_no:  0,
+        created:     ctx.now_unix(),
+    }
+    try Orders.put(ctx, ord)
+    return ord
+}
+
+fn list_orders(ctx: tako.Ctx, req: EmptyReq) -> []Order! {
+    return []Order{}
+}
+
+fn start_settle(ctx: tako.Ctx, req: SettleParams) -> DailyReport! {
+    rep := DailyReport{id: req.day, orders: 1, total_cents: 1000, settled_at: ctx.now_unix()}
+    try Reports.put(ctx, rep)
+    return rep
+}
+
+fn run_settle(ctx: tako.Ctx, params: SettleParams) -> void! {
+    ctx.log_info("running settlement job")
+}
+
+fn assign_invoices(ctx: tako.Ctx) -> void! {
+    ctx.log_info("assigning sequential invoice numbers")
+}

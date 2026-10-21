@@ -246,7 +246,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Pos:     pos,
 				})
 
-			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site":
+			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site", "job":
 				resName := ""
 				if len(gv.Args) > 0 {
 					resName = gv.Args[0]
@@ -270,6 +270,25 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					res.Dir = resName
 				}
 				graph.Resources = append(graph.Resources, res)
+
+			case "auth":
+				providers := gv.Args
+				if len(providers) == 0 {
+					providers = []string{"google"}
+				}
+				graph.Resources = append(graph.Resources, Resource{
+					Kind:      "auth",
+					Name:      "auth",
+					Var:       gv.Name,
+					Package:   pkgName,
+					Providers: providers,
+					Pos:       pos,
+				})
+
+			case "role":
+				if len(gv.Args) > 0 && gv.Args[0] != "" {
+					graph.Roles = appendUnique(graph.Roles, gv.Args[0])
+				}
 
 			case "api", "page":
 				route := ""
@@ -337,6 +356,13 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 									Field: fld.Name,
 									Kind:  "query",
 									Name:  q,
+									Type:  fld.Type,
+								})
+							} else if fm := tag.Get("form"); fm != "" {
+								bindings = append(bindings, Binding{
+									Field: fld.Name,
+									Kind:  "form",
+									Name:  fm,
 									Type:  fld.Type,
 								})
 							} else if h := tag.Get("header"); h != "" {
@@ -426,6 +452,35 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				}
 				graph.Handlers = append(graph.Handlers, h)
 				serviceHandlerMap[defaultSvc] = append(serviceHandlerMap[defaultSvc], gv.Name)
+
+			case "runner":
+				jobBinding := ""
+				if len(gv.Args) > 0 {
+					jobBinding = gv.Args[0]
+				}
+				svcName := strings.ToLower(gv.Name)
+				h := Handler{
+					Kind:    "job",
+					Var:     gv.Name,
+					Package: pkgName,
+					Service: svcName,
+					Binding: jobBinding,
+					Pos:     pos,
+				}
+				workerHandlers = append(workerHandlers, h)
+				graph.Handlers = append(graph.Handlers, h)
+
+			case "singleton":
+				svcName := strings.ToLower(gv.Name)
+				h := Handler{
+					Kind:    "singleton",
+					Var:     gv.Name,
+					Package: pkgName,
+					Service: svcName,
+					Pos:     pos,
+				}
+				workerHandlers = append(workerHandlers, h)
+				graph.Handlers = append(graph.Handlers, h)
 			}
 		}
 	}
@@ -450,13 +505,15 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 		})
 	}
 
-	// Build worker services
+	// Build worker, job, and singleton services
 	for _, wh := range workerHandlers {
 		graph.Services = append(graph.Services, Service{
-			Name:     wh.Service,
-			Package:  wh.Package,
-			Handlers: []string{wh.Var},
-			Profile:  "batch",
+			Name:      wh.Service,
+			Package:   wh.Package,
+			Handlers:  []string{wh.Var},
+			Profile:   "batch",
+			Job:       wh.Kind == "job",
+			Singleton: wh.Kind == "singleton",
 		})
 	}
 

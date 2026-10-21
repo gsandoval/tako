@@ -78,7 +78,7 @@ Bare
 full usage.
 
 `build --push` is **the one flag that crosses into the cloud**: without
-it, `build` produces digest-pinned distroless images locally (no
+it, `build` produces digest-pinned distroless images locally (`static-debian12:nonroot` for Go, `cc-debian12:nonroot` for `cfire`, no
 Docker daemon); with it, they upload to `<repo>/<service>` on Artifact
 Registry. Held as acceptable because the flag name carries it — and
 help sits `build` at the boundary line with the consequence spelled

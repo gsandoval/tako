@@ -8,8 +8,14 @@ contention-free. Most apps never touch Lock directly: Cron's
 
 ## Declare
 
+**Go**
 ```go
 var relock = tako.Lock("reindex")
+```
+
+**cfire**
+```cfire
+ReindexLock := tako.lock("reindex")
 ```
 
 The name must be a string constant (analyzer-enforced) — lock names
@@ -28,9 +34,18 @@ anyone else's.
 
 ## Use
 
+**Go**
 ```go
 err := relock.Do(ctx, func(ctx tako.Ctx) error { ... })      // blocks until held
 ran, err := relock.TryDo(ctx, func(ctx tako.Ctx) error { ... }) // one attempt
+```
+
+**cfire**
+```cfire
+try ReindexLock.with_lease(ctx, 5000, || -> bool! {
+    // critical section guarded by lease
+    return Ok(true)
+})
 ```
 
 `Do` campaigns until the lock is held, runs `fn` holding it, releases

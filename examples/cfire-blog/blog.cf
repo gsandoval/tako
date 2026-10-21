@@ -1,0 +1,49 @@
+package blog
+
+import "core:tako"
+
+type Comment struct {
+    id:      str `entity:"id" json:"id"`
+    post:    str `entity:"index" json:"post"`
+    name:    str `json:"name"`
+    body:    str `json:"body"`
+    created: i64 `entity:"index" json:"created"`
+}
+
+type ListCommentsReq struct {
+    post: str `query:"post"`
+}
+
+type AddCommentReq struct {
+    post: str `form:"post" json:"post"`
+    name: str `form:"name" json:"name"`
+    body: str `form:"body" json:"body"`
+}
+
+CommentsEntity := tako.entity[Comment]("comments")
+Site           := tako.site("./site/public")
+
+Comments   := tako.page("GET /frag/comments", list_comments)
+AddComment := tako.page("POST /frag/comments", add_comment)
+
+fn list_comments(ctx: tako.Ctx, req: ListCommentsReq) -> []Comment! {
+    if req.post == "" {
+        return Err(tako.bad_request("post path is required"))
+    }
+    return []Comment{}
+}
+
+fn add_comment(ctx: tako.Ctx, req: AddCommentReq) -> Comment! {
+    if req.name == "" || req.body == "" {
+        return Err(tako.bad_request("a comment needs a name and a body"))
+    }
+    c := Comment{
+        id:      "cmt_1",
+        post:    req.post,
+        name:    req.name,
+        body:    req.body,
+        created: ctx.now_unix(),
+    }
+    try CommentsEntity.put(ctx, c)
+    return c
+}

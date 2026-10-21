@@ -5,14 +5,22 @@ callable endpoint ([hello chapter](../guide/01-hello.md)).
 
 ## Declare
 
-A package-level var, a Go 1.22+ method-and-pattern route (a string
-constant — analyzer-enforced), a handler `func(Ctx, Req) (Res, error)`
-([examples/hello](../../examples/hello/hello.go)):
+A package-level var/binding, a Go 1.22+ method-and-pattern route (a string
+constant — analyzer-enforced), a handler `func(Ctx, Req) (Res, error)` in Go or `(ctx: tako.Ctx, req: Req) -> Res!` in `cfire`
+([examples/hello](../../examples/hello/hello.go), [examples/cfire-hello](../../examples/cfire-hello/hello.cf)):
 
+**Go**
 ```go
 var Hello = tako.API("GET /hello", hello)
 var Greet = tako.API("GET /greet/{name}", greet)
 var Echo = tako.API("POST /echo", echo)
+```
+
+**cfire**
+```cfire
+Hello := tako.api("GET /hello", hello)
+Greet := tako.api("GET /greet/{name}", greet)
+Echo  := tako.api("POST /echo", echo)
 ```
 
 `tako.Route` carries the settings that describe the ROUTE they sit on:
@@ -82,6 +90,7 @@ shape of a checkbox group, where each box carries the same name. It is
 `nil` when the field is absent, which is what a form with nothing
 ticked sends.
 
+**Go**
 ```go
 // GreetReq binds {name} from the route and loud from the query string.
 type GreetReq struct {
@@ -90,15 +99,24 @@ type GreetReq struct {
 }
 ```
 
+**cfire**
+```cfire
+type GreetReq struct {
+	name: str  `path:"name"`
+	loud: bool `query:"loud"`
+}
+```
+
 Errors are values with status: `tako.Errorf(422, "message must not be
-empty")` surfaces as that status with body `{"error":"..."}`;
-`tako.NotFound()` is the 404. Anything else is an opaque 500 with the
+empty")` / `tako.bad_request("message must not be empty")` surfaces as that status with body `{"error":"..."}`;
+`tako.NotFound()` / `tako.not_found("...")` is the 404. Anything else is an opaque 500 with the
 real error only in your logs.
 
 A `tako.Blob` result streams with its own Content-Type instead of
 being JSON-encoded, and a `tako.Blob` field makes the request
-multipart ([examples/gallery](../../examples/gallery/app.go)):
+multipart ([examples/gallery](../../examples/gallery/app.go), [examples/cfire-gallery](../../examples/cfire-gallery/gallery.cf)):
 
+**Go**
 ```go
 // A tako.Blob field makes the request multipart: img streams from the
 // form field, caption arrives beside it.
@@ -110,6 +128,14 @@ type UploadReq struct {
 // Returning tako.Blob streams the object: correct Content-Type, no JSON.
 func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
 	return photos.Get(ctx, req.ID) // miss → IsNotFound → 404
+}
+```
+
+**cfire**
+```cfire
+download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
+	obj := try Images.get(ctx, req.id)
+	return Ok(obj)
 }
 ```
 

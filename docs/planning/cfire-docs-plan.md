@@ -1,114 +1,48 @@
-# Tako × cfire User-Facing Documentation Plan
+# Tako × cfire Full Dual-Language Examples, Documentation & Visual Graphs Plan
 
-**Status:** Approved for Implementation  
+**Status:** Active Implementation (Milestone 2)  
 **Target Repository:** `/Users/memo/Programming/tako`  
-**Scope:** Public & User-Facing Documentation Surface (`README.md`, `docs/guide/`, `docs/reference/`, `docs/planning/`)
+**Git Commit Policy:** **DO NOT COMMIT** until after 2026-10-21T19:08:36-04:00 (6-hour hold per user instruction).
 
 ---
 
 ## 1. Executive Summary & Objectives
 
-`tako` has evolved from a single-language framework into a **polyglot cloud framework** that natively supports both **Go** and **cfire** (`.cf`), a modern C++23 systems programming language.
+Every example and documentation page in `tako` must treat **Go** and **cfire** (`.cf`) as co-equal, side-by-side languages, and key architectural concepts across the guide and reference must be illustrated with **Mermaid diagrams**.
 
-While internal architecture specifications ([`docs/tako-cfire-plan.md`](../tako-cfire-plan.md)) and operational verification playbooks ([`validate/cfire.md`](../../validate/cfire.md)) are complete, the **public, user-facing surface** does not yet reflect these capabilities:
-1. **The Front Door (`README.md`)** presents Tako exclusively as *"Write Go. Get a cloud."* Developers discovering Tako have no indication that `.cf` files are first-class citizens.
-2. **The Tutorial Story (`docs/guide/`)** walks through six Go chapters (`01-hello` through `06-blog`), but lacks a dedicated end-to-end tutorial chapter showing how to write, run, test, and deploy a native cfire application.
-3. **The Feature Reference (`docs/reference/`)** documents Go types and interfaces, but lacks a dedicated cfire reference chapter detailing `import "core:tako"`, struct tags (`entity:"id"`, `entity:"index"`, `path:`, `query:`, `json:`, `header:`), the C-archive ABI bridge (`libtako.a`), and distroless container runtime images (`gcr.io/distroless/cc-debian12:nonroot`).
-
-### Strategic Objectives
-- Elevate `cfire` to a first-class language alongside Go in Tako's public story without regressing the Go developer experience.
-- Maintain Tako's signature concise, opinionated, prose-first documentation aesthetic.
-- Ensure 100% compliance with `pkg/docserver` automated link, member, and symbol verification tests.
-
----
-
-## 2. Documentation Architecture & Touchpoints
-
-```
-tako/
-├── README.md                          <-- Update: Polyglot hero, dual-language 5-minute quickstart, cfire overview
-├── docs/
-│   ├── embed.go                       <-- Invariant: Embeds only guide/, reference/, api/
-│   ├── guide/
-│   │   ├── README.md                  <-- Update: Index listing cfire tutorial chapter
-│   │   └── 07-cfire.md                <-- NEW: Complete cfire worked example (Hello -> Shortlink -> Deploy)
-│   ├── reference/
-│   │   ├── README.md                  <-- Update: Index listing cfire reference
-│   │   └── cfire.md                   <-- NEW: Complete cfire SDK reference (syntax, tags, ABI, builds)
-│   └── planning/                      <-- (Excluded from embed.go)
-│       ├── cfire-docs-plan.md         <-- This comprehensive plan
-│       ├── backlog.md                 <-- Granular, prioritized backlog with DoD
-│       └── active.md                  <-- Active execution tracking board
-```
-
-### 2.1 Front Door (`README.md`)
-- **Headline & Hero:** Expand tagline to encompass systems programming: *"Write Go or cfire. Get a cloud."*
-- **Dual-Language Code Showcase:** Side-by-side or sequential worked example showing the exact same endpoint (`GET /greet/{name}`) in both Go and cfire.
-- **Five Minutes to a URL:** Provide the quickstart steps for cfire:
-  1. `mkdir hello-cf && cd hello-cf`
-  2. Write `hello.cf` (`import "core:tako"`)
-  3. Run `tako dev` (automatic `.cf` detection, hot reload)
-  4. Run `tako deploy --project <id>` (automatic cross-compilation with `libtako.a` on `distroless/cc-debian12`)
-- **Worked Examples Index:** Add row for `examples/cfire-hello`, `examples/cfire-shortlink`, and `examples/cfire-gallery`.
-
-### 2.2 The Tutorial Guide (`docs/guide/07-cfire.md`)
-Create chapter `07-cfire.md` following the exact chapter format of `01-hello.md` through `06-blog.md`:
-- **The Concept:** Why write a cloud service in a high-performance C++23 systems language with Tako.
-- **The Source:** Complete, runnable `.cf` application with request binding, entity persistence, and background queue workers:
-  ```cfire
-  package shortlink
-  import "core:tako"
-  
-  type Link struct {
-      code:     str `entity:"id" json:"code"`
-      url:      str `json:"url"`
-      clicks:   i64 `entity:"index" json:"clicks"`
-  }
-  
-  Links := tako.entity[Link]("links")
-  Clicks := tako.queue[Link]("clicks")
-  GetLink := tako.api("GET /links/{code}", handle_get)
-  ...
-  ```
-- **The Local Loop:** What happens when typing `tako dev` in a cfire directory:
-  - Generates `.tako/gen/<service>/main.cf`
-  - Compiles `libtako.a` via Go `c-archive`
-  - Links via `cfire build main.cf -o .tako/bin/<service> --link-lib .tako/lib/libtako.a --include <sdk_dir>`
-  - Runs in-process with HTTP server and BoltDB storage.
-- **Testing:** How to write and run unit tests with `tako test` using `*_test.cf`.
-- **Deploying to Cloud Run:** The single-command deploy and OCI layer construction.
-
-### 2.3 The Reference Manual (`docs/reference/cfire.md`)
-Create `cfire.md` inside `docs/reference/` matching the canonical 7-section structure:
-1. **Declare:** Top-level package declarations (`tako.entity[T]`, `tako.bucket`, `tako.queue[T]`, `tako.topic[T]`, `tako.cache[T]`, `tako.lock`, `tako.secret`, `tako.api`, `tako.worker`, `tako.cron`).
-2. **Use:** Method calls on declared handles (`Links.get(ctx, id)`, `Links.put(ctx, entity)`, `Clicks.publish(ctx, item)`).
-3. **Local:** In-process C-ABI mechanics, thread safety, and memory management (`tako_buf_t`, `tako_c_free`).
-4. **Cloud:** Container packaging on `gcr.io/distroless/cc-debian12:nonroot`, glibc/libstdc++ dynamic linkage, IAM least-privilege projection.
-5. **Test it:** In-package tests with `*_test.cf`.
-6. **Errors you'll meet:** Compiler and analyzer static diagnostic table (`tako/entity-id`, `tako/route-params`, `tako/const-name`).
-7. **Not yet:** Current limits (e.g. server-side HTML template engine in cfire vs Go html/template).
+### Core Deliverables
+1. **100% Dual-Language Examples (`examples/`):**
+   Every Go example in `examples/` has a matching `examples/cfire-<name>/` counterpart analyzed and code-generated by Tako's test suite:
+   - `hello` ↔ `cfire-hello`
+   - `shortlink` ↔ `cfire-shortlink`
+   - `gallery` ↔ `cfire-gallery`
+   - `journal` ↔ `cfire-journal`
+   - `shop` ↔ `cfire-shop`
+   - `blog` ↔ `cfire-blog`
+   - `siren` ↔ `cfire-siren`
+2. **Visual Architecture & Lifecycle Graphs (`mermaid`):**
+   - Enhance `pkg/docserver/layout.go` to render `<code class="language-mermaid">` blocks into crisp diagrams on `tako docs` and `tako.memo.engineer`, while degrading gracefully offline and in CLI output.
+   - Add 3 foundational architecture graphs to `docs/guide/00-mental-model.md` (Two-Waist Compilation Pipeline, Package-to-Service Partitioning, and Call-Graph IAM/Index Derivation).
+   - Add service topology graphs to tutorial chapters (`01-hello.md` through `07-cfire.md`) and story pages (`local.md`, `cloud.md`).
+   - Add lifecycle/sequence graphs to key reference pages (`queue.md`, `topic.md`, `bucket.md`, `auth.md`, `calls.md`, `alerts.md`, `entity.md`).
+3. **100% Dual-Language Guide & Reference (`docs/guide/*.md`, `docs/reference/*.md`):**
+   - Every tutorial chapter (`00-mental-model.md` through `06-blog.md`, `local.md`, `cloud.md`) presents both Go and cfire code.
+   - Every feature reference page (`docs/reference/*.md`) presents both Go and cfire declarations and usage idioms.
 
 ---
 
-## 3. Strict Verification & Acceptance Rubric
+## 2. Guardrails for `pkg/docserver` Conformance Tests
 
-Every user-facing documentation change MUST pass the following automated gates:
-1. **Zero Docserver Regressions:**
-   ```bash
-   go test -v ./pkg/docserver/...
-   ```
-   Ensures:
-   - `TestEveryLinkBetweenDocsResolves`: Every Markdown link resolves to an existing file and valid anchor.
-   - `TestNavCoversEveryPage`: Every page in `guide/` and `reference/` appears in the navigation index.
-   - `TestEveryAnalyzerRuleIsInTheErrorsIndex`: All static analysis rules are documented in `reference/errors.md`.
-   - `TestExportGeneratesCompleteStaticSite`: Static documentation generator (`tako docs --export`) renders without error.
-2. **Zero Doc Surface Regressions:**
-   ```bash
-   go test -v ./docs/...
-   ```
-   Ensures `docs/embed.go` and `api/surface.txt` remain byte-for-byte compliant.
-3. **Full Conformance & Example Verification:**
-   ```bash
-   go test -v ./cmd/tako/... ./pkg/analyzer -run TestCfire ./pkg/codegen -run TestCfire
-   ```
-   Ensures all CLI commands and cfire analyzers continue to function flawlessly.
+`pkg/docserver` enforces strict automated invariants on every file in `docs/guide/` and `docs/reference/`:
+1. **`TestEveryTakoSymbolTheDocsNameExists` (`mentions_test.go`):**
+   - Scans for `tako\.([A-Z][A-Za-z0-9_]*)`. Any capitalized `tako.X` MUST exist in Go's `api/surface.txt`.
+   - In `cfire` code snippets, constructors and helpers are snake_case (`tako.api`, `tako.page`, `tako.entity`, `tako.queue`, `tako.topic`, `tako.bucket`, `tako.cache`, `tako.lock`, `tako.secret`, `tako.counter`, `tako.histogram`, `tako.worker`, `tako.subscribe`, `tako.cron`, `tako.job`, `tako.runner`, `tako.singleton`, `tako.site`, `tako.auth`, `tako.role`, `tako.require_role`, `tako.status_page`, `tako.not_found`, `tako.bad_request`, `tako.errorf`, `tako.permanent`, `tako.redirect`), while `tako.Ctx`, `tako.Blob`, `tako.HTML`, `tako.Status`, `tako.User` exist in `api/surface.txt`.
+2. **`TestEveryFieldTheDocsNameExists` (`members_test.go`):**
+   - Scans for `\b([A-Z][A-Za-z0-9]*)\.([A-Z][A-Za-z0-9]*)\b`. If `Type` is in `api/surface.txt`, `Member` must be an exported field or method of `Type` in `api/surface.txt`.
+   - In `cfire` code snippets, method calls on resources use snake_case (`.get`, `.put`, `.remove`, `.query`, `.where`, `.order_by`, `.limit`, `.all`, `.tx`, `.publish`, `.set`, `.with_lease`, `.inc`, `.observe`, `.call`, `.render`, `.fragment`), which never collide with capitalized Go `Type.Member` checks.
+3. **`TestTheDocsQuoteTheRealUnwiredPanic` (`rules_test.go`):**
+   - Preserves all 10 existing `tako: no <x> backend wired` quotes across `docs/reference/*.md`.
+4. **`TestEveryErrorTextTheIndexQuotesIsGoldenTested` (`rules_test.go`):**
+   - Every fenced code block inside `docs/reference/errors.md` is checked against the golden error corpus (`pkg/analyzer/testdata/errors/`). Therefore, in `docs/reference/errors.md`, prose or tables may explain `cfire` parity, while fenced ``` code blocks remain strictly the golden-tested error lines.
+5. **`TestEveryLinkBetweenDocsResolves` (`docserver_test.go`):**
+   - Every link to `../../examples/cfire-<name>/<name>.cf` or another doc page must exist on disk.

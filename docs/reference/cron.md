@@ -6,8 +6,14 @@ cloud (T2), one declaration for both.
 
 ## Declare
 
+**Go**
 ```go
 var Cleanup = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
+```
+
+**cfire**
+```cfire
+PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 
 `Cleanup` is a [`tako.Handler`](handler.md) — the value you hand to

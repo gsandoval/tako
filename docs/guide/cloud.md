@@ -9,6 +9,19 @@ reads the live project, labels everything it creates, and converges.
 analyzing → site builds → codegen → preflight → plan → build/push → apply → URLs
 ```
 
+```mermaid
+flowchart LR
+    Source["Go (.go) or cfire (.cf)"]
+    Analyze["Analyze + Codegen\n(AppGraph + .tako/gen)"]
+    Preflight["Preflight\n(Probe APIs & IAM)"]
+    Plan["Stateless Plan\n(+ create / ~ update / ! replace)"]
+    Build["Container Build & Push\n(distroless/static or distroless/cc)"]
+    Apply["Additive Apply\n(Under deploy lease)"]
+    URLs["Live Cloud Run URLs\n+ Security Summary"]
+
+    Source --> Analyze --> Preflight --> Plan --> Build --> Apply --> URLs
+```
+
 - **Preflight** probes exactly the APIs and permissions your graph
   needs and prints copy-pasteable remediation when something is
   missing (enable command, grant command, or console step).

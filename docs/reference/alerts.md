@@ -2,6 +2,7 @@
 
 An alert is two declarations: **where it goes** and **when it holds**.
 
+**Go** ([examples/siren](../../examples/siren/app.go))
 ```go
 var (
     oncall = tako.AlertEmail("ops@example.com")
@@ -10,6 +11,35 @@ var (
         tako.QueueWatch{DeadLetters: true, For: 10 * time.Minute}), oncall)
     Silent = tako.Alert(tako.CronMissed(Cleanup), oncall)
 )
+```
+
+**cfire** ([examples/cfire-siren](../../examples/cfire-siren/siren.cf) — custom metrics and background targets)
+```cfire
+Work      := tako.queue[JobPayload]("work")
+Processed := tako.counter("siren_processed_total")
+WorkMs    := tako.histogram("siren_work_ms")
+
+DoWork := tako.worker("Work", do_work)
+Sweep  := tako.cron("0 * * * *", sweep)
+```
+
+```mermaid
+flowchart LR
+    Svc["Deployed Services\n(Go or cfire)"]
+    AutoM["Built-in Metrics\n(tako/requests, tako/request_ms)"]
+    CustomM["Declared Metrics\n(Counter / Histogram)"]
+    PlatM["Platform Metrics\n(Pub/Sub, Cloud Run, Scheduler)"]
+    PromQL["Cloud Monitoring Alert Policy\n(Compiled PromQL + Sustained Window)"]
+    Email["AlertEmail"]
+    Webhook["AlertWebhook"]
+    Topic["AlertTopic (Pub/Sub)"]
+
+    Svc --> AutoM --> PromQL
+    Svc --> CustomM --> PromQL
+    PlatM --> PromQL
+    PromQL --> Email
+    PromQL --> Webhook
+    PromQL --> Topic
 ```
 
 Both are package-level vars, like every other tako declaration, and the

@@ -5,10 +5,31 @@ an event source that makes uploads the start of a pipeline.
 
 ## Declare
 
+**Go**
 ```go
 var photos = tako.Bucket("photos")
 
 var OnUploaded = tako.Subscribe(photos.Uploaded, onUploaded)
+```
+
+**cfire**
+```cfire
+Images := tako.bucket("gallery-images")
+```
+
+```mermaid
+flowchart LR
+    Client["Client / Browser"]
+    API["API Handler\n(SignedPut / Put)"]
+    GCS[("Bucket: photos / gallery-images\n(Local disk or GCS)")]
+    Evt(("Bucket Uploaded Event\n(OBJECT_FINALIZE)"))
+    Sub["Subscriber Service: OnUploaded"]
+
+    Client -->|"1a. Request upload URL"| API
+    Client -->|"1b. Direct PUT (SignedPut)"| GCS
+    API -->|"Or through-service Put"| GCS
+    GCS -->|"2. Triggers on any write"| Evt
+    Evt -->|"3. Push delivery"| Sub
 ```
 
 The name must be a string constant (analyzer-enforced). `Uploaded` is
@@ -24,6 +45,7 @@ size. A handler returning `tako.Blob` streams the object with the
 right `Content-Type`; a `tako.Blob` request field makes the request
 multipart:
 
+**Go**
 ```go
 type UploadReq struct {
     Caption string    `form:"caption"`
@@ -32,6 +54,14 @@ type UploadReq struct {
 
 func serveImage(ctx tako.Ctx, req ImageReq) (tako.Blob, error) {
     return photos.Get(ctx, req.ID) // miss → IsNotFound → 404
+}
+```
+
+**cfire**
+```cfire
+download_photo(ctx: tako.Ctx, req: PhotoPathReq) -> tako.Blob! {
+    obj := try Images.get(ctx, req.id)
+    return Ok(obj)
 }
 ```
 

@@ -28,8 +28,25 @@ PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 
 Supported constructors mirror the Go SDK:
-- **Stateful & observability resources:** `tako.entity[T](name)`, `tako.bucket(name)`, `tako.queue[T](name)`, `tako.topic[T](name)`, `tako.cache[T](name)`, `tako.lock(name)`, `tako.secret(name)`, `tako.counter(name)`, `tako.histogram(name)`, `tako.site(dir)`.
-- **Handlers:** `tako.api(route, fn)`, `tako.page(route, fn)`, `tako.worker(queue_var, fn)`, `tako.subscribe(topic_var, fn)`, `tako.cron(schedule, fn)`.
+- **Stateful & observability resources:** `tako.entity[T](name)`, `tako.bucket(name)`, `tako.queue[T](name)`, `tako.topic[T](name)`, `tako.job[T](name)`, `tako.cache[T](name)`, `tako.lock(name)`, `tako.secret(name)`, `tako.counter(name)`, `tako.histogram(name)`, `tako.site(dir)`, `tako.auth()`, `tako.role(name)`.
+- **Handlers:** `tako.api(route, fn)`, `tako.page(route, fn)`, `tako.worker(queue_var, fn)`, `tako.subscribe(topic_var, fn)`, `tako.cron(schedule, fn)`, `tako.runner(job_var, fn)`, `tako.singleton(fn)`.
+
+```mermaid
+flowchart LR
+    subgraph CfireBin["Native Service Binary (C++23 + libtako.a)"]
+        Handler["User .cf Handler\n(fn(ctx: tako.Ctx, req: Req) -> Res!)"]
+        Generated[".tako/gen/<svc>/main.cf\n(JSON/Path/Query/Form Binder)"]
+        Header["sdk/cfire/include/tako.hpp\n(RAII wrappers + tako_buf_t)"]
+        Cgo["cmd/libtako C-ABI Exports\n(tako_entity_*, tako_queue_*, tako_serve)"]
+        Backends["Tako Go Runtime\n(Local bbolt/channels or GCP Datastore/PubSub/GCS)"]
+    end
+
+    Cgo -->|"Dispatch callback"| Generated
+    Generated -->|"Typed call"| Handler
+    Handler -->|"Resource ops"| Header
+    Header -->|"extern C call"| Cgo
+    Cgo --> Backends
+```
 
 ## Use
 

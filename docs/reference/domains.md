@@ -72,7 +72,7 @@ to group endpoints into a service — it derives the grouping:
   static assets and dynamic routes both.
 
 So `tako.Service` describes the package's APP service — the one running
-its API, Page and Cron handlers — and never the satellites. `tako gen
+its API, Page and Cron handlers (whether written in Go or `cfire`) — and never the satellites. `tako gen
 graph` shows you the answer before you deploy:
 
 ```

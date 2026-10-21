@@ -7,10 +7,16 @@ chapters teach the two shapes.
 
 ## Declare
 
+**Go**
 ```go
 // site serves ./web embedded in the service binary; its templates/
 // subtree backs site.Render and is never served statically.
 var site = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
+```
+
+**cfire**
+```cfire
+Site := tako.site("./web")
 ```
 
 `SiteConfig{Build: tako.Build{Command: …, Out: …}}` runs a real generator and serves its

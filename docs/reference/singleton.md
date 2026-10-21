@@ -13,10 +13,29 @@ duplicates — which is what makes it a Singleton and not a worker.
 
 ## Declare
 
-From [examples/shop](../../examples/shop/app.go):
+From [examples/shop](../../examples/shop/app.go) (Go) and [examples/cfire-shop](../../examples/cfire-shop/shop.cf) (`cfire`):
 
+**Go**
 ```go
 Invoicer = tako.Singleton(assignInvoices)
+```
+
+**cfire**
+```cfire
+Invoicer := tako.singleton(assign_invoices)
+```
+
+```mermaid
+flowchart LR
+    RevA["Revision N Instance\n(min=1 / max=1)"]
+    RevB["Revision N+1 Instance\n(During rollout)"]
+    Lease["§4.4 Lease Object\n(leases/run-<app>-<env>-singleton-invoicer\n30s TTL, 10s heartbeat)"]
+    Loop["Active Singleton Loop\n(assignInvoices / assign_invoices)"]
+
+    RevA -->|"Holds generation token"| Lease
+    RevB -->|"Campaigns (~2s poll)"| Lease
+    Lease -->|"Exclusive execution"| Loop
+    RevA -.->|"SIGTERM / Lease released"| RevB
 ```
 
 `Invoicer` is a [`tako.Handler`](handler.md) — what `SingletonDown`

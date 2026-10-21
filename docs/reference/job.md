@@ -8,8 +8,9 @@ body writes it (shop's settle job writes a `reports` entity).
 
 ## Declare
 
-Two vars, from [examples/shop](../../examples/shop/app.go):
+Two vars/bindings, from [examples/shop](../../examples/shop/app.go) (Go) and [examples/cfire-shop](../../examples/cfire-shop/shop.cf) (`cfire`):
 
+**Go**
 ```go
 // settle is long-running compute (§2.7): a Cloud Run JOB in the
 // cloud — no request timeout to outlive — and a tracked in-process
@@ -17,6 +18,30 @@ Two vars, from [examples/shop](../../examples/shop/app.go):
 settle = tako.Job[SettleParams]("settle")
 
 Settle = tako.Runner(settle, runSettle)
+```
+
+**cfire**
+```cfire
+SettleJob := tako.job[SettleParams]("settle")
+
+Settle := tako.runner("SettleJob", run_settle)
+```
+
+```mermaid
+flowchart LR
+    Caller["Caller Handler\n(settle.Run / SettleJob.run)"]
+    Exec["Job Execution\n(Cloud Run Job v2 or Local Dispatcher)"]
+    T0["Task 0 (index=0, count=4)\nHash shard 0"]
+    T1["Task 1 (index=1, count=4)\nHash shard 1"]
+    T2["Task 2 (index=2, count=4)\nHash shard 2"]
+    T3["Task 3 (index=3, count=4)\nHash shard 3"]
+    Store[("Entity Store: settlements\n(Idempotent shard subtotals + final report)")]
+
+    Caller -->|"Hands off & returns immediately"| Exec
+    Exec --> T0 --> Store
+    Exec --> T1 --> Store
+    Exec --> T2 --> Store
+    Exec --> T3 --> Store
 ```
 
 The job is the carrier; the runner var is a

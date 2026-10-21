@@ -1,28 +1,19 @@
-# Active Planning & Execution Board: Tako × cfire User-Facing Documentation
+# Active Planning & Execution Board: Tako × cfire Dual-Language Examples, Docs & Graphs
 
-**Current Milestone:** Milestone 1 — User-Facing Documentation Surface (COMPLETED)  
+**Current Milestone:** Milestone 2 — 100% Dual-Language Examples, Documentation & Visual Architecture Graphs (**COMPLETED**)  
 **Directory:** `/Users/memo/Programming/tako/docs/planning`  
-**Last Updated:** 2026-10-21  
+**Git Commit Policy:** **NO COMMITS** until after 2026-10-21T19:08:36-04:00 (all changes remain unstaged in the working tree).
 
 ---
 
-## 1. Active Task Matrix
+## 1. Active Task Matrix (Milestone 2)
 
-| ID | Title | Status | Assignee | Target Files | Verification Gate |
-| :--- | :--- | :---: | :---: | :--- | :--- |
-| **`DOC-CF-01`** | Update `README.md` for Polyglot Go & cfire | **DONE** | Coding Agent | `README.md` | Verified dual-language hero, 5-min cfire quickstart, and chapter index |
-| **`DOC-CF-02`** | Author Guide `docs/guide/07-cfire.md` | **DONE** | Coding Agent | `docs/guide/07-cfire.md` | `PASS: TestEveryEmbeddedPageRenders` |
-| **`DOC-CF-03`** | Author Reference `docs/reference/cfire.md` | **DONE** | Coding Agent | `docs/reference/cfire.md` | `PASS: TestEveryLinkBetweenDocsResolves` (193 internal links, 66 repo links) |
-| **`DOC-CF-04`** | Update Guide & Reference Indexes | **DONE** | Coding Agent | `docs/guide/README.md`<br>`docs/reference/README.md` | `PASS: TestNavCoversEveryPage` & `PASS: TestSectionsComeFromTheReferenceIndex` |
-| **`DOC-CF-05`** | End-to-End Docserver Conformance Verification | **DONE** | Coding Agent | All Doc Packages & `pkg/docserver/export_test.go` | `PASS: go test -v ./pkg/docserver/... ./docs/...` |
-
----
-
-## 2. Definition of Done (DoD) Evaluation
-
-All 5 evaluation criteria satisfied:
-1. **Fidelity:** Documentation matches actual behavior (`cfire outline --json`, `EnsureLibTako`, `distroless/cc-debian12:nonroot`, struct tags).
-2. **Style & Tone:** Adheres to Tako's concise, opinionated prose and 7-section reference format.
-3. **Automated Link Resolution:** `TestEveryLinkBetweenDocsResolves` verified 193 internal links, 2 anchors, and 66 repository file links with zero broken targets.
-4. **Nav & Static Export Coverage:** `TestNavCoversEveryPage` and `TestExportGeneratesCompleteStaticSite` verify that `/guide/07-cfire` and `/reference/cfire` appear in navigation and export cleanly to HTML.
-5. **Zero Doc Surface Regressions:** `TestEmbeddedSurfaceMatchesTheSDKLock` in `docs/surface_test.go` and `TestEveryAnalyzerRuleIsInTheErrorsIndex` in `pkg/docserver/rules_test.go` pass 100%.
+| ID | Title | Status | Target Files | Verification Gate |
+| :--- | :--- | :---: | :--- | :--- |
+| **`EX-CF-01`** | Complete Dual-Language Examples Parity (`examples/cfire-*`) | **DONE** | `examples/cfire-{journal,shop,blog,siren}`<br>`examples/README.md`<br>`pkg/analyzer/cfire*.go`<br>`pkg/codegen/cfire_test.go` | `PASS` (`TestCfireAnalyzeExamples` & `TestCfireCodegenExamples` on all 7 examples) |
+| **`GRAPH-01`** | Mermaid Graph Rendering in `pkg/docserver/layout.go` | **DONE** | `pkg/docserver/layout.go` | `PASS` (`go test -v ./pkg/docserver/...`) |
+| **`GUIDE-DUAL-01`** | Mental Model (`00-mental-model.md`) Dual-Language + 3 Graphs | **DONE** | `docs/guide/00-mental-model.md` | `PASS` (`go test -v ./pkg/docserver/...`) |
+| **`GUIDE-DUAL-02`** | Tutorial Chapters (`01`–`07`, `local.md`, `cloud.md`) Dual-Language + Graphs | **DONE** | `docs/guide/01-hello.md` .. `07-cfire.md`<br>`docs/guide/local.md`<br>`docs/guide/cloud.md` | `PASS` (`go test -v ./pkg/docserver/...`) |
+| **`REF-DUAL-01`** | HTTP, Data & Async Reference Pages Dual-Language + Graphs | **DONE** | `docs/reference/{api,pages,site,service,domains,entity,cache,observability,alerts,queue,topic,bucket,cron,lock,handler}.md` | `PASS` (`go test -v ./pkg/docserver/...`) |
+| **`REF-DUAL-02`** | Compute & Edges Reference Pages Dual-Language + Graphs | **DONE** | `docs/reference/{job,singleton,calls,footprint,auth,testing,client-ts,cli,errors,cfire}.md` | `PASS` (`go test -v ./pkg/docserver/...`) |
+| **`VERIFY-DUAL-01`** | Full Conformance Verification Gate (Working Tree Only) | **DONE** | All Modified Packages | `PASS` (`pkg/docserver`, `docs`, `pkg/analyzer`, `pkg/codegen`, `cmd/tako`) |

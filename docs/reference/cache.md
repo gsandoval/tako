@@ -5,10 +5,16 @@ no cross-instance invalidation — which is also why it costs nothing.
 
 ## Declare
 
-From [examples/gallery](../../examples/gallery/app.go):
+From [examples/gallery](../../examples/gallery/app.go) (Go) and [examples/cfire-shortlink](../../examples/cfire-shortlink/shortlink.cf) (`cfire`):
 
+**Go**
 ```go
 var feed = tako.Cache[[]Photo]("feed", time.Minute)
+```
+
+**cfire**
+```cfire
+HotUrls := tako.cache[str]("hot-urls")
 ```
 
 The name must be a string constant (analyzer-enforced). The TTL is a
@@ -23,10 +29,20 @@ Keyed like every keyed store: `Get`, `Put`, `Delete`, `Exists` — an
 absent or expired entry reports through `tako.IsNotFound`.
 `GetOrFill` covers the cold start:
 
+**Go**
 ```go
 return feed.GetOrFill(ctx, feedKey(owner), func(ctx tako.Ctx) ([]Photo, error) {
     return readyPhotos(ctx, owner)
 })
+```
+
+**cfire**
+```cfire
+cached := try HotUrls.get(ctx, req.code)
+if cached is str {
+    return Ok(LinkRes{code: req.code, url: cached, clicks: 0})
+}
+try HotUrls.set(ctx, link.code, link.url, 300)
 ```
 
 A fill error is returned and nothing is cached; concurrent misses may

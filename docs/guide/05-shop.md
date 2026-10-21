@@ -1,8 +1,43 @@
 # 5 · shop — many services, one repo
 
-[examples/shop](../../examples/shop/app.go) is the "website with an
-API" endgame: four deployables from one package tree, a generated
-frontend client, and background compute.
+[examples/shop](../../examples/shop/app.go) (Go) and [examples/cfire-shop](../../examples/cfire-shop/shop.cf) (`cfire`) are the "website with an API" endgame: multi-component deployables, a generated frontend client, batch jobs, and a singleton invoice loop.
+
+**Go**
+```go
+var products = tako.Entity[Product]("products")
+var orders   = tako.Entity[Order]("orders")
+var settle   = tako.Job[SettleParams]("settle")
+
+var Settle   = tako.Runner(settle, runSettle)
+var Invoicer = tako.Singleton(assignInvoices)
+```
+
+**cfire**
+```cfire
+Products  := tako.entity[Product]("products")
+Orders    := tako.entity[Order]("orders")
+SettleJob := tako.job[SettleParams]("settle")
+
+Settle   := tako.runner("SettleJob", run_settle)
+Invoicer := tako.singleton(assign_invoices)
+```
+
+```mermaid
+flowchart LR
+    SPA["SPA + Generated TS Client\n(web/src/api.ts)"]
+    ShopSvc["Service: shop\n(Catalog / PlaceOrder / TriggerSettle)"]
+    BillingSvc["Private Service: billing\n(POST /charge, Route.Private)"]
+    Store[("Entities: products, orders, settlements")]
+    Job["Cloud Run Job: shop-settle\n(Parallel shards)"]
+    Single["Singleton Service: shop-invoicer\n(min=1/max=1 + lease)"]
+
+    SPA -->|"Typed fetch + CSRF"| ShopSvc
+    ShopSvc -->|"OIDC + session hop"| BillingSvc
+    ShopSvc -->|"Tx / Put"| Store
+    ShopSvc -->|"settle.Run"| Job
+    Job -->|"Read orders / Write settlement"| Store
+    Single -->|"Sequential invoice sweep"| Store
+```
 
 ## The generated TypeScript client
 

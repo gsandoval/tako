@@ -89,6 +89,7 @@ p, li { max-width:46rem; }
 code { background:var(--code); border-radius:4px; padding:.12rem .35rem; font-size:.88em; font-family:var(--font-mono); }
 pre { background:var(--surface); border:1px solid var(--rule); border-radius:6px; padding:.85rem 1.1rem; overflow:auto; max-width:54rem; margin:1rem 0; }
 pre code { background:none; padding:0; font-size:.85rem; line-height:1.55; }
+pre.mermaid { text-align:center; padding:1.25rem; }
 blockquote { margin:1rem 0; padding:.2rem 1rem; border-left:3px solid var(--rule); color:var(--dim); }
 table { border-collapse:collapse; margin:1.2rem 0; font-size:.92rem; width:100%; max-width:54rem; }
 th, td { border:1px solid var(--rule); padding:.45rem .75rem; text-align:left; vertical-align:top; }
@@ -277,7 +278,23 @@ var tmpl = template.Must(template.New("docs").Parse(`
 <nav class="side">{{range .Nav}}{{if .Group}}<div class="group">{{.Title}}</div>{{else}}<a href="{{.Route}}"{{if .On}} class="on"{{end}}>{{.Title}}</a>{{end}}{{end}}</nav>
 <main>{{end}}
 
-{{define "foot"}}<footer>{{.Footer}} · <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer">GitHub</a></footer></main></div></body></html>{{end}}
+{{define "foot"}}<footer>{{.Footer}} · <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer">GitHub</a></footer></main></div>
+<script type="module">
+const blocks = document.querySelectorAll('pre > code.language-mermaid');
+if (blocks.length > 0) {
+  for (const code of blocks) {
+    const pre = code.parentElement;
+    pre.classList.add('mermaid');
+    pre.textContent = code.textContent;
+  }
+  try {
+    const { default: mermaid } = await import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs');
+    mermaid.initialize({ startOnLoad: false, theme: 'neutral', securityLevel: 'strict' });
+    await mermaid.run({ querySelector: 'pre.mermaid' });
+  } catch (_) {}
+}
+</script>
+</body></html>{{end}}
 
 {{define "page"}}{{template "head" .}}{{.Body}}{{template "foot" .}}{{end}}
 
@@ -287,7 +304,7 @@ var tmpl = template.Must(template.New("docs").Parse(`
     <div class="memo-section-header">// 0x00 Framework Intro</div>
     <div class="hero-title-group">
       <h1 class="memo-hero-title">
-        Write Go. <span class="flat-blue">Get a cloud.</span>
+        Write Go or cfire. <span class="flat-blue">Get a cloud.</span>
       </h1>
       <div class="handwritten-sticker">
         invisible infrastructure 🐙
@@ -295,7 +312,7 @@ var tmpl = template.Must(template.New("docs").Parse(`
     </div>
 
     <p class="memo-hero-desc">
-      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent in your Go code, run the whole stack locally in one process, and let Tako derive the cloud.
+      <strong>Transparent distributed systems over Google Cloud Run.</strong> Stop repeating compute footprints, IAM permissions, and deployment configuration across YAML and Terraform: declare the architectural intent in your <strong>Go</strong> or <strong>cfire</strong> (<code>.cf</code>) code, run the whole stack locally in one process, and let Tako derive the cloud.
     </p>
 
     <div class="memo-actions">
@@ -550,6 +567,25 @@ var tmpl = template.Must(template.New("docs").Parse(`
         <div class="card-footer-meta">
           <span>Local: go test / tako test</span>
           <span>Cloud: Conformance suite</span>
+        </div>
+      </a>
+
+      <a href="/reference/cfire" class="memo-card card-blue">
+        <div class="card-top">
+          <span class="card-id">PRM-13</span>
+          <span class="badge badge-blue">C++23 &amp; CFIRE</span>
+          <span class="card-status">LOCKED</span>
+        </div>
+        <h3 class="card-title"><code>import "core:tako"</code></h3>
+        <p class="card-desc">Write handlers and resources in native <code>cfire</code> (<code>.cf</code>). Analyzed into the same <code>AppGraph</code> and linked against <code>libtako.a</code> onto distroless C++23 containers.</p>
+        <div class="card-tags">
+          <span class="tag">cfire</span>
+          <span class="tag">libtako.a</span>
+          <span class="tag">distroless/cc</span>
+        </div>
+        <div class="card-footer-meta">
+          <span>Local: cfire + libtako.a</span>
+          <span>Cloud: Cloud Run C++23</span>
         </div>
       </a>
     </div>

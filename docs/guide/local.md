@@ -16,19 +16,36 @@ more commands. (Until tako is tagged and published, add
 
 Everything below is about the app you now have.
 
-`tako dev` runs your app as one ordinary Go process. There are **no
+`tako dev` runs your app as one ordinary Go or `cfire` native process. There are **no
 emulators and no Docker** anywhere in local development:
 
-| Declared | Local backing |
+```mermaid
+flowchart LR
+    Browser["Browser / curl :8080"]
+    Dev["tako dev Process\n(Single Port 8080)"]
+    Handlers["Sync & Async Handlers\n(Go or cfire + libtako.a)"]
+    Bolt[(".tako/data/entity.db\n(bbolt)")]
+    Buckets[(".tako/data/buckets/\n(local filesystem)")]
+    Chans[["In-Process Channels\n(Queues, Topics, Jobs)"]]
+    Leases["In-Process Lease Table\n(Locks, Singletons)"]
+
+    Browser --> Dev --> Handlers
+    Handlers --> Bolt
+    Handlers --> Buckets
+    Handlers --> Chans --> Handlers
+    Handlers --> Leases
+```
+
+| Declared (Go / `cfire`) | Local backing |
 |---|---|
-| `tako.Entity[T]` | a bbolt file, `.tako/data/entity.db` |
-| `tako.Bucket` | directories under `.tako/data/buckets/` |
-| `tako.Queue` / `tako.Topic` | in-process channels calling your handlers |
-| `tako.Lock` / singleflight / `Singleton` | an in-process lease table |
-| `tako.Job` | executions ride the local queue dispatcher |
+| `tako.Entity[T]` / `tako.entity[T]` | a bbolt file, `.tako/data/entity.db` |
+| `tako.Bucket` / `tako.bucket` | directories under `.tako/data/buckets/` |
+| `tako.Queue` / `tako.Topic` / `tako.queue` / `tako.topic` | in-process channels calling your handlers |
+| `tako.Lock` / singleflight / `Singleton` / `tako.lock` / `tako.singleton` | an in-process lease table |
+| `tako.Job` / `tako.job` | executions ride the local queue dispatcher |
 | signed URLs | served by your own process |
-| `tako.Auth` | a dev bar: sign in as alice/bob, no GCP anywhere |
-| `tako.Secret` | `.env` in the module directory (`tako secrets set`) |
+| `tako.Auth` / `tako.auth` | a dev bar: sign in as alice/bob, no GCP anywhere |
+| `tako.Secret` / `tako.secret` | `.env` in the module directory (`tako secrets set`) |
 
 Because queues are channels calling your functions, a breakpoint
 steps from a publish straight into the worker — and a cross-service

@@ -8,7 +8,7 @@ app.go:11:5: tako.API route must be a string constant — routes are read at ana
 
 `path:line:col: message (tako/rule-id)` — the same shape as a compiler
 diagnostic, and for the same reason: **these are your app's build
-errors.** `tako dev`, `tako test`, `tako build` and `tako deploy` all
+errors** across both Go (`.go`) and `cfire` (`.cf`) applications. `tako dev`, `tako test`, `tako build` and `tako deploy` all
 refuse to proceed while any of them stands. The text is golden-tested,
 so what you read below is what you will see.
 

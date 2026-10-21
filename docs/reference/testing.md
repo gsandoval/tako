@@ -7,7 +7,7 @@ what each method does, and where the seams are.
 The shape of a Tako test is: **boot an app, call handlers directly,
 settle the async work, assert.** No HTTP, no emulators, no Docker, no
 cloud credentials — the same in-process backends `tako dev` runs, one
-fresh set per test.
+fresh set per test, in both Go (`tako.NewTestApp(t)`) and `cfire` (`*_test.cf` executed via `tako test` linked against `libtako.a`).
 
 ## Declare
 

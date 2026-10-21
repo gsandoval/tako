@@ -6,8 +6,9 @@ methods on the store you declared. Datastore in the cloud, bbolt locally.
 
 ## Declare
 
-From [examples/shortlink](../../examples/shortlink/app.go):
+From [examples/shortlink](../../examples/shortlink/app.go) (Go) and [examples/cfire-shortlink](../../examples/cfire-shortlink/shortlink.cf) (`cfire`):
 
+**Go**
 ```go
 var links = tako.Entity[Link]("links")
 
@@ -18,6 +19,35 @@ type Link struct {
     Created time.Time `entity:"index" json:"created"`
     Hits    int       `json:"hits"`
 }
+```
+
+**cfire**
+```cfire
+Links := tako.entity[Link]("links")
+
+type Link struct {
+    code:       str `entity:"id" json:"code"`
+    url:        str `json:"url"`
+    owner_id:   str `entity:"index" json:"owner_id"`
+    clicks:     i64 `entity:"index" json:"clicks"`
+    created_at: i64 `entity:"index" json:"created_at"`
+}
+```
+
+```mermaid
+flowchart LR
+    Struct["Entity Struct\n(entity:\"id\" + entity:\"index\")"]
+    Query["Static Query Call Sites\n(.Where / .where + .OrderBy / .order_by)"]
+    Analyzer["Tako Analyzer\n(tako/entity-id, tako/unindexed-query)"]
+    Composite["Derived Composite Indexes\n(+ datastore index in deploy plan)"]
+    LocalDB[("Local: bbolt\n(.tako/data/entity.db)")]
+    CloudDB[("Cloud: GCP Datastore\n(namespace = env)")]
+
+    Struct --> Analyzer
+    Query --> Analyzer
+    Analyzer --> Composite
+    Analyzer --> LocalDB
+    Composite --> CloudDB
 ```
 
 The struct is the schema: `entity:"id"` marks the key field (exactly
@@ -117,10 +147,11 @@ be rebuilt from the rows it points past, so caching only the items
 leaves a page that can never say what comes after it — gallery caches
 the whole `PhotoPage`.
 
-`Tx` runs a multi-entity transaction scoped to this store; an error
+`Tx` / `tx` runs a multi-entity transaction scoped to this store; an error
 rolls back and returns unchanged, so `tako.Errorf` statuses compose —
-shortlink claims a slug atomically:
+shortlink claims or updates a slug atomically:
 
+**Go**
 ```go
 err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
     if _, err := tx.Get(req.Slug); err == nil {
@@ -129,6 +160,16 @@ err := links.Tx(ctx, func(tx tako.EntityTx[Link]) error {
         return err
     }
     return tx.Put(link)
+})
+```
+
+**cfire**
+```cfire
+try Links.tx(ctx, |tx| -> bool! {
+    cur := try tx.get(evt.code)
+    updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
+    try tx.put(evt.code, updated)
+    return Ok(true)
 })
 ```
 

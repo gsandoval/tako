@@ -1,10 +1,8 @@
 # 6 · blog — a static generator with dynamic islands
 
-[examples/blog](../../examples/blog/app.go) is the static-site
-showcase: Hugo builds the site, tako ships it, and htmx islands call
-back into tako fragments for the one dynamic thing a blog needs —
-comments.
+[examples/blog](../../examples/blog/app.go) (Go) and [examples/cfire-blog](../../examples/cfire-blog/blog.cf) (`cfire`) are the static-site showcase: Hugo builds the site, tako ships it, and htmx islands call back into tako fragments for the one dynamic thing a blog needs — comments.
 
+**Go**
 ```go
 var comments = tako.Entity[Comment]("comments")
 
@@ -13,6 +11,29 @@ var site = tako.Site("./site/public",
 
 var Comments   = tako.Page("GET /frag/comments", listComments)
 var AddComment = tako.Page("POST /frag/comments", addComment)
+```
+
+**cfire**
+```cfire
+Comments := tako.entity[Comment]("comments")
+Site     := tako.site("./site/public")
+
+ListComments := tako.page("GET /frag/comments", list_comments)
+AddComment   := tako.page("POST /frag/comments", add_comment)
+```
+
+```mermaid
+flowchart LR
+    Hugo["Hugo Build\n(site/ → site/public/)"]
+    Embedded["Embedded Static Site\n(tako.Site / tako.site)"]
+    Browser["Reader Browser"]
+    Island["htmx Island\n(/frag/comments?post=...)"]
+    Store[("Entity: comments\n(Index: post + created)")]
+
+    Hugo --> Embedded
+    Browser -->|"Static HTML"| Embedded
+    Browser -->|"hx-get / hx-post"| Island
+    Island -->|"Query / Put"| Store
 ```
 
 ## The division of labor

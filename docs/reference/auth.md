@@ -2,9 +2,33 @@
 
 ## Declare
 
+**Go** ([examples/journal](../../examples/journal/app.go), [examples/shop](../../examples/shop/app.go))
 ```go
 auth = tako.Auth(tako.AuthConfig{Google: true})   // journal: Google sign-in
 auth = tako.Auth(tako.AuthConfig{Password: true})    // shop: email/password
+```
+
+**cfire** ([examples/cfire-journal](../../examples/cfire-journal/journal.cf))
+```cfire
+Auth      := tako.auth()
+Moderator := tako.role("moderator")
+```
+
+```mermaid
+sequenceDiagram
+    participant Browser as Browser
+    participant SignIn as /_tako/signin & /_tako/api/session
+    participant Store as Session Entity Store
+    participant Gate as Route.SignIn / Route.Allow + CSRF Gate
+    participant Handler as Page / API Handler
+
+    Browser->>SignIn: POST ID token (Cloud) or dev_user (Local)
+    SignIn->>Store: Write revocable session record (7d TTL + CSRF token)
+    SignIn-->>Browser: Set-Cookie: tako_session=<opaque-id>
+    Browser->>Gate: POST /p (Cookie + _csrf / X-CSRF-Token)
+    Gate->>Store: Load session & verify CSRF + Role policy
+    Gate->>Handler: Invoke handler with verified ctx.User()
+    Handler-->>Browser: 200 HTML / 303 Redirect
 ```
 
 One declaration injects the session surface: `POST /_tako/api/session`

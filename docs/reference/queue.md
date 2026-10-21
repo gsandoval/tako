@@ -5,10 +5,35 @@ worker processes it. Fan-out belongs to a [topic](topic.md).
 
 ## Declare
 
+**Go**
 ```go
 var clicks = tako.Queue[Click]("clicks")
 
 var CountClick = tako.Worker(clicks, countClick)
+```
+
+**cfire**
+```cfire
+Clicks := tako.queue[ClickEvent]("clicks")
+
+ProcessClick := tako.worker("Clicks", process_click)
+```
+
+```mermaid
+flowchart LR
+    Pub["Publisher Handler\n(clicks.Publish / Clicks.publish)"]
+    Q[["Queue: clicks\n(In-Proc Channel or Pub/Sub / Cloud Tasks)"]]
+    W["Worker Service: CountClick / ProcessClick\n(POST /_tako/api/push)"]
+    Ack["204 Ack\n(Ok(true) / nil)"]
+    Retry["500 Retry w/ Backoff\n(5 attempts, 10s–300s)"]
+    DLQ[("Dead-Letter Queue\n(tako dlq --replay / --ack)")]
+
+    Pub --> Q --> W
+    W -->|"Success"| Ack
+    W -->|"Transient Error"| Retry
+    Retry -->|"Attempts < Max"| Q
+    Retry -->|"Attempts Exhausted"| DLQ
+    W -->|"Permanent Error"| DLQ
 ```
 
 The worker var is a [`tako.Handler`](handler.md): the exported name is
@@ -35,6 +60,7 @@ MakeThumb = tako.Worker(thumbs, makeThumb,
 ack, an error to retry with backoff, `tako.Permanent(err)` to give up
 immediately and dead-letter. From gallery's worker:
 
+**Go**
 ```go
 func makeThumb(ctx tako.Ctx, job ThumbJob) error {
     img, err := photos.Get(ctx, job.PhotoID)
@@ -45,6 +71,19 @@ func makeThumb(ctx tako.Ctx, job ThumbJob) error {
         return tako.Permanent(errors.New("empty upload")) // never retriable
     }
     ...
+}
+```
+
+**cfire**
+```cfire
+process_click(ctx: tako.Ctx, evt: ClickEvent) -> bool! {
+    try Links.tx(ctx, |tx| -> bool! {
+        cur := try tx.get(evt.code)
+        updated := Link{code: cur.code, url: cur.url, owner_id: cur.owner_id, clicks: cur.clicks + 1, created_at: cur.created_at}
+        try tx.put(evt.code, updated)
+        return Ok(true)
+    })
+    return Ok(true)
 }
 ```
 

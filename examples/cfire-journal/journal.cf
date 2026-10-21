@@ -1,0 +1,68 @@
+package journal
+
+import "core:tako"
+
+type Post struct {
+    slug:      str  `entity:"id" json:"slug"`
+    title:     str  `json:"title"`
+    body:      str  `json:"body"`
+    author_id: str  `entity:"index" json:"author_id"`
+    published: bool `entity:"index" json:"published"`
+    created:   i64  `entity:"index" json:"created"`
+}
+
+type MovedURL struct {
+    from_slug: str `entity:"id" json:"from_slug"`
+    to_slug:   str `json:"to_slug"`
+}
+
+type PostReq struct {
+    slug: str `path:"slug"`
+}
+
+type CreatePostReq struct {
+    slug:  str `form:"slug" json:"slug"`
+    title: str `form:"title" json:"title"`
+    body:  str `form:"body" json:"body"`
+}
+
+type EmptyReq struct {}
+
+Posts     := tako.entity[Post]("posts")
+Moved     := tako.entity[MovedURL]("moved_urls")
+Site      := tako.site("./web")
+Auth      := tako.auth("google")
+Moderator := tako.role("moderator")
+
+Home       := tako.page("GET /", home_page)
+ReadPost   := tako.page("GET /posts/{slug}", read_post)
+CreatePost := tako.api("POST /api/posts", create_post)
+ListPosts  := tako.api("GET /api/posts", list_posts)
+
+fn home_page(ctx: tako.Ctx, req: EmptyReq) -> str! {
+    return "<h1>Journal</h1>"
+}
+
+fn read_post(ctx: tako.Ctx, req: PostReq) -> Post! {
+    return try Posts.get(ctx, req.slug)
+}
+
+fn create_post(ctx: tako.Ctx, req: CreatePostReq) -> Post! {
+    if req.slug == "" || req.title == "" {
+        return Err(tako.bad_request("slug and title are required"))
+    }
+    post := Post{
+        slug:      req.slug,
+        title:     req.title,
+        body:      req.body,
+        author_id: "author_1",
+        published: true,
+        created:   ctx.now_unix(),
+    }
+    try Posts.put(ctx, post)
+    return post
+}
+
+fn list_posts(ctx: tako.Ctx, req: EmptyReq) -> []Post! {
+    return []Post{}
+}

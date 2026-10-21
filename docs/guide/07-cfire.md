@@ -2,10 +2,14 @@
 
 Tako's architecture sits on two narrow waists: a compile-time `AppGraph` JSON contract and a runtime backend interface over opaque bytes. Because neither waist depends on Go's runtime inside your business logic, **cfire** (`.cf`) applications are first-class citizens in Tako alongside Go.
 
-Three canonical `.cf` examples mirror the Go progression:
+Three canonical `.cf` examples mirror the Go progression, and all seven examples have `.cf` counterparts:
 - [examples/cfire-hello](../../examples/cfire-hello/hello.cf) — endpoints, path/query/JSON binding, and typed errors.
 - [examples/cfire-shortlink](../../examples/cfire-shortlink/shortlink.cf) — entities, indexed fields, queues, workers, caches, and cron schedules.
 - [examples/cfire-gallery](../../examples/cfire-gallery/gallery.cf) — object storage buckets, entities, and custom metrics.
+- [examples/cfire-journal](../../examples/cfire-journal/journal.cf) — server-rendered HTML pages, forms, auth, and roles.
+- [examples/cfire-shop](../../examples/cfire-shop/shop.cf) — catalog/order entities, batch jobs, runners, and singletons.
+- [examples/cfire-blog](../../examples/cfire-blog/blog.cf) — static site with dynamic htmx comment fragments.
+- [examples/cfire-siren](../../examples/cfire-siren/siren.cf) — counters, histograms, and alert metrics.
 
 ```cfire
 package shortlink
@@ -48,6 +52,24 @@ A `.cf` application obeys the exact same structural rules as a Go Tako applicati
 - **Result & error ergonomics:** Handlers return `Res!` and propagate errors with `try` or return status-coded errors via `Err(tako.not_found("..."))` and `Err(tako.bad_request("..."))`.
 
 ## How the bridge works
+
+```mermaid
+flowchart LR
+    CF["User .cf Source\n(import \"core:tako\")"]
+    Outline["cfire outline --json"]
+    Analyzer["pkg/analyzer\n(BuildCfireGraph)"]
+    Graph["AppGraph JSON"]
+    Codegen["pkg/codegen\n(.tako/gen/<svc>/main.cf)"]
+    CfireBuild["cfire build\n(C++23 + sdk/cfire/include/tako.hpp)"]
+    LibTako["cmd/libtako\n(libtako-<os>-<arch>.a)"]
+    Bin["Native Service Binary\n(local dev or distroless/cc)"]
+
+    CF --> Outline --> Analyzer --> Graph --> Codegen
+    CF --> CfireBuild
+    Codegen --> CfireBuild
+    LibTako --> CfireBuild
+    CfireBuild --> Bin
+```
 
 1. **Static analysis (`tako gen graph`):** When Tako detects `.cf` files in a directory without a `go.mod`, it invokes `cfire outline --json` to inspect packages, struct field tags, global resource declarations, and handler signatures, producing the standard `AppGraph`.
 2. **Readable generated code (`.tako/gen/<service>/main.cf`):** Codegen emits a human-readable `main.cf` per service that registers entity schemas, decodes HTTP path/query/JSON parameters, and mounts handlers.

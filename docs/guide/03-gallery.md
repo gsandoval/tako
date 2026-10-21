@@ -1,8 +1,8 @@
 # 3 · gallery — files, events, and operations
 
-[examples/gallery](../../examples/gallery/app.go) is the async
-showcase: an image pipeline that is entirely event-driven.
+[examples/gallery](../../examples/gallery/app.go) (Go) and [examples/cfire-gallery](../../examples/cfire-gallery/gallery.cf) (`cfire`) are the async showcase: an image pipeline that is entirely event-driven.
 
+**Go**
 ```go
 var photos     = tako.Bucket("photos")
 var photoStore = tako.Entity[Photo]("photos")
@@ -14,6 +14,41 @@ var MakeThumb   = tako.Worker(thumbs, makeThumb, tako.Compute{Profile: tako.Prof
 var NotifyOwner = tako.Subscribe(ready, notifyOwner)
 var WarmFeed    = tako.Subscribe(ready, warmFeed)
 var Cleanup     = tako.Cron("every 24h", cleanupOrphans, tako.CronConfig{Singleflight: true})
+```
+
+**cfire**
+```cfire
+Photos := tako.entity[Photo]("photos")
+Images := tako.bucket("gallery-images")
+Uploads := tako.counter("gallery_uploads_total")
+
+UploadPhoto   := tako.api("POST /photos/{id}", upload_photo)
+GetPhoto      := tako.api("GET /photos/{id}", get_photo)
+DownloadPhoto := tako.api("GET /photos/{id}/raw", download_photo)
+DeletePhoto   := tako.api("DELETE /photos/{id}", delete_photo)
+```
+
+```mermaid
+flowchart LR
+    Browser["Client / Browser"]
+    Bucket[("Bucket: photos")]
+    OnUp["Subscriber: OnUploaded"]
+    ThumbQ[["Queue: thumbnails"]]
+    Worker["Batch Worker: MakeThumb"]
+    Store[("Entity: photos")]
+    ReadyT(("Topic: photo-ready"))
+    Notify["Subscriber: NotifyOwner"]
+    Warm["Subscriber: WarmFeed"]
+
+    Browser -->|"Signed PUT / Upload"| Bucket
+    Bucket -->|"photos.Uploaded"| OnUp
+    OnUp -->|"Publish"| ThumbQ
+    ThumbQ --> Worker
+    Worker -->|"Put thumbnail"| Bucket
+    Worker -->|"Update metadata"| Store
+    Worker -->|"Publish"| ReadyT
+    ReadyT --> Notify
+    ReadyT --> Warm
 ```
 
 ## The pipeline

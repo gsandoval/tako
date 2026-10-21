@@ -5,14 +5,22 @@ command that reads a deployed app's logs.
 
 ## Declare
 
-From [examples/gallery](../../examples/gallery/app.go):
+From [examples/gallery](../../examples/gallery/app.go) (Go) and [examples/cfire-siren](../../examples/cfire-siren/siren.cf) (`cfire`):
 
+**Go**
 ```go
 var (
     notifier = tako.Secret("notifier-key")
     ups      = tako.Counter("uploads")
     thumbMs  = tako.Histogram("thumb_ms")
 )
+```
+
+**cfire**
+```cfire
+WebhookSecret := tako.secret("siren_webhook_key")
+Processed     := tako.counter("siren_processed_total")
+WorkMs        := tako.histogram("siren_work_ms")
 ```
 
 Every name must be a string constant (analyzer-enforced). None of the
@@ -24,17 +32,30 @@ A secret resolves **once at startup** — boot refuses to start a
 service with any declared secret unset, which is what lets `Value()`
 take no Ctx and never fail at request time:
 
+**Go**
 ```go
 // Value never fails here: boot refused to start if the secret was unset.
 key := notifier.Value()
 ```
 
+**cfire**
+```cfire
+key := try WebhookSecret.get(ctx)
+```
+
 Metrics are fire-and-forget — recording never fails and never blocks
 the handler:
 
+**Go**
 ```go
 ups.Add(ctx, 1)
 thumbMs.Observe(ctx, float64(time.Since(start).Milliseconds()))
+```
+
+**cfire**
+```cfire
+Processed.inc(ctx, 1)
+WorkMs.observe(ctx, 42.5)
 ```
 
 ## Logging

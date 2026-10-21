@@ -2,8 +2,8 @@
 
 ## Declare
 
-Nothing to declare — every browser-callable `tako.API` endpoint is in;
-the command reads the app:
+Nothing to declare — every browser-callable `tako.API` / `tako.api` endpoint in your Go or `cfire` app is in;
+the command reads the `AppGraph`:
 
 ```
 tako gen client ts [--out <path>]

@@ -1,0 +1,68 @@
+package siren
+
+import "core:tako"
+
+type Task struct {
+    fail:    str `json:"fail"`
+    hold_ms: i64 `json:"hold_ms"`
+    burn_ms: i64 `json:"burn_ms"`
+}
+
+type Incident struct {
+    incident_id:    str `json:"incident_id"`
+    policy_name:    str `json:"policy_name"`
+    condition_name: str `json:"condition_name"`
+    state:          str `json:"state"`
+    summary:        str `json:"summary"`
+}
+
+type BoomReq struct {
+    rate: f64 `query:"rate"`
+}
+
+type SlowReq struct {
+    ms: i64 `query:"ms"`
+}
+
+type FloodReq struct {
+    n:    i64 `query:"n"`
+    fail: str `query:"fail"`
+}
+
+Work      := tako.queue[Task]("work")
+Incidents := tako.topic[Incident]("incidents")
+Hits      := tako.counter("hits")
+WorkMs    := tako.histogram("work_ms")
+
+Boom       := tako.api("GET /boom", boom_handler)
+Slow       := tako.api("GET /slow", slow_handler)
+Flood      := tako.api("POST /flood", flood_handler)
+WorkRunner := tako.worker(Work, run_task)
+OnIncident := tako.subscribe(Incidents, record_incident)
+
+fn boom_handler(ctx: tako.Ctx, req: BoomReq) -> str! {
+    Hits.inc(1)
+    if req.rate >= 1.0 {
+        return Err(tako.bad_request("boom: failing on purpose"))
+    }
+    return "ok"
+}
+
+fn slow_handler(ctx: tako.Ctx, req: SlowReq) -> str! {
+    Hits.inc(1)
+    WorkMs.observe(req.ms)
+    return "slept"
+}
+
+fn flood_handler(ctx: tako.Ctx, req: FloodReq) -> str! {
+    try Work.publish(ctx, Task{fail: req.fail, hold_ms: 0, burn_ms: 0})
+    return "queued"
+}
+
+fn run_task(ctx: tako.Ctx, t: Task) -> void! {
+    ctx.log_info("processing siren task")
+}
+
+fn record_incident(ctx: tako.Ctx, inc: Incident) -> void! {
+    ctx.log_info("received alert incident")
+}

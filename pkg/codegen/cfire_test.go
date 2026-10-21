@@ -67,6 +67,10 @@ func TestCfireCodegenExamples(t *testing.T) {
 		"../../examples/cfire-hello",
 		"../../examples/cfire-shortlink",
 		"../../examples/cfire-gallery",
+		"../../examples/cfire-journal",
+		"../../examples/cfire-shop",
+		"../../examples/cfire-blog",
+		"../../examples/cfire-siren",
 	}
 
 	for _, ex := range examples {

@@ -8,11 +8,36 @@ silence, legally.
 
 ## Declare
 
+**Go**
 ```go
 var ready = tako.Topic[PhotoReady]("photo-ready") // fan-out: MANY subscribers
 
 var NotifyOwner = tako.Subscribe(ready, notifyOwner)
 var WarmFeed    = tako.Subscribe(ready, warmFeed)
+```
+
+**cfire**
+```cfire
+Ready := tako.topic[PhotoReady]("photo-ready")
+
+NotifyOwner := tako.subscribe("Ready", notify_owner)
+WarmFeed    := tako.subscribe("Ready", warm_feed)
+```
+
+```mermaid
+flowchart LR
+    Pub["Publisher\n(ready.Publish / Ready.publish)"]
+    T(("Topic: photo-ready"))
+    Sub1["Subscriber Service: NotifyOwner"]
+    DLQ1[("DLQ: NotifyOwner")]
+    Sub2["Subscriber Service: WarmFeed"]
+    DLQ2[("DLQ: WarmFeed")]
+
+    Pub --> T
+    T -->|"Independent Push + Retry"| Sub1
+    Sub1 -->|"Exhausted"| DLQ1
+    T -->|"Independent Push + Retry"| Sub2
+    Sub2 -->|"Exhausted"| DLQ2
 ```
 
 Each subscriber var is a [`tako.Handler`](handler.md), and each is its
@@ -32,8 +57,14 @@ typed event names on the consuming side, no runtime surprises.
 
 ## Use
 
+**Go**
 ```go
 return ready.Publish(ctx, PhotoReady{PhotoID: p.ID, Owner: p.Owner, Caption: p.Caption})
+```
+
+**cfire**
+```cfire
+try Ready.publish(ctx, PhotoReady{photo_id: p.id, owner: p.owner, caption: p.caption})
 ```
 
 Every subscriber is the universal async shape: return `nil` to ack,

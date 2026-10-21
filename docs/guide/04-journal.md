@@ -1,10 +1,8 @@
 # 4 · journal — a website, no SPA required
 
-[examples/journal](../../examples/journal/app.go) is the
-server-rendered showcase: a multi-user blog in ~120 lines, with
-interactivity from htmx as a static asset — no client framework, no
-Node in production.
+[examples/journal](../../examples/journal/app.go) (Go) and [examples/cfire-journal](../../examples/cfire-journal/journal.cf) (`cfire`) are the server-rendered showcase: a multi-user blog in ~120 lines, with interactivity from htmx as a static asset — no client framework, no Node in production.
 
+**Go**
 ```go
 var posts = tako.Entity[Post]("posts")
 var site  = tako.Site("./web", tako.SiteConfig{Redirects: map[string]string{"/about-us": "/about"}})
@@ -14,6 +12,35 @@ var Home    = tako.Page("GET /", home)
 var Read    = tako.Page("GET /p/{id}", read)
 var Save    = tako.Page("POST /p", save, tako.Route{SignIn: true})
 var Publish = tako.Page("POST /p/{id}/publish", publish, tako.Route{SignIn: true})
+```
+
+**cfire**
+```cfire
+Posts     := tako.entity[Post]("posts")
+Site      := tako.site("./web")
+Auth      := tako.auth()
+Moderator := tako.role("moderator")
+
+Home     := tako.page("GET /", home)
+Read     := tako.page("GET /p/{id}", read_post)
+Save     := tako.page("POST /p", save_post)
+Publish  := tako.page("POST /p/{id}/publish", publish_post)
+Moderate := tako.page("GET /moderate", moderate)
+```
+
+```mermaid
+flowchart LR
+    Browser["Browser (HTML + htmx)"]
+    AuthGate["Auth + CSRF + Role Gate\n(/_tako/api/session*, Route.SignIn)"]
+    PageHandlers["Page Handlers\n(Home / Read / Save / Moderate)"]
+    Templates["Site Templates\n(site.Render / Fragment + sanitized Markdown)"]
+    Store[("Entity: posts")]
+
+    Browser -->|"GET / POST (form: tags)"| AuthGate
+    AuthGate --> PageHandlers
+    PageHandlers -->|"Query / Tx / Put"| Store
+    PageHandlers -->|"Render HTML / Fragment"| Templates
+    Templates --> Browser
 ```
 
 ## Sites and pages

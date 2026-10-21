@@ -6,6 +6,7 @@ those settings no longer ride whichever endpoint happened to be first.
 
 ## Declare
 
+**Go**
 ```go
 package blog
 
@@ -17,6 +18,8 @@ var web = tako.Service(
 	},
 )
 ```
+
+In both Go and `cfire`, a package with handlers and no explicit service config deploys as a service named after the package (e.g. `package shop` in [examples/cfire-shop](../../examples/cfire-shop/shop.cf) deploys its synchronous endpoints as `shop` and carves out `shop-settle` and `shop-invoicer`).
 
 One per package (`tako/one-service`), no per-handler binding — the same
 shape [`tako.Site`](site.md) and [`tako.Auth`](auth.md) already have.

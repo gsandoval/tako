@@ -174,6 +174,8 @@ process. The claims are still fully validated at analysis time, and
 
 ## Cloud
 
+Footprint and profile settings apply identically whether the service is compiled from Go (`gcr.io/distroless/static-debian12:nonroot`) or `cfire` (`gcr.io/distroless/cc-debian12:nonroot`).
+
 Footprint fields must be constants — they are read at analysis time,
 and validated twice: each field against Cloud Run's limits, then the
 RESOLVED combination (profile base plus overrides) against Cloud Run's

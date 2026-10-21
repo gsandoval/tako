@@ -52,6 +52,23 @@ callees, so nothing changes shape locally.
 
 ## Cloud
 
+```mermaid
+sequenceDiagram
+    participant Browser as Browser / Client
+    participant Shop as Caller Service (shop)
+    participant IAM as Cloud Run IAM Gate
+    participant Billing as Private Callee (billing)
+    participant Store as Session Entity Store
+
+    Browser->>Shop: POST /api/orders (Cookie: tako_session)
+    Shop->>Shop: Mint OIDC Token (aud = billing URL)
+    Shop->>IAM: POST /charge (Authorization: Bearer OIDC, X-Tako-Session, X-Tako-Deadline)
+    IAM->>Billing: Verify roles/run.invoker (shop-sa)
+    Billing->>Store: Verify & load session record
+    Billing-->>Shop: 200 Receipt JSON (or verbatim 4xx status)
+    Shop-->>Browser: 200 Order JSON
+```
+
 One authenticated HTTP round trip over the endpoint's own route. The
 caller mints an OIDC identity token from the metadata server for the
 callee's URL (its own service account's identity, cached ~50 minutes;
