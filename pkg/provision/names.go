@@ -22,18 +22,28 @@ const maxBucketName = 63
 // string that appears nowhere in the user's code.
 func CheckNames(g *analyzer.AppGraph, cfg Config) error {
 	for _, r := range g.Resources {
-		if r.Kind != "bucket" {
+		var name, kindLabel string
+		switch r.Kind {
+		case "bucket":
+			name = gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
+			kindLabel = "bucket"
+		case "disk":
+			if r.Config["ephemeral"] == "true" {
+				continue
+			}
+			name = gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
+			kindLabel = "disk"
+		default:
 			continue
 		}
-		name := gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
 		if len(name) <= maxBucketName {
 			continue
 		}
-		return fmt.Errorf("bucket %q would be created as\n  %s (%d characters)\n\n"+
+		return fmt.Errorf("%s %q would be created as\n  %s (%d characters)\n\n"+
 			"    Google caps bucket names at %d. The name is\n"+
 			"    <project>-<app id>-<env>-<declared name>; shorten the declared\n"+
 			"    name, the env, or the project id.",
-			r.Name, name, len(name), maxBucketName)
+			kindLabel, r.Name, name, len(name), maxBucketName)
 	}
 	return checkCollisions(g)
 }

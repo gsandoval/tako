@@ -36,6 +36,13 @@ func verbOf(kind, method string) string {
 		case "SignedPut", "SignedGet":
 			return "sign"
 		}
+	case "disk":
+		switch method {
+		case "ReadFile", "Open", "Stat", "FS", "Path":
+			return "read"
+		case "WriteFile", "Create", "OpenFile", "Remove", "MkdirAll":
+			return "write"
+		}
 	case "queue", "topic":
 		if method == "Publish" || method == "PublishAfter" {
 			return "publish"

@@ -1,6 +1,10 @@
 package tako
 
-import "github.com/gsandoval/tako/internal/hooks"
+import (
+	"time"
+
+	"github.com/gsandoval/tako/internal/hooks"
+)
 
 // The runtime wires backends and handler registrations through
 // internal/hooks; this init hands it a reader for Handler records
@@ -18,6 +22,22 @@ func init() {
 			return hd.parallel
 		}
 		return 1
+	}
+	hooks.HandlerCronConfig = func(h any) (string, time.Duration) {
+		if hd, ok := h.(Handler); ok {
+			return hd.timezone, hd.timeout
+		}
+		return "", 0
+	}
+	hooks.HandlerJobConfig = func(h any) (int, int, time.Duration) {
+		if hd, ok := h.(Handler); ok {
+			par := hd.parallel
+			if par < 1 {
+				par = 1
+			}
+			return par, hd.attempts, hd.timeout
+		}
+		return 1, 0, 0
 	}
 	// The runtime attaches the DECLARED name (the analyzer's variable
 	// name, carried by the generated Register calls) to a handler by id.

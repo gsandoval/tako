@@ -32,21 +32,38 @@ func RegisterJob(name string, h tako.Handler) {
 		panic("tako: RegisterJob before Boot")
 	}
 	par := 1
-	if hooks.HandlerParallel != nil {
+	attempts := 0
+	var timeout time.Duration
+	if hooks.HandlerJobConfig != nil {
+		par, attempts, timeout = hooks.HandlerJobConfig(h)
+	} else if hooks.HandlerParallel != nil {
 		par = hooks.HandlerParallel(h)
+	}
+	if attempts > 0 {
+		SetQueueDelivery(hooks.JobQueue(jobName), attempts, 0, 0)
+	}
+	runTask := fn
+	if timeout > 0 {
+		base := fn
+		runTask = func(ctx tako.Ctx, b []byte) error {
+			c, cancel := context.WithTimeout(ctx, timeout)
+			defer cancel()
+			taskIdx, taskCnt := ctx.Task()
+			return base(&requestCtx{Context: c, log: ctx.Log(), taskIndex: taskIdx, taskCount: taskCnt}, b)
+		}
 	}
 	hooks.Queue.Consume(hooks.JobQueue(jobName), func(ctx context.Context, payload []byte) error {
 		// WithParallel locally: N tasks per execution, joined — the
 		// same shard indices Cloud Run hands out, one process over.
 		if par == 1 {
 			jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name)}
-			return fn(jctx, payload)
+			return runTask(jctx, payload)
 		}
 		errs := make(chan error, par)
 		for i := range par {
 			go func(i int) {
 				jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name, "task", i), taskIndex: i, taskCount: par}
-				errs <- fn(jctx, payload)
+				errs <- runTask(jctx, payload)
 			}(i)
 		}
 		var first error

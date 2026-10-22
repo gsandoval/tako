@@ -7,6 +7,7 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	runtime "github.com/gsandoval/tako/pkg/runtime"
 
@@ -16,9 +17,15 @@ import (
 func main() {
 	runtime.Boot() // observability always; backends when this package declares any
 
+	runtime.SetQueueDelivery("clicks", 5, 10*time.Second, 300*time.Second)
+
+	runtime.SetQueueDelivery("expiries", 5, 10*time.Second, 300*time.Second)
+
 	// queue archive: WithDelivery RateLimit 2 — Cloud Tasks caps dispatch
 	// in the cloud; locally the dispatcher paces to the same rate.
 	runtime.SetQueueRate("archive", 2)
+
+	runtime.SetQueueDelivery("archive", 5, 30*time.Second, 600*time.Second)
 
 	mux := http.NewServeMux()
 

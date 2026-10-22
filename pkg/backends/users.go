@@ -46,10 +46,12 @@ type Users interface {
 // account that signs in with Google has none, and demanding one would
 // make the common case invent a secret nobody uses.
 type NewUserSpec struct {
-	Email    string
-	Password string
-	Name     string
-	Roles    []string
+	ID            string
+	Email         string
+	Password      string
+	Name          string
+	Roles         []string
+	EmailVerified bool
 }
 
 // UserRecord is one account as a backend holds it. There is no password

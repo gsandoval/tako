@@ -314,7 +314,7 @@ var declCtors = map[string]bool{
 	"Site": true, "Service": true, "Auth": true, "Policy": true,
 	"RequireRole": true, "Role": true, "StatusPage": true, "Job": true,
 	"Lock": true, "Alert": true, "AlertEmail": true, "AlertTopic": true,
-	"AlertWebhook": true,
+	"AlertWebhook": true, "Disk": true,
 }
 
 // checkPackageLevel reports handler and resource constructors called

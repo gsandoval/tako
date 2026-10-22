@@ -249,6 +249,64 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 	}
 	sort.Strings(eventList)
 
+	disksByName := map[string]analyzer.Resource{}
+	for _, r := range g.Resources {
+		if r.Kind == "disk" {
+			disksByName[r.Name] = r
+		}
+	}
+	svcDisks := map[string]map[string]bool{} // service → disk name → touched
+	for _, e := range g.Edges {
+		if e.Kind == "resource" && e.ToKind == "disk" {
+			svc := svcOf[e.From]
+			if svc == "" {
+				continue
+			}
+			if svcDisks[svc] == nil {
+				svcDisks[svc] = map[string]bool{}
+			}
+			svcDisks[svc][e.To] = true
+		}
+	}
+	mountsFor := func(service string) []any {
+		touched := svcDisks[service]
+		if len(touched) == 0 {
+			return nil
+		}
+		names := make([]string, 0, len(touched))
+		for name := range touched {
+			if _, ok := disksByName[name]; ok {
+				names = append(names, name)
+			}
+		}
+		sort.Strings(names)
+		out := make([]any, 0, len(names))
+		for _, name := range names {
+			r := disksByName[name]
+			if r.Config["ephemeral"] == "true" {
+				sizeLimit := r.Config["size_limit"]
+				if sizeLimit == "" {
+					sizeLimit = "512Mi"
+				}
+				out = append(out, map[string]any{
+					"name":      r.Name,
+					"mountPath": gcpb.DiskMountPath(r.Name),
+					"ephemeral": true,
+					"sizeLimit": sizeLimit,
+				})
+			} else {
+				out = append(out, map[string]any{
+					"name":      r.Name,
+					"mountPath": gcpb.DiskMountPath(r.Name),
+					"ephemeral": false,
+					"bucket":    gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
+					"readOnly":  r.Config["readonly"] == "true",
+				})
+			}
+		}
+		return out
+	}
+
 	for _, svc := range g.Services {
 		image, ok := images[svc.Name]
 		if !ok {
@@ -348,37 +406,45 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					taskCount = h.Parallel
 				}
 			}
+			jobSpec := map[string]any{
+				"image":          image,
+				"serviceAccount": cfg.SAEmail(svc.Name),
+				"env":            env,
+				"taskCount":      taskCount,
+				// Task compute: the footprint's CPU/Memory/Timeout
+				// when pinned, batch-profile values otherwise.
+				"cpu":     strconv.Itoa(resolved.CPU),
+				"memory":  resolved.Memory,
+				"timeout": traffic.TimeoutSeconds,
+				"retries": jobRetries(g, svc.Name),
+			}
+			if mounts := mountsFor(svc.Name); len(mounts) > 0 {
+				jobSpec["mounts"] = mounts
+			}
 			objs = append(objs, Object{
 				Kind: KindRunJob,
 				Name: cfg.Name(svc.Name),
-				Spec: map[string]any{
-					"image":          image,
-					"serviceAccount": cfg.SAEmail(svc.Name),
-					"env":            env,
-					"taskCount":      taskCount,
-					// Task compute: the footprint's CPU/Memory/Timeout
-					// when pinned, batch-profile values otherwise.
-					"cpu":     strconv.Itoa(resolved.CPU),
-					"memory":  resolved.Memory,
-					"timeout": traffic.TimeoutSeconds,
-					"retries": jobRetries(g, svc.Name),
-				},
+				Spec: jobSpec,
 			})
 			continue
+		}
+		svcSpec := map[string]any{
+			"image":          image,
+			"serviceAccount": cfg.SAEmail(svc.Name),
+			"env":            env,
+			"scaling":        knobs,
+			// Async services admit only the OIDC push identity;
+			// WithPrivate services admit only granted callers;
+			// singleton loops admit nobody's traffic but health.
+			"public": !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
+		}
+		if mounts := mountsFor(svc.Name); len(mounts) > 0 {
+			svcSpec["mounts"] = mounts
 		}
 		objs = append(objs, Object{
 			Kind: KindRunService,
 			Name: cfg.Name(svc.Name),
-			Spec: map[string]any{
-				"image":          image,
-				"serviceAccount": cfg.SAEmail(svc.Name),
-				"env":            env,
-				"scaling":        knobs,
-				// Async services admit only the OIDC push identity;
-				// WithPrivate services admit only granted callers;
-				// singleton loops admit nobody's traffic but health.
-				"public": !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
-			},
+			Spec: svcSpec,
 		})
 	}
 
@@ -448,6 +514,15 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				// cors: browsers execute signed URLs directly against
 				// the bucket (SignedPut's whole point).
 				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": true},
+			})
+		case "disk":
+			if r.Config["ephemeral"] == "true" {
+				continue
+			}
+			objs = append(objs, Object{
+				Kind: KindBucket,
+				Name: gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
+				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": false},
 			})
 		case "entity":
 			for ti, tuple := range r.Composites {

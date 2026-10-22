@@ -33,7 +33,7 @@ var devNonce = os.Getenv("TAKO_DEV_NONCE")
 // its child — the one request a tako service answers that no client
 // made and no log should carry.
 func isDevProbe(r *http.Request) bool {
-	return devNonce != "" && r.URL.Path == routes.DevReady
+	return activeDevNonce() != "" && (r.URL.Path == routes.DevReady || r.URL.Path == devReadyAliasPath)
 }
 
 // devReadyFirst answers the dev loop's identity probe ahead of the app.
@@ -41,7 +41,7 @@ func isDevProbe(r *http.Request) bool {
 // empty and this is one string comparison per request.
 func devReadyFirst(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if answerDevReady(w, r) {
+		if answerDevReady(w, r) || answerDevUsers(w, r) {
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -55,7 +55,7 @@ func answerDevReady(w http.ResponseWriter, r *http.Request) bool {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.WriteString(w, devNonce)
+	_, _ = io.WriteString(w, activeDevNonce())
 	return true
 }
 
@@ -94,6 +94,9 @@ func Reserved(framework, app http.Handler) http.Handler {
 		// it — the dev loop read the 404 as a stranger's server and
 		// killed its own healthy child. It lives in Serve now, which
 		// every service calls.
+		if answerDevReady(w, r) || answerDevUsers(w, r) {
+			return
+		}
 		if routes.IsReserved(r.URL.Path) {
 			framework.ServeHTTP(w, r)
 			return

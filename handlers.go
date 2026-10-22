@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends"
@@ -83,7 +84,10 @@ type Handler struct {
 	// VALUE is matched — app.AdvanceCron(Cleanup) — without comparing
 	// function pointers, and how the runtime attaches the declared name.
 	id       int
-	parallel int // RunnerConfig.Parallel fan-out for jobs; 0/1 = one task
+	parallel int           // RunnerConfig.Parallel fan-out for jobs; 0/1 = one task
+	attempts int           // RunnerConfig.Attempts for jobs
+	timeout  time.Duration // RunnerConfig.Timeout / CronConfig.Deadline / SingletonConfig.Timeout
+	timezone string        // CronConfig.Timezone
 	invoke   func(Ctx, []byte) error
 }
 
@@ -230,22 +234,42 @@ func Subscribe[T any](source EventSource[T], fn func(Ctx, T) error, cfg ...Compu
 // app.AdvanceCron(cron) fires one run synchronously.
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler {
 	id := nextHandlerID()
-	invoke := func(ctx Ctx, _ []byte) error { return fn(ctx) }
+	var timezone string
+	var deadline time.Duration
+	var singleflight bool
 	for _, c := range cfg {
+		if c.Timezone != "" {
+			timezone = c.Timezone
+		}
+		if c.Deadline > 0 {
+			deadline = c.Deadline
+		}
 		if c.Singleflight {
-			// The wrap lives HERE so every trigger — dev ticker,
-			// AdvanceCron, Cloud Scheduler — inherits it: one CAS
-			// attempt on the cron's lease; held elsewhere means an
-			// overlapping run is live, and this one collapses into it.
-			invoke = singleflightInvoke(id, fn)
+			singleflight = true
 		}
 	}
+	baseFn := fn
+	if deadline > 0 {
+		d := deadline
+		inner := baseFn
+		baseFn = func(ctx Ctx) error {
+			c, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(reroot(ctx, c))
+		}
+	}
+	invoke := func(ctx Ctx, _ []byte) error { return baseFn(ctx) }
+	if singleflight {
+		invoke = singleflightInvoke(id, baseFn)
+	}
 	return register(Handler{
-		kind:   "cron",
-		source: schedule,
-		name:   fnName(fn),
-		id:     id,
-		invoke: invoke,
+		kind:     "cron",
+		source:   schedule,
+		name:     fnName(fn),
+		id:       id,
+		timezone: timezone,
+		timeout:  deadline,
+		invoke:   invoke,
 	})
 }
 
@@ -271,11 +295,15 @@ func leaseKey(id int) string {
 
 func singleflightInvoke(id int, fn func(Ctx) error) func(Ctx, []byte) error {
 	return func(ctx Ctx, _ []byte) error {
-		if hooks.Lease == nil {
+		lease := hooks.Lease
+		if a := appFrom(ctx); a != nil && a.Lease != nil {
+			lease = a.Lease
+		}
+		if lease == nil {
 			return fn(ctx) // unwired (bare test): run plainly
 		}
 		key := leaseKey(id)
-		ran, err := backends.TryDoLease(ctx, hooks.Lease, key, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+		ran, err := backends.TryDoLease(ctx, lease, key, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 			return fn(reroot(ctx, c))
 		})
 		if err == nil && !ran && hooks.CronSkipped != nil {
@@ -290,10 +318,27 @@ func singleflightInvoke(id int, fn func(Ctx) error) func(Ctx, []byte) error {
 // executes only while holding the §4.4 lease, so min=1/max=1 plus the
 // lease — not either alone — is the guarantee.
 func Singleton(fn func(Ctx) error, cfg ...SingletonConfig) Handler {
+	var timeout time.Duration
+	for _, c := range cfg {
+		if c.Timeout > 0 {
+			timeout = c.Timeout
+		}
+	}
+	baseFn := fn
+	if timeout > 0 {
+		d := timeout
+		inner := baseFn
+		baseFn = func(ctx Ctx) error {
+			c, cancel := context.WithTimeout(ctx, d)
+			defer cancel()
+			return inner(reroot(ctx, c))
+		}
+	}
 	return register(Handler{
-		kind:   "singleton",
-		name:   fnName(fn),
-		id:     nextHandlerID(),
-		invoke: func(ctx Ctx, _ []byte) error { return fn(ctx) },
+		kind:    "singleton",
+		name:    fnName(fn),
+		id:      nextHandlerID(),
+		timeout: timeout,
+		invoke:  func(ctx Ctx, _ []byte) error { return baseFn(ctx) },
 	})
 }

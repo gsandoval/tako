@@ -54,11 +54,31 @@ func RegisterCron(name string, h tako.Handler) {
 		// the binary predates the declaration — fail loudly.
 		panic("tako: " + err.Error())
 	}
+	var tzName string
+	var deadline time.Duration
+	if hooks.HandlerCronConfig != nil {
+		tzName, deadline = hooks.HandlerCronConfig(h)
+	}
+	loc := time.Local
+	if tzName != "" {
+		if loaded, err := time.LoadLocation(tzName); err == nil {
+			loc = loaded
+		}
+	}
+	runCron := fn
+	if deadline > 0 {
+		base := fn
+		runCron = func(ctx tako.Ctx, b []byte) error {
+			c, cancel := context.WithTimeout(ctx, deadline)
+			defer cancel()
+			return base(&requestCtx{Context: c, log: ctx.Log()}, b)
+		}
+	}
 	// The declared name reaches the SDK here: singleflight keys its
 	// lease on it, and it is the only identity stable across instances
 	// and deploys.
 	hooks.SetHandlerIdentity(hooks.HandlerID(h), name)
-	cronHandlers.Store(name, fn)
+	cronHandlers.Store(name, runCron)
 	if cronInert {
 		// In the cloud the trigger is Cloud Scheduler → POST
 		// /_tako/api/cron/<name> (T2); a per-instance ticker would fire
@@ -69,7 +89,7 @@ func RegisterCron(name string, h tako.Handler) {
 	fmt.Printf("⏰ cron %s: %s\n", name, schedStr)
 	go func() {
 		var running atomic.Bool
-		for next := sched.Next(time.Now()); ; next = sched.Next(next) {
+		for next := sched.Next(time.Now().In(loc)); ; next = sched.Next(next.In(loc)) {
 			time.Sleep(time.Until(next))
 			if !running.CompareAndSwap(false, true) {
 				fmt.Printf("⏰ cron %s: run still in progress — tick skipped\n", name)
@@ -79,7 +99,7 @@ func RegisterCron(name string, h tako.Handler) {
 				defer running.Store(false)
 				start := time.Now()
 				cctx := &requestCtx{Context: context.Background(), log: slog.Default().With("cron", name)}
-				if err := fn(cctx, nil); err != nil {
+				if err := runCron(cctx, nil); err != nil {
 					fmt.Printf("⏰ cron %s failed: %v — next run on schedule\n", name, err)
 					return
 				}
@@ -192,6 +212,11 @@ func googleSigningKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
 // than push's 500.
 func verifyCronCaller(r *http.Request, name string) (int, error) {
 	audience, invoker := os.Getenv("TAKO_CRON_AUDIENCE"), os.Getenv("TAKO_CRON_INVOKER")
+	_, registered := cronHandlers.Load(name)
+	if isLocalBackend() && audience == "" && invoker == "" && r.Header.Get("Authorization") == "" &&
+		(registered || os.Getenv("TAKO_BACKEND") == "local" || activeDevNonce() != "") {
+		return 0, nil
+	}
 	refuse := func(status int, err error) (int, error) {
 		logRefusal(slog.Default().With("cron", name), "cron trigger", status, err,
 			"expected_audience", audience, "expected_invoker", invoker)

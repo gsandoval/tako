@@ -2,6 +2,7 @@ package tako
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
+	"github.com/gsandoval/tako/pkg/backends"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -53,9 +55,12 @@ func NewTestApp(tb testing.TB) *TestApp {
 			// Jobs ride the dispatcher locally: DrainQueues waits for
 			// them, failures dead-letter inspectably. RunnerConfig.Parallel runs
 			// its N tasks (ctx.Task() shards) joined per execution.
-			par, invoke, name := h.parallel, h.invoke, h.name
+			par, attempts, invoke, name := h.parallel, h.attempts, h.invoke, h.name
 			if par < 1 {
 				par = 1
+			}
+			if attempts > 0 {
+				app.Dispatcher.SetQueueDelivery(hooks.JobQueue(h.source), attempts, 0, 0)
 			}
 			app.Dispatcher.Consume(hooks.JobQueue(h.source), func(ctx context.Context, payload []byte) error {
 				if par == 1 {
@@ -122,9 +127,29 @@ type TestApp struct {
 //	editor := app.SignIn("ana", Editor)
 //	stranger := app.SignIn("sam")   // signed in, and behind every door
 func (a *TestApp) SignIn(name string, roles ...RoleHandle) User {
-	u := User{ID: name, Email: name + "@example.test", Name: name}
+	u := User{ID: name, Email: name + "@example.test", Name: name, EmailVerified: true}
 	for _, r := range roles {
 		u.Roles = append(u.Roles, r.Name())
+	}
+	if a.app != nil && a.app.Users != nil {
+		ctx := context.Background()
+		rec, err := a.app.Users.ByEmail(ctx, u.Email)
+		if errors.Is(err, backends.ErrNotFound) {
+			rec, err = a.app.Users.Create(ctx, backends.NewUserSpec{
+				ID:            name,
+				Email:         u.Email,
+				Name:          name,
+				Roles:         u.Roles,
+				EmailVerified: true,
+			})
+		} else if err == nil && !sameStrings(rec.Roles, u.Roles) {
+			if err = a.app.Users.SetRoles(ctx, rec.ID, u.Roles); err == nil {
+				rec.Roles = u.Roles
+			}
+		}
+		if err == nil && rec.ID != "" {
+			u.ID = rec.ID
+		}
 	}
 	return u
 }

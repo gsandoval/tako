@@ -1154,6 +1154,45 @@ inline Entity<T> entity(std::string_view name) { return Entity<T>(std::string(na
 
 inline Bucket bucket(std::string_view name) { return Bucket(std::string(name)); }
 
+struct DiskOpts {
+    bool read_only = false;
+    bool ephemeral = false;
+    std::string size_limit = "";
+};
+
+class Disk {
+public:
+    std::string name_;
+    DiskOpts opts_;
+
+    explicit Disk(std::string name, DiskOpts opts = {}) : name_(std::move(name)), opts_(std::move(opts)) {}
+
+    std::string path(Ctx /*ctx*/, std::string_view rel) const {
+        return "/mnt/tako/" + name_ + "/" + std::string(rel);
+    }
+
+    std::expected<std::string, cfire::Error> read_file(Ctx /*ctx*/, std::string_view rel) const {
+        auto& b = detail::local_store().buckets["disk:" + name_];
+        auto it = b.find(std::string(rel));
+        if (it == b.end()) return cfire::make_error(not_found("not found"));
+        return it->second.first;
+    }
+
+    std::expected<void, cfire::Error> write_file(Ctx /*ctx*/, std::string_view rel, std::string_view data) const {
+        if (opts_.read_only) return cfire::make_error("write to read-only disk");
+        detail::local_store().buckets["disk:" + name_][std::string(rel)] = {std::string(data), "application/octet-stream"};
+        return {};
+    }
+
+    std::expected<void, cfire::Error> remove(Ctx /*ctx*/, std::string_view rel) const {
+        if (opts_.read_only) return cfire::make_error("write to read-only disk");
+        detail::local_store().buckets["disk:" + name_].erase(std::string(rel));
+        return {};
+    }
+};
+
+inline Disk disk(std::string_view name, DiskOpts opts = {}) { return Disk(std::string(name), std::move(opts)); }
+
 template <typename T>
 inline Queue<T> queue(std::string_view name, QueueOpts /*opts*/ = {}) { return Queue<T>(std::string(name)); }
 

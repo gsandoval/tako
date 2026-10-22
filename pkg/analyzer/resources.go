@@ -148,6 +148,72 @@ func extractBucket(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	}
 }
 
+// extractDisk validates one tako.Disk declaration and its optional DiskConfig.
+func extractDisk(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return nil
+	}
+	resName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Disk name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	if !checkResourceName("disk", "tako.Disk", resName, dir, pkg, call.Args[0], errs) {
+		return nil
+	}
+	cfg, ok := configFields(dir, pkg, call.Args[1:], "DiskConfig", errs)
+	if !ok {
+		return nil
+	}
+	readOnly := boolField(dir, pkg, cfg, "ReadOnly", "DiskConfig", errs)
+	ephemeral := boolField(dir, pkg, cfg, "Ephemeral", "DiskConfig", errs)
+	sizeLimit, hasSize := stringField(dir, pkg, cfg, "SizeLimit", "DiskConfig", errs)
+	if hasSize && sizeLimit != "" {
+		if !ephemeral {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, cfg["SizeLimit"].Pos()),
+				Msg:  fmt.Sprintf("disk %q sets SizeLimit without Ephemeral: true — SizeLimit only caps in-memory ephemeral disks; persistent disks are backed by Cloud Storage", resName),
+				Rule: "footprint",
+			})
+			return nil
+		}
+		if mi, ok := memMi(sizeLimit); !ok || mi < 1 || mi > 32*1024 {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, cfg["SizeLimit"].Pos()),
+				Msg:  fmt.Sprintf("disk %q SizeLimit must be a memory size like \"512Mi\" or \"2Gi\" (up to 32Gi); got %q", resName, sizeLimit),
+				Rule: "footprint",
+			})
+			return nil
+		}
+	}
+	var cfgMap map[string]string
+	if readOnly || ephemeral || sizeLimit != "" {
+		cfgMap = map[string]string{}
+		if readOnly {
+			cfgMap["readonly"] = "true"
+		}
+		if ephemeral {
+			cfgMap["ephemeral"] = "true"
+		}
+		if sizeLimit != "" {
+			cfgMap["size_limit"] = sizeLimit
+		}
+	}
+	return &Resource{
+		Kind:    "disk",
+		Name:    resName,
+		Var:     pkg.Name + "." + name.Name,
+		Package: pkg.PkgPath,
+		Config:  cfgMap,
+		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+	}
+}
+
 // entitySchemaOf validates the payload struct's entity tags: exactly one
 // entity:"id" field, of type string.
 func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs *ErrorList) (*entityType, bool) {
@@ -689,7 +755,7 @@ var physicalName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
 // and capitals, and a Cache never leaves the process. Applying one
 // charset to all of them would refuse names that are perfectly legal
 // where they actually land.
-var physicallyNamed = map[string]bool{"bucket": true, "queue": true, "topic": true}
+var physicallyNamed = map[string]bool{"bucket": true, "queue": true, "topic": true, "disk": true}
 
 // checkResourceName reports whether the name is usable, appending the
 // error if not.

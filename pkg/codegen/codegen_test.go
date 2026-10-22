@@ -212,3 +212,42 @@ func mountPatterns(src string) map[string]string {
 	}
 	return out
 }
+
+func TestMultiPackageBackgroundHandlersRegisteredLocallyInPrimaryMain(t *testing.T) {
+	g := &analyzer.AppGraph{
+		Module: "example.com/app",
+		Services: []analyzer.Service{
+			{Name: "app", Package: "example.com/app"},
+			{Name: "workers-digest", Package: "example.com/app/workers"},
+		},
+		Resources: []analyzer.Resource{
+			{Kind: "queue", Name: "digests", Package: "example.com/app/workers", RateLimit: 5, MaxAttempts: 3, MinBackoffSeconds: 10, MaxBackoffSeconds: 60},
+		},
+		Handlers: []analyzer.Handler{
+			{Kind: "api", Service: "app", Package: "example.com/app", Var: "app.Home", Route: "GET /api/home"},
+			{Kind: "worker", Service: "workers-digest", Package: "example.com/app/workers", Var: "workers.SendDigest", Binding: "digests"},
+			{Kind: "cron", Service: "workers", Package: "example.com/app/workers", Var: "workers.Nightly", Binding: "every 24h"},
+		},
+	}
+	outDir := t.TempDir()
+	if _, err := Generate(g, outDir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, ".tako", "gen", "app", "main.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{
+		`workers "example.com/app/workers"`,
+		`if os.Getenv("TAKO_ENV") == ""`,
+		`runtime.SetQueueRate("digests", 5)`,
+		`runtime.SetQueueDelivery("digests", 3, 10*time.Second, 60*time.Second)`,
+		`runtime.RegisterWorker("SendDigest", workers.SendDigest)`,
+		`runtime.RegisterCron("Nightly", workers.Nightly)`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("generated primary main.go missing %q:\n%s", want, src)
+		}
+	}
+}

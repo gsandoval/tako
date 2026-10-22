@@ -59,8 +59,9 @@ type sessionRecord struct {
 	// a user's claims on every request would put an admin API call on
 	// the hot path. A grant or revoke marks the session stale instead
 	// (AB10b), and the next request refreshes exactly one of them.
-	Roles    []string `json:"roles,omitempty"`
-	Provider string   `json:"provider,omitempty"`
+	Roles         []string `json:"roles,omitempty"`
+	Provider      string   `json:"provider,omitempty"`
+	EmailVerified bool     `json:"emailVerified,omitempty"`
 	// Stale marks a session whose roles are known to be out of date: a
 	// grant or revoke landed after it was minted. The next request
 	// re-reads that ONE account and rewrites this record, which is how a
@@ -84,15 +85,16 @@ func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 		return nil, errors.New("tako: sessions need the entity backend — Boot wires it")
 	}
 	rec := &sessionRecord{
-		ID:       randomHex(16),
-		UID:      u.ID,
-		Email:    u.Email,
-		Name:     u.Name,
-		Roles:    u.Roles,
-		Provider: u.Provider,
-		CSRF:     randomHex(16),
-		Created:  time.Now().UTC(),
-		Expires:  time.Now().UTC().Add(sessionTTL),
+		ID:            randomHex(16),
+		UID:           u.ID,
+		Email:         u.Email,
+		Name:          u.Name,
+		Roles:         u.Roles,
+		Provider:      u.Provider,
+		EmailVerified: u.EmailVerified,
+		CSRF:          randomHex(16),
+		Created:       time.Now().UTC(),
+		Expires:       time.Now().UTC().Add(sessionTTL),
 	}
 	doc, err := json.Marshal(rec)
 	if err != nil {
@@ -137,7 +139,10 @@ func passwordSignIn(ctx context.Context, email, password string) (tako.User, err
 		// an address exists is not something a sign-in page tells you.
 		return tako.User{}, errors.New("account disabled")
 	}
-	return tako.User{ID: rec.ID, Email: rec.Email, Name: rec.Name, Provider: "email", Roles: rec.Roles}, nil
+	return tako.User{
+		ID: rec.ID, Email: rec.Email, Name: rec.Name,
+		Provider: "email", EmailVerified: rec.EmailVerified, Roles: rec.Roles,
+	}, nil
 }
 
 // seenKind marks identities tako has minted a session for. One tiny
@@ -182,27 +187,82 @@ func announceFirstSignIn(ctx context.Context, u tako.User) {
 	}
 }
 
+func defaultDevProvider(override string) string {
+	if override != "" {
+		return override
+	}
+	if slices.Contains(declaredProviders, "google") {
+		return "google"
+	}
+	if slices.Contains(declaredProviders, "github") {
+		return "github"
+	}
+	if len(declaredProviders) > 0 {
+		return declaredProviders[0]
+	}
+	return "email"
+}
+
+func toggleRoleSlice(roles []string, role string) []string {
+	var out []string
+	found := false
+	for _, r := range roles {
+		if r == role {
+			found = true
+			continue
+		}
+		out = append(out, r)
+	}
+	if !found {
+		out = append(out, role)
+	}
+	return out
+}
+
 // devAccount is what `tako dev` signs in as: a real account in the local
 // store, created on first sight and updated with whatever roles were
 // ticked. The ticks ARE the local grant — there is no console to open.
-func devAccount(ctx context.Context, name string, roles []string) (tako.User, error) {
+func devAccount(ctx context.Context, name string, roles []string, explicitRoles bool, toggleRole, providerOverride string) (tako.User, error) {
 	email := name + "@example.test"
-	base := tako.User{ID: name, Email: email, Name: name, Provider: "email", Roles: roles}
+	provider := defaultDevProvider(providerOverride)
+	if !explicitRoles && toggleRole != "" {
+		roles = toggleRoleSlice(nil, toggleRole)
+	}
+	base := tako.User{
+		ID: name, Email: email, Name: name,
+		Provider: provider, EmailVerified: true, Roles: roles,
+	}
 	if hooks.Users == nil {
 		return base, nil // unwired: the session still works, it just has no record
 	}
 	rec, err := hooks.Users.ByEmail(ctx, email)
 	if errors.Is(err, backends.ErrNotFound) {
-		rec, err = hooks.Users.Create(ctx, backends.NewUserSpec{Email: email, Name: name, Roles: roles})
-	} else if err == nil && !sameRoles(rec.Roles, roles) {
-		if err = hooks.Users.SetRoles(ctx, rec.ID, roles); err == nil {
-			rec.Roles = roles
+		rec, err = hooks.Users.Create(ctx, backends.NewUserSpec{
+			Email: email, Name: name, Roles: roles, EmailVerified: true,
+		})
+	} else if err == nil {
+		nextRoles := rec.Roles
+		shouldUpdate := false
+		if explicitRoles {
+			nextRoles = roles
+			shouldUpdate = !sameRoles(rec.Roles, nextRoles)
+		} else if toggleRole != "" {
+			nextRoles = toggleRoleSlice(rec.Roles, toggleRole)
+			shouldUpdate = true
+		}
+		if shouldUpdate {
+			if err = hooks.Users.SetRoles(ctx, rec.ID, nextRoles); err == nil {
+				rec.Roles = nextRoles
+			}
 		}
 	}
 	if err != nil {
 		return tako.User{}, err
 	}
-	return tako.User{ID: rec.ID, Email: rec.Email, Name: rec.Name, Provider: "email", Roles: rec.Roles}, nil
+	return tako.User{
+		ID: rec.ID, Email: rec.Email, Name: rec.Name,
+		Provider: provider, EmailVerified: true, Roles: rec.Roles,
+	}, nil
 }
 
 func sameRoles(a, b []string) bool {
@@ -322,7 +382,7 @@ func (s *sessionRecord) user() tako.User {
 	}
 	return tako.User{
 		ID: s.UID, Email: s.Email, Name: s.Name,
-		Roles: s.Roles, Provider: s.Provider,
+		Roles: s.Roles, Provider: s.Provider, EmailVerified: s.EmailVerified,
 	}
 }
 
@@ -408,7 +468,15 @@ func SessionHandler(providers ...string) http.Handler {
 				// while somebody was demonstrably signed in, so an admin
 				// screen worked deployed and was inert on a laptop.
 				var err error
-				u, err = devAccount(r.Context(), name, r.PostForm["dev_role"])
+				explicitRoles := r.PostFormValue("dev_roles_form") != "" || len(r.PostForm["dev_role"]) > 0
+				u, err = devAccount(
+					r.Context(),
+					name,
+					r.PostForm["dev_role"],
+					explicitRoles,
+					r.PostFormValue("dev_toggle_role"),
+					r.PostFormValue("dev_provider"),
+				)
 				if err != nil {
 					http.Error(w, "dev sign-in: "+err.Error(), http.StatusInternalServerError)
 					return
@@ -467,13 +535,14 @@ func SessionHandler(providers ...string) http.Handler {
 			setSessionCookie(w, r, rec.ID, rec.Expires)
 			// The dev bar (and dev sign-in page) post plain forms:
 			// bounce to next, else back to the page.
-			if r.PostFormValue("dev_user") != "" {
+			if r.PostFormValue("dev_user") != "" || r.PostFormValue("next") != "" {
 				// Same guard as the sign-in page's: a bare "starts with /"
 				// admits //evil.example, and this one ends in a Location
 				// header. The Referer fallback goes through it too — that
 				// header is the browser's, not ours.
-				to := safeNext(r.PostFormValue("next"))
-				if to == "/" {
+				rawNext := r.PostFormValue("next")
+				to := safeNext(rawNext)
+				if rawNext == "" {
 					if ref := r.Referer(); ref != "" {
 						if u, err := url.Parse(ref); err == nil && u.Host == r.Host {
 							to = safeNext(u.RequestURI())
@@ -779,6 +848,27 @@ func (b *barWriter) flush() {
 	controls.WriteString(`</form>`)
 	if rec != nil {
 		who = "signed in as " + rec.Name
+		if len(declaredRoles) > 0 {
+			for _, role := range declaredRoles {
+				active := slices.Contains(rec.Roles, role)
+				nextRoles := toggleRoleSlice(rec.Roles, role)
+				controls.WriteString(`<form method="post" action="` + routes.Session + `" style="display:inline;margin:0">`)
+				fmt.Fprintf(&controls, `<input type="hidden" name="dev_user" value="%s">`, html.EscapeString(rec.Name))
+				controls.WriteString(`<input type="hidden" name="dev_roles_form" value="1">`)
+				for _, nr := range nextRoles {
+					fmt.Fprintf(&controls, `<input type="hidden" name="dev_role" value="%s">`, html.EscapeString(nr))
+				}
+				label := html.EscapeString(role)
+				style := "opacity:0.65"
+				if active {
+					label = "✓ " + label
+					style = "font-weight:600"
+				}
+				fmt.Fprintf(&controls, `<button name="dev_toggle_role" value="%s" style="%s">%s</button>`,
+					html.EscapeString(role), style, label)
+				controls.WriteString(`</form>`)
+			}
+		}
 		controls.WriteString(`<form method="post" action="` + routes.SignOut + `" style="margin:0"><button>sign out</button></form>`)
 	}
 	// The id is a CONTRACT, not decoration: an app whose own layout puts
@@ -910,7 +1000,7 @@ const signInDevPage = `<!doctype html><meta charset="utf-8"><title>sign in · ta
 <body style="font:16px sans-serif;max-width:32rem;margin:4rem auto">
 <h1>Sign in (dev)</h1>
 <p>Local sessions are dev-minted — no GCP involved. Pick a user:</p>
-<form method="post" action="` + routes.Session + `"><input type="hidden" name="next" value="%s">
+<form method="post" action="` + routes.Session + `"><input type="hidden" name="next" value="%s"><input type="hidden" name="dev_roles_form" value="1">
 %s<button name="dev_user" value="alice">alice</button>
 <button name="dev_user" value="bob">bob</button>
 </form>%s</body>`

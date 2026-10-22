@@ -52,6 +52,7 @@ func RunJobMain(name string, h github.com/gsandoval/tako.Handler)
 func RunSingletonLoop(name string, h github.com/gsandoval/tako.Handler)
 func Serve(h net/http.Handler)
 func SessionHandler(providers ...string) net/http.Handler
+func SetQueueDelivery(queue string, maxAttempts int, minBackoff time.Duration, maxBackoff time.Duration)
 func SetQueueRate(queue string, perSec int)
 func SignInPage(providers ...string) net/http.Handler
 func SignOutHandler() net/http.Handler

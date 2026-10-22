@@ -37,6 +37,23 @@ func (r *RunServices) parent() string {
 	return fmt.Sprintf("projects/%s/locations/%s", r.C.Project, r.C.Region)
 }
 
+type runVolume struct {
+	Name string `json:"name"`
+	GCS  *struct {
+		Bucket   string `json:"bucket"`
+		ReadOnly bool   `json:"readOnly,omitempty"`
+	} `json:"gcs,omitempty"`
+	EmptyDir *struct {
+		Medium    string `json:"medium,omitempty"`
+		SizeLimit string `json:"sizeLimit,omitempty"`
+	} `json:"emptyDir,omitempty"`
+}
+
+type runVolumeMount struct {
+	Name      string `json:"name"`
+	MountPath string `json:"mountPath"`
+}
+
 type runService struct {
 	Name        string            `json:"name,omitempty"`
 	URI         string            `json:"uri,omitempty"`
@@ -48,12 +65,13 @@ type runService struct {
 			MinInstanceCount int `json:"minInstanceCount"`
 			MaxInstanceCount int `json:"maxInstanceCount"`
 		} `json:"scaling"`
-		MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
+		MaxInstanceRequestConcurrency int         `json:"maxInstanceRequestConcurrency,omitempty"`
 		// Omitted-when-false, like cpuIdle and startupCpuBoost — the third
 		// field on this service with that shape, and the third chance to
 		// report drift against ourselves if liveHash forgets it.
-		SessionAffinity bool   `json:"sessionAffinity,omitempty"`
-		Timeout         string `json:"timeout,omitempty"`
+		SessionAffinity bool        `json:"sessionAffinity,omitempty"`
+		Timeout         string      `json:"timeout,omitempty"`
+		Volumes         []runVolume `json:"volumes,omitempty"`
 		Containers      []struct {
 			Image string `json:"image"`
 			Env   []struct {
@@ -64,7 +82,8 @@ type runService struct {
 				Name          string `json:"name,omitempty"`
 				ContainerPort int    `json:"containerPort,omitempty"`
 			} `json:"ports,omitempty"`
-			Resources struct {
+			VolumeMounts []runVolumeMount `json:"volumeMounts,omitempty"`
+			Resources    struct {
 				Limits  map[string]string `json:"limits,omitempty"`
 				CPUIdle bool              `json:"cpuIdle,omitempty"`
 				// Like cpuIdle, this reads back only when true — the
@@ -152,6 +171,84 @@ func portName(http2 bool) string {
 	return "http1"
 }
 
+func reconstructMounts(volumes []runVolume, vmounts []runVolumeMount) []any {
+	if len(volumes) == 0 {
+		return nil
+	}
+	mountPaths := map[string]string{}
+	for _, vm := range vmounts {
+		mountPaths[vm.Name] = vm.MountPath
+	}
+	var out []any
+	for _, v := range volumes {
+		if v.EmptyDir != nil {
+			out = append(out, map[string]any{
+				"name":      v.Name,
+				"mountPath": mountPaths[v.Name],
+				"ephemeral": true,
+				"sizeLimit": v.EmptyDir.SizeLimit,
+			})
+		} else if v.GCS != nil {
+			out = append(out, map[string]any{
+				"name":      v.Name,
+				"mountPath": mountPaths[v.Name],
+				"ephemeral": false,
+				"bucket":    v.GCS.Bucket,
+				"readOnly":  v.GCS.ReadOnly,
+			})
+		}
+	}
+	slices.SortFunc(out, func(a, b any) int {
+		na, _ := a.(map[string]any)["name"].(string)
+		nb, _ := b.(map[string]any)["name"].(string)
+		return strings.Compare(na, nb)
+	})
+	return out
+}
+
+func buildVolumesAndMounts(spec map[string]any) ([]map[string]any, []map[string]any) {
+	raw, ok := spec["mounts"].([]any)
+	if !ok || len(raw) == 0 {
+		return nil, nil
+	}
+	var volumes []map[string]any
+	var vmounts []map[string]any
+	for _, item := range raw {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		mountPath, _ := m["mountPath"].(string)
+		ephemeral, _ := m["ephemeral"].(bool)
+		if ephemeral {
+			sizeLimit, _ := m["sizeLimit"].(string)
+			volumes = append(volumes, map[string]any{
+				"name": name,
+				"emptyDir": map[string]any{
+					"medium":    "MEMORY",
+					"sizeLimit": sizeLimit,
+				},
+			})
+		} else {
+			bucket, _ := m["bucket"].(string)
+			readOnly, _ := m["readOnly"].(bool)
+			volumes = append(volumes, map[string]any{
+				"name": name,
+				"gcs": map[string]any{
+					"bucket":   bucket,
+					"readOnly": readOnly,
+				},
+			})
+		}
+		vmounts = append(vmounts, map[string]any{
+			"name":      name,
+			"mountPath": mountPath,
+		})
+	}
+	return volumes, vmounts
+}
+
 // liveHash re-derives the intended-spec map from the live service so a
 // console edit of any tako-owned field hashes differently. Values GCP
 // normalizes are un-normalized (cpu "1000m" → "1").
@@ -165,7 +262,7 @@ func liveHash(svc runService, public bool) string {
 		env[e.Name] = e.Value
 	}
 	cpu := strings.TrimSuffix(c.Resources.Limits["cpu"], "000m")
-	return provision.SpecHash(map[string]any{
+	spec := map[string]any{
 		"image":          c.Image,
 		"serviceAccount": svc.Template.ServiceAccount,
 		"env":            env,
@@ -183,7 +280,11 @@ func liveHash(svc runService, public bool) string {
 			"timeout":      secondsOf(svc.Template.Timeout),
 		},
 		"public": public,
-	})
+	}
+	if mounts := reconstructMounts(svc.Template.Volumes, c.VolumeMounts); len(mounts) > 0 {
+		spec["mounts"] = mounts
+	}
+	return provision.SpecHash(spec)
 }
 
 func (r *RunServices) body(o provision.Object) map[string]any {
@@ -197,55 +298,64 @@ func (r *RunServices) body(o provision.Object) map[string]any {
 	for k, v := range r.Annotations {
 		annotations[k] = v
 	}
+	volumes, vmounts := buildVolumesAndMounts(spec)
+	container := map[string]any{
+		"image": spec["image"],
+		"env":   env,
+		// The port NAME is how Cloud Run's v2 API expresses the
+		// protocol for the last hop: "h2c" keeps HTTP/2 all the way
+		// to the instance, "http1" lets the edge downgrade. TLS is
+		// terminated at the frontend either way — a container never
+		// sees it — so h2c is the only shape HTTP/2 can take here.
+		//
+		// containerPort is NOT optional alongside it. Naming a port
+		// without a number fails the create outright ("must be
+		// 0 < port_number < 65536" — the zero value is not a
+		// default, it is a violation). It is also what Cloud Run
+		// injects as PORT, so it has to match what Serve listens
+		// on when PORT is unset.
+		"ports": []map[string]any{{
+			"name":          portName(scaling["http2"] == true),
+			"containerPort": defaultPort,
+		}},
+		"resources": map[string]any{
+			"limits": map[string]string{
+				"cpu":    fmt.Sprint(scaling["cpu"]),
+				"memory": fmt.Sprint(scaling["memory"]),
+			},
+			// Cloud Run throttles CPU between requests unless told
+			// otherwise; Latency is the profile that says otherwise.
+			"cpuIdle": scaling["cpuAlwaysOn"] != true,
+			// Extra CPU until the instance is serving. A warm floor
+			// cannot prevent every cold start, so this is the other
+			// half of what Latency promises.
+			"startupCpuBoost": scaling["startupBoost"] == true,
+		},
+	}
+	if len(vmounts) > 0 {
+		container["volumeMounts"] = vmounts
+	}
+	tmpl := map[string]any{
+		"annotations":    r.Annotations,
+		"serviceAccount": spec["serviceAccount"],
+		"scaling": map[string]any{
+			"minInstanceCount": scaling["min"],
+			"maxInstanceCount": scaling["max"],
+		},
+		"maxInstanceRequestConcurrency": scaling["concurrency"],
+		// Best-effort stickiness, and a template field rather than a
+		// container one — Cloud Run routes, the container never knows.
+		"sessionAffinity": scaling["affinity"] == true,
+		"timeout":         fmt.Sprintf("%ds", scaling["timeout"]),
+		"containers":      []map[string]any{container},
+	}
+	if len(volumes) > 0 {
+		tmpl["volumes"] = volumes
+	}
 	return map[string]any{
 		"labels":      r.Labels,
 		"annotations": annotations,
-		"template": map[string]any{
-			"annotations":    r.Annotations,
-			"serviceAccount": spec["serviceAccount"],
-			"scaling": map[string]any{
-				"minInstanceCount": scaling["min"],
-				"maxInstanceCount": scaling["max"],
-			},
-			"maxInstanceRequestConcurrency": scaling["concurrency"],
-			// Best-effort stickiness, and a template field rather than a
-			// container one — Cloud Run routes, the container never knows.
-			"sessionAffinity": scaling["affinity"] == true,
-			"timeout":         fmt.Sprintf("%ds", scaling["timeout"]),
-			"containers": []map[string]any{{
-				"image": spec["image"],
-				"env":   env,
-				// The port NAME is how Cloud Run's v2 API expresses the
-				// protocol for the last hop: "h2c" keeps HTTP/2 all the way
-				// to the instance, "http1" lets the edge downgrade. TLS is
-				// terminated at the frontend either way — a container never
-				// sees it — so h2c is the only shape HTTP/2 can take here.
-				//
-				// containerPort is NOT optional alongside it. Naming a port
-				// without a number fails the create outright ("must be
-				// 0 < port_number < 65536" — the zero value is not a
-				// default, it is a violation). It is also what Cloud Run
-				// injects as PORT, so it has to match what Serve listens
-				// on when PORT is unset.
-				"ports": []map[string]any{{
-					"name":          portName(scaling["http2"] == true),
-					"containerPort": defaultPort,
-				}},
-				"resources": map[string]any{
-					"limits": map[string]string{
-						"cpu":    fmt.Sprint(scaling["cpu"]),
-						"memory": fmt.Sprint(scaling["memory"]),
-					},
-					// Cloud Run throttles CPU between requests unless told
-					// otherwise; Latency is the profile that says otherwise.
-					"cpuIdle": scaling["cpuAlwaysOn"] != true,
-					// Extra CPU until the instance is serving. A warm floor
-					// cannot prevent every cold start, so this is the other
-					// half of what Latency promises.
-					"startupCpuBoost": scaling["startupBoost"] == true,
-				},
-			}},
-		},
+		"template":    tmpl,
 	}
 }
 

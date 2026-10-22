@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/gsandoval/tako/pkg/backends"
 )
@@ -116,6 +117,12 @@ var HandlerInfo func(h any) (kind, source string, invoke any)
 // HandlerParallel reads a job handler's RunnerConfig.Parallel fan-out (1 when
 // none) — the local runtime runs that many tasks per execution.
 var HandlerParallel func(h any) int
+
+// HandlerCronConfig reads a cron handler's Timezone and Deadline.
+var HandlerCronConfig func(h any) (timezone string, deadline time.Duration)
+
+// HandlerJobConfig reads a job handler's Parallel, Attempts, and Timeout.
+var HandlerJobConfig func(h any) (parallel, attempts int, timeout time.Duration)
 
 // HandlerID is set by the SDK at init: it reads a Handler's
 // registration id, which is how the runtime attaches a declared name.

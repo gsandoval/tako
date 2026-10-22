@@ -31,16 +31,18 @@ type runJob struct {
 	Template    struct {
 		TaskCount int `json:"taskCount,omitempty"`
 		Template  struct {
-			ServiceAccount string `json:"serviceAccount,omitempty"`
-			MaxRetries     int    `json:"maxRetries,omitempty"`
-			Timeout        string `json:"timeout,omitempty"`
+			ServiceAccount string      `json:"serviceAccount,omitempty"`
+			MaxRetries     int         `json:"maxRetries,omitempty"`
+			Timeout        string      `json:"timeout,omitempty"`
+			Volumes        []runVolume `json:"volumes,omitempty"`
 			Containers     []struct {
 				Image string `json:"image"`
 				Env   []struct {
 					Name  string `json:"name"`
 					Value string `json:"value"`
 				} `json:"env,omitempty"`
-				Resources struct {
+				VolumeMounts []runVolumeMount `json:"volumeMounts,omitempty"`
+				Resources    struct {
 					Limits map[string]string `json:"limits"`
 				} `json:"resources"`
 			} `json:"containers"`
@@ -87,14 +89,18 @@ func jobLiveHash(j runJob) string {
 	// Same normalization the services applier does: the API reports
 	// cpu "1000m"-style even when set as "1".
 	cpu := strings.TrimSuffix(c.Resources.Limits["cpu"], "000m")
-	return provision.SpecHash(map[string]any{
+	spec := map[string]any{
 		"image":          c.Image,
 		"serviceAccount": j.Template.Template.ServiceAccount,
 		"env":            env,
 		"taskCount":      taskCount,
 		"cpu":            cpu,
 		"memory":         c.Resources.Limits["memory"],
-	})
+	}
+	if mounts := reconstructMounts(j.Template.Template.Volumes, c.VolumeMounts); len(mounts) > 0 {
+		spec["mounts"] = mounts
+	}
+	return provision.SpecHash(spec)
 }
 
 func (r *RunJobs) body(o provision.Object) map[string]any {
@@ -103,28 +109,37 @@ func (r *RunJobs) body(o provision.Object) map[string]any {
 	for name, value := range spec["env"].(map[string]any) {
 		env = append(env, map[string]any{"name": name, "value": value})
 	}
+	volumes, vmounts := buildVolumesAndMounts(spec)
+	container := map[string]any{
+		"image": spec["image"],
+		"env":   env,
+		"resources": map[string]any{
+			"limits": map[string]any{
+				"cpu":    fmt.Sprint(spec["cpu"]),
+				"memory": fmt.Sprint(spec["memory"]),
+			},
+		},
+	}
+	if len(vmounts) > 0 {
+		container["volumeMounts"] = vmounts
+	}
+	taskTmpl := map[string]any{
+		"serviceAccount": spec["serviceAccount"],
+		// Compute, not messaging: Cloud Run retries a failed
+		// task up to maxRetries; there is no dead-letter here.
+		"maxRetries": spec["retries"],
+		"timeout":    fmt.Sprintf("%ds", spec["timeout"]),
+		"containers": []map[string]any{container},
+	}
+	if len(volumes) > 0 {
+		taskTmpl["volumes"] = volumes
+	}
 	return map[string]any{
 		"labels":      r.Labels,
 		"annotations": map[string]string{"tako-spec-hash": provision.SpecHash(o.Spec)},
 		"template": map[string]any{
 			"taskCount": spec["taskCount"],
-			"template": map[string]any{
-				"serviceAccount": spec["serviceAccount"],
-				// Compute, not messaging: Cloud Run retries a failed
-				// task up to maxRetries; there is no dead-letter here.
-				"maxRetries": spec["retries"],
-				"timeout":    fmt.Sprintf("%ds", spec["timeout"]),
-				"containers": []map[string]any{{
-					"image": spec["image"],
-					"env":   env,
-					"resources": map[string]any{
-						"limits": map[string]any{
-							"cpu":    fmt.Sprint(spec["cpu"]),
-							"memory": fmt.Sprint(spec["memory"]),
-						},
-					},
-				}},
-			},
+			"template":  taskTmpl,
 		},
 	}
 }

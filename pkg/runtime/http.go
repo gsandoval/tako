@@ -164,6 +164,10 @@ func Serve(h http.Handler) {
 		drain(srv, &live)
 	}()
 
+	if isLocalBackend() {
+		writeDevInfo(localDataDir, port, activeDevNonce())
+		defer removeDevInfo(localDataDir)
+	}
 	err := srv.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		<-drained // in-flight requests are done; now the hooks may flush

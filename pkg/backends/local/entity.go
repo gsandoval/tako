@@ -202,14 +202,36 @@ func (s *EntityStore) Tx(ctx context.Context, kind string, indexed []string, fn 
 		if err != nil {
 			return err
 		}
-		return fn(&entityTx{b: b, kind: kind, indexed: indexed})
+		etx := &entityTx{b: b, kind: kind, indexed: indexed}
+		if err := fn(etx); err != nil {
+			return err
+		}
+		for _, m := range etx.mutations {
+			if m.delete {
+				if err := b.Delete([]byte(m.id)); err != nil {
+					return err
+				}
+			} else {
+				if err := b.Put([]byte(m.id), m.doc); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
 	})
 }
 
+type txMutation struct {
+	id     string
+	doc    []byte
+	delete bool
+}
+
 type entityTx struct {
-	b       *bolt.Bucket
-	kind    string
-	indexed []string
+	b         *bolt.Bucket
+	kind      string
+	indexed   []string
+	mutations []txMutation
 }
 
 func (t *entityTx) Get(id string) ([]byte, error) {
@@ -224,10 +246,14 @@ func (t *entityTx) Put(id string, doc []byte) error {
 	if err := checkIndexed(t.kind, doc, t.indexed); err != nil {
 		return err
 	}
-	return t.b.Put([]byte(id), doc)
+	t.mutations = append(t.mutations, txMutation{id: id, doc: bytes.Clone(doc)})
+	return nil
 }
 
-func (t *entityTx) Delete(id string) error { return t.b.Delete([]byte(id)) }
+func (t *entityTx) Delete(id string) error {
+	t.mutations = append(t.mutations, txMutation{id: id, delete: true})
+	return nil
+}
 
 // Query scans the kind's documents, filters and orders on top-level JSON
 // fields, and applies the limit. Functionally equivalent to an indexed

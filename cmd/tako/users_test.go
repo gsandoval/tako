@@ -10,9 +10,12 @@ package main
 // pin the one thing that cannot be allowed to drift.
 
 import (
+	"encoding/json"
 	"errors"
 	"go/parser"
 	"go/token"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,6 +25,7 @@ import (
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/backends"
 	"github.com/gsandoval/tako/pkg/backends/local"
+	"github.com/gsandoval/tako/pkg/runtime"
 )
 
 // testApp is the graph facts a journal-shaped app would produce.
@@ -556,5 +560,93 @@ func TestWiringTheAccountsAlsoWiresWhatSessionsNeed(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(".tako", "data", "entity.db")); err != nil {
 		t.Errorf("an account created by the CLI did not land in .tako/data, where tako dev reads: %v", err)
+	}
+}
+
+type handlerRoundTripper struct{ h http.Handler }
+
+func (rt handlerRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	w := httptest.NewRecorder()
+	rt.h.ServeHTTP(w, req)
+	return w.Result(), nil
+}
+
+func TestUsersCommandsWorkConcurrentlyAgainstLiveDevServer(t *testing.T) {
+	tmp := t.TempDir()
+	t.Chdir(tmp)
+	t.Setenv("TAKO_DEV_NONCE", "live-dev-nonce-123")
+
+	dataDir := filepath.Join(tmp, ".tako", "data")
+	if err := runtime.BootLocal(dataDir); err != nil {
+		t.Fatal(err)
+	}
+	devServerUsers := hooks.Users
+	devServerEntity := hooks.Entity
+	devHandler := runtime.Reserved(http.NewServeMux(), http.NotFoundHandler())
+
+	prevTransport := devUsersTransport
+	devUsersTransport = handlerRoundTripper{h: devHandler}
+	t.Cleanup(func() { devUsersTransport = prevTransport })
+
+	rawInfo, _ := json.Marshal(map[string]string{
+		"url":   "http://127.0.0.1:18080",
+		"nonce": "live-dev-nonce-123",
+	})
+	if err := os.WriteFile(filepath.Join(dataDir, "dev.json"), rawInfo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Open accounts for the CLI while the dev server's hooks.Users is restored inside handlerRoundTripper.
+	devUsersTransport = handlerRoundTripper{h: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		prevU, prevE := hooks.Users, hooks.Entity
+		hooks.Users, hooks.Entity = devServerUsers, devServerEntity
+		defer func() { hooks.Users, hooks.Entity = prevU, prevE }()
+		devHandler.ServeHTTP(w, r)
+	})}
+
+	closeAccounts, err := openAccounts(accountsTarget{}, &analyzer.AppGraph{Module: "example.com/app"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeAccounts()
+
+	runCmd := func(sub string, args ...string) string {
+		t.Helper()
+		out := &strings.Builder{}
+		c := &usersCmd{out: out, app: testApp()}
+		if err := c.run(sub, args); err != nil {
+			t.Fatalf("users %s %v: %v", sub, args, err)
+		}
+		return out.String()
+	}
+
+	outCreate := runCmd("create", "live@example.com", "--name", "Live", "--role", "editor")
+	if !strings.Contains(outCreate, "created") || !strings.Contains(outCreate, "live@example.com") {
+		t.Fatalf("create output = %s", outCreate)
+	}
+
+	outList := runCmd("list")
+	if !strings.Contains(outList, "live@example.com") {
+		t.Fatalf("list output = %s", outList)
+	}
+
+	outGrant := runCmd("grant", "live@example.com", "moderator")
+	if !strings.Contains(outGrant, "granted  moderator to live@example.com") {
+		t.Fatalf("grant output = %s", outGrant)
+	}
+
+	outRevoke := runCmd("revoke", "live@example.com", "editor")
+	if !strings.Contains(outRevoke, "revoked  editor from live@example.com") {
+		t.Fatalf("revoke output = %s", outRevoke)
+	}
+
+	outDisable := runCmd("disable", "live@example.com")
+	if !strings.Contains(outDisable, "disabled  live@example.com") {
+		t.Fatalf("disable output = %s", outDisable)
+	}
+
+	outDelete := runCmd("delete", "live@example.com")
+	if !strings.Contains(outDelete, "every session ended") {
+		t.Fatalf("delete output = %s", outDelete)
 	}
 }

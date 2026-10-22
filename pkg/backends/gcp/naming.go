@@ -46,3 +46,17 @@ func EventTopicName(env, bucket string) string {
 func DeadTopicName(env, service string) string {
 	return Prefixed(env, service+"-dead")
 }
+
+// DiskBucketName is the physical GCS bucket backing a persistent declared
+// disk (mounted into Cloud Run via Cloud Storage FUSE). The "-disk-"
+// segment keeps a disk named "media" distinct from a bucket named "media".
+func DiskBucketName(project, app, env, base string) string {
+	return project + "-" + app + "-disk-" + Prefixed(env, base)
+}
+
+// DiskMountPath is the absolute container path where a declared disk is
+// mounted inside Cloud Run services and jobs.
+func DiskMountPath(name string) string {
+	return "/mnt/tako/" + name
+}
+

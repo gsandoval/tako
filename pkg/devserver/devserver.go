@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -94,7 +95,10 @@ func Run(ctx context.Context, opts Options) error {
 			if hiddenPath(dir, ev.Name) || s.ownWrite(ev.Name) || ev.Op == fsnotify.Chmod {
 				continue
 			}
-			drain(watcher, 150*time.Millisecond)
+			if ev.Has(fsnotify.Create) {
+				addWatchedDirs(watcher, dir, ev.Name)
+			}
+			drain(watcher, dir, 150*time.Millisecond)
 			if err := s.cycle(false); err != nil {
 				s.printFailure(err)
 			}
@@ -246,6 +250,7 @@ func (s *session) cycle(first bool) error {
 		s.stopApp()
 		return err
 	}
+	s.writeDevFile()
 
 	elapsed := time.Since(start).Round(time.Millisecond)
 	if first {
@@ -309,18 +314,48 @@ func (s *session) startApp(bin string) error {
 	return nil
 }
 
+func (s *session) writeDevFile() {
+	if s.dir == "" || s.nonce == "" {
+		return
+	}
+	dataDir := filepath.Join(s.dir, ".tako", "data")
+	_ = os.MkdirAll(dataDir, 0o755)
+	raw, err := json.Marshal(map[string]string{
+		"url":   "http://127.0.0.1:" + s.opts.Port,
+		"nonce": s.nonce,
+	})
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(dataDir, "dev.json"), raw, 0o600)
+}
+
+func (s *session) removeDevFile() {
+	if s.dir == "" {
+		return
+	}
+	_ = os.Remove(filepath.Join(s.dir, ".tako", "data", "dev.json"))
+}
+
 func (s *session) stopApp() {
+	s.removeDevFile()
 	if s.app == nil || s.app.Process == nil {
 		return
 	}
-	_ = s.app.Process.Kill()
-	if s.exited != nil {
-		<-s.exited // the Wait goroutine started in startApp reaps it
-		s.exited = nil
-	}
 	if s.guard != nil {
-		s.guard.Close()
+		_ = s.guard.Close()
 		s.guard = nil
+	}
+	if s.exited != nil {
+		select {
+		case <-s.exited:
+		case <-time.After(2 * time.Second):
+			_ = s.app.Process.Kill()
+			<-s.exited
+		}
+		s.exited = nil
+	} else {
+		_ = s.app.Process.Kill()
 	}
 	s.app = nil
 }
@@ -363,11 +398,31 @@ func hiddenPath(dir, path string) bool {
 		return false
 	}
 	for _, part := range strings.Split(rel, string(filepath.Separator)) {
+		if part == ".env" {
+			continue
+		}
 		if strings.HasPrefix(part, ".") {
 			return true
 		}
 	}
 	return false
+}
+
+func addWatchedDirs(watcher *fsnotify.Watcher, rootDir, createdPath string) {
+	info, err := os.Stat(createdPath)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	_ = filepath.WalkDir(createdPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if hiddenPath(rootDir, path) {
+			return filepath.SkipDir
+		}
+		_ = watcher.Add(path)
+		return nil
+	})
 }
 
 // watch recursively watches dir's directories, skipping hidden ones
@@ -398,12 +453,15 @@ func watch(dir string) (*fsnotify.Watcher, error) {
 
 // drain absorbs the burst of events editors emit for one save, so a save
 // triggers one rebuild.
-func drain(watcher *fsnotify.Watcher, window time.Duration) {
+func drain(watcher *fsnotify.Watcher, rootDir string, window time.Duration) {
 	timer := time.NewTimer(window)
 	defer timer.Stop()
 	for {
 		select {
-		case <-watcher.Events:
+		case ev := <-watcher.Events:
+			if ev.Has(fsnotify.Create) && !hiddenPath(rootDir, ev.Name) {
+				addWatchedDirs(watcher, rootDir, ev.Name)
+			}
 			timer.Reset(window)
 		case <-timer.C:
 			return

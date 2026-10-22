@@ -7,6 +7,7 @@ package main
 
 import (
 	"net/http"
+	"time"
 
 	runtime "github.com/gsandoval/tako/pkg/runtime"
 
@@ -15,6 +16,8 @@ import (
 
 func main() {
 	runtime.Boot() // observability always; backends when this package declares any
+
+	runtime.SetQueueDelivery("thumbnails", 5, 10*time.Second, 300*time.Second)
 
 	// tako's own endpoints, on a mux of their own. They are answered
 	// before the app's router below is consulted, so nothing under

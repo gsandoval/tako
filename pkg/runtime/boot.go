@@ -203,9 +203,11 @@ func bootGCP(opts gcpb.Options) error {
 // again closes the previously booted store first.
 func BootLocal(dir string) error {
 	if owned != nil {
+		removeDevInfo(localDataDir)
 		_ = owned.Close()
 		owned = nil
 	}
+	localDataDir = dir
 	// Signed URLs point back at this service's own /_tako/signed/
 	// endpoint; the signing key persists under dir so URLs survive
 	// reloads.
@@ -239,6 +241,11 @@ func BootLocal(dir string) error {
 		fmt.Printf("☢ chaos: enabled (seed %d) — deliveries may duplicate, reorder, redeliver\n", seed)
 	}
 	owned = app
+	writeDevInfo(dir, port, activeDevNonce())
+	hooks.OnShutdown(func(context.Context) {
+		removeDevInfo(dir)
+		_ = app.Dispatcher.Close()
+	})
 	hooks.CronSkipped = narrateCronSkip
 	return nil
 }
@@ -333,6 +340,16 @@ func SignedURLHandler() http.Handler {
 func SetQueueRate(queue string, perSec int) {
 	if d, ok := localQueue(); ok {
 		d.SetRate(queue, perSec)
+	}
+}
+
+// SetQueueDelivery mirrors a queue's Delivery retry and backoff bounds
+// onto the local dispatcher. In the cloud these live on the Cloud Tasks
+// queue / Pub/Sub subscription, so this is a no-op when nothing local
+// is wired.
+func SetQueueDelivery(queue string, maxAttempts int, minBackoff, maxBackoff time.Duration) {
+	if d, ok := localQueue(); ok {
+		d.SetQueueDelivery(queue, maxAttempts, minBackoff, maxBackoff)
 	}
 }
 

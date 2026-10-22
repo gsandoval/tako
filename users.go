@@ -79,7 +79,7 @@ type NewUser struct {
 // with an error tako.IsEmailTaken recognises, because the remedy is to
 // look it up and grant it what it needs rather than to retry.
 func (h *UsersHandle) Create(ctx Ctx, spec NewUser) (User, error) {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -108,12 +108,16 @@ func (h *UsersHandle) Create(ctx Ctx, spec NewUser) (User, error) {
 // every direction, because the caller's obvious response is to retry
 // and make a second one.
 func publishAuthEvent(ctx Ctx, source string, u User) {
-	if hooks.Topic == nil {
+	topic := hooks.Topic
+	if a := appFrom(ctx); a != nil && a.Dispatcher != nil {
+		topic = a.Dispatcher.Topics()
+	}
+	if topic == nil {
 		return // unwired (bare test): nothing subscribes either
 	}
 	raw, err := json.Marshal(u)
 	if err == nil {
-		err = hooks.Topic.Publish(ctx, source, raw)
+		err = topic.Publish(ctx, source, raw)
 	}
 	if err != nil {
 		ctx.Log().Error("tako: announcing an account event failed", "source", source, "user", u.ID, "err", err)
@@ -122,7 +126,7 @@ func publishAuthEvent(ctx Ctx, source string, u User) {
 
 // Get returns the account with this id; tako.IsNotFound reports absence.
 func (h *UsersHandle) Get(ctx Ctx, id string) (User, error) {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -135,7 +139,7 @@ func (h *UsersHandle) Get(ctx Ctx, id string) (User, error) {
 
 // ByEmail returns the account with this address.
 func (h *UsersHandle) ByEmail(ctx Ctx, email string) (User, error) {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return User{}, err
 	}
@@ -165,7 +169,7 @@ func (q *UserQuery) Limit(n int) *UserQuery { q.limit = n; return q }
 // Page returns one page, resuming after the cursor (empty starts at the
 // beginning).
 func (q *UserQuery) Page(cursor string) (UsersPage, error) {
-	store, err := usersBackend()
+	store, err := usersBackend(q.ctx)
 	if err != nil {
 		return UsersPage{}, err
 	}
@@ -219,7 +223,7 @@ func (h *UsersHandle) Revoke(ctx Ctx, id string, role RoleHandle) error {
 }
 
 func (h *UsersHandle) changeRoles(ctx Ctx, id string, apply func([]string) []string) error {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return err
 	}
@@ -242,10 +246,11 @@ func (h *UsersHandle) changeRoles(ctx Ctx, id string, apply func([]string) []str
 		// than a read per request.
 		return staleSessions(c, id)
 	}
-	if hooks.Lease == nil {
+	lease := leaseBackend(ctx)
+	if lease == nil {
 		return change(ctx) // unwired (bare test): no concurrency to guard
 	}
-	ran, err := backends.TryDoLease(ctx, hooks.Lease, "users-"+id, hooks.LeaseOwner, backends.LeaseTTL,
+	ran, err := backends.TryDoLease(ctx, lease, "users-"+id, hooks.LeaseOwner, backends.LeaseTTL,
 		func(c context.Context) error { return change(reroot(ctx, c)) })
 	if err != nil {
 		return err
@@ -265,7 +270,7 @@ func (h *UsersHandle) Disable(ctx Ctx, id string) error { return h.setDisabled(c
 func (h *UsersHandle) Enable(ctx Ctx, id string) error { return h.setDisabled(ctx, id, false) }
 
 func (h *UsersHandle) setDisabled(ctx Ctx, id string, disabled bool) error {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return err
 	}
@@ -281,7 +286,7 @@ func (h *UsersHandle) setDisabled(ctx Ctx, id string, disabled bool) error {
 // Delete removes an account and ends its sessions. Deleting an absent id
 // is not an error.
 func (h *UsersHandle) Delete(ctx Ctx, id string) error {
-	store, err := usersBackend()
+	store, err := usersBackend(ctx)
 	if err != nil {
 		return err
 	}
@@ -309,7 +314,10 @@ func mapUserErr(err error) error {
 	return err
 }
 
-func usersBackend() (backends.Users, error) {
+func usersBackend(ctx context.Context) (backends.Users, error) {
+	if a := appFrom(ctx); a != nil && a.Users != nil {
+		return a.Users, nil
+	}
 	if hooks.Users == nil {
 		return nil, errors.New("tako: accounts are not wired — auth.Users() works in generated services (tako dev / deploy) and under NewTestApp, not in a bare test")
 	}

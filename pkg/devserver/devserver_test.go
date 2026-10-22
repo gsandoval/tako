@@ -87,7 +87,6 @@ func TestHiddenPathIgnoresTheLoopsOwnWrites(t *testing.T) {
 		"/app/.tako/gen/hello/main.go",
 		"/app/.tako/data/entities.db",
 		"/app/.git/index",
-		"/app/.env",
 		"/app/pkg/.hidden/x.go",
 	}
 	for _, p := range hidden {
@@ -97,6 +96,7 @@ func TestHiddenPathIgnoresTheLoopsOwnWrites(t *testing.T) {
 	}
 	visible := []string{
 		"/app/app.go",
+		"/app/.env",
 		"/app/web/index.html",
 		"/app/internal/thumbs/thumbs.go",
 	}

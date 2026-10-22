@@ -80,6 +80,8 @@ Two consequences worth knowing:
   events
 - [bucket.md](bucket.md) — `tako.Bucket`: blobs, signed URLs, upload
   events
+- [disk.md](disk.md) — `tako.Disk`, `tako.DiskConfig`: persistent shared
+  disks (Cloud Storage FUSE) and per-instance ephemeral scratch mounts
 - [cron.md](cron.md) — `tako.Cron` (+ `CronConfig.Singleflight`)
 - [lock.md](lock.md) — `tako.Lock`: leases, `Do`/`TryDo`
 - [handler.md](handler.md) — `tako.Handler`: the value every

@@ -28,7 +28,7 @@ func Mermaid(g *AppGraph) string {
 	for _, r := range g.Resources {
 		open, close := "([\"", "\"])"
 		switch r.Kind {
-		case "entity", "bucket", "cache":
+		case "entity", "bucket", "cache", "disk":
 			open, close = "[(\"", "\")]"
 		case "queue", "topic":
 			open, close = "{{\"", "\"}}"

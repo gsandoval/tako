@@ -90,12 +90,13 @@ func attachChaosConsole(d *local.QueueDispatcher) {
 // attachMetricsConsole renders recordings as 📈 lines: metrics are logs
 // locally, but the dev console keeps the running totals visible.
 func attachMetricsConsole(m *local.MetricsLog) {
-	m.OnMetric(func(kind, name string, value float64, total int64) {
+	m.OnMetricWithLabels(func(kind, name string, labels map[string]string, value float64, total int64) {
+		lbl := local.FormatMetricLabels(labels)
 		switch kind {
 		case "counter":
-			fmt.Printf("📈 %s %+d (total %d)\n", name, int64(value), total)
+			fmt.Printf("📈 %s%s %+d (total %d)\n", name, lbl, int64(value), total)
 		case "histogram":
-			fmt.Printf("📈 %s %g (n=%d)\n", name, value, total)
+			fmt.Printf("📈 %s%s %g (n=%d)\n", name, lbl, value, total)
 		}
 	})
 }

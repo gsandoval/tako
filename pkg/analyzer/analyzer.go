@@ -167,6 +167,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					bucketVars[pkg.TypesInfo.Defs[d.name]] = r.Name
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "bucket"}
 				}
+			case "Disk":
+				if r := extractDisk(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "disk"}
+				}
 			case "Queue":
 				if r := extractQueue(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
@@ -488,6 +493,27 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		}
 	}
 	errs = append(errs, edgeErrs...)
+	readOnlyDisks := map[string]bool{}
+	for _, r := range graph.Resources {
+		if r.Kind == "disk" && r.Config["readonly"] == "true" {
+			readOnlyDisks[r.Name] = true
+		}
+	}
+	if len(readOnlyDisks) > 0 {
+		for _, e := range graph.Edges {
+			if e.Kind == "resource" && e.ToKind == "disk" && e.Verb == "write" && readOnlyDisks[e.To] {
+				pos := e.From
+				if h := handlersByVar[e.From]; h != nil {
+					pos = h.Pos
+				}
+				errs = append(errs, &Error{
+					Pos:  pos,
+					Msg:  fmt.Sprintf("handler %s writes to disk %q, which is declared with ReadOnly: true", e.From, e.To),
+					Rule: "config-literal",
+				})
+			}
+		}
+	}
 	// Two routes Go's mux cannot order are a service that panics at
 	// startup. Checked last, because it needs every handler placed in
 	// its service first.

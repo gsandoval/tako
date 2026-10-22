@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
@@ -33,11 +34,13 @@ type Options struct {
 // App is one booted set of local backends.
 type App struct {
 	Entity     *local.EntityStore
+	Users      *local.UserStore
 	Buckets    *local.BucketStore
 	Dispatcher *local.QueueDispatcher
 	Signer     *local.URLSigner
 	Cache      *local.MemoryCache
 	Metrics    *local.MetricsLog
+	Lease      *local.MemoryLease
 }
 
 // Local boots a fresh backend set rooted at opts.Dir and installs it as
@@ -45,6 +48,9 @@ type App struct {
 // returned App in their contexts, which takes precedence over the
 // globals — that is what isolates parallel test apps.
 func Local(opts Options) (*App, error) {
+	if opts.Dir != "" {
+		_ = os.RemoveAll(filepath.Join(opts.Dir, "disks-ephemeral"))
+	}
 	store, err := local.OpenEntity(opts.Dir)
 	if err != nil {
 		return nil, err
@@ -67,16 +73,18 @@ func Local(opts Options) (*App, error) {
 	}
 	app := &App{
 		Entity:     store,
+		Users:      local.NewUserStore(store),
 		Buckets:    buckets,
 		Dispatcher: dispatcher,
 		Signer:     signer,
 		Cache:      local.NewMemoryCache(),
 		Metrics:    local.NewMetricsLog(),
+		Lease:      local.NewMemoryLease(),
 	}
 	hooks.Entity = store
 	// Accounts share the entity database: one file for `tako dev`, and
 	// one thing to delete when a developer wants a clean slate.
-	hooks.Users = local.NewUserStore(store)
+	hooks.Users = app.Users
 	hooks.Bucket = buckets
 	hooks.Queue = dispatcher
 	hooks.Topic = dispatcher.Topics()
@@ -85,7 +93,7 @@ func Local(opts Options) (*App, error) {
 	hooks.Metrics = app.Metrics
 	// One lease table per process: dev's whole app IS one instance, and
 	// TestApp goroutines contend on it for real.
-	hooks.Lease = local.NewMemoryLease()
+	hooks.Lease = app.Lease
 	hooks.LeaseOwner = leaseOwner()
 	return app, nil
 }
@@ -100,4 +108,9 @@ func leaseOwner() string {
 }
 
 // Close releases the app's resources.
-func (a *App) Close() error { return a.Entity.Close() }
+func (a *App) Close() error {
+	if a.Dispatcher != nil {
+		_ = a.Dispatcher.Close()
+	}
+	return a.Entity.Close()
+}

@@ -61,6 +61,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			ensure(target{TargetTopic, cfg.Name(h.Binding)})
 		}
 	}
+	ephemeralDisks := map[string]bool{}
 	for _, r := range g.Resources {
 		switch r.Kind {
 		case "bucket":
@@ -68,6 +69,12 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			if events[r.Name] {
 				ensure(target{TargetTopic, gcpb.EventTopicName(cfg.Env, r.Name)})
 			}
+		case "disk":
+			if r.Config["ephemeral"] == "true" {
+				ephemeralDisks[r.Name] = true
+				continue
+			}
+			ensure(target{TargetBucket, gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)})
 		case "queue", "topic":
 			ensure(target{TargetTopic, cfg.Name(r.Name)})
 			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
@@ -258,6 +265,17 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 				// needs object access for the URLs to work — admin, since
 				// SignedPut writes and SignedGet reads.
 				add(target{TargetServiceAccount, cfg.SAEmail(svc)}, "roles/iam.serviceAccountTokenCreator", member)
+				add(target{TargetBucket, b}, "roles/storage.objectAdmin", member)
+			}
+		case "disk":
+			if ephemeralDisks[e.To] {
+				continue
+			}
+			b := gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, e.To)
+			switch e.Verb {
+			case "read":
+				add(target{TargetBucket, b}, "roles/storage.objectViewer", member)
+			case "write":
 				add(target{TargetBucket, b}, "roles/storage.objectAdmin", member)
 			}
 		case "queue", "topic":

@@ -82,11 +82,16 @@ func (s *UserStore) Create(ctx context.Context, spec backends.NewUserSpec) (back
 	} else if err != backends.ErrNotFound {
 		return backends.UserRecord{}, err
 	}
+	id := spec.ID
+	if id == "" {
+		id = "u_" + randomHex(8)
+	}
 	doc := userDoc{
-		ID:    "u_" + randomHex(8),
-		Email: email,
-		Name:  spec.Name,
-		Roles: spec.Roles,
+		ID:            id,
+		Email:         email,
+		Name:          spec.Name,
+		Roles:         spec.Roles,
+		EmailVerified: spec.EmailVerified,
 	}
 	if spec.Password != "" {
 		salt := randomHex(16)

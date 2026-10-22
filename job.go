@@ -1,8 +1,10 @@
 package tako
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/backends"
@@ -32,6 +34,9 @@ func (j *JobHandle[T]) Run(ctx Ctx, params T) error {
 	if hooks.RunJob != nil { // the cloud path: a real Cloud Run Job execution
 		return hooks.RunJob(ctx, j.name, raw)
 	}
+	if a := appFrom(ctx); a != nil && a.Dispatcher != nil {
+		return a.Dispatcher.Publish(ctx, hooks.JobQueue(j.name), raw, backends.PublishOptions{})
+	}
 	if hooks.Queue == nil {
 		panic(unwiredPanic("queue"))
 	}
@@ -46,9 +51,17 @@ func (j *JobHandle[T]) Run(ctx Ctx, params T) error {
 // across tasks.
 func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig) Handler {
 	parallel := 1
+	attempts := 0
+	var timeout time.Duration
 	for _, c := range cfg {
 		if c.Parallel > 1 {
 			parallel = c.Parallel
+		}
+		if c.Attempts > 0 {
+			attempts = c.Attempts
+		}
+		if c.Timeout > 0 {
+			timeout = c.Timeout
 		}
 	}
 	return register(Handler{
@@ -56,11 +69,18 @@ func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig
 		id:       nextHandlerID(),
 		source:   job.name,
 		parallel: parallel,
+		attempts: attempts,
+		timeout:  timeout,
 		name:     fnName(fn),
 		invoke: func(ctx Ctx, raw []byte) error {
 			var params T
 			if err := json.Unmarshal(raw, &params); err != nil {
 				return Permanent(fmt.Errorf("job params do not decode: %w", err))
+			}
+			if timeout > 0 {
+				c, cancel := context.WithTimeout(ctx, timeout)
+				defer cancel()
+				ctx = reroot(ctx, c)
 			}
 			return fn(ctx, params)
 		},

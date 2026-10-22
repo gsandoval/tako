@@ -193,6 +193,9 @@ type Resource struct {
 	// ("google", "email").
 	Providers []string       `json:"providers,omitempty"`
 	Redirects []SiteRedirect `json:"redirects,omitempty"`
+	// Config holds key/value configuration for resources such as Disk
+	// ("readonly", "ephemeral", "size_limit").
+	Config map[string]string `json:"config,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
 }

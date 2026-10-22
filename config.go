@@ -327,3 +327,19 @@ func (p PutPolicy) Headers() map[string]string {
 	}
 	return h
 }
+
+// DiskConfig configures a remote filesystem disk mounted into the
+// services and jobs whose handlers touch it.
+type DiskConfig struct {
+	// ReadOnly mounts the disk read-only at the container level and turns
+	// any static write call (WriteFile, Create, OpenFile, Remove, MkdirAll)
+	// into an analyzer error before deploy.
+	ReadOnly bool
+	// Ephemeral provisions an in-memory tmpfs volume (emptyDir) scoped to
+	// each container instance instead of a persistent GCS FUSE bucket.
+	Ephemeral bool
+	// SizeLimit caps the capacity of an Ephemeral disk (for example,
+	// "512Mi" or "2Gi"). Ignored unless Ephemeral is true.
+	SizeLimit string
+}
+

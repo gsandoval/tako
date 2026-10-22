@@ -12,18 +12,23 @@ package main
 // copies will drift. A test asserts users.go imports no backend.
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"golang.org/x/term"
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/backends"
 	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/backends/local"
 	"github.com/gsandoval/tako/pkg/provision"
@@ -52,15 +57,248 @@ func openAccounts(t accountsTarget, graph *analyzer.AppGraph) (func(), error) {
 		return openCloudAccounts(t, graph)
 	}
 	dir := filepath.Join(".tako", "data")
+	if client, ok := tryLiveDevClient(dir); ok {
+		prevStale, prevEnd := hooks.StaleSessions, hooks.EndSessions
+		hooks.Users = client
+		hooks.Lease = local.NewMemoryLease()
+		hooks.LeaseOwner = "tako-users-cli"
+		hooks.StaleSessions = func(context.Context, string) error { return nil }
+		hooks.EndSessions = func(context.Context, string) error { return nil }
+		return func() {
+			hooks.StaleSessions = prevStale
+			hooks.EndSessions = prevEnd
+		}, nil
+	}
 	store, err := local.OpenEntity(dir)
 	if err != nil {
 		return nil, fmt.Errorf("cannot open the local accounts in %s: %v", dir, err)
 	}
 	hooks.Entity = store
-	hooks.Users = local.NewUserStore(store)
+	hooks.Users = &localOrDevUsers{local: local.NewUserStore(store), dir: dir}
 	hooks.Lease = local.NewMemoryLease()
 	hooks.LeaseOwner = "tako-users-cli"
 	return func() { _ = store.Close() }, nil
+}
+
+type devServerInfo struct {
+	URL   string `json:"url"`
+	Nonce string `json:"nonce"`
+}
+
+var devUsersTransport http.RoundTripper
+
+func tryLiveDevClient(dir string) (*devUsersClient, bool) {
+	raw, err := os.ReadFile(filepath.Join(dir, "dev.json"))
+	if err != nil {
+		return nil, false
+	}
+	var info devServerInfo
+	if err := json.Unmarshal(raw, &info); err != nil || info.URL == "" || info.Nonce == "" {
+		return nil, false
+	}
+	hc := &http.Client{Timeout: 500 * time.Millisecond, Transport: devUsersTransport}
+	res, err := hc.Get(strings.TrimRight(info.URL, "/") + "/_tako/dev/ready")
+	if err != nil {
+		return nil, false
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK || string(body) != info.Nonce {
+		return nil, false
+	}
+	return &devUsersClient{
+		endpoint: strings.TrimRight(info.URL, "/") + "/_tako/dev/users",
+		nonce:    info.Nonce,
+		client:   &http.Client{Timeout: 5 * time.Second, Transport: devUsersTransport},
+	}, true
+}
+
+type localOrDevUsers struct {
+	local *local.UserStore
+	dir   string
+}
+
+func (u *localOrDevUsers) delegateOnLock(err error) (*devUsersClient, bool) {
+	if err != nil && strings.Contains(err.Error(), "another process holds") {
+		if c, ok := tryLiveDevClient(u.dir); ok {
+			hooks.StaleSessions = func(context.Context, string) error { return nil }
+			hooks.EndSessions = func(context.Context, string) error { return nil }
+			return c, true
+		}
+	}
+	return nil, false
+}
+
+func (u *localOrDevUsers) Create(ctx context.Context, spec backends.NewUserSpec) (backends.UserRecord, error) {
+	rec, err := u.local.Create(ctx, spec)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.Create(ctx, spec)
+	}
+	return rec, err
+}
+
+func (u *localOrDevUsers) Get(ctx context.Context, id string) (backends.UserRecord, error) {
+	rec, err := u.local.Get(ctx, id)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.Get(ctx, id)
+	}
+	return rec, err
+}
+
+func (u *localOrDevUsers) ByEmail(ctx context.Context, email string) (backends.UserRecord, error) {
+	rec, err := u.local.ByEmail(ctx, email)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.ByEmail(ctx, email)
+	}
+	return rec, err
+}
+
+func (u *localOrDevUsers) List(ctx context.Context, limit int, after string) ([]backends.UserRecord, string, error) {
+	list, next, err := u.local.List(ctx, limit, after)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.List(ctx, limit, after)
+	}
+	return list, next, err
+}
+
+func (u *localOrDevUsers) SetRoles(ctx context.Context, id string, roles []string) error {
+	err := u.local.SetRoles(ctx, id, roles)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.SetRoles(ctx, id, roles)
+	}
+	return err
+}
+
+func (u *localOrDevUsers) SetDisabled(ctx context.Context, id string, disabled bool) error {
+	err := u.local.SetDisabled(ctx, id, disabled)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.SetDisabled(ctx, id, disabled)
+	}
+	return err
+}
+
+func (u *localOrDevUsers) Delete(ctx context.Context, id string) error {
+	err := u.local.Delete(ctx, id)
+	if c, ok := u.delegateOnLock(err); ok {
+		return c.Delete(ctx, id)
+	}
+	return err
+}
+
+type devUsersClient struct {
+	endpoint string
+	nonce    string
+	client   *http.Client
+}
+
+type devUsersPayload struct {
+	Action   string   `json:"action"`
+	ID       string   `json:"id,omitempty"`
+	Email    string   `json:"email,omitempty"`
+	Password string   `json:"password,omitempty"`
+	Name     string   `json:"name,omitempty"`
+	Roles    []string `json:"roles,omitempty"`
+	Disabled bool     `json:"disabled,omitempty"`
+	Limit    int      `json:"limit,omitempty"`
+	After    string   `json:"after,omitempty"`
+}
+
+type devUsersReply struct {
+	User  *backends.UserRecord  `json:"user,omitempty"`
+	Users []backends.UserRecord `json:"users,omitempty"`
+	Next  string                `json:"next,omitempty"`
+	Error string                `json:"error,omitempty"`
+	Code  string                `json:"code,omitempty"`
+}
+
+func (c *devUsersClient) call(ctx context.Context, req devUsersPayload) (devUsersReply, error) {
+	raw, err := json.Marshal(req)
+	if err != nil {
+		return devUsersReply{}, err
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(raw))
+	if err != nil {
+		return devUsersReply{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("X-Tako-Dev-Nonce", c.nonce)
+	res, err := c.client.Do(httpReq)
+	if err != nil {
+		return devUsersReply{}, err
+	}
+	defer res.Body.Close()
+	var reply devUsersReply
+	_ = json.NewDecoder(res.Body).Decode(&reply)
+	if res.StatusCode >= 400 {
+		switch reply.Code {
+		case "not_found":
+			return devUsersReply{}, backends.ErrNotFound
+		case "email_taken":
+			return devUsersReply{}, backends.ErrEmailTaken
+		case "roles_too_large":
+			return devUsersReply{}, errors.New(reply.Error)
+		default:
+			if reply.Error != "" {
+				return devUsersReply{}, errors.New(reply.Error)
+			}
+			return devUsersReply{}, fmt.Errorf("dev users endpoint returned HTTP %d", res.StatusCode)
+		}
+	}
+	return reply, nil
+}
+
+func (c *devUsersClient) Create(ctx context.Context, spec backends.NewUserSpec) (backends.UserRecord, error) {
+	reply, err := c.call(ctx, devUsersPayload{
+		Action:   "create",
+		ID:       spec.ID,
+		Email:    spec.Email,
+		Password: spec.Password,
+		Name:     spec.Name,
+		Roles:    spec.Roles,
+	})
+	if err != nil || reply.User == nil {
+		return backends.UserRecord{}, err
+	}
+	return *reply.User, nil
+}
+
+func (c *devUsersClient) Get(ctx context.Context, id string) (backends.UserRecord, error) {
+	reply, err := c.call(ctx, devUsersPayload{Action: "get", ID: id})
+	if err != nil || reply.User == nil {
+		return backends.UserRecord{}, err
+	}
+	return *reply.User, nil
+}
+
+func (c *devUsersClient) ByEmail(ctx context.Context, email string) (backends.UserRecord, error) {
+	reply, err := c.call(ctx, devUsersPayload{Action: "by_email", Email: email})
+	if err != nil || reply.User == nil {
+		return backends.UserRecord{}, err
+	}
+	return *reply.User, nil
+}
+
+func (c *devUsersClient) List(ctx context.Context, limit int, after string) ([]backends.UserRecord, string, error) {
+	reply, err := c.call(ctx, devUsersPayload{Action: "list", Limit: limit, After: after})
+	if err != nil {
+		return nil, "", err
+	}
+	return reply.Users, reply.Next, nil
+}
+
+func (c *devUsersClient) SetRoles(ctx context.Context, id string, roles []string) error {
+	_, err := c.call(ctx, devUsersPayload{Action: "set_roles", ID: id, Roles: roles})
+	return err
+}
+
+func (c *devUsersClient) SetDisabled(ctx context.Context, id string, disabled bool) error {
+	_, err := c.call(ctx, devUsersPayload{Action: "set_disabled", ID: id, Disabled: disabled})
+	return err
+}
+
+func (c *devUsersClient) Delete(ctx context.Context, id string) error {
+	_, err := c.call(ctx, devUsersPayload{Action: "delete", ID: id})
+	return err
 }
 
 func openCloudAccounts(t accountsTarget, graph *analyzer.AppGraph) (func(), error) {

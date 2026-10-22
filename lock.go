@@ -26,13 +26,21 @@ type LockHandle struct {
 	name string
 }
 
+func leaseBackend(ctx context.Context) backends.Lease {
+	if a := appFrom(ctx); a != nil && a.Lease != nil {
+		return a.Lease
+	}
+	return hooks.Lease
+}
+
 // Do blocks until the lock is held, runs fn while holding it, and releases
 // it on return. fn's Ctx is cancelled if the lock is lost mid-flight.
 func (l *LockHandle) Do(ctx Ctx, fn func(Ctx) error) error {
-	if hooks.Lease == nil {
+	lease := leaseBackend(ctx)
+	if lease == nil {
 		panic(unwiredPanic("lease"))
 	}
-	return backends.DoLease(ctx, hooks.Lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+	return backends.DoLease(ctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))
 	})
 }
@@ -40,10 +48,11 @@ func (l *LockHandle) Do(ctx Ctx, fn func(Ctx) error) error {
 // TryDo runs fn only if the lock is immediately available, reporting
 // whether it ran; it returns (false, nil) when someone else holds the lock.
 func (l *LockHandle) TryDo(ctx Ctx, fn func(Ctx) error) (bool, error) {
-	if hooks.Lease == nil {
+	lease := leaseBackend(ctx)
+	if lease == nil {
 		panic(unwiredPanic("lease"))
 	}
-	return backends.TryDoLease(ctx, hooks.Lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+	return backends.TryDoLease(ctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))
 	})
 }
