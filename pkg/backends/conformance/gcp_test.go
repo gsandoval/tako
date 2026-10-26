@@ -238,20 +238,22 @@ func ensureAndIndex(t *testing.T, c *gcpb.Client) {
 	andIndexOnce.Do(func() {
 		ctx := context.Background()
 		base := "https://datastore.googleapis.com/v1/projects/" + *project + "/indexes"
-		body := strings.NewReader(`{"kind":"links","ancestor":"NONE","properties":[{"name":"owner","direction":"ASCENDING"},{"name":"hits","direction":"ASCENDING"}]}`)
-		req, err := http.NewRequestWithContext(ctx, "POST", base, body)
-		if err != nil {
-			t.Fatal(err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		resp, err := c.HC.Do(req)
-		if err != nil {
-			t.Fatalf("create conformance index: %v", err)
-		}
-		resp.Body.Close()
-		// 409 = already there from an earlier run; anything else fatal.
-		if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusConflict {
-			t.Fatalf("create conformance index: HTTP %d", resp.StatusCode)
+		for _, dir := range []string{"ASCENDING", "DESCENDING"} {
+			body := strings.NewReader(`{"kind":"links","ancestor":"NONE","properties":[{"name":"owner","direction":"ASCENDING"},{"name":"hits","direction":"` + dir + `"}]}`)
+			req, err := http.NewRequestWithContext(ctx, "POST", base, body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := c.HC.Do(req)
+			if err != nil {
+				t.Fatalf("create conformance index: %v", err)
+			}
+			resp.Body.Close()
+			// 409 = already there from an earlier run; anything else fatal.
+			if resp.StatusCode/100 != 2 && resp.StatusCode != http.StatusConflict {
+				t.Fatalf("create conformance index: HTTP %d", resp.StatusCode)
+			}
 		}
 		deadline := time.Now().Add(3 * time.Minute)
 		for time.Now().Before(deadline) {
@@ -264,7 +266,8 @@ func ensureAndIndex(t *testing.T, c *gcpb.Client) {
 					Kind       string `json:"kind"`
 					State      string `json:"state"`
 					Properties []struct {
-						Name string `json:"name"`
+						Name      string `json:"name"`
+						Direction string `json:"direction"`
 					} `json:"properties"`
 				} `json:"indexes"`
 			}
@@ -272,12 +275,16 @@ func ensureAndIndex(t *testing.T, c *gcpb.Client) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			ready := 0
 			for _, ix := range out.Indexes {
 				if ix.Kind == "links" && len(ix.Properties) == 2 &&
 					ix.Properties[0].Name == "owner" && ix.Properties[1].Name == "hits" &&
 					ix.State == "READY" {
-					return
+					ready++
 				}
+			}
+			if ready >= 2 {
+				return
 			}
 			time.Sleep(5 * time.Second)
 		}

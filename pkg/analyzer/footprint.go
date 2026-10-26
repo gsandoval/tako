@@ -241,123 +241,73 @@ func footprintArg(dir string, pkg *packages.Package, opt ast.Expr, errs *ErrorLi
 // this deployable — 60m for a request, 24h for a job task, which the
 // per-field parser cannot know.
 func applyTraffic(graph *AppGraph, errs *ErrorList) {
-	for i := range graph.Services {
-		svc := &graph.Services[i]
-		var claim *Traffic
-		claimedBy, claimPos := "", ""
-		for _, h := range graph.Handlers {
-			if h.Service != svc.Name || h.Traffic == nil {
-				continue
-			}
-			if claim != nil && *claim != *h.Traffic {
+	projectServiceClaims(
+		graph,
+		errs,
+		func(h Handler) (*Traffic, bool) { return h.Traffic, h.Traffic != nil },
+		func(r Resource) (*Traffic, bool) { return r.Traffic, r.Traffic != nil },
+		func(a, b *Traffic) bool { return *a == *b },
+		"mixed-traffic",
+		func(svcName string, first *Traffic, firstBy string, second *Traffic, secondBy string) string {
+			return fmt.Sprintf("service %s cannot carry both traffic (%s) from %s and traffic (%s) from %s — one service answers one way; split the packages or align the settings", svcName, first, firstBy, second, secondBy)
+		},
+		func(svc *Service, claim *Traffic, claimPos string) {
+			svc.Traffic = claim
+			r := claim.Over(TrafficKnobs[svc.Profile])
+			if !svc.Job && r.TimeoutSeconds > 3600 {
 				*errs = append(*errs, &Error{
-					Pos:  h.Pos,
-					Msg:  fmt.Sprintf("service %s cannot carry both traffic (%s) from %s and traffic (%s) from %s — one service answers one way; split the packages or align the settings", svc.Name, claim, claimedBy, h.Traffic, ShortVar(h)),
-					Rule: "mixed-traffic",
+					Pos: claimPos,
+					Msg: fmt.Sprintf("service %s resolves to a %s request timeout — Cloud Run caps a request at 60m; for work that outlives a request use a tako.Job (docs/reference/job.md)",
+						svc.Name, time.Duration(r.TimeoutSeconds)*time.Second),
+					Rule: "traffic",
 				})
-				continue
 			}
-			claim, claimedBy, claimPos = h.Traffic, ShortVar(h), h.Pos
-		}
-		for _, r := range graph.Resources {
-			if r.Kind != "service" || r.Package != svc.Package || r.Traffic == nil {
-				continue
-			}
-			if claim != nil && *claim != *r.Traffic {
-				*errs = append(*errs, &Error{
-					Pos:  r.Pos,
-					Msg:  fmt.Sprintf("service %s cannot carry both traffic (%s) from %s and traffic (%s) from %s — one service answers one way; split the packages or align the settings", svc.Name, claim, claimedBy, r.Traffic, r.Var),
-					Rule: "mixed-traffic",
-				})
-				continue
-			}
-			if isAppService(graph, *svc) {
-				claim, claimedBy, claimPos = r.Traffic, r.Var, r.Pos
-			}
-		}
-		if claim == nil {
-			continue
-		}
-		svc.Traffic = claim
-		r := claim.Over(TrafficKnobs[svc.Profile])
-		if !svc.Job && r.TimeoutSeconds > 3600 {
-			*errs = append(*errs, &Error{
-				Pos: claimPos,
-				Msg: fmt.Sprintf("service %s resolves to a %s request timeout — Cloud Run caps a request at 60m; for work that outlives a request use a tako.Job (docs/reference/job.md)",
-					svc.Name, time.Duration(r.TimeoutSeconds)*time.Second),
-				Rule: "traffic",
-			})
-		}
-	}
+		},
+	)
 }
 
 func applyFootprints(graph *AppGraph, errs *ErrorList) {
-	for i := range graph.Services {
-		svc := &graph.Services[i]
-		var claim *Footprint
-		claimedBy, claimPos := "", ""
-		for _, h := range graph.Handlers {
-			if h.Service != svc.Name || h.Footprint == nil {
-				continue
-			}
-			if claim != nil && *claim != *h.Footprint {
-				*errs = append(*errs, &Error{
-					Pos:  h.Pos,
-					Msg:  fmt.Sprintf("service %s cannot carry both footprint (%s) from %s and footprint (%s) from %s — one service scales one way; split the packages or align the footprints", svc.Name, claim, claimedBy, h.Footprint, ShortVar(h)),
-					Rule: "mixed-footprint",
-				})
-				continue
-			}
-			claim, claimedBy, claimPos = h.Footprint, ShortVar(h), h.Pos
-		}
-		for _, r := range graph.Resources {
-			if r.Kind != "service" || r.Package != svc.Package || r.Footprint == nil {
-				continue
-			}
-			if claim != nil && *claim != *r.Footprint {
-				*errs = append(*errs, &Error{
-					Pos:  r.Pos,
-					Msg:  fmt.Sprintf("service %s cannot carry both footprint (%s) from %s and footprint (%s) from %s — one service scales one way; split the packages or align the footprints", svc.Name, claim, claimedBy, r.Footprint, r.Var),
-					Rule: "mixed-footprint",
-				})
-				continue
-			}
-			if isAppService(graph, *svc) {
-				claim, claimedBy, claimPos = r.Footprint, r.Var, r.Pos
-			}
-		}
-		if claim == nil {
-			continue
-		}
-		svc.Footprint = claim
+	projectServiceClaims(
+		graph,
+		errs,
+		func(h Handler) (*Footprint, bool) { return h.Footprint, h.Footprint != nil },
+		func(r Resource) (*Footprint, bool) { return r.Footprint, r.Footprint != nil },
+		func(a, b *Footprint) bool { return *a == *b },
+		"mixed-footprint",
+		func(svcName string, first *Footprint, firstBy string, second *Footprint, secondBy string) string {
+			return fmt.Sprintf("service %s cannot carry both footprint (%s) from %s and footprint (%s) from %s — one service scales one way; split the packages or align the footprints", svcName, first, firstBy, second, secondBy)
+		},
+		func(svc *Service, claim *Footprint, claimPos string) {
+			svc.Footprint = claim
 
-		r := claim.Over(ProfileKnobs[svc.Profile])
-		mi, _ := memMi(r.Memory)
-		cpus := fmt.Sprintf("%d vCPU", r.CPU)
-		if r.CPU != 1 {
-			cpus += "s"
-		}
-		resolveFail := func(msg string) {
-			*errs = append(*errs, &Error{Pos: claimPos, Msg: msg, Rule: "footprint"})
-		}
-		switch {
-		case r.CPU >= 8 && mi < 4*1024:
-			resolveFail(fmt.Sprintf("service %s resolves to %s with %s memory — 8 vCPUs need at least 4Gi; pin Memory too", svc.Name, cpus, r.Memory))
-		case r.CPU >= 4 && mi < 2*1024:
-			resolveFail(fmt.Sprintf("service %s resolves to %s with %s memory — 4 vCPUs need at least 2Gi; pin Memory too", svc.Name, cpus, r.Memory))
-		}
-		switch {
-		case mi > 16*1024 && r.CPU < 8:
-			resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 16Gi needs 8 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
-		case mi > 8*1024 && r.CPU < 4:
-			resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 8Gi needs at least 4 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
-		case mi > 4*1024 && r.CPU < 2:
-			resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 4Gi needs at least 2 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
-		}
-		if r.MinInstances > r.MaxInstances {
-			resolveFail(fmt.Sprintf("service %s resolves to MinInstances %d over MaxInstances %d (profile %s) — pin MaxInstances too", svc.Name, r.MinInstances, r.MaxInstances, svc.Profile))
-		}
-	}
+			r := claim.Over(ProfileKnobs[svc.Profile])
+			mi, _ := memMi(r.Memory)
+			cpus := fmt.Sprintf("%d vCPU", r.CPU)
+			if r.CPU != 1 {
+				cpus += "s"
+			}
+			resolveFail := func(msg string) {
+				*errs = append(*errs, &Error{Pos: claimPos, Msg: msg, Rule: "footprint"})
+			}
+			switch {
+			case r.CPU >= 8 && mi < 4*1024:
+				resolveFail(fmt.Sprintf("service %s resolves to %s with %s memory — 8 vCPUs need at least 4Gi; pin Memory too", svc.Name, cpus, r.Memory))
+			case r.CPU >= 4 && mi < 2*1024:
+				resolveFail(fmt.Sprintf("service %s resolves to %s with %s memory — 4 vCPUs need at least 2Gi; pin Memory too", svc.Name, cpus, r.Memory))
+			}
+			switch {
+			case mi > 16*1024 && r.CPU < 8:
+				resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 16Gi needs 8 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
+			case mi > 8*1024 && r.CPU < 4:
+				resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 8Gi needs at least 4 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
+			case mi > 4*1024 && r.CPU < 2:
+				resolveFail(fmt.Sprintf("service %s resolves to %s memory with %s — over 4Gi needs at least 2 vCPUs; pin CPU too", svc.Name, r.Memory, cpus))
+			}
+			if r.MinInstances > r.MaxInstances {
+				resolveFail(fmt.Sprintf("service %s resolves to MinInstances %d over MaxInstances %d (profile %s) — pin MaxInstances too", svc.Name, r.MinInstances, r.MaxInstances, svc.Profile))
+			}
+		},
+	)
 }
 
 // Over layers a traffic claim's set fields on top of base, the way

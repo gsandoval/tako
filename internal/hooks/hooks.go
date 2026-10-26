@@ -39,6 +39,10 @@ var Metrics backends.Metrics
 // boot.
 var Users backends.Users
 
+// DataDir is the root directory of the wired local backends; empty on
+// cloud backends or before boot.
+var DataDir string
+
 // The two account event sources (AB10d), as topic names on the wire.
 //
 // They live here because BOTH the SDK (which publishes Registered and

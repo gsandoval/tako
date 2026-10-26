@@ -161,7 +161,11 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 		}
 	}
 	for _, svc := range g.Services {
-		ensure(target{TargetRunService, cfg.Name(svc.Name)})
+		if svc.Job {
+			ensure(target{TargetRunJob, cfg.Name(svc.Name)})
+		} else {
+			ensure(target{TargetRunService, cfg.Name(svc.Name)})
+		}
 		ensure(target{TargetServiceAccount, cfg.SAEmail(svc.Name)})
 	}
 	// The framework bucket is always managed (the deploy lease lives

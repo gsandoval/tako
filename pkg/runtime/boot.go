@@ -326,6 +326,14 @@ func SignedURLHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		signer, sok := hooks.Signer.(*local.URLSigner)
 		store, bok := hooks.Bucket.(*local.BucketStore)
+		if app := boot.FromContext(r.Context()); app != nil {
+			if app.Signer != nil {
+				signer, sok = app.Signer, true
+			}
+			if app.Buckets != nil {
+				store, bok = app.Buckets, true
+			}
+		}
 		if !sok || !bok {
 			http.Error(w, "tako: signed URLs on the gcp backend arrive with C5 — SignedPut/SignedGet error until then", http.StatusNotImplemented)
 			return

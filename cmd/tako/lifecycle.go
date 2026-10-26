@@ -122,6 +122,7 @@ var pruneStateless = map[provision.Kind]bool{
 // go immediately; --data walks buckets and undeclared datastore kinds
 // through counts and the typed confirmation.
 func runPrune(args []string) error {
+	args = normalizeArgs(args)
 	withData := false
 	var filtered []string
 	for _, a := range args {

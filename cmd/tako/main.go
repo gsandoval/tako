@@ -130,18 +130,19 @@ func main() {
 		fmt.Fprint(os.Stderr, usage)
 		os.Exit(2)
 	}
+	subArgs := normalizeArgs(os.Args[2:])
 	switch os.Args[1] {
 	case "new":
-		if err := runNew(os.Args[2:]); err != nil {
+		if err := runNew(subArgs); err != nil {
 			fail(err)
 		}
 	case "check":
-		if err := runCheck(os.Args[2:]); err != nil {
+		if err := runCheck(subArgs); err != nil {
 			fail(err)
 		}
 	case "dev":
 		opts := devserver.Options{Dir: "."}
-		for _, arg := range os.Args[2:] {
+		for _, arg := range subArgs {
 			if arg == "--chaos" {
 				opts.ChaosSeed = time.Now().UnixNano()
 			}
@@ -156,73 +157,73 @@ func main() {
 			fail(err)
 		}
 	case "secrets":
-		if err := runSecrets(os.Args[2:]); err != nil {
+		if err := runSecrets(subArgs); err != nil {
 			fail(err)
 		}
 	case "users":
-		if err := runUsers(os.Args[2:]); err != nil {
+		if err := runUsers(subArgs); err != nil {
 			fail(err)
 		}
 	case "build":
-		if err := runBuild(os.Args[2:]); err != nil {
+		if err := runBuild(subArgs); err != nil {
 			fail(err)
 		}
 	case "setup":
-		if err := runSetup(os.Args[2:]); err != nil {
+		if err := runSetup(subArgs); err != nil {
 			fail(err)
 		}
 	case "datastore":
-		if err := runDatastore(os.Args[2:]); err != nil {
+		if err := runDatastore(subArgs); err != nil {
 			fail(err)
 		}
 	case "deploy":
-		if err := runDeploy(os.Args[2:]); err != nil {
+		if err := runDeploy(subArgs); err != nil {
 			fail(err)
 		}
 	case "dlq":
-		if err := runDLQ(os.Args[2:]); err != nil {
+		if err := runDLQ(subArgs); err != nil {
 			fail(err)
 		}
 	case "promote":
-		if err := runPromote(os.Args[2:]); err != nil {
+		if err := runPromote(subArgs); err != nil {
 			fail(err)
 		}
 	case "rollback":
-		if err := runRollback(os.Args[2:]); err != nil {
+		if err := runRollback(subArgs); err != nil {
 			fail(err)
 		}
 	case "prune":
-		if err := runPrune(os.Args[2:]); err != nil {
+		if err := runPrune(subArgs); err != nil {
 			fail(err)
 		}
 	case "logs":
-		if err := runLogs(os.Args[2:]); err != nil {
+		if err := runLogs(subArgs); err != nil {
 			fail(err)
 		}
 	case "alerts":
-		if err := runAlerts(os.Args[2:]); err != nil {
+		if err := runAlerts(subArgs); err != nil {
 			fail(err)
 		}
 	case "docs":
-		if err := runDocs(os.Args[2:]); err != nil {
+		if err := runDocs(subArgs); err != nil {
 			fail(err)
 		}
 	case "metrics":
-		if err := runMetrics(os.Args[2:]); err != nil {
+		if err := runMetrics(subArgs); err != nil {
 			fail(err)
 		}
 	case "destroy":
-		if err := runDestroy(os.Args[2:]); err != nil {
+		if err := runDestroy(subArgs); err != nil {
 			fail(err)
 		}
 	case "gen":
-		if len(os.Args) >= 3 && os.Args[2] == "client" {
-			if err := runGenClient(os.Args[3:]); err != nil {
+		if len(subArgs) >= 1 && subArgs[0] == "client" {
+			if err := runGenClient(subArgs[1:]); err != nil {
 				fail(err)
 			}
 			return
 		}
-		if len(os.Args) < 3 || os.Args[2] != "graph" {
+		if len(subArgs) < 1 || subArgs[0] != "graph" {
 			// The gen NAMESPACE gets its own help — a bare or unknown
 			// gen should list the generators, not dump everything.
 			fmt.Fprint(os.Stderr, `tako gen — code and artifact generators (local, no cloud touched)
@@ -233,7 +234,7 @@ func main() {
 			os.Exit(2)
 		}
 		mode := "summary"
-		for _, arg := range os.Args[3:] {
+		for _, arg := range subArgs[1:] {
 			switch arg {
 			case "--json", "--mermaid":
 				mode = arg[2:]
@@ -355,7 +356,7 @@ func runTest(args []string) error {
 			if incDir := build.GetCfireIncludeDir(); incDir != "" {
 				cfArgs = append(cfArgs, "--include", incDir)
 			}
-			cmd := exec.Command("cfire", cfArgs...)
+			cmd := exec.Command(build.FindCfireBin(), cfArgs...)
 			cmd.Dir = dir
 			cmd.Stdout = os.Stdout
 			cmd.Stderr = os.Stderr

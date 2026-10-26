@@ -29,6 +29,7 @@ import (
 
 // runAlerts is `tako alerts [name] [--env <env>]`.
 func runAlerts(args []string) error {
+	args = normalizeArgs(args)
 	env := provision.DefaultEnv
 	var only string
 	for i := 0; i < len(args); i++ {
@@ -37,8 +38,6 @@ func runAlerts(args []string) error {
 		case a == "--env" && i+1 < len(args):
 			i++
 			env = args[i]
-		case strings.HasPrefix(a, "--env="):
-			env = strings.TrimPrefix(a, "--env=")
 		case strings.HasPrefix(a, "-"):
 			return fmt.Errorf("unknown flag %q (tako alerts accepts [name] and --env)", a)
 		default:

@@ -251,3 +251,35 @@ func TestMultiPackageBackgroundHandlersRegisteredLocallyInPrimaryMain(t *testing
 		}
 	}
 }
+
+func TestHarnessEmitsQueueRate(t *testing.T) {
+	g := &analyzer.AppGraph{
+		Module: "example.com/app",
+		Services: []analyzer.Service{
+			{Name: "app", Package: "example.com/app"},
+		},
+		Resources: []analyzer.Resource{
+			{Kind: "queue", Name: "archive", Package: "example.com/app", RateLimit: 2, MaxAttempts: 5, MinBackoffSeconds: 10, MaxBackoffSeconds: 60},
+		},
+		Handlers: []analyzer.Handler{
+			{Kind: "api", Service: "app", Package: "example.com/app", Var: "app.Home", Route: "GET /api/home"},
+		},
+	}
+	outDir := t.TempDir()
+	if _, err := Generate(g, outDir); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(outDir, ".tako", "gen", "app", harnessDir, harnessFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(raw)
+	for _, want := range []string{
+		`runtime.SetQueueRate("archive", 2)`,
+		`runtime.SetQueueDelivery("archive", 5, 10*time.Second, 60*time.Second)`,
+	} {
+		if !strings.Contains(src, want) {
+			t.Errorf("generated harness missing %q:\n%s", want, src)
+		}
+	}
+}

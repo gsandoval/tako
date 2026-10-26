@@ -20,7 +20,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
@@ -109,33 +108,8 @@ func init() {
 func takoTestMux() http.Handler {
 `, svc.Name, pkgName, osImport, timeImport)
 
-	for _, r := range g.Resources {
-		if r.Package == svc.Package && r.Kind == "queue" && (r.MaxAttempts > 0 || r.MinBackoffSeconds > 0 || r.MaxBackoffSeconds > 0) {
-			fmt.Fprintf(&b, "\truntime.SetQueueDelivery(%q, %d, %d*time.Second, %d*time.Second)\n",
-				r.Name, r.MaxAttempts, r.MinBackoffSeconds, r.MaxBackoffSeconds)
-		}
-	}
-
-	if hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc) {
-		b.WriteString("\ttakoMux := http.NewServeMux()\n")
-		if hasAuth(g) {
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SessionHandler(%s))\n", routes.PatternSession, providerArgs(g))
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignOutHandler())\n", routes.PatternSignOut)
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignInPage(%s))\n", routes.PatternSignIn, providerArgs(g))
-			if len(g.Roles) > 0 {
-				fmt.Fprintf(&b, "\truntime.RegisterRoles(%s)\n", quotedList(g.Roles))
-			}
-		}
-		if hasBucket(g, svc) {
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.SignedURLHandler())\n", routes.PatternSigned)
-		}
-		if hasCron(g, svc) {
-			fmt.Fprintf(&b, "\ttakoMux.Handle(%q, runtime.CronDispatch())\n", routes.PatternCron)
-		}
-		b.WriteString("\n")
-	} else {
-		b.WriteString("\ttakoMux := http.NewServeMux()\n\n")
-	}
+	writeQueueConfigs(&b, g, func(pkg string) bool { return pkg == svc.Package }, "\t", false)
+	writeReservedMux(&b, g, svc, false)
 
 	if sp := statusOf(g, svc); sp != nil {
 		fmt.Fprintf(&b, "\truntime.RegisterStatusPage(%s)\n\n", analyzer.ShortName(sp.Var))

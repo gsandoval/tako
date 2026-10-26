@@ -73,16 +73,34 @@ func checkCollisions(g *analyzer.AppGraph) error {
 	// Every physical name this app can produce, and the declaration it
 	// came from, per environment-independent form.
 	declared := map[string]string{} // logical name → "kind name"
+	buckets := map[string]bool{}
 	for _, r := range g.Resources {
+		if r.Kind == "disk" && r.Config["ephemeral"] == "true" {
+			continue
+		}
 		declared[r.Name] = r.Kind + " " + r.Name
+		if r.Kind == "bucket" {
+			buckets[r.Name] = true
+		}
 	}
 	for _, r := range g.Resources {
+		if r.Kind == "disk" && r.Config["ephemeral"] == "true" {
+			continue
+		}
 		if r.Kind == "bucket" {
 			if owner, ok := declared[r.Name+"-uploaded"]; ok {
 				return fmt.Errorf("%s is also the event topic of bucket %q\n\n"+
 					"    tako publishes a bucket's writes on <bucket>-uploaded, so those two\n"+
 					"    are one Pub/Sub topic. Rename the declaration.",
 					owner, r.Name)
+			}
+		}
+		if r.Kind == "disk" && r.Config["ephemeral"] != "true" {
+			if buckets["disk-"+r.Name] {
+				return fmt.Errorf("bucket %q and disk %q become the same GCS bucket\n\n"+
+					"    tako names a persistent disk's bucket with a disk- prefix, so a\n"+
+					"    bucket named %q addresses the same storage as disk %q. Rename one.",
+					"disk-"+r.Name, r.Name, "disk-"+r.Name, r.Name)
 			}
 		}
 		// M and P-M: P is the env in which they are the same resource.

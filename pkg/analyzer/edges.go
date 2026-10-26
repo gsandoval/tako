@@ -19,57 +19,14 @@ type resRef struct {
 // Only kinds that derive cloud grants (spec §4.6's table) produce edges;
 // unknown methods produce none.
 func verbOf(kind, method string) string {
-	switch kind {
-	case "entity":
-		switch method {
-		case "Get", "Exists", "Query":
-			return "read"
-		case "Put", "Delete", "Update", "Tx":
-			return "write"
-		}
-	case "bucket":
-		switch method {
-		case "Get", "Exists", "List":
-			return "read"
-		case "Put", "Delete":
-			return "write"
-		case "SignedPut", "SignedGet":
-			return "sign"
-		}
-	case "disk":
-		switch method {
-		case "ReadFile", "Open", "Stat", "FS", "Path":
-			return "read"
-		case "WriteFile", "Create", "OpenFile", "Remove", "MkdirAll":
-			return "write"
-		}
-	case "queue", "topic":
-		if method == "Publish" || method == "PublishAfter" {
-			return "publish"
-		}
-	case "secret":
-		return "read"
-	case "lock":
-		switch method {
-		case "Do", "TryDo":
-			return "lease"
-		}
-	case "job":
-		if method == "Run" {
-			return "run"
-		}
-	case "auth":
-		// Accounts (AB10b). The split is the whole point: a service that
-		// only reads the account list is not a service that can mint one,
-		// and Identity Platform has separate roles for exactly that.
-		switch method {
-		case "Get", "ByEmail", "List", "Page":
-			return "read"
-		case "Create", "Grant", "Revoke", "Disable", "Enable", "Delete":
-			return "write"
-		}
+	spec, ok := ByKind[kind]
+	if !ok || spec.MethodVerbs == nil {
+		return ""
 	}
-	return ""
+	if v, ok := spec.MethodVerbs[method]; ok {
+		return v
+	}
+	return spec.MethodVerbs["*"]
 }
 
 // usersHandleType is the receiver type whose methods derive account

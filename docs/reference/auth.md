@@ -344,8 +344,9 @@ next request and nobody is signed out, because the command goes through
 `auth.Users()` and inherits its stale-marking. `disable` ends the
 sessions outright, for the same reason it does from Go.
 
-Two things to know: `tako dev` holds `.tako/data` while it runs, so stop
-it first (the command says so if you forget); and against a project you
+Two things to know: while `tako dev` is running, local `tako users`
+commands automatically proxy through the live dev server so you do not
+have to stop it; and against a project you
 need `roles/identitytoolkit.admin`, which the refusal prints as a
 ready-to-paste grant.
 
@@ -495,11 +496,13 @@ already have.
 ## Local
 
 `tako dev` does auth with no GCP anywhere near it. HTML responses get
-the **dev bar**: sign in as test users `alice` / `bob`. The bar
+the **dev bar**: sign in as test users `alice` / `bob`, plus one-click
+role toggle pills when the app declares `tako.Role` vars. The bar
 reflects the session instead of listing every control — signed out it
-offers "sign in as alice/bob"; signed in as alice it shows "switch to
-bob" and "sign out". `/_tako/signin` serves a dev page listing
-the same users. Dev sessions are real session records in the local
+offers "sign in as alice/bob"; signed in as alice it shows active role
+pills, "switch to bob", and "sign out" (preserving roles already granted
+to the account). `/_tako/signin` serves a dev page listing
+the same users and role checkboxes. Dev sessions are real session records in the local
 entity store, so sign-out and revocation behave exactly as in the
 cloud.
 

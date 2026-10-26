@@ -200,7 +200,7 @@ func (s *session) cycle(first bool) error {
 		if incDir := build.GetCfireIncludeDir(); incDir != "" {
 			args = append(args, "--include", incDir)
 		}
-		cmd := exec.Command("cfire", args...)
+		cmd := exec.Command(analyzer.FindCfireBin(), args...)
 		cmd.Dir = s.dir
 		if out, err := cmd.CombinedOutput(); err != nil {
 			return fmt.Errorf("cfire build failed:\n%s", strings.TrimSpace(string(out)))

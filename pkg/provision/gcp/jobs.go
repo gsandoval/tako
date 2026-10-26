@@ -96,6 +96,8 @@ func jobLiveHash(j runJob) string {
 		"taskCount":      taskCount,
 		"cpu":            cpu,
 		"memory":         c.Resources.Limits["memory"],
+		"timeout":        secondsOf(j.Template.Template.Timeout),
+		"retries":        j.Template.Template.MaxRetries,
 	}
 	if mounts := reconstructMounts(j.Template.Template.Volumes, c.VolumeMounts); len(mounts) > 0 {
 		spec["mounts"] = mounts

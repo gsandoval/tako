@@ -38,7 +38,7 @@ func IsCfireProject(dir string) bool {
 	return hasCf
 }
 
-func findCfireBin() string {
+func FindCfireBin() string {
 	if env := os.Getenv("CFIRE_BIN"); env != "" {
 		return env
 	}
@@ -50,6 +50,10 @@ func findCfireBin() string {
 		return local
 	}
 	return "cfire"
+}
+
+func findCfireBin() string {
+	return FindCfireBin()
 }
 
 // Cfire outline JSON structures emitted by `cfire outline --json <dir>`
@@ -257,6 +261,14 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 						Msg:  fmt.Sprintf("%s name must be a non-empty string literal", ctor),
 						Rule: "const-name",
 					})
+				} else if !validResourceName(ctor, resName) {
+					errs = append(errs, &Error{
+						Pos: pos,
+						Msg: fmt.Sprintf("tako.%s name %q is not usable as a physical name — use lowercase letters, "+
+							"digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit",
+							ctor, resName),
+						Rule: "resource-name",
+					})
 				}
 				res := Resource{
 					Kind:    ctor,
@@ -268,6 +280,10 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				}
 				if ctor == "site" {
 					res.Dir = resName
+				}
+				if ctor == "disk" {
+					rawOpts := strings.Join(gv.Args[1:], " ") + " " + cfireDeclSource(p, gv.Line)
+					res.Config = parseCfireDiskOpts(rawOpts, resName, pos, &errs)
 				}
 				graph.Resources = append(graph.Resources, res)
 
@@ -567,6 +583,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 		}
 	}
 
+	checkReadOnlyDisks(graph, nil, &errs)
 	if len(errs) > 0 {
 		return nil, errs
 	}
@@ -589,11 +606,15 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 
 	// Build worker, job, and singleton services
 	for _, wh := range workerHandlers {
+		profile := "batch"
+		if wh.Kind == "singleton" {
+			profile = "singleton"
+		}
 		graph.Services = append(graph.Services, Service{
 			Name:      wh.Service,
 			Package:   wh.Package,
 			Handlers:  []string{wh.Var},
-			Profile:   "batch",
+			Profile:   profile,
 			Job:       wh.Kind == "job",
 			Singleton: wh.Kind == "singleton",
 		})
@@ -603,4 +624,82 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 		Graph: graph,
 		Dir:   cfg.Dir,
 	}, nil
+}
+
+var (
+	cfireEphemeralRe = regexp.MustCompile(`(?:\.?ephemeral)\s*[:=]\s*true\b`)
+	cfireReadOnlyRe  = regexp.MustCompile(`(?:\.?read_?only)\s*[:=]\s*true\b`)
+	cfireSizeLimitRe = regexp.MustCompile(`(?:\.?size_limit)\s*[:=]\s*"([^"]*)"`)
+)
+
+func cfireDeclSource(filePath string, startLine int) string {
+	if startLine <= 0 {
+		return ""
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return ""
+	}
+	lines := strings.Split(string(data), "\n")
+	if startLine > len(lines) {
+		return ""
+	}
+	var b strings.Builder
+	depth := 0
+	started := false
+	for i := startLine - 1; i < len(lines); i++ {
+		line := lines[i]
+		b.WriteString(line)
+		b.WriteByte('\n')
+		for _, ch := range line {
+			if ch == '(' {
+				depth++
+				started = true
+			} else if ch == ')' {
+				depth--
+			}
+		}
+		if started && depth <= 0 {
+			break
+		}
+	}
+	return b.String()
+}
+
+func parseCfireDiskOpts(raw, resName, pos string, errs *ErrorList) map[string]string {
+	ephemeral := cfireEphemeralRe.MatchString(raw)
+	readOnly := cfireReadOnlyRe.MatchString(raw)
+	sizeLimit := ""
+	if m := cfireSizeLimitRe.FindStringSubmatch(raw); len(m) > 1 {
+		sizeLimit = m[1]
+	}
+	if sizeLimit != "" {
+		if !ephemeral {
+			*errs = append(*errs, &Error{
+				Pos:  pos,
+				Msg:  fmt.Sprintf("disk %q sets SizeLimit without Ephemeral: true — SizeLimit only caps in-memory ephemeral disks; persistent disks are backed by Cloud Storage", resName),
+				Rule: "footprint",
+			})
+		} else if mi, ok := memMi(sizeLimit); !ok || mi < 1 || mi > 32*1024 {
+			*errs = append(*errs, &Error{
+				Pos:  pos,
+				Msg:  fmt.Sprintf("disk %q SizeLimit must be a memory size like \"512Mi\" or \"2Gi\" (up to 32Gi); got %q", resName, sizeLimit),
+				Rule: "footprint",
+			})
+		}
+	}
+	if !readOnly && !ephemeral && sizeLimit == "" {
+		return nil
+	}
+	cfg := map[string]string{}
+	if readOnly {
+		cfg["readonly"] = "true"
+	}
+	if ephemeral {
+		cfg["ephemeral"] = "true"
+	}
+	if sizeLimit != "" {
+		cfg["size_limit"] = sizeLimit
+	}
+	return cfg
 }

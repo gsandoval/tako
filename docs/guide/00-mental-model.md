@@ -297,7 +297,9 @@ Everything Tako generates or stores locally lives under `.tako/`
 - `.tako/lib/libtako-<os>-<arch>.a` — the cached Go C-archive runtime
   linked into native **cfire** binaries.
 - `.tako/data/` — local `bbolt` entity database (`entity.db`), local
-  bucket files (`buckets/`), and local dead letters (`deadletter/`).
+  bucket files (`buckets/`), mounted local disks (`disks/` and
+  `disks-ephemeral/`), persistent queue state (`queues/`), and local
+  dead letters (`deadletter/`).
   Delete `.tako/data/` at any time to reset local state.
 
 Use the fast CLI loop while developing:

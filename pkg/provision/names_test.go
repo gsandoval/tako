@@ -124,3 +124,22 @@ func TestASharedPrefixIsNotACollision(t *testing.T) {
 		t.Errorf("false positive on ordinary names: %v", err)
 	}
 }
+
+func TestDiskBucketCollisionWithDeclaredBucketIsRefused(t *testing.T) {
+	g := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "disk", Name: "media"},
+		{Kind: "bucket", Name: "disk-media"},
+	}}
+	if err := CheckNames(g, Config{Project: "p", App: "video", Env: "prod"}); err == nil {
+		t.Fatal("persistent disk 'media' and bucket 'disk-media' resolve to the same GCS bucket")
+	}
+
+	// An ephemeral disk provisions no bucket, so it cannot collide.
+	ephemeral := &analyzer.AppGraph{Resources: []analyzer.Resource{
+		{Kind: "disk", Name: "media", Config: map[string]string{"ephemeral": "true"}},
+		{Kind: "bucket", Name: "disk-media"},
+	}}
+	if err := CheckNames(ephemeral, Config{Project: "p", App: "video", Env: "prod"}); err != nil {
+		t.Errorf("ephemeral disk should not collide with bucket: %v", err)
+	}
+}

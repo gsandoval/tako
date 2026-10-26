@@ -59,7 +59,7 @@ write.
 
 | Rule | Fires when | Page |
 |---|---|---|
-| `resource-name` | a bucket, queue or topic name is not usable as a physical name | [bucket.md](bucket.md) |
+| `resource-name` | a bucket, disk, queue or topic name is not usable as a physical name | [bucket.md](bucket.md), [disk.md](disk.md) |
 
 ```
 tako.Bucket name "Photo Uploads" is not usable as a physical name — use lowercase letters, digits and hyphens (a-z, 0-9, -), starting and ending with a letter or digit

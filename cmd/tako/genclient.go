@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/clientgen"
@@ -13,6 +12,7 @@ import (
 // runGenClient is `tako gen client ts`: the typed TypeScript client for
 // the app's api endpoints, written under .tako/gen (or --out).
 func runGenClient(args []string) error {
+	args = normalizeArgs(args)
 	if len(args) < 1 || args[0] != "ts" {
 		return fmt.Errorf("tako gen client generates TypeScript today — run: tako gen client ts")
 	}
@@ -25,8 +25,6 @@ func runGenClient(args []string) error {
 				return fmt.Errorf("--out needs a path")
 			}
 			out = args[i]
-		case strings.HasPrefix(args[i], "--out="):
-			out = strings.TrimPrefix(args[i], "--out=")
 		default:
 			return fmt.Errorf("unknown flag %q (tako gen client ts accepts --out <path>)", args[i])
 		}

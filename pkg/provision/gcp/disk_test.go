@@ -71,6 +71,8 @@ func TestRunServiceAndJobMountsLiveHashRoundTrip(t *testing.T) {
 			"taskCount":      2,
 			"cpu":            "2",
 			"memory":         "2Gi",
+			"timeout":        600,
+			"retries":        3,
 			"mounts":         mounts,
 		},
 	}

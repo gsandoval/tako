@@ -6,7 +6,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -50,15 +49,15 @@ var errDiskReadOnly = errors.New("tako: write to read-only disk")
 // root returns the host filesystem root directory for this disk under ctx.
 func (d *DiskHandle) root(ctx context.Context) string {
 	dir := ""
-	if a := appFrom(ctx); a != nil && a.Buckets != nil {
-		dir = extractBucketDir(a.Buckets)
+	if a := appFrom(ctx); a != nil && a.DataDir != "" {
+		dir = a.DataDir
 	} else if Environment() == EnvCloud {
 		if root := os.Getenv("TAKO_DISK_ROOT"); root != "" {
 			return filepath.Join(root, d.name)
 		}
 		return filepath.Join("/mnt/tako", d.name)
 	} else if hooks.Bucket != nil {
-		dir = extractBucketDir(hooks.Bucket)
+		dir = hooks.DataDir
 		if dir == "" {
 			dir = ".tako/data"
 		}
@@ -73,20 +72,6 @@ func (d *DiskHandle) root(ctx context.Context) string {
 	base := filepath.Join(dir, subdir, d.name)
 	_ = os.MkdirAll(base, 0o755)
 	return base
-}
-
-func extractBucketDir(b any) string {
-	v := reflect.ValueOf(b)
-	if v.Kind() == reflect.Ptr && !v.IsNil() {
-		v = v.Elem()
-	}
-	if v.Kind() == reflect.Struct {
-		f := v.FieldByName("dir")
-		if f.IsValid() && f.Kind() == reflect.String {
-			return f.String()
-		}
-	}
-	return ""
 }
 
 // resolve validates and joins rel against the disk's root directory,

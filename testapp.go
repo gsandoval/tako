@@ -179,14 +179,22 @@ func (a *TestApp) Handler() http.Handler {
 			"      Run `tako test` (it regenerates first) — or `tako test ./pkg/...` for a subset.")
 		return nil
 	}
-	return hooks.TestMux()
+	base := hooks.TestMux()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		base.ServeHTTP(w, r.WithContext(withApp(r.Context(), a.app)))
+	})
+}
+
+func withApp(ctx context.Context, app *boot.App) context.Context {
+	ctx = boot.WithApp(ctx, app)
+	return context.WithValue(ctx, appKey{}, app)
 }
 
 // Ctx returns a request context bound to this app's backends,
 // authenticated as the given user if one is passed.
 func (a *TestApp) Ctx(as ...User) Ctx {
 	c := &testCtx{
-		Context: context.WithValue(context.Background(), appKey{}, a.app),
+		Context: withApp(context.Background(), a.app),
 		log:     slog.Default(),
 	}
 	if len(as) > 0 {
@@ -209,7 +217,7 @@ func (a *TestApp) HTMX(as ...User) Ctx {
 // plus a logger naming the handler.
 func (a *TestApp) handlerCtx(ctx context.Context, name string) Ctx {
 	return &testCtx{
-		Context: context.WithValue(ctx, appKey{}, a.app),
+		Context: withApp(ctx, a.app),
 		log:     slog.Default().With("handler", name),
 	}
 }

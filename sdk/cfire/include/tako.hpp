@@ -393,7 +393,7 @@ inline void mount_json(std::string_view pattern, Fn&& fn, MountOpts opts = {}) {
 #ifdef CFIRE_HAS_LIBTAKO
     auto* heap_fn = new std::function<std::expected<HttpRes, cfire::Error>(HttpReq)>(std::forward<Fn>(fn));
     auto cb = +[](tako_http_req_t req, void* user_data) -> tako_buf_t {
-        auto* fp = static_cast<std::function<std::expected<HttpRes, cfire::Error>>(HttpReq)*>(user_data);
+        auto* fp = static_cast<std::function<std::expected<HttpRes, cfire::Error>(HttpReq)>*>(user_data);
         HttpReq hreq{
             .method = req.method ? req.method : "",
             .path = req.path ? req.path : "",

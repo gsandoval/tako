@@ -51,8 +51,6 @@ func runSetup(args []string) error {
 			// missing, which is a different mistake with a different fix.
 			return fmt.Errorf("--member needs a value, e.g. --member user:you@example.com " +
 				"or --member serviceAccount:ci@project.iam.gserviceaccount.com")
-		case strings.HasPrefix(rest[i], "--member="):
-			member = strings.TrimPrefix(rest[i], "--member=")
 		default:
 			return fmt.Errorf("unknown flag %q (tako setup accepts --project, --region, --env, --member, --plan, --yes)", rest[i])
 		}
@@ -265,6 +263,7 @@ func handOver(err error, project, principal string, plan gcp.SetupPlan) error {
 // is derivable, replaceable or revocable, so every other region flag in
 // this CLI has a default. This one refuses to.
 func runDatastore(args []string) error {
+	args = normalizeArgs(args)
 	if len(args) == 0 || args[0] != "create" {
 		fmt.Fprint(os.Stderr, "tako datastore create --region <region> [--project <id>]\n\n"+
 			"  Creates the project's datastore-mode database. The location is\n"+
@@ -274,7 +273,7 @@ func runDatastore(args []string) error {
 	}
 	regionGiven := false
 	for _, a := range args[1:] {
-		if a == "--region" || strings.HasPrefix(a, "--region=") {
+		if a == "--region" {
 			regionGiven = true
 		}
 	}

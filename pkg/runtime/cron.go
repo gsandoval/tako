@@ -2,12 +2,7 @@ package runtime
 
 import (
 	"context"
-	"crypto"
-	"crypto/rsa"
-	"crypto/sha256"
-	"crypto/x509"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -152,54 +147,6 @@ func CronDispatch() http.Handler {
 }
 
 // --- Google-signed OIDC verification (Scheduler's identity) -----------
-//
-// Same pure-stdlib RS256 discipline as the session's Identity Platform
-// path, against Google's OAuth2 x509 endpoint.
-
-const googleCerts = "https://www.googleapis.com/oauth2/v1/certs"
-
-var (
-	gcertMu      sync.Mutex
-	gcertCache   map[string]*rsa.PublicKey
-	gcertExpires time.Time
-)
-
-func googleSigningKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
-	gcertMu.Lock()
-	defer gcertMu.Unlock()
-	if gcertCache != nil && time.Now().Before(gcertExpires) {
-		return gcertCache, nil
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, googleCerts, nil)
-	if err != nil {
-		return nil, err
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer res.Body.Close()
-	var pems map[string]string
-	if err := json.NewDecoder(res.Body).Decode(&pems); err != nil {
-		return nil, err
-	}
-	keys := map[string]*rsa.PublicKey{}
-	for kid, certPEM := range pems {
-		block, _ := pem.Decode([]byte(certPEM))
-		if block == nil {
-			continue
-		}
-		cert, err := x509.ParseCertificate(block.Bytes)
-		if err != nil {
-			continue
-		}
-		if pub, ok := cert.PublicKey.(*rsa.PublicKey); ok {
-			keys[kid] = pub
-		}
-	}
-	gcertCache, gcertExpires = keys, time.Now().Add(30*time.Minute)
-	return keys, nil
-}
 
 // verifyCronCaller authenticates a Cloud Scheduler trigger against this
 // service's deploy-injected expectations, mirroring verifyPushCaller:
@@ -266,34 +213,9 @@ func logRefusal(log *slog.Logger, what string, status int, reason error, extra .
 // how one of the two routes ends up with a weaker check than the other
 // — which is the state CR3 found.
 func verifyGoogleToken(ctx context.Context, token, audience, invoker string) error {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return errors.New("not a JWT")
-	}
-	headRaw, err1 := b64url(parts[0])
-	claimRaw, err2 := b64url(parts[1])
-	sig, err3 := b64url(parts[2])
-	if err1 != nil || err2 != nil || err3 != nil {
-		return errors.New("malformed JWT")
-	}
-	var head struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
-	}
-	if json.Unmarshal(headRaw, &head) != nil || head.Alg != "RS256" {
-		return errors.New("unexpected algorithm")
-	}
-	keys, err := googleSigningKeys(ctx)
+	claimRaw, err := verifyRS256(ctx, token, &googleCertStore, "Google signing keys")
 	if err != nil {
-		return fmt.Errorf("fetching Google signing keys: %v", err)
-	}
-	key, ok := keys[head.Kid]
-	if !ok {
-		return errors.New("unknown signing key")
-	}
-	digest := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	if rsa.VerifyPKCS1v15(key, crypto.SHA256, digest[:], sig) != nil {
-		return errors.New("bad signature")
+		return err
 	}
 	var claims struct {
 		Iss   string `json:"iss"`

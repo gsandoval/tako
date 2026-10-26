@@ -40,11 +40,12 @@ flowchart LR
 |---|---|
 | `tako.Entity[T]` / `tako.entity[T]` | a bbolt file, `.tako/data/entity.db` |
 | `tako.Bucket` / `tako.bucket` | directories under `.tako/data/buckets/` |
-| `tako.Queue` / `tako.Topic` / `tako.queue` / `tako.topic` | in-process channels calling your handlers |
+| `tako.Disk` / `tako.disk` | directories under `.tako/data/disks/` (or `.tako/data/disks-ephemeral/`) |
+| `tako.Queue` / `tako.Topic` / `tako.queue` / `tako.topic` | in-process channels with `.tako/data/queues/` persistence across reloads |
 | `tako.Lock` / singleflight / `Singleton` / `tako.lock` / `tako.singleton` | an in-process lease table |
 | `tako.Job` / `tako.job` | executions ride the local queue dispatcher |
 | signed URLs | served by your own process |
-| `tako.Auth` / `tako.auth` | a dev bar: sign in as alice/bob, no GCP anywhere |
+| `tako.Auth` / `tako.auth` | a dev bar: sign in as alice/bob and toggle roles, no GCP anywhere |
 | `tako.Secret` / `tako.secret` | `.env` in the module directory (`tako secrets set`) |
 
 Because queues are channels calling your functions, a breakpoint
@@ -96,9 +97,12 @@ comment on the declaration says so.
   works on `.tako/data` — the same accounts `tako dev` signs in — and
   on a deployed app's Identity Platform when you add `--project`. A
   grant reaches sessions that are already signed in: the role lands on
-  their next request, nobody is signed out. One catch: `tako dev` holds
-  `.tako/data` while it runs, so stop it first (the command says so if
-  you forget).
+  their next request, nobody is signed out. While `tako dev` is running,
+  local `tako users` commands automatically proxy over `/_tako/dev/users`
+  so you can manage accounts without stopping the dev server.
+- **Manual cron triggers in dev.** In addition to running on their schedule,
+  declared crons can be triggered on demand during `tako dev` via
+  `curl -X POST http://localhost:8080/_tako/api/cron/<CronVar>`.
 - `tako.Environment() == tako.EnvLocal` is how your code knows it is
   here rather than deployed — for a seeded sign-in, a visible fixture,
   an extra log line. It is not a feature flag: branch a development

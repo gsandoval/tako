@@ -27,9 +27,9 @@ var Scratch = tako.Disk("scratch", tako.DiskConfig{
 
 **cfire**
 ```cfire
-Shared := tako.disk("shared")
-Weights := tako.disk("weights")
-Scratch := tako.disk("scratch")
+Shared  := tako.disk("shared")
+Weights := tako.disk("weights", DiskOpts{read_only: true})
+Scratch := tako.disk("scratch", DiskOpts{ephemeral: true, size_limit: "1Gi"})
 ```
 
 ```mermaid
@@ -151,3 +151,10 @@ test "scratch disk round-trip" {
     defer app.close()
 }
 ```
+
+## Errors you'll meet
+
+- **`tako/config-literal`** — A handler or helper calls a mutating method (`WriteFile`, `Create`, `OpenFile`, `Remove`, `MkdirAll` in Go, or `write_file`, `remove`, `mkdir_all` in cfire) on a disk declared with `ReadOnly: true`, or `DiskConfig.SizeLimit` is set on a persistent disk (`Ephemeral: false`) or uses an invalid size string (such as `"50Gi"` above Cloud Run's `"32Gi"` limit).
+- **`tako/resource-name`** — The disk name is not a lowercase physical identifier (`a-z`, `0-9`, `-`, starting and ending with a letter or digit).
+- **Name collision with a bucket** — Because persistent `tako.Disk("foo")` provisions a Cloud Storage bucket named `<project>-<app>-disk-<env>-foo`, declaring both `tako.Disk("foo")` and `tako.Bucket("disk-foo")` in the same app is refused before provisioning.
+- **Path traversal (`..`)** — Passing an absolute path or a relative path that escapes the disk root returns an error before touching the filesystem.

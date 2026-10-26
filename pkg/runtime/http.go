@@ -16,6 +16,7 @@ import (
 	"time"
 
 	tako "github.com/gsandoval/tako"
+	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/metrics"
 	"golang.org/x/net/http2"
@@ -252,6 +253,9 @@ const (
 // fails.
 func recordRequest(r *http.Request, rl *routeLabel, status int, took time.Duration) {
 	sink := hooks.Metrics
+	if app := boot.FromContext(r.Context()); app != nil && app.Metrics != nil {
+		sink = app.Metrics
+	}
 	if sink == nil {
 		return
 	}

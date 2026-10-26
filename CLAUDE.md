@@ -96,8 +96,9 @@ symbol as a side effect of another task — API changes are their own task.
 
 ```
 go test ./...                    # the framework itself: unit + golden + conformance(local)
-tako test                        # AN APP (from its dir): analyze → regenerate → go test
-go run ./cmd/tako gen graph      # print AppGraph for a target module
+tako check [--json]              # fast static analysis + site-shadow check + .tako/gen/ codegen
+tako test                        # AN APP (from its dir): analyze → regenerate → go test / cfire test
+go run ./cmd/tako gen graph      # print AppGraph for a target module (--json | --mermaid)
 go run ./cmd/tako dev            # run an example locally (from its dir)
 go test ./pkg/backends/conformance -backend=local
 ```
@@ -109,24 +110,46 @@ does not apply. A test that reaches for `app.Handler()` under `go test`
 fails with the line telling it so. Everything else in an app still runs
 fine either way; the framework's own suite is unaffected.
 
-(gcp-backend conformance and `tako deploy` arrive in Phase E; update this list
-when they do.)
-
 ## Repo map
 
 ```
-cmd/tako/          CLI (dev, deploy, gen, test, logs, alerts, docs, destroy, prune)
-*.go (root)        user-facing SDK, package tako — normative, changes are their own task
-pkg/analyzer/      go/packages + go/types → AppGraph; testdata/ goldens
-pkg/codegen/       AppGraph → .tako/gen/<service>/main.go
-pkg/runtime/       middleware, codecs, auth shim, Ctx implementation
-pkg/backends/      interface contracts + conformance suite
-  local/           in-process: fs bucket, bbolt entity, channel queues
-  gcp/             GCS, Datastore, Pub/Sub, Tasks (Phase E+)
-pkg/provision/     stateless GCP reconciler (Phase E+)
-pkg/devserver/     tako dev: watch → analyze → generate → go run
-pkg/docserver/     tako docs: renders the embedded guide/reference/api
-examples/          hello, shortlink, gallery, journal, shop
+cmd/tako/          CLI (new, check, dev, test, gen, build, setup, deploy, promote, rollback,
+                   users, secrets, logs, dlq, alerts, metrics, docs, prune, destroy)
+  cli_flags.go     Shared --flag=value argument normalizer (normalizeArgs)
+  deploy.go        Deploy orchestration, preflight, and rollout
+  deploy_report.go Plan formatting, security summary, and post-deploy output
+  new.go           Project scaffolding (Go and cfire)
+  new_templates.go Starter templates for API, Site, cfire, and AGENTS.md
+*.go (root)        User-facing SDK, package tako — normative, changes are their own task
+internal/boot/     Per-App backend holder + context-scoped boot.WithApp / boot.FromContext
+internal/hooks/    Internal registration seams between root SDK and pkg/runtime
+pkg/analyzer/      Go (go/packages + go/types) & cfire (cfire outline) → AppGraph
+  primitives.go    Single-source-of-truth PrimitiveSpec registry for constructors & kinds
+  pipeline.go      Shared post-extraction pipeline (projectServiceClaims, checkReadOnlyDisks)
+  queries.go       Datastore query-shape & composite-index powerset analyzer
+  cfire.go         cfire outline AST extraction and validation
+pkg/codegen/       AppGraph → .tako/gen/<service>/main.{go,cf} + test harness
+  wiring.go        Shared resource/handler wiring emitters for main.go and harness.go
+  mounts.go        HTTP route binder & mount code generation
+  remotecall.go    Cross-service typed RPC stub generation
+pkg/runtime/       Middleware, codecs, auth shim, Ctx implementation
+  session.go       Core session middleware, cookie management, CSRF verification
+  jwt.go           Shared RS256 X.509 cert cache & JWT verifier (Firebase Auth & OIDC)
+  signin_page.go   Hosted /_tako/signin HTML & JS flows
+  devbar.go        Local #tako-dev-bar HTML/CSS injection and role toggle pills
+  devauth.go       Local dev user creation, role toggling, and /_tako/dev/users proxy API
+  page.go          SSR Page rendering, HTMX fragment negotiation, and markdown sanitization
+  templates.go     Template directory discovery and layout cloning
+pkg/backends/      Interface contracts + shared conformance suite (local + gcp)
+  local/           In-process: fs bucket, bbolt entity, persistent channel queues, deadletter
+  gcp/             GCS, Datastore, Pub/Sub, Cloud Tasks, Cloud Run Jobs, Secret Manager
+pkg/provision/     Stateless GCP reconciler (Desired → Plan → Apply)
+  specs.go         Typed RunServiceSpec, RunJobSpec, MountSpec
+  desired.go       Subsystem-focused desired state builders
+  gcp/             Live GCP API clients & round-trip wire codecs (run_common.go, run.go, jobs.go)
+pkg/devserver/     tako dev: watch → analyze → generate → run
+pkg/docserver/     tako docs: renders embedded guide/reference/api + /llms.txt
+examples/          hello, shortlink, gallery, journal, shop, blog, cfire-*
 docs/              tech spec, implementation plan, agent plan; guide/ +
                    reference/ + api/ are go:embed'ed and served by tako docs
 ```

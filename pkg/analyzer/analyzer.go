@@ -493,27 +493,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 		}
 	}
 	errs = append(errs, edgeErrs...)
-	readOnlyDisks := map[string]bool{}
-	for _, r := range graph.Resources {
-		if r.Kind == "disk" && r.Config["readonly"] == "true" {
-			readOnlyDisks[r.Name] = true
-		}
-	}
-	if len(readOnlyDisks) > 0 {
-		for _, e := range graph.Edges {
-			if e.Kind == "resource" && e.ToKind == "disk" && e.Verb == "write" && readOnlyDisks[e.To] {
-				pos := e.From
-				if h := handlersByVar[e.From]; h != nil {
-					pos = h.Pos
-				}
-				errs = append(errs, &Error{
-					Pos:  pos,
-					Msg:  fmt.Sprintf("handler %s writes to disk %q, which is declared with ReadOnly: true", e.From, e.To),
-					Rule: "config-literal",
-				})
-			}
-		}
-	}
+	checkReadOnlyDisks(graph, pkgs[0].Fset, &errs)
 	// Two routes Go's mux cannot order are a service that panics at
 	// startup. Checked last, because it needs every handler placed in
 	// its service first.
@@ -714,43 +694,20 @@ func splitPos(pos string) (file string, line, col int) {
 // applyProfiles projects handler WithProfile claims onto services and
 // rejects conflicts (one service, one scaling profile).
 func applyProfiles(graph *AppGraph, errs *ErrorList) {
-	for i := range graph.Services {
-		svc := &graph.Services[i]
-		claim, claimedBy := "", ""
-		for _, h := range graph.Handlers {
-			if h.Service != svc.Name || h.Profile == "" {
-				continue
-			}
-			if claim != "" && claim != h.Profile {
-				*errs = append(*errs, &Error{
-					Pos:  h.Pos,
-					Msg:  fmt.Sprintf("service %s cannot be both %s (%s) and %s (%s) — one service scales one way; split the packages or align the profiles", svc.Name, claim, claimedBy, h.Profile, ShortVar(h)),
-					Rule: "mixed-profile",
-				})
-				continue
-			}
-			claim, claimedBy = h.Profile, ShortVar(h)
-		}
-		for _, r := range graph.Resources {
-			if r.Kind != "service" || r.Package != svc.Package || r.Profile == "" {
-				continue
-			}
-			if claim != "" && claim != r.Profile {
-				*errs = append(*errs, &Error{
-					Pos:  r.Pos,
-					Msg:  fmt.Sprintf("service %s cannot be both %s (%s) and %s (%s) — one service scales one way; split the packages or align the profiles", svc.Name, claim, claimedBy, r.Profile, r.Var),
-					Rule: "mixed-profile",
-				})
-				continue
-			}
-			if isAppService(graph, *svc) {
-				claim = r.Profile
-			}
-		}
-		if claim != "" {
+	projectServiceClaims(
+		graph,
+		errs,
+		func(h Handler) (string, bool) { return h.Profile, h.Profile != "" },
+		func(r Resource) (string, bool) { return r.Profile, r.Profile != "" },
+		func(a, b string) bool { return a == b },
+		"mixed-profile",
+		func(svcName, first, firstBy, second, secondBy string) string {
+			return fmt.Sprintf("service %s cannot be both %s (%s) and %s (%s) — one service scales one way; split the packages or align the profiles", svcName, first, firstBy, second, secondBy)
+		},
+		func(svc *Service, claim string, _ string) {
 			svc.Profile = claim
-		}
-	}
+		},
+	)
 }
 
 // varDecl is one package-level var initialised by a constructor call.

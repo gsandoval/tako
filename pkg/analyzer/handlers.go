@@ -303,20 +303,6 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	}
 }
 
-var handlerCtors = map[string]bool{
-	"API": true, "Page": true, "Worker": true, "Subscribe": true,
-	"Cron": true, "Runner": true, "Singleton": true,
-}
-
-var declCtors = map[string]bool{
-	"Entity": true, "Bucket": true, "Queue": true, "Topic": true,
-	"Cache": true, "Secret": true, "Counter": true, "Histogram": true,
-	"Site": true, "Service": true, "Auth": true, "Policy": true,
-	"RequireRole": true, "Role": true, "StatusPage": true, "Job": true,
-	"Lock": true, "Alert": true, "AlertEmail": true, "AlertTopic": true,
-	"AlertWebhook": true, "Disk": true,
-}
-
 // checkPackageLevel reports handler and resource constructors called
 // inside function bodies — declarations the analyzer would never see.
 func checkPackageLevel(dir string, pkg *packages.Package, handlerLits []*ast.FuncDecl, errs *ErrorList) {
@@ -327,13 +313,17 @@ func checkPackageLevel(dir string, pkg *packages.Package, handlerLits []*ast.Fun
 				return true
 			}
 			ctor := sdkConstructor(pkg, call)
-			if handlerCtors[ctor] {
+			spec, ok := Registry[ctor]
+			if !ok || !spec.RejectLocalDecl {
+				return true
+			}
+			if spec.IsHandler {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, call.Pos()),
 					Msg:  fmt.Sprintf("tako.%s must initialize a package-level var — handlers declared inside functions are invisible to analysis", ctor),
 					Rule: "package-level",
 				})
-			} else if declCtors[ctor] {
+			} else {
 				*errs = append(*errs, &Error{
 					Pos:  relPos(dir, pkg.Fset, call.Pos()),
 					Msg:  fmt.Sprintf("tako.%s must initialize a package-level var — declarations inside functions are invisible to analysis", ctor),

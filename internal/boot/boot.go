@@ -4,6 +4,7 @@
 package boot
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
@@ -33,6 +34,7 @@ type Options struct {
 
 // App is one booted set of local backends.
 type App struct {
+	DataDir    string
 	Entity     *local.EntityStore
 	Users      *local.UserStore
 	Buckets    *local.BucketStore
@@ -41,6 +43,23 @@ type App struct {
 	Cache      *local.MemoryCache
 	Metrics    *local.MetricsLog
 	Lease      *local.MemoryLease
+}
+
+type appKey struct{}
+
+// WithApp returns a derived context carrying app, isolating operations
+// under this context from the process-global hooks.
+func WithApp(ctx context.Context, app *App) context.Context {
+	return context.WithValue(ctx, appKey{}, app)
+}
+
+// FromContext returns the App carried by ctx, or nil when none is bound.
+func FromContext(ctx context.Context) *App {
+	if ctx == nil {
+		return nil
+	}
+	a, _ := ctx.Value(appKey{}).(*App)
+	return a
 }
 
 // Local boots a fresh backend set rooted at opts.Dir and installs it as
@@ -72,6 +91,7 @@ func Local(opts Options) (*App, error) {
 		secrets.Load(resolved)
 	}
 	app := &App{
+		DataDir:    opts.Dir,
 		Entity:     store,
 		Users:      local.NewUserStore(store),
 		Buckets:    buckets,
@@ -81,6 +101,7 @@ func Local(opts Options) (*App, error) {
 		Metrics:    local.NewMetricsLog(),
 		Lease:      local.NewMemoryLease(),
 	}
+	hooks.DataDir = opts.Dir
 	hooks.Entity = store
 	// Accounts share the entity database: one file for `tako dev`, and
 	// one thing to delete when a developer wants a clean slate.

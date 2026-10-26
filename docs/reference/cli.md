@@ -103,7 +103,7 @@ Platform. A role the app does not declare is refused with the declared
 set and a did-you-mean; deleting against a project asks you to type the
 email, and deleting locally does not (`.tako/data` is the reset story).
 
-`tako dev` holds `.tako/data` while it runs — stop it first. Against a
+While `tako dev` is running (and holds the `.tako/data/entity.db` lock), local `tako users` commands automatically proxy through the running dev server (`/_tako/dev/users`), so you can create users or grant roles without stopping `tako dev`. Against a
 project you need `roles/identitytoolkit.admin` **and**
 `roles/serviceusage.serviceUsageConsumer`; each refusal prints its own
 grant, and they are not interchangeable — the second is about which

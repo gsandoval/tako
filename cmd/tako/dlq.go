@@ -17,6 +17,7 @@ import (
 // with a service it prints the messages (peek — nothing is consumed);
 // --ack drains what it printed.
 func runDLQ(args []string) error {
+	args = normalizeArgs(args)
 	// --local is answered before parseTarget, which insists on a project:
 	// asking for a GCP project to read files under .tako/data would be a
 	// requirement invented by the parser, not by the task.
@@ -242,6 +243,7 @@ func replayDead(ctx context.Context, client *gcp.Client, t target, service, sub 
 // runDLQLocalArgs parses the shared dlq flags without a cloud target and
 // hands off to the on-disk implementation.
 func runDLQLocalArgs(args []string) error {
+	args = normalizeArgs(args)
 	ack, replay, all := false, false, false
 	var carrier, id string
 	for _, a := range args {

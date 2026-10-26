@@ -27,6 +27,7 @@ type checkReport struct {
 // warnings, and code generation (including the test harness overlay)
 // without starting the dev server or running tests.
 func runCheck(args []string) error {
+	args = normalizeArgs(args)
 	jsonOut := false
 	for _, arg := range args {
 		switch arg {

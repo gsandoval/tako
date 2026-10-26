@@ -28,6 +28,7 @@ import (
 // runDocs is `tako docs [--port <n>] [--open] [--export <dir>]` or
 // `tako docs <list | topic | search <query>>`.
 func runDocs(args []string) error {
+	args = normalizeArgs(args)
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		site, err := docserver.Build(docs.FS)
 		if err != nil {
@@ -64,14 +65,9 @@ func runDocs(args []string) error {
 			i++
 			opts.ExportDir = args[i]
 			continue
-		case strings.HasPrefix(a, "--export="):
-			opts.ExportDir = strings.TrimPrefix(a, "--export=")
-			continue
 		case a == "--port" && i+1 < len(args):
 			i++
 			raw = args[i]
-		case strings.HasPrefix(a, "--port="):
-			raw = strings.TrimPrefix(a, "--port=")
 		default:
 			return fmt.Errorf("unknown flag %q (tako docs accepts --port <n>, --open, and --export <dir>)", a)
 		}

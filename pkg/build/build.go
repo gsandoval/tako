@@ -129,7 +129,7 @@ func compile(dir, service string) (path string, size int64, err error) {
 		if incDir := GetCfireIncludeDir(); incDir != "" {
 			args = append(args, "--include", incDir)
 		}
-		cmd := exec.Command("cfire", args...)
+		cmd := exec.Command(FindCfireBin(), args...)
 		cmd.Dir = dir
 		if msg, err := cmd.CombinedOutput(); err != nil {
 			return "", 0, fmt.Errorf("cfire build %s: %s", service, strings.TrimSpace(string(msg)))

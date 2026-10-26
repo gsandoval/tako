@@ -18,6 +18,7 @@ import (
 // generated main (async-only — per-service mains arrive with cloud
 // async) are skipped with a note, never silently.
 func runBuild(args []string) error {
+	args = normalizeArgs(args)
 	repo := ""
 	for i := 0; i < len(args); i++ {
 		switch args[i] {

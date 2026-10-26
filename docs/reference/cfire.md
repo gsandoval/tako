@@ -49,7 +49,7 @@ PruneExpired := tako.cron("0 * * * *", prune_expired)
 ```
 
 Supported constructors mirror the Go SDK:
-- **Stateful & observability resources:** `tako.entity[T](name)`, `tako.bucket(name)`, `tako.queue[T](name)`, `tako.topic[T](name)`, `tako.job[T](name)`, `tako.cache[T](name)`, `tako.lock(name)`, `tako.secret(name)`, `tako.counter(name)`, `tako.histogram(name)`, `tako.site(dir)`, `tako.auth()`, `tako.role(name)`.
+- **Stateful & observability resources:** `tako.entity[T](name)`, `tako.bucket(name)`, `tako.disk(name [, opts])`, `tako.queue[T](name)`, `tako.topic[T](name)`, `tako.job[T](name)`, `tako.cache[T](name)`, `tako.lock(name)`, `tako.secret(name)`, `tako.counter(name)`, `tako.histogram(name)`, `tako.site(dir)`, `tako.auth()`, `tako.role(name)`.
 - **Handlers:** `tako.api(route, fn)`, `tako.page(route, fn)`, `tako.worker(queue_var, fn)`, `tako.subscribe(topic_var, fn)`, `tako.cron(schedule, fn)`, `tako.runner(job_var, fn)`, `tako.singleton(fn)`.
 
 ```mermaid
@@ -138,6 +138,7 @@ fn get_link(ctx: tako.Ctx, req: GetLinkReq) -> Link! {
 
 - **Entity (`tako.entity[T]`):** `.get(ctx, id) -> T?!`, `.put(ctx, val) -> void!`, `.remove(ctx, id) -> void!`, `.query() -> Query[T]` (`.where(field, op, val)`, `.order_by(field)`, `.limit(n)`, `.all(ctx) -> []T!`), `.tx(ctx, |tx| -> void!)`.
 - **Bucket (`tako.bucket`):** `.put(ctx, key, data, content_type) -> void!`, `.get(ctx, key) -> bytes!`, `.remove(ctx, key) -> void!`, `.signed_url(ctx, key, method, ttl_sec) -> str!`.
+- **Disk (`tako.disk`):** `.read_file(ctx, path) -> bytes!`, `.write_file(ctx, path, data) -> void!`, `.path(ctx, rel) -> str!`, `.remove(ctx, path) -> void!`, `.mkdir_all(ctx, path) -> void!`.
 - **Queue & Topic (`tako.queue[T]`, `tako.topic[T]`):** `.publish(ctx, msg) -> void!`.
 - **Cache (`tako.cache[T]`):** `.get(ctx, key) -> T?`, `.set(ctx, key, val, ttl_sec) -> void!`, `.remove(ctx, key) -> void!`.
 - **Lock (`tako.lock`):** `.with_lease(ctx, ttl_sec, || -> void!) -> void!`.

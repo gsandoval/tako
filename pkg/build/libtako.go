@@ -68,3 +68,18 @@ func GetCfireIncludeDir() string {
 	return ""
 }
 
+// FindCfireBin returns the path to the cfire compiler binary.
+func FindCfireBin() string {
+	if env := os.Getenv("CFIRE_BIN"); env != "" {
+		return env
+	}
+	if path, err := exec.LookPath("cfire"); err == nil {
+		return path
+	}
+	local := "/Users/memo/Programming/cfire/cfire"
+	if _, err := os.Stat(local); err == nil {
+		return local
+	}
+	return "cfire"
+}
+

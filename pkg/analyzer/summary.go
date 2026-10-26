@@ -105,6 +105,21 @@ func ResourceLine(r Resource) string {
 	if len(r.Indexes) > 0 {
 		line += " (indexes: " + strings.Join(r.Indexes, ", ") + ")"
 	}
+	if r.Kind == "disk" && len(r.Config) > 0 {
+		var details []string
+		if r.Config["readonly"] == "true" {
+			details = append(details, "readonly")
+		}
+		if r.Config["ephemeral"] == "true" {
+			details = append(details, "ephemeral")
+		}
+		if sz := r.Config["size_limit"]; sz != "" {
+			details = append(details, "size_limit "+sz)
+		}
+		if len(details) > 0 {
+			line += " (" + strings.Join(details, ", ") + ")"
+		}
+	}
 	if r.Kind == "auth" {
 		return "auth (" + strings.Join(r.Providers, ", ") + ")"
 	}

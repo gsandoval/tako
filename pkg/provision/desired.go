@@ -143,6 +143,29 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		Name: RepoName,
 		Spec: map[string]any{"location": cfg.Region, "format": "DOCKER"},
 	}}
+
+	computeObjs, err := desiredComputeAndScheduler(g, cfg, images)
+	if err != nil {
+		return nil, err
+	}
+	objs = append(objs, computeObjs...)
+	objs = append(objs, desiredBucketsAndStorage(g, cfg)...)
+	objs = append(objs, desiredIndexes(g)...)
+	objs = append(objs, desiredMessaging(g, cfg)...)
+
+	alerts, err := alertObjects(cfg, g)
+	if err != nil {
+		return nil, err
+	}
+	objs = append(objs, alerts...)
+
+	objs = append(objs, deriveGrants(g, cfg)...)
+	return objs, nil
+}
+
+func desiredComputeAndScheduler(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Object, error) {
+	var objs []Object
+
 	// A service whose handlers are all async receives work over OIDC
 	// push, never public traffic (mirrors codegen's asyncOnly).
 	async := map[string]bool{}
@@ -217,38 +240,6 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		jobTriggers[svc][e.To] = fmt.Sprintf("projects/%s/locations/%s/jobs/%s", cfg.Project, cfg.Region, cfg.Name(jobSvcOf[e.To]))
 	}
 
-	// Account events with subscribers get a topic each (AB10d). Unlike a
-	// bucket's, nothing outside the app publishes to them: the app
-	// service does, from auth.Users().Create and from the session
-	// endpoint, so there is no service agent to grant and no
-	// notification config to create — just the topic.
-	authEvents := map[string]bool{}
-	for _, h := range g.Handlers {
-		if h.Kind == "subscribe" && h.BindingKind == "auth" {
-			authEvents[h.Binding] = true
-		}
-	}
-	var authEventList []string
-	for e := range authEvents {
-		authEventList = append(authEventList, e)
-	}
-	sort.Strings(authEventList)
-
-	// Buckets with Uploaded subscribers get an events topic, fed by
-	// GCS's own notifications (C5): every write — through-service or
-	// signed direct — lands there without the runtime's involvement.
-	eventBuckets := map[string]bool{}
-	for _, h := range g.Handlers {
-		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
-			eventBuckets[strings.TrimSuffix(h.Binding, ".Uploaded")] = true
-		}
-	}
-	var eventList []string
-	for b := range eventBuckets {
-		eventList = append(eventList, b)
-	}
-	sort.Strings(eventList)
-
 	disksByName := map[string]analyzer.Resource{}
 	for _, r := range g.Resources {
 		if r.Kind == "disk" {
@@ -288,20 +279,20 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				if sizeLimit == "" {
 					sizeLimit = "512Mi"
 				}
-				out = append(out, map[string]any{
-					"name":      r.Name,
-					"mountPath": gcpb.DiskMountPath(r.Name),
-					"ephemeral": true,
-					"sizeLimit": sizeLimit,
-				})
+				out = append(out, MountSpec{
+					Name:      r.Name,
+					MountPath: gcpb.DiskMountPath(r.Name),
+					Ephemeral: true,
+					SizeLimit: sizeLimit,
+				}.ToMap())
 			} else {
-				out = append(out, map[string]any{
-					"name":      r.Name,
-					"mountPath": gcpb.DiskMountPath(r.Name),
-					"ephemeral": false,
-					"bucket":    gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
-					"readOnly":  r.Config["readonly"] == "true",
-				})
+				out = append(out, MountSpec{
+					Name:      r.Name,
+					MountPath: gcpb.DiskMountPath(r.Name),
+					Ephemeral: false,
+					Bucket:    gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
+					ReadOnly:  r.Config["readonly"] == "true",
+				}.ToMap())
 			}
 		}
 		return out
@@ -406,21 +397,17 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 					taskCount = h.Parallel
 				}
 			}
-			jobSpec := map[string]any{
-				"image":          image,
-				"serviceAccount": cfg.SAEmail(svc.Name),
-				"env":            env,
-				"taskCount":      taskCount,
-				// Task compute: the footprint's CPU/Memory/Timeout
-				// when pinned, batch-profile values otherwise.
-				"cpu":     strconv.Itoa(resolved.CPU),
-				"memory":  resolved.Memory,
-				"timeout": traffic.TimeoutSeconds,
-				"retries": jobRetries(g, svc.Name),
-			}
-			if mounts := mountsFor(svc.Name); len(mounts) > 0 {
-				jobSpec["mounts"] = mounts
-			}
+			jobSpec := RunJobSpec{
+				Image:          image,
+				ServiceAccount: cfg.SAEmail(svc.Name),
+				Env:            env,
+				TaskCount:      taskCount,
+				CPU:            strconv.Itoa(resolved.CPU),
+				Memory:         resolved.Memory,
+				Timeout:        traffic.TimeoutSeconds,
+				Retries:        jobRetries(g, svc.Name),
+				Mounts:         mountsFor(svc.Name),
+			}.ToMap()
 			objs = append(objs, Object{
 				Kind: KindRunJob,
 				Name: cfg.Name(svc.Name),
@@ -428,19 +415,17 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 			})
 			continue
 		}
-		svcSpec := map[string]any{
-			"image":          image,
-			"serviceAccount": cfg.SAEmail(svc.Name),
-			"env":            env,
-			"scaling":        knobs,
+		svcSpec := RunServiceSpec{
+			Image:          image,
+			ServiceAccount: cfg.SAEmail(svc.Name),
+			Env:            env,
+			Scaling:        knobs,
 			// Async services admit only the OIDC push identity;
 			// WithPrivate services admit only granted callers;
 			// singleton loops admit nobody's traffic but health.
-			"public": !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
-		}
-		if mounts := mountsFor(svc.Name); len(mounts) > 0 {
-			svcSpec["mounts"] = mounts
-		}
+			Public: !async[svc.Name] && !privateSvc[svc.Name] && !svc.Singleton,
+			Mounts: mountsFor(svc.Name),
+		}.ToMap()
 		objs = append(objs, Object{
 			Kind: KindRunService,
 			Name: cfg.Name(svc.Name),
@@ -448,28 +433,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		})
 	}
 
-	// Custom domains (U1): one Cloud Run domain mapping per service that
-	// declared WithDomain. The domain is the object's identity — it is
-	// globally unique by construction, so it takes no env prefix; two
-	// environments wanting the same name is a contradiction the user must
-	// resolve, not one tako should paper over by inventing a name.
-	for _, svc := range g.Services {
-		if svc.Domain == "" {
-			continue
-		}
-		objs = append(objs, Object{
-			Kind: KindDomainMapping,
-			Name: svc.Domain,
-			Spec: map[string]any{
-				"routeName": cfg.Name(svc.Name),
-				// AUTOMATIC is the only mode tako offers: a managed
-				// certificate issued and renewed by Google. Bringing your
-				// own certificate is a key-management story tako does not
-				// have (spec §4.6a — tako never holds user secrets).
-				"certificateMode": "AUTOMATIC",
-			},
-		})
-	}
+	objs = append(objs, desiredDomains(g, cfg)...)
 
 	// Cloud Scheduler jobs (T2): one per cron handler, firing the
 	// service's dispatch route with an OIDC token as the service's own
@@ -505,6 +469,39 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		})
 	}
 
+	return objs, nil
+}
+
+// desiredDomains derives custom domain mappings (U1): one Cloud Run
+// domain mapping per service that declared WithDomain. The domain is the
+// object's identity — it is globally unique by construction, so it takes
+// no env prefix; two environments wanting the same name is a
+// contradiction the user must resolve, not one tako should paper over by
+// inventing a name.
+func desiredDomains(g *analyzer.AppGraph, cfg Config) []Object {
+	var objs []Object
+	for _, svc := range g.Services {
+		if svc.Domain == "" {
+			continue
+		}
+		objs = append(objs, Object{
+			Kind: KindDomainMapping,
+			Name: svc.Domain,
+			Spec: map[string]any{
+				"routeName": cfg.Name(svc.Name),
+				// AUTOMATIC is the only mode tako offers: a managed
+				// certificate issued and renewed by Google. Bringing your
+				// own certificate is a key-management story tako does not
+				// have (spec §4.6a — tako never holds user secrets).
+				"certificateMode": "AUTOMATIC",
+			},
+		})
+	}
+	return objs
+}
+
+func desiredBucketsAndStorage(g *analyzer.AppGraph, cfg Config) []Object {
+	var objs []Object
 	for _, r := range g.Resources {
 		switch r.Kind {
 		case "bucket":
@@ -524,55 +521,106 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 				Name: gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
 				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": false},
 			})
-		case "entity":
-			for ti, tuple := range r.Composites {
-				props := make([]any, 0, len(tuple))
-				for _, f := range tuple {
-					dir := "ASCENDING"
-					if strings.HasPrefix(f, "-") {
-						f, dir = f[1:], "DESCENDING"
-					}
-					props = append(props, map[string]any{"name": f, "direction": dir})
+		}
+	}
+	return objs
+}
+
+func desiredIndexes(g *analyzer.AppGraph) []Object {
+	var objs []Object
+	for _, r := range g.Resources {
+		if r.Kind != "entity" {
+			continue
+		}
+		for ti, tuple := range r.Composites {
+			props := make([]any, 0, len(tuple))
+			for _, f := range tuple {
+				dir := "ASCENDING"
+				if strings.HasPrefix(f, "-") {
+					f, dir = f[1:], "DESCENDING"
 				}
-				// The query that asks for this index, for the plan to
-				// print. An index with no note is one nothing declares.
-				var note string
-				if ti < len(r.CompositeSources) {
-					note = r.CompositeSources[ti]
-				}
-				objs = append(objs, Object{
-					Kind: KindDatastoreIndex,
-					// Indexes serve every namespace, so envs share them:
-					// no env prefix in the identity.
-					Name: r.Name + " (" + strings.Join(tuple, ", ") + ")",
-					Spec: map[string]any{"entityKind": r.Name, "properties": props},
-					Note: note,
-				})
+				props = append(props, map[string]any{"name": f, "direction": dir})
 			}
-		case "queue", "topic":
+			// The query that asks for this index, for the plan to
+			// print. An index with no note is one nothing declares.
+			var note string
+			if ti < len(r.CompositeSources) {
+				note = r.CompositeSources[ti]
+			}
 			objs = append(objs, Object{
-				Kind: KindTopic,
-				Name: cfg.Name(r.Name),
-				Spec: map[string]any{},
+				Kind: KindDatastoreIndex,
+				// Indexes serve every namespace, so envs share them:
+				// no env prefix in the identity.
+				Name: r.Name + " (" + strings.Join(tuple, ", ") + ")",
+				Spec: map[string]any{"entityKind": r.Name, "properties": props},
+				Note: note,
 			})
-			// Tasks-routed queues (T3): WithRateLimit or a WithDelay
-			// publish site adds a Cloud Tasks queue in FRONT of the
-			// worker — Pub/Sub push stays the plain path.
-			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
-				rate := r.RateLimit
-				if rate == 0 {
-					rate = 500 // delay-only queues: Tasks' dispatch ceiling
-				}
-				attempts := r.MaxAttempts
-				if attempts == 0 {
-					attempts = analyzer.DeliveryDefaults.MaxAttempts
-				}
-				objs = append(objs, Object{
-					Kind: KindTasksQueue,
-					Name: cfg.Name(r.Name) + "-tako",
-					Spec: map[string]any{"rate": rate, "attempts": attempts},
-				})
+		}
+	}
+	return objs
+}
+
+func desiredMessaging(g *analyzer.AppGraph, cfg Config) []Object {
+	var objs []Object
+
+	// Account events with subscribers get a topic each (AB10d). Unlike a
+	// bucket's, nothing outside the app publishes to them: the app
+	// service does, from auth.Users().Create and from the session
+	// endpoint, so there is no service agent to grant and no
+	// notification config to create — just the topic.
+	authEvents := map[string]bool{}
+	for _, h := range g.Handlers {
+		if h.Kind == "subscribe" && h.BindingKind == "auth" {
+			authEvents[h.Binding] = true
+		}
+	}
+	var authEventList []string
+	for e := range authEvents {
+		authEventList = append(authEventList, e)
+	}
+	sort.Strings(authEventList)
+
+	// Buckets with Uploaded subscribers get an events topic, fed by
+	// GCS's own notifications (C5): every write — through-service or
+	// signed direct — lands there without the runtime's involvement.
+	eventBuckets := map[string]bool{}
+	for _, h := range g.Handlers {
+		if h.Kind == "subscribe" && h.BindingKind == "bucket" {
+			eventBuckets[strings.TrimSuffix(h.Binding, ".Uploaded")] = true
+		}
+	}
+	var eventList []string
+	for b := range eventBuckets {
+		eventList = append(eventList, b)
+	}
+	sort.Strings(eventList)
+
+	for _, r := range g.Resources {
+		if r.Kind != "queue" && r.Kind != "topic" {
+			continue
+		}
+		objs = append(objs, Object{
+			Kind: KindTopic,
+			Name: cfg.Name(r.Name),
+			Spec: map[string]any{},
+		})
+		// Tasks-routed queues (T3): WithRateLimit or a WithDelay
+		// publish site adds a Cloud Tasks queue in FRONT of the
+		// worker — Pub/Sub push stays the plain path.
+		if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
+			rate := r.RateLimit
+			if rate == 0 {
+				rate = 500 // delay-only queues: Tasks' dispatch ceiling
 			}
+			attempts := r.MaxAttempts
+			if attempts == 0 {
+				attempts = analyzer.DeliveryDefaults.MaxAttempts
+			}
+			objs = append(objs, Object{
+				Kind: KindTasksQueue,
+				Name: cfg.Name(r.Name) + "-tako",
+				Spec: map[string]any{"rate": rate, "attempts": attempts},
+			})
 		}
 	}
 
@@ -666,14 +714,7 @@ func Desired(g *analyzer.AppGraph, cfg Config, images map[string]string) ([]Obje
 		)
 	}
 
-	alerts, err := alertObjects(cfg, g)
-	if err != nil {
-		return nil, err
-	}
-	objs = append(objs, alerts...)
-
-	objs = append(objs, deriveGrants(g, cfg)...)
-	return objs, nil
+	return objs
 }
 
 // jobRetries is the job's WithRetries claim, or Cloud Run's 3.

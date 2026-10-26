@@ -27,10 +27,10 @@ func Mermaid(g *AppGraph) string {
 
 	for _, r := range g.Resources {
 		open, close := "([\"", "\"])"
-		switch r.Kind {
-		case "entity", "bucket", "cache", "disk":
+		switch ByKind[r.Kind].MermaidShape {
+		case "cylinder":
 			open, close = "[(\"", "\")]"
-		case "queue", "topic":
+		case "hexagon", "queue":
 			open, close = "{{\"", "\"}}"
 		}
 		fmt.Fprintf(&b, "  %s%s%s %s%s\n", nodeID("r", r.Kind+"_"+r.Name), open, r.Kind, r.Name, close)

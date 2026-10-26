@@ -91,15 +91,7 @@ func parseSecretsTarget(raw []string) (accountsTarget, []string, error) {
 func parseDataTarget(cmd, writes, local string, raw []string) (accountsTarget, []string, error) {
 	t := accountsTarget{}
 	var envGiven bool
-	// Both --flag value and --flag=value, like every other command.
-	var args []string
-	for _, a := range raw {
-		if name, value, ok := strings.Cut(a, "="); ok && (name == "--project" || name == "--env") {
-			args = append(args, name, value)
-			continue
-		}
-		args = append(args, a)
-	}
+	args := normalizeArgs(raw)
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
@@ -402,6 +394,7 @@ func (c *usersCmd) show(args []string) error {
 }
 
 func (c *usersCmd) create(args []string) error {
+	args = normalizeArgs(args)
 	email := args[0]
 	spec := tako.NewUser{Email: email, Roles: roleFlags(args[1:])}
 	wantPassword := false
@@ -642,15 +635,12 @@ func bracket(roles []string) string {
 // roleFlags collects every --role value. Repeating the flag is how a
 // new account gets two roles.
 func roleFlags(args []string) []string {
+	args = normalizeArgs(args)
 	var out []string
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--role" && i+1 < len(args) {
 			i++
 			out = append(out, args[i])
-			continue
-		}
-		if name, value, ok := strings.Cut(args[i], "="); ok && name == "--role" {
-			out = append(out, value)
 		}
 	}
 	return out
