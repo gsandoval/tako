@@ -70,9 +70,9 @@ func backgroundRegistrationSpec(kind string) (regFn, commentSuffix string) {
 }
 
 // writeReservedMux emits the /_tako/ reserved endpoints mux when the
-// service uses auth, buckets, or crons.
+// service uses auth, buckets, crons, or MCP tools.
 func writeReservedMux(b *strings.Builder, g *analyzer.AppGraph, svc analyzer.Service, commented bool) {
-	hasReserved := hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc)
+	hasReserved := hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc) || hasMCP(g, svc)
 	if !hasReserved {
 		if !commented {
 			b.WriteString("\ttakoMux := http.NewServeMux()\n\n")
@@ -156,6 +156,17 @@ func hasAuth(g *analyzer.AppGraph) bool {
 func hasCron(g *analyzer.AppGraph, svc analyzer.Service) bool {
 	for _, h := range g.Handlers {
 		if h.Service == svc.Name && h.Kind == "cron" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMCP reports whether any API handler in this service exposes an MCP
+// tool via Route.Tool.
+func hasMCP(g *analyzer.AppGraph, svc analyzer.Service) bool {
+	for _, h := range g.Handlers {
+		if h.Service == svc.Name && h.Kind == "api" && h.Tool != "" {
 			return true
 		}
 	}

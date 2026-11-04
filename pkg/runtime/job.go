@@ -12,6 +12,7 @@ import (
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -31,6 +32,7 @@ func RegisterJob(name string, h tako.Handler) {
 	if !ok || hooks.Queue == nil {
 		panic("tako: RegisterJob before Boot")
 	}
+	recordAsyncHandler(name, fn)
 	par := 1
 	attempts := 0
 	var timeout time.Duration
@@ -56,14 +58,22 @@ func RegisterJob(name string, h tako.Handler) {
 		// WithParallel locally: N tasks per execution, joined — the
 		// same shard indices Cloud Run hands out, one process over.
 		if par == 1 {
+			ctx, _, finish := trace.StartRoot(ctx, "job", name, os.Getenv("TAKO_SERVICE"), "", "", "")
+			ctx = pinFlagsOnCtx(ctx)
 			jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name)}
-			return runTask(jctx, payload)
+			err := runTask(jctx, payload)
+			finish(0, err)
+			return err
 		}
 		errs := make(chan error, par)
 		for i := range par {
 			go func(i int) {
-				jctx := &requestCtx{Context: ctx, log: slog.Default().With("job", name, "task", i), taskIndex: i, taskCount: par}
-				errs <- runTask(jctx, payload)
+				tctx, _, finish := trace.StartRoot(ctx, "job", name, os.Getenv("TAKO_SERVICE"), "", "", "")
+				tctx = pinFlagsOnCtx(tctx)
+				jctx := &requestCtx{Context: tctx, log: slog.Default().With("job", name, "task", i), taskIndex: i, taskCount: par}
+				err := runTask(jctx, payload)
+				finish(0, err)
+				errs <- err
 			}(i)
 		}
 		var first error
@@ -86,10 +96,28 @@ func RunJobMain(name string, h tako.Handler) {
 		panic(fmt.Sprintf("tako: RunJobMain(%s): handler is %q, not a job", name, kind))
 	}
 	fn := invoke.(func(tako.Ctx, []byte) error)
+	if rawSpec := os.Getenv("TAKO_ONESHOT"); rawSpec != "" {
+		recordAsyncHandler(name, fn)
+		runOneShot(http.NotFoundHandler(), rawSpec)
+		return
+	}
 	var raw []byte
+	var traceHdr, reqID, parentSpan, flagsHdr string
 	for i, a := range os.Args {
-		if a == "--tako-job-params" && i+1 < len(os.Args) {
+		if i+1 >= len(os.Args) {
+			continue
+		}
+		switch a {
+		case "--tako-job-params":
 			raw = []byte(os.Args[i+1])
+		case "--tako-job-trace":
+			traceHdr = os.Args[i+1]
+		case "--tako-job-req":
+			reqID = os.Args[i+1]
+		case "--tako-job-parent-span":
+			parentSpan = os.Args[i+1]
+		case "--tako-job-flags":
+			flagsHdr = os.Args[i+1]
 		}
 	}
 	// Cloud Run hands each parallel task its shard through the
@@ -100,8 +128,21 @@ func RunJobMain(name string, h tako.Handler) {
 		taskCount = 1
 	}
 	start := time.Now()
-	ctx := &requestCtx{Context: context.Background(), log: slog.Default().With("job", name), taskIndex: taskIndex, taskCount: taskCount}
+	baseCtx, _, finishRoot := trace.StartRoot(context.Background(), "job", name, os.Getenv("TAKO_SERVICE"), reqID, traceHdr, parentSpan)
+	if flags := trace.DecodeFlagsHeader(flagsHdr); len(flags) > 0 {
+		baseCtx = trace.WithPropagatedFlags(baseCtx, flags)
+	}
+	baseCtx = pinFlagsOnCtx(baseCtx)
+	log := slog.Default().With("job", name)
+	if reqID != "" {
+		log = log.With("req", reqID)
+	}
+	if tAttrs := traceAttrsFromHeader(traceHdr); len(tAttrs) > 0 {
+		log = log.With(tAttrs...)
+	}
+	ctx := &requestCtx{Context: baseCtx, log: log, taskIndex: taskIndex, taskCount: taskCount}
 	err := fn(ctx, raw)
+	finishRoot(0, err)
 	// A job's every exit is a process exit, and os.Exit runs no defers —
 	// so the flush goes HERE, on both paths. A failing task's metrics are
 	// the ones most worth having, and until this line they were the ones

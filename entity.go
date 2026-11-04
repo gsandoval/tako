@@ -6,9 +6,11 @@ import (
 	"reflect"
 	"sort"
 	"sync"
+	"time"
 
 	"github.com/gsandoval/tako/internal/entitytag"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -32,12 +34,16 @@ type EntityHandle[T any] struct {
 }
 
 // entitySchema is T's declared schema, computed once per handle at first
-// use (never per request): the id field and the indexed fields, with
-// their JSON document names.
+// use (never per request): the id field, optional ttl field, and the indexed
+// fields, with their JSON document names.
 type entitySchema struct {
-	idField string            // Go name of the entity:"id" field
-	idJSON  string            // its JSON document name
-	indexed map[string]string // Go field name → JSON name, entity:"index" fields
+	idField  string            // Go name of the entity:"id" field
+	idIndex  int               // struct field index of idField
+	idJSON   string            // its JSON document name
+	ttlField string            // Go name of the entity:"ttl" field, if any
+	ttlIndex int               // struct field index of ttlField (-1 when none)
+	ttlJSON  string            // its JSON document name
+	indexed  map[string]string // Go field name → JSON name, entity:"index" fields
 	// indexedJSON is the same set as a sorted slice — the shape every
 	// write hands to the backend. Built here, once, rather than
 	// assembled and sorted on each Put, Update and Tx.
@@ -47,11 +53,28 @@ type entitySchema struct {
 // Get returns the entity stored under id. tako.IsNotFound reports absence.
 func (e *EntityHandle[T]) Get(ctx Ctx, id string) (T, error) {
 	var v T
-	doc, err := entityBackend(ctx).Get(ctx, e.name, id)
-	if err != nil {
-		return v, mapNotFound(err)
+	var retErr error
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Get", "entity", e.name, "op", "Get", "id", id)
+	defer func() { finish(retErr) }()
+	if _, err := e.loadSchema(); err != nil {
+		retErr = err
+		return v, retErr
 	}
-	return v, json.Unmarshal(doc, &v)
+	doc, err := entityBackend(ctx).Get(sctx, e.name, id)
+	if err != nil {
+		retErr = mapNotFound(err)
+		return v, retErr
+	}
+	if err := json.Unmarshal(doc, &v); err != nil {
+		retErr = err
+		return v, retErr
+	}
+	if e.isExpiredValue(v) {
+		var zero T
+		retErr = errNotFound
+		return zero, retErr
+	}
+	return v, nil
 }
 
 // Put stores the entity under the id carried by its `entity:"id"` field.
@@ -64,7 +87,10 @@ func (e *EntityHandle[T]) Put(ctx Ctx, entity T) error {
 	if err != nil {
 		return err
 	}
-	return entityBackend(ctx).Put(ctx, e.name, id, doc, indexed)
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Put", "entity", e.name, "op", "Put", "id", id)
+	err = entityBackend(ctx).Put(sctx, e.name, id, doc, indexed)
+	finish(err)
+	return err
 }
 
 // indexedFields is the entity:"index" set, as JSON names, for the store.
@@ -87,12 +113,32 @@ func (e *EntityHandle[T]) indexedFields() ([]string, error) {
 // Delete removes the entity stored under id; deleting an absent id is not
 // an error.
 func (e *EntityHandle[T]) Delete(ctx Ctx, id string) error {
-	return entityBackend(ctx).Delete(ctx, e.name, id)
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Delete", "entity", e.name, "op", "Delete", "id", id)
+	err := entityBackend(ctx).Delete(sctx, e.name, id)
+	finish(err)
+	return err
 }
 
 // Exists reports whether an entity is stored under id.
 func (e *EntityHandle[T]) Exists(ctx Ctx, id string) (bool, error) {
-	return entityBackend(ctx).Exists(ctx, e.name, id)
+	s, err := e.loadSchema()
+	if err != nil {
+		return false, err
+	}
+	if s.ttlIndex >= 0 {
+		_, err := e.Get(ctx, id)
+		if err == nil {
+			return true, nil
+		}
+		if IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Exists", "entity", e.name, "op", "Exists", "id", id)
+	ok, err := entityBackend(ctx).Exists(sctx, e.name, id)
+	finish(err)
+	return ok, err
 }
 
 // Query starts a query against the store. Only fields tagged
@@ -110,15 +156,84 @@ func (e *EntityHandle[T]) Update(ctx Ctx, id string, mutate func(*T)) error {
 	if err != nil {
 		return err
 	}
-	err = entityBackend(ctx).Update(ctx, e.name, id, indexed, func(doc []byte) ([]byte, error) {
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Update", "entity", e.name, "op", "Update", "id", id)
+	err = entityBackend(ctx).Update(sctx, e.name, id, indexed, func(doc []byte) ([]byte, error) {
 		var v T
 		if err := json.Unmarshal(doc, &v); err != nil {
 			return nil, err
 		}
+		if e.isExpiredValue(v) {
+			return nil, backends.ErrNotFound
+		}
 		mutate(&v)
 		return json.Marshal(v)
 	})
-	return mapNotFound(err)
+	err = mapNotFound(err)
+	finish(err)
+	return err
+}
+
+// Upsert performs a transactional create-or-update of the entity stored
+// under id. When id is absent (or its TTL has expired), mutate is called
+// on a zero-initialized T with its `entity:"id"` field populated to id;
+// otherwise mutate is called on the existing entity.
+func (e *EntityHandle[T]) Upsert(ctx Ctx, id string, mutate func(*T)) error {
+	s, err := e.loadSchema()
+	if err != nil {
+		return err
+	}
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Upsert", "entity", e.name, "op", "Upsert", "id", id)
+	err = entityBackend(ctx).Tx(sctx, e.name, s.indexedJSON, func(ops backends.EntityTxOps) error {
+		var v T
+		doc, getErr := ops.Get(id)
+		if getErr != nil && getErr != backends.ErrNotFound {
+			return getErr
+		}
+		if getErr == nil {
+			if err := json.Unmarshal(doc, &v); err != nil {
+				return err
+			}
+			if e.isExpiredValue(v) {
+				var zero T
+				v = zero
+			}
+		}
+		e.populateID(&v, id)
+		mutate(&v)
+		e.populateID(&v, id)
+		_, nextDoc, err := e.encode(v)
+		if err != nil {
+			return err
+		}
+		return ops.Put(id, nextDoc)
+	})
+	finish(err)
+	return err
+}
+
+func (e *EntityHandle[T]) populateID(v *T, id string) {
+	s, err := e.loadSchema()
+	if err != nil || s.idIndex < 0 {
+		return
+	}
+	rv := reflect.ValueOf(v).Elem()
+	f := rv.Field(s.idIndex)
+	if f.Kind() == reflect.String && f.CanSet() && f.String() == "" {
+		f.SetString(id)
+	}
+}
+
+func (e *EntityHandle[T]) isExpiredValue(v T) bool {
+	s, err := e.loadSchema()
+	if err != nil || s.ttlIndex < 0 {
+		return false
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	exp, ok := rv.Field(s.ttlIndex).Interface().(time.Time)
+	return ok && !exp.IsZero() && exp.Before(time.Now())
 }
 
 // Tx runs fn in a transaction scoped to this store. If fn returns an
@@ -129,9 +244,12 @@ func (e *EntityHandle[T]) Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error {
 	if err != nil {
 		return err
 	}
-	return entityBackend(ctx).Tx(ctx, e.name, indexed, func(ops backends.EntityTxOps) error {
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Tx", "entity", e.name, "op", "Tx")
+	err = entityBackend(ctx).Tx(sctx, e.name, indexed, func(ops backends.EntityTxOps) error {
 		return fn(&entityTx[T]{h: e, ops: ops})
 	})
+	finish(err)
+	return err
 }
 
 // encode marshals the entity and extracts its id via the JSON document —
@@ -165,13 +283,33 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 			e.schemaErr = fmt.Errorf("tako: entity %q: type %s is not a struct", e.name, t)
 			return
 		}
-		s := &entitySchema{indexed: map[string]string{}}
+		s := &entitySchema{indexed: map[string]string{}, idIndex: -1, ttlIndex: -1}
 		for i := range t.NumField() {
 			f := t.Field(i)
 			switch entitytag.Kind(string(f.Tag)) {
 			case "id":
 				s.idField = f.Name
+				s.idIndex = i
 				s.idJSON = entitytag.Name(string(f.Tag), f.Name)
+			case "ttl":
+				if entitytag.Omitted(string(f.Tag)) {
+					e.schemaErr = fmt.Errorf("tako: entity %q: field %s is tagged entity:\"ttl\" "+
+						"but json:\"-\" keeps it out of the stored document", e.name, f.Name)
+					return
+				}
+				if f.Type != reflect.TypeFor[time.Time]() {
+					e.schemaErr = fmt.Errorf("tako: entity %q: field %s is tagged entity:\"ttl\" with type %s — TTL fields must be time.Time",
+						e.name, f.Name, f.Type)
+					return
+				}
+				if s.ttlField != "" {
+					e.schemaErr = fmt.Errorf("tako: entity %q: both %s and %s are tagged entity:\"ttl\" — an entity may have at most one TTL field",
+						e.name, s.ttlField, f.Name)
+					return
+				}
+				s.ttlField = f.Name
+				s.ttlIndex = i
+				s.ttlJSON = entitytag.Name(string(f.Tag), f.Name)
 			case "index":
 				// A field the document does not carry cannot be
 				// indexed, and the failure is silent: the write declares
@@ -258,15 +396,28 @@ func (q *EntityQuery[T]) All() ([]T, error) {
 	if q.err != nil {
 		return nil, q.err
 	}
-	docs, err := entityBackend(q.ctx).Query(q.ctx, q.h.name, q.q)
-	if err != nil {
+	if _, err := q.h.loadSchema(); err != nil {
 		return nil, err
 	}
-	out := make([]T, len(docs))
-	for i, doc := range docs {
-		if err := json.Unmarshal(doc, &out[i]); err != nil {
+	var retErr error
+	sctx, finish := trace.StartSpan(q.ctx, "entity", q.h.name+".Query", "entity", q.h.name, "op", "Query")
+	defer func() { finish(retErr) }()
+	docs, err := entityBackend(q.ctx).Query(sctx, q.h.name, q.q)
+	if err != nil {
+		retErr = err
+		return nil, err
+	}
+	out := make([]T, 0, len(docs))
+	for _, doc := range docs {
+		var item T
+		if err := json.Unmarshal(doc, &item); err != nil {
+			retErr = err
 			return nil, err
 		}
+		if q.h.isExpiredValue(item) {
+			continue
+		}
+		out = append(out, item)
 	}
 	return out, nil
 }
@@ -326,15 +477,25 @@ func (q *EntityQuery[T]) Page(cursor string) (EntityPage[T], error) {
 	if q.err != nil {
 		return page, q.err
 	}
-	docs, next, err := entityBackend(q.ctx).Page(q.ctx, q.h.name, q.q, cursor)
+	var retErr error
+	sctx, finish := trace.StartSpan(q.ctx, "entity", q.h.name+".Page", "entity", q.h.name, "op", "Page")
+	defer func() { finish(retErr) }()
+	docs, next, err := entityBackend(q.ctx).Page(sctx, q.h.name, q.q, cursor)
 	if err != nil {
+		retErr = err
 		return page, err
 	}
-	page.Items = make([]T, len(docs))
-	for i, doc := range docs {
-		if err := json.Unmarshal(doc, &page.Items[i]); err != nil {
+	page.Items = make([]T, 0, len(docs))
+	for _, doc := range docs {
+		var item T
+		if err := json.Unmarshal(doc, &item); err != nil {
+			retErr = err
 			return EntityPage[T]{}, err
 		}
+		if q.h.isExpiredValue(item) {
+			continue
+		}
+		page.Items = append(page.Items, item)
 	}
 	page.Cursor, page.More = next, next != ""
 	return page, nil
@@ -355,7 +516,21 @@ func (q *EntityQuery[T]) Count() (int64, error) {
 	if q.err != nil {
 		return 0, q.err
 	}
-	return entityBackend(q.ctx).Count(q.ctx, q.h.name, q.q)
+	s, err := q.h.loadSchema()
+	if err != nil {
+		return 0, err
+	}
+	if s.ttlIndex >= 0 {
+		noLimit := *q
+		noLimit.q.Limit = 0
+		noLimit.q.Order = ""
+		all, err := noLimit.All()
+		return int64(len(all)), err
+	}
+	sctx, finish := trace.StartSpan(q.ctx, "entity", q.h.name+".Count", "entity", q.h.name, "op", "Count")
+	n, err := entityBackend(q.ctx).Count(sctx, q.h.name, q.q)
+	finish(err)
+	return n, err
 }
 
 // Iter executes the query and iterates matching entities.
@@ -405,7 +580,14 @@ func (t *entityTx[T]) Get(id string) (T, error) {
 	if err != nil {
 		return v, mapNotFound(err)
 	}
-	return v, json.Unmarshal(doc, &v)
+	if err := json.Unmarshal(doc, &v); err != nil {
+		return v, err
+	}
+	if t.h.isExpiredValue(v) {
+		var zero T
+		return zero, errNotFound
+	}
+	return v, nil
 }
 
 func (t *entityTx[T]) Put(entity T) error {

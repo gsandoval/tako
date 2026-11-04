@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/gsandoval/tako/pkg/analyzer"
 )
 
 // Lease is the deploy lease (spec §4.6a): a GCS object created with a
@@ -138,4 +140,55 @@ func (l *Lease) DeleteBucket(ctx context.Context) error {
 		}
 	}
 	return l.C.do(ctx, http.MethodDelete, l.C.url(storageHost, "/storage/v1/b/"+l.bucket()), nil, nil)
+}
+
+func (l *Lease) graphObject(prev bool) string {
+	if prev {
+		return "state/" + l.App + "-" + l.Env + "-prev-graph.json"
+	}
+	return "state/" + l.App + "-" + l.Env + "-graph.json"
+}
+
+// LoadDeployedGraph reads the currently deployed (or previous, when prev is
+// true) AppGraph from the framework bucket, returning (nil, nil) if none has
+// been recorded yet.
+func (l *Lease) LoadDeployedGraph(ctx context.Context, prev bool) (*analyzer.AppGraph, error) {
+	u := l.C.url(storageHost, "/storage/v1/b/%s/o/%s?alt=media", l.bucket(), url.QueryEscape(l.graphObject(prev)))
+	var g analyzer.AppGraph
+	if err := l.C.do(ctx, http.MethodGet, u, nil, &g); err != nil {
+		if ae, ok := err.(*apiError); ok && ae.Status == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &g, nil
+}
+
+// SaveDeployedGraph archives the current deployed AppGraph to -prev-graph.json
+// and writes g as the new deployed AppGraph in the framework bucket.
+func (l *Lease) SaveDeployedGraph(ctx context.Context, g *analyzer.AppGraph) error {
+	if cur, err := l.LoadDeployedGraph(ctx, false); err == nil && cur != nil {
+		_ = l.writeGraphObject(ctx, l.graphObject(true), cur)
+	}
+	return l.writeGraphObject(ctx, l.graphObject(false), g)
+}
+
+func (l *Lease) writeGraphObject(ctx context.Context, obj string, g *analyzer.AppGraph) error {
+	raw, err := json.MarshalIndent(g, "", "  ")
+	if err != nil {
+		return err
+	}
+	u := l.C.url(storageHost, "/upload/storage/v1/b/%s/o?uploadType=media&name=%s",
+		l.bucket(), url.QueryEscape(obj))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, strings.NewReader(string(raw)))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := l.C.HC.Do(req)
+	if err != nil {
+		return err
+	}
+	defer res.Body.Close()
+	return nil
 }

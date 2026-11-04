@@ -1,4 +1,5 @@
 const LatencyMetric untyped string
+const OneShotMarker untyped string
 const ReplayAttr untyped string
 const RequestsMetric untyped string
 func BlobHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.Blob], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
@@ -17,7 +18,9 @@ func FormInt(r *net/http.Request, name string) (int, error)
 func FormInt64(r *net/http.Request, name string) (int64, error)
 func FormString(r *net/http.Request, name string) string
 func FormStrings(r *net/http.Request, name string) []string
+func Idempotent() HandlerOption
 func JSONHandler[Req, Res any](e github.com/gsandoval/tako.Endpoint[Req, Res], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
+func MCPHandler(appMux net/http.Handler, tools ...MCPToolSpec) net/http.Handler
 func NewCtx(parent context.Context) github.com/gsandoval/tako.Ctx
 func PageHandler[Req any](e github.com/gsandoval/tako.Endpoint[Req, github.com/gsandoval/tako.HTML], decode func(*net/http.Request) (Req, error), opts ...HandlerOption) net/http.Handler
 func PathBool(r *net/http.Request, name string) (bool, error)
@@ -62,5 +65,9 @@ func SiteHandler(fsys io/fs.FS, opts SiteOptions) net/http.Handler
 func StaleSessions(ctx context.Context, uid string) error
 func WaitIdle(timeout time.Duration) error
 func WithDevBar(next net/http.Handler) net/http.Handler
+func WithRateLimit(requests int, windowSeconds int) HandlerOption
 type HandlerOption
+type MCPToolSpec
+type OneShotResult
+type OneShotSpec
 type SiteOptions

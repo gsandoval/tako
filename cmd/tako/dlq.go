@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -11,7 +12,7 @@ import (
 	"github.com/gsandoval/tako/pkg/provision/gcp"
 )
 
-// runDLQ is `tako dlq [service] [--ack] [--project …] [--env …]`: the
+// runDLQ is `tako dlq [service] [--ack] [--json] [--project …] [--env …]`: the
 // cloud counterpart of local's on-disk dead-letter JSON. Bare it lists
 // every async service's dead-letter subscription with what's retained;
 // with a service it prints the messages (peek — nothing is consumed);
@@ -37,7 +38,7 @@ func runDLQ(args []string) error {
 	if err != nil {
 		return err
 	}
-	ack, replay, all := false, false, false
+	ack, replay, all, jsonOut := false, false, false, false
 	var service, id string
 	for _, a := range rest {
 		switch {
@@ -50,6 +51,9 @@ func runDLQ(args []string) error {
 		case a == "--all":
 			all = true
 			continue
+		case a == "--json":
+			jsonOut = true
+			continue
 		}
 		if service == "" {
 			service = a
@@ -59,7 +63,7 @@ func runDLQ(args []string) error {
 			id = a
 			continue
 		}
-		return fmt.Errorf("unknown argument %q (tako dlq accepts one service, --ack, --replay <id>, --replay --all, --project, --env)", a)
+		return fmt.Errorf("unknown argument %q (tako dlq accepts one service, --ack, --replay <id>, --replay --all, --json, --project, --env)", a)
 	}
 	// Opposite verbs on the same message: --ack throws it away, --replay
 	// puts it back. Refusing beats guessing which one was meant.
@@ -90,6 +94,10 @@ func runDLQ(args []string) error {
 		}
 	}
 	if len(asyncServices) == 0 {
+		if jsonOut {
+			fmt.Println(`{"services":[],"messages":[]}`)
+			return nil
+		}
 		fmt.Println("this app has no workers or subscribers — nothing dead-letters")
 		return nil
 	}
@@ -99,19 +107,31 @@ func runDLQ(args []string) error {
 	}
 
 	if service == "" {
+		type svcCount struct {
+			Service string `json:"service"`
+			Count   int    `json:"count"`
+		}
+		var summaries []svcCount
 		for _, svc := range asyncServices {
 			msgs, err := client.PullDead(context.Background(), gcpb.DeadTopicName(t.env, svc), 100)
 			if err != nil {
 				return err
 			}
-			state := "empty"
-			if n := len(msgs); n > 0 {
-				state = fmt.Sprintf("%d message(s)", n)
-				if n == 100 {
-					state = "100+ messages"
+			summaries = append(summaries, svcCount{Service: svc, Count: len(msgs)})
+			if !jsonOut {
+				state := "empty"
+				if n := len(msgs); n > 0 {
+					state = fmt.Sprintf("%d message(s)", n)
+					if n == 100 {
+						state = "100+ messages"
+					}
 				}
+				fmt.Printf("  %-28s %s\n", svc, state)
 			}
-			fmt.Printf("  %-28s %s\n", svc, state)
+		}
+		if jsonOut {
+			raw, _ := json.MarshalIndent(map[string]any{"services": summaries}, "", "  ")
+			fmt.Printf("%s\n", raw)
 		}
 		return nil
 	}
@@ -132,6 +152,11 @@ func runDLQ(args []string) error {
 		return err
 	}
 	if len(msgs) == 0 {
+		if jsonOut {
+			raw, _ := json.MarshalIndent(map[string]any{"service": service, "messages": []any{}}, "", "  ")
+			fmt.Printf("%s\n", raw)
+			return nil
+		}
 		fmt.Printf("no dead-lettered messages for %s\n", service)
 		return nil
 	}
@@ -146,15 +171,27 @@ func runDLQ(args []string) error {
 			// delivery attempts (the runtime only stamps Permanent ones).
 			reason = "delivery attempts exhausted"
 		}
-		fmt.Printf("  %s  %s  %s\n    %s\n", m.ID,
-			m.Published.Local().Format("2006-01-02 15:04:05"), reason, m.Payload)
+		if !jsonOut {
+			fmt.Printf("  %s  %s  %s\n    %s\n", m.ID,
+				m.Published.Local().Format("2006-01-02 15:04:05"), reason, m.Payload)
+		}
 		ackIDs = append(ackIDs, m.AckID)
 	}
 	if ack {
 		if err := client.AckDead(context.Background(), sub, ackIDs); err != nil {
 			return err
 		}
-		fmt.Printf("✓ acknowledged %d message(s) — they will not be seen again\n", len(ackIDs))
+		if !jsonOut {
+			fmt.Printf("✓ acknowledged %d message(s) — they will not be seen again\n", len(ackIDs))
+		}
+	}
+	if jsonOut {
+		raw, _ := json.MarshalIndent(map[string]any{
+			"service":      service,
+			"acknowledged": ack,
+			"messages":     msgs,
+		}, "", "  ")
+		fmt.Printf("%s\n", raw)
 	}
 	return nil
 }
@@ -244,7 +281,7 @@ func replayDead(ctx context.Context, client *gcp.Client, t target, service, sub 
 // hands off to the on-disk implementation.
 func runDLQLocalArgs(args []string) error {
 	args = normalizeArgs(args)
-	ack, replay, all := false, false, false
+	ack, replay, all, jsonOut := false, false, false, false
 	var carrier, id string
 	for _, a := range args {
 		switch {
@@ -257,8 +294,11 @@ func runDLQLocalArgs(args []string) error {
 		case a == "--all":
 			all = true
 			continue
+		case a == "--json":
+			jsonOut = true
+			continue
 		case strings.HasPrefix(a, "--"):
-			return fmt.Errorf("unknown argument %q (tako dlq --local accepts one carrier, --ack, --replay <id>, --replay --all)", a)
+			return fmt.Errorf("unknown argument %q (tako dlq --local accepts one carrier, --ack, --replay <id>, --replay --all, --json)", a)
 		}
 		if carrier == "" {
 			carrier = a
@@ -268,7 +308,7 @@ func runDLQLocalArgs(args []string) error {
 			id = a
 			continue
 		}
-		return fmt.Errorf("unknown argument %q (tako dlq --local accepts one carrier, --ack, --replay <id>, --replay --all)", a)
+		return fmt.Errorf("unknown argument %q (tako dlq --local accepts one carrier, --ack, --replay <id>, --replay --all, --json)", a)
 	}
 	if ack && replay {
 		return fmt.Errorf("--ack and --replay do the opposite things to the same message — pick one")
@@ -279,5 +319,5 @@ func runDLQLocalArgs(args []string) error {
 	if replay && id != "" && all {
 		return fmt.Errorf("--replay takes an id or --all, not both")
 	}
-	return runDLQLocal(".tako/data", carrier, ack, replay, all, id)
+	return runDLQLocalJSON(".tako/data", carrier, ack, replay, all, id, jsonOut)
 }

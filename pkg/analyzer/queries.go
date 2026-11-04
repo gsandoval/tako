@@ -19,6 +19,7 @@ type entityType struct {
 	display     string            // short type name, e.g. "Link"
 	declared    []string          // entity:"index" fields, struct order
 	indexed     map[string]bool   // membership set of declared
+	ttlField    string            // marshaled property name of entity:"ttl" field, if any
 	wire        map[string]string // Go field → marshaled property name (json tag rule)
 	wireToField map[string]string // marshaled property name → Go field (when json tag differs)
 	used        map[string]bool   // fields seen in Where/OrderBy call sites
@@ -137,6 +138,37 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 			// provisions and the property the document carries cannot
 			// drift apart (item 43).
 			et.wire[f.Name()] = entitytag.Name(st.Tag(i), f.Name())
+		case "ttl":
+			if entitytag.Omitted(st.Tag(i)) {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, f.Pos()),
+					Msg: fmt.Sprintf("field %s is tagged entity:\"ttl\" but json:\"-\" keeps it "+
+						"out of the stored document; drop one of the two tags", f.Name()),
+					Rule: "entity-ttl",
+				})
+				bad = true
+				continue
+			}
+			if f.Type().String() != "time.Time" {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, f.Pos()),
+					Msg: fmt.Sprintf("entity ttl field %s must be time.Time; got %s",
+						f.Name(), types.TypeString(f.Type(), types.RelativeTo(pkg.Types))),
+					Rule: "entity-ttl",
+				})
+				bad = true
+				continue
+			}
+			if et.ttlField != "" {
+				*errs = append(*errs, &Error{
+					Pos:  relPos(dir, pkg.Fset, f.Pos()),
+					Msg:  fmt.Sprintf("entity type %s may have at most one field tagged entity:\"ttl\"", obj.Name()),
+					Rule: "entity-ttl",
+				})
+				bad = true
+				continue
+			}
+			et.ttlField = entitytag.Name(st.Tag(i), f.Name())
 		}
 	}
 	if idCount != 1 {

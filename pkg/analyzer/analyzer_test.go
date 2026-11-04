@@ -276,3 +276,20 @@ func TestSirenAlertsAllResolveASubject(t *testing.T) {
 		}
 	}
 }
+
+func TestPopulateErrorHintsAndExplainRule(t *testing.T) {
+	errs := ErrorList{
+		{Pos: "app.go:10:2", Msg: "missing id", Rule: "entity-id"},
+		{Pos: "app.go:12:2", Msg: "bad tool", Rule: "tool-api"},
+	}
+	PopulateErrorHints(errs)
+	for _, e := range errs {
+		if e.Hint == "" || e.Doc == "" {
+			t.Errorf("expected Hint and Doc populated for rule %q, got %+v", e.Rule, e)
+		}
+	}
+	explained, ok := ExplainRule("tako/entity-id")
+	if !ok || !strings.Contains(explained, "entity:\"id\"") {
+		t.Errorf("ExplainRule(tako/entity-id) = %q, ok=%v", explained, ok)
+	}
+}

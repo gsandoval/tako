@@ -135,6 +135,10 @@ type Resource struct {
 	// (Where/OrderBy call sites), in struct declaration order — the
 	// derived index set.
 	Indexes []string `json:"indexes,omitempty"`
+	// TTLField is the marshaled JSON property name of the entity's
+	// optional entity:"ttl" time.Time field, used to configure
+	// Firestore/Datastore native TTL garbage collection.
+	TTLField string `json:"ttl_field,omitempty"`
 	// Composites are the derived Datastore composite indexes, one
 	// tuple PER QUERY SHAPE (grouped per function): filter fields
 	// first (struct order, ascending), then OrderBy fields in call
@@ -275,6 +279,19 @@ type Handler struct {
 	// keep this page's response. 0 is no-cache, which is every page
 	// that does not ask otherwise.
 	MaxAge int `json:"max_age,omitempty"`
+	// Idempotent marks a mutation route declared with Route.Idempotent.
+	Idempotent bool `json:"idempotent,omitempty"`
+	// RateLimitRequests and RateLimitWindowSeconds carry Route.RateLimit.
+	RateLimitRequests      int `json:"rate_limit_requests,omitempty"`
+	RateLimitWindowSeconds int `json:"rate_limit_window_seconds,omitempty"`
+	// Tool is the MCP tool description declared with Route.Tool on an API
+	// endpoint; when non-empty, the generated service mounts POST /_tako/api/mcp
+	// and exposes this endpoint as a Model Context Protocol tool.
+	Tool string `json:"tool,omitempty"`
+	// ToolSchema is the compile-time JSON Schema (serialized JSON object)
+	// for the MCP tool's input parameters (combining path, query, and body
+	// fields), populated when Tool is non-empty.
+	ToolSchema string `json:"tool_schema,omitempty"`
 	// BindingKind distinguishes a Subscribe handler's source: "topic" or
 	// "bucket". Empty for workers (always a queue) and sync handlers.
 	BindingKind string `json:"binding_kind,omitempty"`

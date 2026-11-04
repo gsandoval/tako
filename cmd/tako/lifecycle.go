@@ -80,6 +80,13 @@ func runRollback(args []string) error {
 		return err
 	}
 	ctx := context.Background()
+	lease := &gcp.Lease{C: client, App: cfg.AppID(), Env: cfg.Env, Labels: cfg.Labels()}
+	if prevGraph, err := lease.LoadDeployedGraph(ctx, true); err == nil && prevGraph != nil {
+		skew := provision.CheckSkew(graph, prevGraph, nil)
+		if len(skew.Findings) > 0 {
+			fmt.Printf("  rollback skew check:\n%s\n", skew.Render())
+		}
+	}
 	runs := &gcp.RunServices{C: client, Labels: cfg.Labels()}
 	rolled := 0
 	for _, svc := range graph.Services {

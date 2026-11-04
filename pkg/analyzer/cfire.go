@@ -250,7 +250,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Pos:     pos,
 				})
 
-			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site", "job", "disk":
+			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site", "job", "disk", "flag", "audit", "push":
 				resName := ""
 				if len(gv.Args) > 0 {
 					resName = gv.Args[0]

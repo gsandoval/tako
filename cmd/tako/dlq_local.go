@@ -83,6 +83,10 @@ func readLocalDead(dir string) ([]localDead, error) {
 // answer the same command with the same semantics — replay is a MOVE
 // either way, and a replayed message that fails again comes back.
 func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) error {
+	return runDLQLocalJSON(dataDir, carrier, ack, replay, all, prefix, false)
+}
+
+func runDLQLocalJSON(dataDir, carrier string, ack, replay, all bool, prefix string, jsonOut bool) error {
 	msgs, err := readLocalDead(dataDir)
 	if err != nil {
 		return err
@@ -111,6 +115,10 @@ func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) 
 		msgs = kept
 	}
 	if len(msgs) == 0 {
+		if jsonOut {
+			fmt.Println(`{"messages":[]}`)
+			return nil
+		}
 		fmt.Printf("no dead letters under %s\n", filepath.Join(dataDir, "deadletter"))
 		return nil
 	}
@@ -135,19 +143,28 @@ func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) 
 			if err := os.Rename(m.Path, filepath.Join(inbox, m.ID+".json")); err != nil {
 				return fmt.Errorf("replay %s: %v", m.ID, err)
 			}
-			fmt.Printf("↩ replayed %s → %s\n", m.ID, m.localName())
+			if !jsonOut {
+				fmt.Printf("↩ replayed %s → %s\n", m.ID, m.localName())
+			}
+		}
+		if jsonOut {
+			raw, _ := json.MarshalIndent(map[string]any{"replayed": len(chosen)}, "", "  ")
+			fmt.Printf("%s\n", raw)
+			return nil
 		}
 		fmt.Println("  the running tako dev picks these up within a couple of seconds; if dev is down they wait for its next boot")
 		return nil
 	}
 
-	for _, m := range msgs {
-		reason := m.Record.LastError
-		if m.Record.Permanent {
-			reason = "permanent: " + reason
+	if !jsonOut {
+		for _, m := range msgs {
+			reason := m.Record.LastError
+			if m.Record.Permanent {
+				reason = "permanent: " + reason
+			}
+			fmt.Printf("  %s  %-28s attempts %d  %s\n    %s\n",
+				m.ID, m.localName(), m.Record.Attempts, reason, onOneLine(m.Record.Payload))
 		}
-		fmt.Printf("  %s  %-28s attempts %d  %s\n    %s\n",
-			m.ID, m.localName(), m.Record.Attempts, reason, onOneLine(m.Record.Payload))
 	}
 	if ack {
 		for _, m := range msgs {
@@ -155,7 +172,25 @@ func runDLQLocal(dataDir, carrier string, ack, replay, all bool, prefix string) 
 				return err
 			}
 		}
-		fmt.Printf("✓ acknowledged %d message(s) — deleted from disk\n", len(msgs))
+		if !jsonOut {
+			fmt.Printf("✓ acknowledged %d message(s) — deleted from disk\n", len(msgs))
+		}
+	}
+	if jsonOut {
+		type item struct {
+			ID      string              `json:"id"`
+			Carrier string              `json:"carrier"`
+			Record  backends.DeadLetter `json:"record"`
+		}
+		var out []item
+		for _, m := range msgs {
+			out = append(out, item{ID: m.ID, Carrier: m.localName(), Record: m.Record})
+		}
+		raw, _ := json.MarshalIndent(map[string]any{
+			"acknowledged": ack,
+			"messages":     out,
+		}, "", "  ")
+		fmt.Printf("%s\n", raw)
 	}
 	return nil
 }

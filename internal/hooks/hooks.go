@@ -39,6 +39,25 @@ var Metrics backends.Metrics
 // boot.
 var Users backends.Users
 
+// Flags is the wired feature flag / experiment store; nil until boot.
+var Flags backends.Flags
+
+// Audits is the wired audit collector; nil until boot.
+var Audits *backends.AuditCollector
+
+// Push is the wired mobile push notification backend; nil until boot.
+var Push backends.Push
+
+// DeclaredFlag describes one declared tako.Flag[T] for devbar / CLI inspection.
+type DeclaredFlag struct {
+	Name        string
+	TypeName    string
+	DefaultJSON []byte
+}
+
+// DeclaredFlags returns all registered tako.Flag[T] declarations.
+var DeclaredFlags func() []DeclaredFlag
+
 // DataDir is the root directory of the wired local backends; empty on
 // cloud backends or before boot.
 var DataDir string

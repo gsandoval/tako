@@ -1,3 +1,5 @@
+    func (*AuditHandle[E]).Name() string
+    func (*AuditHandle[E]).Record(ctx Ctx, event E)
     func (*AuthHandle).Users() *UsersHandle
     func (*BucketHandle).Delete(ctx Ctx, key string) error
     func (*BucketHandle).Exists(ctx Ctx, key string) (bool, error)
@@ -32,6 +34,7 @@
     func (*EntityHandle[T]).Query(ctx Ctx) *EntityQuery[T]
     func (*EntityHandle[T]).Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error
     func (*EntityHandle[T]).Update(ctx Ctx, id string, mutate func(*T)) error
+    func (*EntityHandle[T]).Upsert(ctx Ctx, id string, mutate func(*T)) error
     func (*EntityQuery[T]).All() ([]T, error)
     func (*EntityQuery[T]).Count() (int64, error)
     func (*EntityQuery[T]).First() (T, error)
@@ -40,6 +43,9 @@
     func (*EntityQuery[T]).OrderBy(field string) *EntityQuery[T]
     func (*EntityQuery[T]).Page(cursor string) (EntityPage[T], error)
     func (*EntityQuery[T]).Where(field string, op string, value any) *EntityQuery[T]
+    func (*FlagHandle[T]).Get(ctx Ctx) T
+    func (*FlagHandle[T]).GetFor(ctx Ctx, subjectID string) T
+    func (*FlagHandle[T]).Name() string
     func (*HistogramHandle).Count() Metric
     func (*HistogramHandle).Mean() Metric
     func (*HistogramHandle).Observe(ctx Ctx, value float64)
@@ -53,6 +59,8 @@
     func (*LockHandle).TryDo(ctx Ctx, fn func(Ctx) error) (bool, error)
     func (*PolicyHandle).Check(ctx Ctx, u User) error
     func (*PolicyHandle).Roles() []string
+    func (*PushHandle).Name() string
+    func (*PushHandle).Send(ctx Ctx, msg PushMessage) error
     func (*QueueHandle[T]).Publish(ctx Ctx, msg T) error
     func (*QueueHandle[T]).PublishAfter(ctx Ctx, msg T, delay time.Duration) error
     func (*RequestMsHandle).Count() Metric
@@ -76,11 +84,14 @@
     func (*TemplateSet).Render(ctx Ctx, template string, data any) (HTML, error)
     func (*TestApp).Advance(d time.Duration)
     func (*TestApp).AdvanceCron(cron Handler)
+    func (*TestApp).AuditRecords(stream any) []AuditRecord
     func (*TestApp).Chaos()
     func (*TestApp).Ctx(as ...User) Ctx
     func (*TestApp).DrainQueues()
     func (*TestApp).HTMX(as ...User) Ctx
     func (*TestApp).Handler() net/http.Handler
+    func (*TestApp).PushMessages(push any) []PushMessage
+    func (*TestApp).SetFlag(flag any, value any)
     func (*TestApp).SetSecret(name string, value string)
     func (*TestApp).SignIn(name string, roles ...RoleHandle) User
     func (*TopicHandle[T]).Publish(ctx Ctx, event T) error
@@ -128,6 +139,7 @@ func Alert(when Condition, notify *ChannelHandle, also ...*ChannelHandle) AlertH
 func AlertEmail(address string) *ChannelHandle
 func AlertTopic[T any](topic *TopicHandle[T]) *ChannelHandle
 func AlertWebhook(url string) *ChannelHandle
+func Audit[E any](name string) *AuditHandle[E]
 func Auth(cfg AuthConfig) *AuthHandle
 func Bucket(name string) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
@@ -140,10 +152,12 @@ func Disk(name string, cfg ...DiskConfig) *DiskHandle
 func Entity[T any](name string) *EntityHandle[T]
 func Environment() Env
 func Errorf(status int, format string, args ...any) error
+func Flag[T any](name string, defaultVal T) *FlagHandle[T]
 func Histogram(name string) *HistogramHandle
 func IsDenied(err error) bool
 func IsEmailTaken(err error) bool
 func IsNotFound(err error) bool
+func IsUnregisteredPushToken(err error) bool
 func JobFailed[T any](job *JobHandle[T], times int, w ...Window) Condition
 func Job[T any](name string) *JobHandle[T]
 func Lock(name string) *LockHandle
@@ -154,6 +168,7 @@ func Page[Req any](route string, fn func(Ctx, Req) (HTML, error), cfg ...Route) 
 func Permanent(err error) error
 func PlatformMetric(metricType string, filters ...string) Metric
 func Policy(fn func(Ctx, User) error) *PolicyHandle
+func Push(name string) *PushHandle
 func QueueBacklogged(c Consumer, n int, w QueueWatch) Condition
 func QueueMetric(c Consumer, metricType string, filters ...string) Metric
 func QueueStalled(c Consumer, age time.Duration, w QueueWatch) Condition
@@ -185,6 +200,8 @@ func WhenAtLeast(m Metric, n float64, w Window) Condition
 func WhenBelow(m Metric, threshold float64, w Window) Condition
 func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute) Handler
 type AlertHandle struct{}
+type AuditHandle[E any] struct{}
+type AuditRecord struct{Stream string; ActorID string; ActorEmail string; CallerIP string; CallerAgent string; DeviceID string; TraceID string; Event encoding/json.RawMessage; RecordedAt time.Time}
 type AuthConfig struct{Google bool; Password bool}
 type AuthEvent struct{}
 type AuthHandle struct{Registered AuthEvent; FirstSignIn AuthEvent}
@@ -194,7 +211,7 @@ type BucketHandle struct{Uploaded BucketEvent}
 type Build struct{Command string; Out string}
 type CacheHandle[T any] struct{}
 type ChannelHandle struct{}
-type Client struct{IP string; UserAgent string}
+type Client struct{IP string; UserAgent string; DeviceID string}
 type Compute struct{Profile Profile; Footprint Footprint; Traffic Traffic}
 type Condition struct{}
 type Consumer interface{consumerRef() metricRef}
@@ -211,6 +228,7 @@ type EntityQuery[T any] struct{}
 type EntityTx[T any] interface{Delete(id string) error; Get(id string) (T, error); Put(entity T) error}
 type Env int
 type EventSource[T any] interface{eventSource(T); sourceName() string}
+type FlagHandle[T any] struct{}
 type Footprint struct{CPU int; Memory string; Concurrency int; MinInstances int; MaxInstances int; CPUAlwaysOn Toggle; StartupBoost Toggle}
 type HTML struct{}
 type Handler struct{}
@@ -223,13 +241,16 @@ type NewUser struct{Email string; Password string; Name string; Roles []string}
 type ObjectInfo struct{Key string; Size int64; ContentType string; Updated time.Time}
 type PolicyHandle struct{}
 type Profile int
+type PushHandle struct{}
+type PushMessage struct{Token string; Topic string; Title string; Body string; Data map[string]string}
 type PutPolicy struct{MaxSize int64; ContentType string}
 type QueueHandle[T any] struct{}
 type QueueWatch struct{DeadLetters bool; For time.Duration}
+type RateLimit struct{Requests int; Window time.Duration}
 type RequestMsHandle struct{}
 type RequestsHandle struct{}
 type RoleHandle struct{}
-type Route struct{SignIn bool; Allow *PolicyHandle; Private bool; MaxAge time.Duration}
+type Route struct{SignIn bool; Allow *PolicyHandle; Private bool; MaxAge time.Duration; Idempotent bool; RateLimit RateLimit; Tool string}
 type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Profile Profile; Footprint Footprint}
 type SecretHandle struct{}
 type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}

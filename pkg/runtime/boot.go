@@ -13,6 +13,8 @@ import (
 	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
+	"github.com/gsandoval/tako/internal/trace"
+	"github.com/gsandoval/tako/pkg/backends"
 	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
@@ -174,10 +176,26 @@ func bootGCP(opts gcpb.Options) error {
 		// recordings the final in-flight requests made.
 		hooks.OnShutdown(metrics.Close)
 	}
+	traces := gcpb.NewTraceStore(c, true)
+	traces.Start(0)
+	trace.SetGlobalSink(traces)
+	hooks.OnShutdown(traces.Close)
 	// Leases are objects in the framework bucket — the real §4.4
 	// mechanism, shared with the deploy lease.
 	hooks.Lease = gcpb.NewLeaseStore(c)
 	hooks.LeaseOwner = leaseOwner()
+	// Feature flags & experiments: in a Cloud Run Job (CLOUD_RUN_JOB is set)
+	// the manifest is loaded once at task startup and frozen for the task;
+	// in a long-lived service, it polls with If-None-Match every 5s.
+	flagPoll := 5 * time.Second
+	if os.Getenv("CLOUD_RUN_JOB") != "" {
+		flagPoll = 0
+	}
+	flagStore := gcpb.NewFlagStore(c, flagPoll)
+	hooks.Flags = flagStore
+	hooks.OnShutdown(func(context.Context) { flagStore.Close() })
+	hooks.Audits = backends.NewAuditCollector()
+	hooks.Push = gcpb.NewPushStore(c)
 	hooks.CronSkipped = narrateCronSkip
 	// Jobs are REAL Cloud Run Job executions: the deploy injects each
 	// triggerable job's resource name as TAKO_JOB_<NAME>.

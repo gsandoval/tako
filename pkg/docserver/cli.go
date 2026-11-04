@@ -147,7 +147,11 @@ func (s *Site) LLMsTxt() string {
 	b.WriteString("- `tako docs list` — list all embedded documentation topics\n")
 	b.WriteString("- `tako docs <topic>` — print any guide or reference page as Markdown to stdout\n")
 	b.WriteString("- `tako docs search <query>` — search across guide, reference, and SDK surface\n")
-	b.WriteString("- `tako check [--json]` — run static analysis, site-shadow checks, and codegen in <1s\n\n")
+	b.WriteString("- `tako docs explain <rule>` — explain an analysis error rule with fix hints and examples\n")
+	b.WriteString("- `tako check [--json]` — run static analysis, site-shadow checks, and codegen in <1s\n")
+	b.WriteString("- `tako call <HandlerVar|route> [json-input] [--json]` — invoke any handler in-process against `.tako/data`\n")
+	b.WriteString("- `tako gen openapi` / `tako gen agents` — generate OpenAPI 3.1 specs and live `AGENTS.md` architecture context\n")
+	b.WriteString("- `tako mcp` — run Tako's Model Context Protocol (MCP) server over stdio\n\n")
 	b.WriteString("## Guide\n\n")
 	for _, p := range s.Guide {
 		topic := p.Name

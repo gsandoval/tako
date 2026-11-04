@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
 
 	tako "github.com/gsandoval/tako"
+	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
+	"github.com/gsandoval/tako/pkg/backends"
 )
 
 // Cross-service call headers (§2.12 + the W9 session amendment).
@@ -73,19 +77,26 @@ func RemoteJSON[Req, Res any](ctx tako.Ctx, service, base, method, path string, 
 		callCtx, cancel = context.WithDeadline(callCtx, deadline)
 		defer cancel()
 	}
+	var retErr error
+	var finishSpan func(error)
+	callCtx, finishSpan = trace.StartSpan(callCtx, "call", service+" "+method+" "+path, "callee", service, "method", method, "path", path)
+	defer func() { finishSpan(retErr) }()
 
 	raw, err := json.Marshal(req)
 	if err != nil {
+		retErr = err
 		return zero, err
 	}
 	httpReq, err := http.NewRequestWithContext(callCtx, method, base+path, bytes.NewReader(raw))
 	if err != nil {
+		retErr = err
 		return zero, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	token, err := identityToken(callCtx, base)
 	if err != nil {
-		return zero, fmt.Errorf("minting the OIDC token for %s: %w", service, err)
+		retErr = fmt.Errorf("minting the OIDC token for %s: %w", service, err)
+		return zero, retErr
 	}
 	if token != "" {
 		httpReq.Header.Set("Authorization", "Bearer "+token)
@@ -99,19 +110,31 @@ func RemoteJSON[Req, Res any](ctx tako.Ctx, service, base, method, path string, 
 	if rid, ok := ctx.Value(requestIDKey).(string); ok && rid != "" {
 		httpReq.Header.Set(requestHeader, rid)
 	}
+	if tc, ok := trace.FromContext(callCtx); ok {
+		httpReq.Header.Set(trace.CloudTraceHeader, trace.FormatCloudTraceContext(tc.TraceID, tc.SpanID, tc.Sampled))
+		if tc.SpanID != "" {
+			httpReq.Header.Set(trace.ParentSpanHeader, tc.SpanID)
+		}
+	}
+	if flagsHdr := trace.EncodeFlagsHeader(trace.PropagatedFlags(callCtx)); flagsHdr != "" {
+		httpReq.Header.Set(trace.FlagsHeader, flagsHdr)
+	}
 
 	res, err := http.DefaultClient.Do(httpReq)
 	if err != nil {
-		return zero, fmt.Errorf("calling %s: %w", service, err)
+		retErr = fmt.Errorf("calling %s: %w", service, err)
+		return zero, retErr
 	}
 	defer res.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
 	if res.StatusCode/100 != 2 {
-		return zero, remoteError(service, res.StatusCode, body)
+		retErr = remoteError(service, res.StatusCode, body)
+		return zero, retErr
 	}
 	var out Res
 	if err := json.Unmarshal(body, &out); err != nil {
-		return zero, fmt.Errorf("decoding %s's response: %w", service, err)
+		retErr = fmt.Errorf("decoding %s's response: %w", service, err)
+		return zero, retErr
 	}
 	return out, nil
 }
@@ -186,12 +209,30 @@ func callContext(r *http.Request, session *sessionRecord, reqID string) (context
 		base = context.WithValue(base, sessionIDKey, session.ID)
 	}
 	base = context.WithValue(base, requestIDKey, reqID)
+	var finishRoot func(int, error)
+	base, _, finishRoot = trace.StartRoot(
+		base,
+		"http",
+		r.Method+" "+r.URL.Path,
+		os.Getenv("TAKO_SERVICE"),
+		reqID,
+		r.Header.Get(trace.CloudTraceHeader),
+		r.Header.Get(trace.ParentSpanHeader),
+	)
+	if flags := trace.DecodeFlagsHeader(r.Header.Get(trace.FlagsHeader)); len(flags) > 0 {
+		base = trace.WithPropagatedFlags(base, flags)
+	}
+	base = pinFlagsOnCtx(base)
 	if h := r.Header.Get(deadlineHeader); h != "" {
 		if t, err := time.Parse(time.RFC3339Nano, h); err == nil && time.Until(t) > 0 {
-			return context.WithDeadline(base, t)
+			c, cancel := context.WithDeadline(base, t)
+			return c, func() {
+				finishRoot(0, nil)
+				cancel()
+			}
 		}
 	}
-	return base, func() {}
+	return base, func() { finishRoot(0, nil) }
 }
 
 // incomingRequestID reuses a propagated trace id, else mints one.
@@ -200,4 +241,14 @@ func incomingRequestID(r *http.Request) string {
 		return rid
 	}
 	return newRequestID()
+}
+
+func pinFlagsOnCtx(ctx context.Context) context.Context {
+	if app := boot.FromContext(ctx); app != nil && app.Flags != nil {
+		return backends.WithFlagSnapshot(ctx, app.Flags.Snapshot())
+	}
+	if hooks.Flags != nil {
+		return backends.WithFlagSnapshot(ctx, hooks.Flags.Snapshot())
+	}
+	return ctx
 }

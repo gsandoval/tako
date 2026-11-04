@@ -22,11 +22,12 @@ import (
 	"syscall"
 
 	"github.com/gsandoval/tako/docs"
+	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/docserver"
 )
 
 // runDocs is `tako docs [--port <n>] [--open] [--export <dir>]` or
-// `tako docs <list | topic | search <query>>`.
+// `tako docs <list | topic | search <query> | explain <rule>>`.
 func runDocs(args []string) error {
 	args = normalizeArgs(args)
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
@@ -41,12 +42,29 @@ func runDocs(args []string) error {
 		case "search":
 			fmt.Print(site.Search(strings.Join(args[1:], " ")))
 			return nil
+		case "explain":
+			if len(args) < 2 {
+				return fmt.Errorf("usage: tako docs explain <rule> (e.g. tako docs explain entity-id)")
+			}
+			if exp, ok := analyzer.ExplainRule(args[1]); ok {
+				fmt.Print(exp)
+				return nil
+			}
+			return fmt.Errorf("unknown analysis rule %q — run `tako docs errors` to see all rules", args[1])
 		default:
+			if exp, ok := analyzer.ExplainRule(args[0]); ok && strings.HasPrefix(strings.ToLower(args[0]), "tako/") {
+				fmt.Print(exp)
+				return nil
+			}
 			if md, ok := site.Topic(args[0]); ok {
 				fmt.Print(md)
 				if !strings.HasSuffix(md, "\n") {
 					fmt.Println()
 				}
+				return nil
+			}
+			if exp, ok := analyzer.ExplainRule(args[0]); ok {
+				fmt.Print(exp)
 				return nil
 			}
 			return fmt.Errorf("unknown docs topic %q — run `tako docs list` to see available topics or `tako docs search %s`", args[0], args[0])

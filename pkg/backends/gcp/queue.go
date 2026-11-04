@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -34,7 +35,8 @@ func (s *QueueStore) Publish(ctx context.Context, queue string, payload []byte, 
 	if opts.Delay > 0 {
 		return fmt.Errorf("queue %q has no Cloud Tasks route — a PublishAfter site the analyzer did not see? redeploy so the deploy can provision it", queue)
 	}
-	return s.c.publish(ctx, TopicName(s.c.Opts.Env, queue), payload, map[string]string{"tako-queue": queue})
+	attrs := trace.InjectAttrs(ctx, map[string]string{"tako-queue": queue})
+	return s.c.publish(ctx, TopicName(s.c.Opts.Env, queue), payload, attrs)
 }
 
 // enqueueTask creates one Cloud Tasks task that POSTs the standard push
@@ -46,10 +48,11 @@ func (c *Client) enqueueTask(ctx context.Context, route, queue string, payload [
 		return fmt.Errorf("malformed TAKO_TASKS route for queue %q", queue)
 	}
 	queueResource, pushURL, workerSA := parts[0], parts[1], parts[2]
+	attrs := trace.InjectAttrs(ctx, map[string]string{"tako-queue": queue})
 	envelope, err := json.Marshal(map[string]any{
 		"message": map[string]any{
 			"data":       payload, // encoding/json base64-encodes []byte
-			"attributes": map[string]string{"tako-queue": queue},
+			"attributes": attrs,
 		},
 		"subscription": "cloudtasks",
 	})
@@ -102,7 +105,8 @@ type TopicStore struct {
 func NewTopicStore(c *Client) *TopicStore { return &TopicStore{c: c} }
 
 func (s *TopicStore) Publish(ctx context.Context, topic string, payload []byte) error {
-	return s.c.publish(ctx, TopicName(s.c.Opts.Env, topic), payload, map[string]string{"tako-topic": topic})
+	attrs := trace.InjectAttrs(ctx, map[string]string{"tako-topic": topic})
+	return s.c.publish(ctx, TopicName(s.c.Opts.Env, topic), payload, attrs)
 }
 
 // Subscribe is a no-op on gcp, like Consume: delivery arrives over

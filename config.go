@@ -85,6 +85,29 @@ type Route struct {
 	// authenticated page would serve one signed-in visitor's page to
 	// another, and that is a bug you find from a support ticket.
 	MaxAge time.Duration
+	// Idempotent deduplicates mutation requests carrying an Idempotency-Key
+	// header across all running instances via the entity store: concurrent
+	// duplicates receive 409 Conflict; completed duplicates replay the
+	// stored response without re-running the handler.
+	Idempotent bool
+	// RateLimit caps how many requests a single caller (User.ID when signed
+	// in, else Client.DeviceID, else Client.IP) may make to this route
+	// within RateLimit.Window across all instances of the service.
+	RateLimit RateLimit
+	// Tool exposes this API endpoint as a Model Context Protocol (MCP) tool
+	// on POST /_tako/api/mcp using this string as the tool description.
+	// Its input schema is derived at analysis time from the handler's request
+	// struct (path, query, and JSON body fields), and calls enforce SignIn,
+	// Allow, RateLimit, and Idempotent identically to HTTP calls.
+	Tool string
+}
+
+// RateLimit configures a per-caller request quota on a single Route.
+// Quota is enforced globally across all Cloud Run tasks via an atomic
+// Datastore counter with a local exhaustion fast-path.
+type RateLimit struct {
+	Requests int
+	Window   time.Duration
 }
 
 // Compute sizes the service an async handler is the whole of. Workers

@@ -2,6 +2,7 @@ package tako
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"github.com/gsandoval/tako/internal/boot"
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
@@ -41,16 +43,19 @@ func NewTestApp(tb testing.TB) *TestApp {
 	ta := &TestApp{tb: tb, app: app}
 	registerTestIdentities()
 	for _, h := range registeredAsync() {
-		deliver := func(invoke func(Ctx, []byte) error, name string) func(context.Context, []byte) error {
+		deliver := func(invoke func(Ctx, []byte) error, kind, name string) func(context.Context, []byte) error {
 			return func(ctx context.Context, payload []byte) error {
-				return invoke(ta.handlerCtx(ctx, name), payload)
+				tctx, finish := ta.spanHandlerCtx(ctx, kind, name)
+				err := invoke(tctx, payload)
+				finish(0, err)
+				return err
 			}
 		}
 		switch h.kind {
 		case "worker":
-			app.Dispatcher.Consume(h.source, deliver(h.invoke, h.name))
+			app.Dispatcher.Consume(h.source, deliver(h.invoke, "worker", h.name))
 		case "subscribe":
-			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, h.name))
+			app.Dispatcher.Topics().Subscribe(h.source, h.name, deliver(h.invoke, "subscribe", h.name))
 		case "job":
 			// Jobs ride the dispatcher locally: DrainQueues waits for
 			// them, failures dead-letter inspectably. RunnerConfig.Parallel runs
@@ -64,14 +69,20 @@ func NewTestApp(tb testing.TB) *TestApp {
 			}
 			app.Dispatcher.Consume(hooks.JobQueue(h.source), func(ctx context.Context, payload []byte) error {
 				if par == 1 {
-					return invoke(ta.handlerCtx(ctx, name), payload)
+					tctx, finish := ta.spanHandlerCtx(ctx, "job", name)
+					err := invoke(tctx, payload)
+					finish(0, err)
+					return err
 				}
 				errs := make(chan error, par)
 				for i := range par {
 					go func(i int) {
-						c := ta.handlerCtx(ctx, name).(*testCtx)
+						tctx, finish := ta.spanHandlerCtx(ctx, "job", name)
+						c := tctx.(*testCtx)
 						c.taskIndex, c.taskCount = i, par
-						errs <- invoke(c, payload)
+						err := invoke(c, payload)
+						finish(0, err)
+						errs <- err
 					}(i)
 				}
 				var first error
@@ -193,8 +204,16 @@ func withApp(ctx context.Context, app *boot.App) context.Context {
 // Ctx returns a request context bound to this app's backends,
 // authenticated as the given user if one is passed.
 func (a *TestApp) Ctx(as ...User) Ctx {
+	base := withApp(context.Background(), a.app)
+	base = trace.WithContext(base, trace.Context{
+		TraceID: trace.NewTraceID(),
+		SpanID:  trace.NewSpanID(),
+		Sampled: true,
+	})
+	base = trace.WithPropagatedFlags(base, nil)
+	base = withFlagPinHolder(base)
 	c := &testCtx{
-		Context: withApp(context.Background(), a.app),
+		Context: base,
 		log:     slog.Default(),
 	}
 	if len(as) > 0 {
@@ -220,6 +239,18 @@ func (a *TestApp) handlerCtx(ctx context.Context, name string) Ctx {
 		Context: withApp(ctx, a.app),
 		log:     slog.Default().With("handler", name),
 	}
+}
+
+func (a *TestApp) spanHandlerCtx(ctx context.Context, kind, name string) (Ctx, func(int, error)) {
+	base := withApp(ctx, a.app)
+	base, _, finish := trace.StartRoot(base, kind, name, "", "", "", "")
+	if a.app != nil && a.app.Flags != nil {
+		base = backends.WithFlagSnapshot(base, a.app.Flags.Snapshot())
+	}
+	return &testCtx{
+		Context: base,
+		log:     slog.Default().With("handler", name),
+	}, finish
 }
 
 // DrainQueues blocks until every published message — including chaos
@@ -256,6 +287,30 @@ func (a *TestApp) SetSecret(name, value string) {
 	})
 }
 
+// SetFlag overrides a declared tako.Flag[T] in this test app's flag store.
+// Pass the flag handle (or its name) and the override value:
+//
+//	app.SetFlag(NewCheckout, true)
+//	app.SetFlag(CheckoutFlow, "treatment")
+func (a *TestApp) SetFlag(flag any, value any) {
+	a.tb.Helper()
+	name, err := flagNameOf(flag)
+	if err != nil {
+		a.tb.Fatalf("tako: SetFlag: %v", err)
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		a.tb.Fatalf("tako: SetFlag(%s): marshal value: %v", name, err)
+	}
+	if err := a.app.Flags.Put(context.Background(), backends.FlagRule{
+		Name:      name,
+		Value:     raw,
+		UpdatedAt: time.Now().UTC(),
+	}); err != nil {
+		a.tb.Fatalf("tako: SetFlag(%s): %v", name, err)
+	}
+}
+
 // AdvanceCron runs a cron once, synchronously, as if its schedule fired
 // — tests own scheduled time (see Advance). Pass the cron itself:
 //
@@ -276,7 +331,10 @@ func (a *TestApp) AdvanceCron(cron Handler) {
 		a.tb.Fatalf("tako: AdvanceCron: that is a %s, not a cron — %s", cron.kind, wrongKindHint(cron.kind))
 		return
 	}
-	if err := cron.invoke(a.handlerCtx(context.Background(), cron.name), nil); err != nil {
+	tctx, finish := a.spanHandlerCtx(context.Background(), "cron", cron.name)
+	err := cron.invoke(tctx, nil)
+	finish(0, err)
+	if err != nil {
 		a.tb.Fatalf("tako: AdvanceCron(%s): %v", cron.name, err)
 	}
 }
@@ -314,6 +372,70 @@ func (a *TestApp) Chaos() {
 	}
 	a.app.Dispatcher.EnableChaos(seed)
 	a.tb.Logf("tako: chaos enabled (seed %d) — rerun with TAKO_CHAOS_SEED=%d to reproduce", seed, seed)
+}
+
+// AuditRecords returns all audit entries recorded on stream (which may be
+// a *AuditHandle[E] or a stream name string) during this test run.
+func (a *TestApp) AuditRecords(stream any) []AuditRecord {
+	a.tb.Helper()
+	if a.app == nil || a.app.Audits == nil {
+		return nil
+	}
+	var name string
+	switch s := stream.(type) {
+	case string:
+		name = s
+	case interface{ Name() string }:
+		name = s.Name()
+	default:
+		a.tb.Fatalf("tako: AuditRecords wants a *tako.AuditHandle[E] or stream name, got %T", stream)
+	}
+	recs := a.app.Audits.ForStream(name)
+	out := make([]AuditRecord, len(recs))
+	for i, r := range recs {
+		out[i] = AuditRecord{
+			Stream:      r.Stream,
+			ActorID:     r.ActorID,
+			ActorEmail:  r.ActorEmail,
+			CallerIP:    r.CallerIP,
+			CallerAgent: r.CallerAgent,
+			DeviceID:    r.DeviceID,
+			TraceID:     r.TraceID,
+			Event:       r.Event,
+			RecordedAt:  r.RecordedAt,
+		}
+	}
+	return out
+}
+
+// PushMessages returns all mobile push notifications sent on push (which
+// may be a *PushHandle or channel name string) during this test run.
+func (a *TestApp) PushMessages(push any) []PushMessage {
+	a.tb.Helper()
+	if a.app == nil || a.app.Push == nil {
+		return nil
+	}
+	var name string
+	switch p := push.(type) {
+	case string:
+		name = p
+	case interface{ Name() string }:
+		name = p.Name()
+	default:
+		a.tb.Fatalf("tako: PushMessages wants a *tako.PushHandle or channel name, got %T", push)
+	}
+	msgs := a.app.Push.Messages(name)
+	out := make([]PushMessage, len(msgs))
+	for i, m := range msgs {
+		out[i] = PushMessage{
+			Token: m.Token,
+			Topic: m.Topic,
+			Title: m.Title,
+			Body:  m.Body,
+			Data:  m.Data,
+		}
+	}
+	return out
 }
 
 // testCtx is the Ctx implementation behind TestApp.Ctx.

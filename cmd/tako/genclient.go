@@ -7,6 +7,7 @@ import (
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/clientgen"
+	"github.com/gsandoval/tako/pkg/schemagen"
 )
 
 // runGenClient is `tako gen client ts`: the typed TypeScript client for
@@ -51,6 +52,96 @@ func runGenClient(args []string) error {
 	if sum.Endpoints == 0 {
 		fmt.Println("           note: the app declares no browser-callable api endpoints")
 	}
+	return nil
+}
+
+// runGenOpenAPI is `tako gen openapi [--out <path>] [--stdout]`.
+func runGenOpenAPI(args []string) error {
+	args = normalizeArgs(args)
+	out := filepath.Join(".tako", "gen", "openapi.json")
+	stdout := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--out needs a path")
+			}
+			out = args[i]
+		case "--stdout":
+			stdout = true
+		default:
+			return fmt.Errorf("unknown flag %q (tako gen openapi accepts --out <path> and --stdout)", args[i])
+		}
+	}
+	tg, err := analyzer.AnalyzeTyped(analyzer.Config{Dir: "."})
+	if err != nil {
+		return err
+	}
+	spec, sum, err := schemagen.OpenAPI(tg)
+	if err != nil {
+		return err
+	}
+	if stdout {
+		fmt.Printf("%s\n", spec)
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(out), 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(out, append(spec, '\n'), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("  openapi  %s — %d endpoint%s, %d schema%s, %d mcp tool%s\n",
+		out,
+		sum.Operations, plural(sum.Operations),
+		sum.Schemas, plural(sum.Schemas),
+		sum.Tools, plural(sum.Tools))
+	return nil
+}
+
+// runGenAgents is `tako gen agents [--out <path>] [--stdout]`.
+func runGenAgents(args []string) error {
+	args = normalizeArgs(args)
+	out := "AGENTS.md"
+	stdout := false
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--out":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--out needs a path")
+			}
+			out = args[i]
+		case "--stdout":
+			stdout = true
+		default:
+			return fmt.Errorf("unknown flag %q (tako gen agents accepts --out <path> and --stdout)", args[i])
+		}
+	}
+	tg, err := analyzer.AnalyzeTyped(analyzer.Config{Dir: "."})
+	if err != nil {
+		return err
+	}
+	existing, _ := os.ReadFile(out)
+	md := schemagen.GenerateAgentsMD(tg, string(existing))
+	if stdout {
+		fmt.Print(md)
+		return nil
+	}
+	if dir := filepath.Dir(out); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return err
+		}
+	}
+	if err := os.WriteFile(out, []byte(md), 0o644); err != nil {
+		return err
+	}
+	fmt.Printf("  agents   %s — %d service%s, %d handler%s, %d resource%s\n",
+		out,
+		len(tg.Graph.Services), plural(len(tg.Graph.Services)),
+		len(tg.Graph.Handlers), plural(len(tg.Graph.Handlers)),
+		len(tg.Graph.Resources), plural(len(tg.Graph.Resources)))
 	return nil
 }
 

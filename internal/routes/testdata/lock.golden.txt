@@ -9,5 +9,6 @@ SignOut	POST /_tako/api/session/signout
 Push	POST /_tako/api/push
 Signed	/_tako/api/signed/
 Cron	POST /_tako/api/cron/{cron}
+MCP	POST /_tako/api/mcp
 SignIn	GET /_tako/signin
 dev-only	GET /_tako/z/dev

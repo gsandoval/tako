@@ -87,6 +87,13 @@ func topicStore(ctx context.Context) backends.Topic {
 	return hooks.Topic
 }
 
+func flagStore(ctx context.Context) backends.Flags {
+	if app := boot.FromContext(ctx); app != nil && app.Flags != nil {
+		return app.Flags
+	}
+	return hooks.Flags
+}
+
 // mintSession stores a new session record and returns it.
 func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 	store := entityStore(ctx)

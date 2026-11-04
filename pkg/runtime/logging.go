@@ -88,6 +88,8 @@ func severityOf(l slog.Level) string {
 	switch {
 	case l < slog.LevelInfo:
 		return "DEBUG"
+	case l == slog.LevelInfo+2:
+		return "NOTICE"
 	case l < slog.LevelWarn:
 		return "INFO"
 	case l < slog.LevelError:
@@ -103,10 +105,16 @@ func severityOf(l slog.Level) string {
 // in the Logs Explorer; without them (local, tests, push deliveries)
 // the `req` attribute keeps doing the correlating on its own.
 func traceAttrs(r *http.Request) []any {
+	return traceAttrsFromHeader(r.Header.Get("X-Cloud-Trace-Context"))
+}
+
+// traceAttrsFromHeader builds Cloud Logging's trace and spanId fields
+// from an X-Cloud-Trace-Context or propagated tako-trace string.
+func traceAttrsFromHeader(h string) []any {
 	if traceProject == "" {
 		return nil
 	}
-	trace, span := parseTraceContext(r.Header.Get("X-Cloud-Trace-Context"))
+	trace, span := parseTraceContext(h)
 	if trace == "" {
 		return nil
 	}

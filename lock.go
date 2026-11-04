@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -40,9 +41,12 @@ func (l *LockHandle) Do(ctx Ctx, fn func(Ctx) error) error {
 	if lease == nil {
 		panic(unwiredPanic("lease"))
 	}
-	return backends.DoLease(ctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+	sctx, finish := trace.StartSpan(ctx, "lock", l.name+".Do", "lock", l.name, "op", "Do")
+	err := backends.DoLease(sctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))
 	})
+	finish(err)
+	return err
 }
 
 // TryDo runs fn only if the lock is immediately available, reporting
@@ -52,9 +56,12 @@ func (l *LockHandle) TryDo(ctx Ctx, fn func(Ctx) error) (bool, error) {
 	if lease == nil {
 		panic(unwiredPanic("lease"))
 	}
-	return backends.TryDoLease(ctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
+	sctx, finish := trace.StartSpan(ctx, "lock", l.name+".TryDo", "lock", l.name, "op", "TryDo")
+	ok, err := backends.TryDoLease(sctx, lease, l.name, hooks.LeaseOwner, backends.LeaseTTL, func(c context.Context) error {
 		return fn(reroot(ctx, c))
 	})
+	finish(err)
+	return ok, err
 }
 
 // reroot re-bases a Ctx on a cancellable context — the lease machinery

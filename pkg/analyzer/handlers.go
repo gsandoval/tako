@@ -171,6 +171,58 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 		}
 		maxAge = secs
 	}
+	idempotent := boolField(dir, pkg, cfg, "Idempotent", "Route", errs)
+	toolDesc := ""
+	if te, tset := fieldOf(cfg, "Tool"); tset {
+		if ts, tok := stringField(dir, pkg, cfg, "Tool", "Route", errs); tok {
+			toolDesc = strings.TrimSpace(ts)
+			if toolDesc == "" {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, te.Pos()),
+					Msg:  "tako.Route.Tool requires a non-empty description string",
+					Rule: "config-literal",
+				})
+			} else if ctor != "API" {
+				fail(&Error{
+					Pos:  relPos(dir, pkg.Fset, te.Pos()),
+					Msg:  fmt.Sprintf("%s sets Route.Tool on a tako.%s — MCP tools require JSON request/response endpoints (tako.API)", name.Name, ctor),
+					Rule: "tool-api",
+				})
+			}
+		} else {
+			bad = true
+		}
+	}
+	rateLimitReqs := 0
+	rateLimitWinSecs := 0
+	if e, set := fieldOf(cfg, "RateLimit"); set {
+		if rl, ok := configLit(dir, pkg, e, "RateLimit", errs); ok {
+			if re, rset := fieldOf(rl, "Requests"); rset {
+				if n, nok := constInt(pkg, re); nok && n > 0 {
+					rateLimitReqs = n
+				} else {
+					fail(&Error{
+						Pos:  relPos(dir, pkg.Fset, re.Pos()),
+						Msg:  "tako.RateLimit.Requests must be a positive integer constant",
+						Rule: "config-literal",
+					})
+				}
+			}
+			if we, wset := fieldOf(rl, "Window"); wset {
+				if n, wok := constInt(pkg, we); wok && n >= int(time.Second) {
+					rateLimitWinSecs = n / int(time.Second)
+				} else {
+					fail(&Error{
+						Pos:  relPos(dir, pkg.Fset, we.Pos()),
+						Msg:  "tako.RateLimit.Window must be a duration constant of at least 1s",
+						Rule: "config-literal",
+					})
+				}
+			}
+		} else {
+			bad = true
+		}
+	}
 
 	req, reqErr := reqStruct(pkg, call.Args[1])
 	if reqErr != "" {
@@ -273,6 +325,16 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 			})
 		}
 	}
+	resBlob := resIsBlob(pkg, call.Args[1])
+	if toolDesc != "" && (hasBlob || resBlob) {
+		if te, tset := fieldOf(cfg, "Tool"); tset {
+			fail(&Error{
+				Pos:  relPos(dir, pkg.Fset, te.Pos()),
+				Msg:  fmt.Sprintf("%s sets Route.Tool on a blob endpoint — MCP tools require JSON request and response types", name.Name),
+				Rule: "tool-api",
+			})
+		}
+	}
 	if bad {
 		return nil
 	}
@@ -281,25 +343,34 @@ func extractRoute(ctor, dir string, pkg *packages.Package, name *ast.Ident, call
 	if ctor == "Page" {
 		kind = "page"
 	}
+	toolSchema := ""
+	if toolDesc != "" {
+		toolSchema = buildToolSchema(req)
+	}
 	reqRef, resRef := qualifiedSignature(pkg, call.Args[1])
 	return &Handler{
-		Kind:         kind,
-		Var:          pkg.Name + "." + name.Name,
-		Package:      pkg.PkgPath,
-		Service:      pkg.Name,
-		Route:        route,
-		ReqType:      req.ref,
-		ReqRef:       reqRef,
-		ResRef:       resRef,
-		Bindings:     bindings,
-		HasBody:      hasBody,
-		ResBlob:      resIsBlob(pkg, call.Args[1]),
-		RequiresAuth: requiresAuth,
-		Policy:       policy,
-		PolicyRoles:  policyRoles,
-		Private:      private,
-		MaxAge:       maxAge,
-		Pos:          relPos(dir, pkg.Fset, name.Pos()),
+		Kind:                   kind,
+		Var:                    pkg.Name + "." + name.Name,
+		Package:                pkg.PkgPath,
+		Service:                pkg.Name,
+		Route:                  route,
+		ReqType:                req.ref,
+		ReqRef:                 reqRef,
+		ResRef:                 resRef,
+		Bindings:               bindings,
+		HasBody:                hasBody,
+		ResBlob:                resBlob,
+		RequiresAuth:           requiresAuth,
+		Policy:                 policy,
+		PolicyRoles:            policyRoles,
+		Private:                private,
+		MaxAge:                 maxAge,
+		Idempotent:             idempotent,
+		RateLimitRequests:      rateLimitReqs,
+		RateLimitWindowSeconds: rateLimitWinSecs,
+		Tool:                   toolDesc,
+		ToolSchema:             toolSchema,
+		Pos:                    relPos(dir, pkg.Fset, name.Pos()),
 	}
 }
 

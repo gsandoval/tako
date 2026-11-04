@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,7 +15,7 @@ import (
 	"github.com/gsandoval/tako/pkg/provision/gcp"
 )
 
-// runLogs is `tako logs [service] [--since 15m] [--project …]`.
+// runLogs is `tako logs [service] [--since 15m] [--json] [--project …]`.
 func runLogs(args []string) error {
 	t, rest, err := parseTarget(args)
 	if err != nil {
@@ -22,7 +23,12 @@ func runLogs(args []string) error {
 	}
 	since := 15 * time.Minute
 	var service string
+	var jsonOut bool
 	for i := 0; i < len(rest); i++ {
+		if rest[i] == "--json" {
+			jsonOut = true
+			continue
+		}
 		if rest[i] == "--since" && i+1 < len(rest) {
 			i++
 			d, err := time.ParseDuration(rest[i])
@@ -55,6 +61,21 @@ func runLogs(args []string) error {
 	entries, err := client.Logs(context.Background(), services, since, 200)
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		if entries == nil {
+			entries = []gcp.LogEntry{}
+		}
+		raw, err := json.MarshalIndent(map[string]any{
+			"services": services,
+			"since":    since.String(),
+			"entries":  entries,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", raw)
+		return nil
 	}
 	if len(entries) == 0 {
 		fmt.Printf("no log entries in the last %s\n", since)

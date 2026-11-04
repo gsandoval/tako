@@ -283,3 +283,55 @@ func TestHarnessEmitsQueueRate(t *testing.T) {
 		}
 	}
 }
+
+func TestCodegenEmitsMCPHandlerWhenToolDeclared(t *testing.T) {
+	g := &analyzer.AppGraph{
+		Module: "example.com/app",
+		Services: []analyzer.Service{
+			{Name: "app", Package: "example.com/app"},
+		},
+		Handlers: []analyzer.Handler{
+			{
+				Kind:       "api",
+				Service:    "app",
+				Package:    "example.com/app",
+				Var:        "app.CreateOrder",
+				Route:      "POST /orders/{id}",
+				ReqType:    "CreateOrderReq",
+				HasBody:    true,
+				Tool:       "Create a customer order",
+				ToolSchema: `{"type":"object","properties":{"id":{"type":"string"}}}`,
+				Bindings: []analyzer.Binding{
+					{Field: "ID", Kind: "path", Name: "id", Type: "string"},
+				},
+			},
+		},
+	}
+	outDir := t.TempDir()
+	if _, err := Generate(g, outDir); err != nil {
+		t.Fatal(err)
+	}
+	for _, rel := range []string{
+		filepath.Join(".tako", "gen", "app", "main.go"),
+		filepath.Join(".tako", "gen", "app", harnessDir, harnessFile),
+	} {
+		raw, err := os.ReadFile(filepath.Join(outDir, rel))
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(raw)
+		for _, want := range []string{
+			`takoMux.Handle("POST /_tako/api/mcp", runtime.MCPHandler(mux,`,
+			`Name:        "create_order"`,
+			`Description: "Create a customer order"`,
+			`Route:       "POST /orders/{id}"`,
+			`PathParams:  []string{"id"}`,
+			`HasBody:     true`,
+			`runtime.Reserved(takoMux, mux)`,
+		} {
+			if !strings.Contains(src, want) {
+				t.Errorf("%s missing %q:\n%s", rel, want, src)
+			}
+		}
+	}
+}

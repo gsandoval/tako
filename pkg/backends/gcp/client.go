@@ -37,6 +37,8 @@ const (
 	iamCredsHost   = "iamcredentials.googleapis.com"
 	monitoringHost = "monitoring.googleapis.com"
 	identityHost   = "identitytoolkit.googleapis.com"
+	traceHost      = "cloudtrace.googleapis.com"
+	fcmHost        = "fcm.googleapis.com"
 )
 
 // Client is the shared authenticated HTTP client behind the stores.

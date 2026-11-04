@@ -11,6 +11,7 @@ import (
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
@@ -34,9 +35,14 @@ func RegisterWorker(name string, h tako.Handler) {
 	workerMu.Lock()
 	workerNames[queue] = name
 	workerMu.Unlock()
+	recordAsyncHandler(name, fn)
 	hooks.Queue.Consume(queue, func(ctx context.Context, payload []byte) error {
+		ctx, _, finish := trace.StartRoot(ctx, "worker", name, os.Getenv("TAKO_SERVICE"), "", "", "")
+		ctx = pinFlagsOnCtx(ctx)
 		wctx := &requestCtx{Context: ctx, log: slog.Default().With("worker", name)}
-		return fn(wctx, payload)
+		err := fn(wctx, payload)
+		finish(0, err)
+		return err
 	})
 }
 
@@ -53,9 +59,14 @@ func RegisterSubscriber(name string, h tako.Handler) {
 	if !ok || hooks.Topic == nil {
 		panic("tako: RegisterSubscriber before Boot")
 	}
+	recordAsyncHandler(name, fn)
 	hooks.Topic.Subscribe(source, name, func(ctx context.Context, payload []byte) error {
+		ctx, _, finish := trace.StartRoot(ctx, "subscribe", name, os.Getenv("TAKO_SERVICE"), "", "", "")
+		ctx = pinFlagsOnCtx(ctx)
 		sctx := &requestCtx{Context: ctx, log: slog.Default().With("subscriber", name)}
-		return fn(sctx, payload)
+		err := fn(sctx, payload)
+		finish(0, err)
+		return err
 	})
 }
 

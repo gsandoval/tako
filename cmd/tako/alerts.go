@@ -19,6 +19,7 @@ package main
 // which is what --env selects.
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -27,19 +28,22 @@ import (
 	"github.com/gsandoval/tako/pkg/provision"
 )
 
-// runAlerts is `tako alerts [name] [--env <env>]`.
+// runAlerts is `tako alerts [name] [--env <env>] [--json]`.
 func runAlerts(args []string) error {
 	args = normalizeArgs(args)
 	env := provision.DefaultEnv
 	var only string
+	var jsonOut bool
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {
+		case a == "--json":
+			jsonOut = true
 		case a == "--env" && i+1 < len(args):
 			i++
 			env = args[i]
 		case strings.HasPrefix(a, "-"):
-			return fmt.Errorf("unknown flag %q (tako alerts accepts [name] and --env)", a)
+			return fmt.Errorf("unknown flag %q (tako alerts accepts [name], --env, and --json)", a)
 		default:
 			only = a
 		}
@@ -66,6 +70,34 @@ func runAlerts(args []string) error {
 	described, err := provision.DescribeAlerts(cfg, graph)
 	if err != nil {
 		return err
+	}
+	if jsonOut {
+		var filtered []provision.AlertDescription
+		for _, d := range described {
+			if only != "" && !strings.EqualFold(d.Name, only) {
+				continue
+			}
+			filtered = append(filtered, d)
+		}
+		if only != "" && len(filtered) == 0 && len(described) > 0 {
+			var names []string
+			for _, d := range described {
+				names = append(names, d.Name)
+			}
+			return fmt.Errorf("no alert named %q — this app declares %s", only, strings.Join(names, ", "))
+		}
+		if filtered == nil {
+			filtered = []provision.AlertDescription{}
+		}
+		raw, err := json.MarshalIndent(map[string]any{
+			"env":    env,
+			"alerts": filtered,
+		}, "", "  ")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s\n", raw)
+		return nil
 	}
 	if len(described) == 0 {
 		fmt.Println("no alerts declared — a condition becomes one with tako.Alert(cond, channel)")

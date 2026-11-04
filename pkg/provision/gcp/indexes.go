@@ -282,3 +282,24 @@ func (d *DatastoreIndexes) Delete(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
+// EnsureEntityTTL configures Firestore/Datastore's native background TTL
+// policy on (kind, field) so expired documents are automatically deleted
+// at zero compute cost.
+func (c *Client) EnsureEntityTTL(ctx context.Context, kind, field string) error {
+	if kind == "" || field == "" {
+		return nil
+	}
+	u := c.url(firestoreHost, fmt.Sprintf(
+		"/v1/projects/%s/databases/(default)/collectionGroups/%s/fields/%s?updateMask=ttlConfig",
+		c.Project, kind, field,
+	))
+	body := map[string]any{"ttlConfig": map[string]any{}}
+	if err := c.do(ctx, http.MethodPatch, u, body, nil); err != nil {
+		if disabledAPI(err) {
+			return nil
+		}
+		return Classify(err, c.Project, "configure entity TTL policy", "roles/datastore.owner")
+	}
+	return nil
+}

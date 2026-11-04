@@ -180,6 +180,7 @@ that the value is written as a literal, and that it is in range.
 | `auth-provider` | `tako.Auth` declares no provider | [auth.md](auth.md) |
 | `max-age` | `Route.MaxAge` is not a constant between 1s and a year | [pages.md](pages.md) |
 | `cache-signin` | `Route.MaxAge` on a route that requires sign-in | [pages.md](pages.md) |
+| `tool-api` | `Route.Tool` is set on a `tako.Page` or uses a `tako.Blob` request | [api.md](api.md) |
 | `one-status` | a package declares two status pages | [site.md](site.md) |
 | `unexported-status` | a status page var is not exported | [site.md](site.md) |
 | `site-dir` | a site's directory doesn't exist and nothing builds it | [site.md](site.md) |
@@ -329,6 +330,7 @@ write by hand is not the one you know.
 | Rule | Fires when | Page |
 |---|---|---|
 | `entity-id` | the id field is missing, duplicated, or not a string | [entity.md](entity.md) |
+| `entity-ttl` | the ttl field is duplicated, not `time.Time`, or hidden by `json:"-"` | [entity.md](entity.md) |
 | `entity-index` | an indexed field is one `json:"-"` keeps out of the document | [entity.md](entity.md) |
 | `unindexed-query` | a query filters or orders on an untagged field | [entity.md](entity.md) |
 | `query-shapes` | one function assembles a query from too many conditional filters | [entity.md](entity.md) |
@@ -337,6 +339,7 @@ write by hand is not the one you know.
 ```
 entity type Link must have exactly one field tagged entity:"id"
 entity id field Slug must be a string; got int
+entity ttl field Expires must be time.Time; got int64
 field Secret is tagged entity:"index" but json:"-" keeps it out of the stored document — an index on a field nothing writes matches nothing, silently; drop one of the two tags
 query filters on Link.URL, but URL is not indexed — tag it entity:"index" to make it queryable
 query orders by Link.Hits, but Hits is not indexed — tag it entity:"index" to make it orderable

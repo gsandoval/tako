@@ -297,14 +297,25 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			// object-level CAS writes need objectAdmin there. Bucket-wide
 			// (GCS has no prefix IAM); the summary names the lease use.
 			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin", member)
+		case "flag":
+			// Flags are read from flags/<app>-<env>.json in the framework bucket.
+			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectViewer", member)
+		case "push":
+			// Mobile push notifications use FCM HTTP v1 API.
+			add(target{TargetProject, cfg.Project}, "roles/firebasecloudmessaging.admin", member)
 		}
 	}
 
 	// Singleflight crons and singleton loops hold the same kind of
-	// lease without a Lock var.
+	// lease without a Lock var; Idempotent and RateLimit routes use
+	// Datastore framework kinds (_tako_idempotency, _tako_ratelimit).
 	for _, h := range g.Handlers {
 		if (h.Kind == "cron" && h.Singleflight) || h.Kind == "singleton" {
 			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin",
+				"serviceAccount:"+cfg.SAEmail(h.Service))
+		}
+		if h.Idempotent || h.RateLimitRequests > 0 {
+			add(target{TargetProject, cfg.Project}, "roles/datastore.user",
 				"serviceAccount:"+cfg.SAEmail(h.Service))
 		}
 	}

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/backends"
 	gcpb "github.com/gsandoval/tako/pkg/backends/gcp"
 	"github.com/gsandoval/tako/pkg/build"
 	"github.com/gsandoval/tako/pkg/codegen"
@@ -230,6 +231,16 @@ func runDeploy(args []string) error {
 	warnFootprints(graph)
 	warnDomains(graph)
 	warnSiteShadows(dir, graph)
+	lease := &gcp.Lease{C: client, App: cfg.AppID(), Env: t.env, Labels: cfg.Labels(), Say: sayf}
+	prevGraph, _ := lease.LoadDeployedGraph(ctx, false)
+	var activeFlags []backends.FlagRule
+	if rtClient, err := gcpb.New(ctx, gcpb.Options{Project: t.project, App: cfg.AppID(), Env: t.env}); err == nil {
+		activeFlags, _ = gcpb.NewFlagStore(rtClient, 0).List(ctx)
+	}
+	skew := provision.CheckSkew(prevGraph, graph, activeFlags)
+	if len(skew.Findings) > 0 {
+		fmt.Printf("\n  version & config skew\n%s", skew.Render())
+	}
 
 	if t.planOnly {
 		return nil
@@ -243,9 +254,10 @@ func runDeploy(args []string) error {
 		return narrateDomains(ctx, graph, domains)
 	}
 	// §4.6a "plan before apply": anything beyond additive/in-place —
-	// replaces, rename suspects — waits for a human unless --yes (CI).
-	if plan.NeedsConfirm() && !t.yes {
-		fmt.Printf("  the plan contains replaces or rename suspects — continue? [y/N] ")
+	// replaces, rename suspects, or dangerous version/config skew —
+	// waits for a human unless --yes (CI).
+	if (plan.NeedsConfirm() || skew.HasDanger()) && !t.yes {
+		fmt.Printf("  the plan contains replaces, rename suspects, or dangerous version/config skew — continue? [y/N] ")
 		line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
 		if l := strings.ToLower(strings.TrimSpace(line)); l != "y" && l != "yes" {
 			return fmt.Errorf("aborted — nothing was changed (re-run with --yes to skip this prompt)")
@@ -253,7 +265,6 @@ func runDeploy(args []string) error {
 	}
 	runs.Canary = t.canary
 
-	lease := &gcp.Lease{C: client, App: cfg.AppID(), Env: t.env, Labels: cfg.Labels(), Say: sayf}
 	release, err := lease.Acquire(ctx, holder())
 	if err != nil {
 		return err
@@ -385,6 +396,12 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindAlertPolicy), desired, applier); err != nil {
 		return err
 	}
+	for _, r := range graph.Resources {
+		if r.Kind == "entity" && r.TTLField != "" {
+			_ = client.EnsureEntityTTL(ctx, r.Name, r.TTLField)
+		}
+	}
+	_ = lease.SaveDeployedGraph(ctx, graph)
 
 	fmt.Println()
 	var liveHosts []string

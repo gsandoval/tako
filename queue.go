@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -34,12 +35,18 @@ func (q *QueueHandle[T]) PublishAfter(ctx Ctx, msg T, delay time.Duration) error
 	return q.publish(ctx, msg, backends.PublishOptions{Delay: delay})
 }
 
-func (q *QueueHandle[T]) publish(ctx Ctx, msg T, po backends.PublishOptions) error {
+func (q *QueueHandle[T]) publish(ctx Ctx, msg T, po backends.PublishOptions) (retErr error) {
+	op := "Publish"
+	if po.Delay > 0 {
+		op = "PublishAfter"
+	}
+	sctx, finish := trace.StartSpan(ctx, "queue", q.name+"."+op, "queue", q.name, "op", op)
+	defer func() { finish(retErr) }()
 	raw, err := json.Marshal(msg)
 	if err != nil {
 		return err
 	}
-	return queueBackend(ctx).Publish(ctx, q.name, raw, po)
+	return queueBackend(ctx).Publish(sctx, q.name, raw, po)
 }
 
 // queueBackend returns the wired queue backend, which boot (generated

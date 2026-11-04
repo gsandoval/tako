@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"html"
 	"net/http"
@@ -9,7 +10,10 @@ import (
 	"strings"
 
 	"github.com/gsandoval/tako/internal/routes"
+	"github.com/gsandoval/tako/pkg/backends"
 )
+
+const devFlagsRoute = "/_tako/dev/flags"
 
 // --- The dev sign-in bar ----------------------------------------------
 
@@ -22,6 +26,10 @@ func WithDevBar(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == devFlagsRoute && r.Method == http.MethodPost {
+			handleDevFlags(w, r)
+			return
+		}
 		// A pointer in the context for the same reason routeLabel is
 		// one: the decision is made INSIDE the handler and read out
 		// here, after it has returned.
@@ -31,6 +39,42 @@ func WithDevBar(next http.Handler) http.Handler {
 		next.ServeHTTP(bw, r)
 		bw.flush()
 	})
+}
+
+func handleDevFlags(w http.ResponseWriter, r *http.Request) {
+	store := flagStore(r.Context())
+	if store != nil && r.ParseForm() == nil {
+		name := strings.TrimSpace(r.FormValue("flag_name"))
+		action := r.FormValue("flag_action")
+		val := strings.TrimSpace(r.FormValue("flag_value"))
+		if name != "" {
+			switch action {
+			case "reset":
+				_ = store.Delete(r.Context(), name)
+			case "toggle":
+				snap := store.Snapshot()
+				cur, ok := snap.Lookup(name)
+				nextVal := json.RawMessage(`true`)
+				if ok && strings.TrimSpace(string(cur.Value)) == "true" {
+					nextVal = json.RawMessage(`false`)
+				}
+				_ = store.Put(r.Context(), backends.FlagRule{Name: name, Value: nextVal})
+			case "set":
+				if val != "" {
+					if !json.Valid([]byte(val)) {
+						b, _ := json.Marshal(val)
+						val = string(b)
+					}
+					_ = store.Put(r.Context(), backends.FlagRule{Name: name, Value: json.RawMessage(val)})
+				}
+			}
+		}
+	}
+	back := r.Header.Get("Referer")
+	if back == "" {
+		back = "/"
+	}
+	http.Redirect(w, r, back, http.StatusSeeOther)
 }
 
 // fragmentFlag records that the response in flight is a PARTIAL — an
@@ -136,6 +180,22 @@ func (b *barWriter) flush() {
 			}
 		}
 		controls.WriteString(`<form method="post" action="` + routes.SignOut + `" style="margin:0"><button>sign out</button></form>`)
+	}
+	if store := flagStore(b.req.Context()); store != nil {
+		if rules, err := store.List(b.req.Context()); err == nil && len(rules) > 0 {
+			for _, fr := range rules {
+				controls.WriteString(`<form method="post" action="` + devFlagsRoute + `" style="display:inline-flex;gap:4px;margin:0;align-items:center">`)
+				fmt.Fprintf(&controls, `<input type="hidden" name="flag_name" value="%s">`, html.EscapeString(fr.Name))
+				valStr := strings.TrimSpace(string(fr.Value))
+				if valStr == "true" || valStr == "false" {
+					fmt.Fprintf(&controls, `<button name="flag_action" value="toggle" title="toggle %s">⚑ %s=%s</button>`,
+						html.EscapeString(fr.Name), html.EscapeString(fr.Name), html.EscapeString(valStr))
+				} else {
+					fmt.Fprintf(&controls, `<span style="opacity:0.85">⚑ %s</span>`, html.EscapeString(fr.Name))
+				}
+				controls.WriteString(`<button name="flag_action" value="reset" title="reset flag">×</button></form>`)
+			}
+		}
 	}
 	// The id is a CONTRACT, not decoration: an app whose own layout puts
 	// something at the bottom of the window needs a way to move or hide

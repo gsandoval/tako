@@ -11,18 +11,29 @@ tako new <name> [--kind api|site] [--lang go|cfire] [--module <path>] [--replace
                          write a new app: go.mod (or .cf), one handler,
                          a test, AGENTS.md, a .gitignore — and for a
                          site, the layout and page
-tako check [--json]      analyze declarations, check site shadows, and
+tako check [--json] [--skew]
+                         analyze declarations, check site shadows (or
+                         version skew against deployed state), and
                          refresh generated code under .tako/gen/
+tako ci [init]           print or write the GitHub Actions CI/CD workflow
+                         with Workload Identity Federation and skew checks
 tako dev [--chaos]       run the app locally with reload (--chaos: seeded
                          duplicate/reordered deliveries)
 tako test [args]         analyze, refresh generated code and site builds,
                          then go test ./...
+tako call <HandlerVar|route> [json-input] [--as <user>] [--roles r1,r2] [--flag k=v] [--json]
+                         invoke any declared handler in-process against
+                         .tako/data without starting a server
+tako mcp                 run Tako's Model Context Protocol (MCP) server
+                         over stdio for coding agents and IDEs
 tako gen graph [--json | --mermaid]
 tako gen client ts [--out <path>]
-tako alerts [name] [--env prod]
+tako gen openapi [--out <path>] [--stdout]
+tako gen agents [--out <path>] [--stdout]
+tako alerts [name] [--env prod] [--json]
                          what each declared alert compiles to — PromQL,
                          notification sentence, and the call it came from
-tako docs [list | <topic> | search <q> | --port 8090 | --open | --export <dir>]
+tako docs [list | <topic> | search <q> | explain <rule> | --port 8090 | --open | --export <dir>]
                          serve, export, or print the guide, the reference
                          and the SDK's exported signatures from this binary
 tako build [--push <repo>]
@@ -41,14 +52,24 @@ With no arguments (or `--port <n>`, `--open`), `tako docs` listens on
 `--export <dir>`, it writes the static HTML site and LLM bundles to disk.
 And from a terminal or coding agent, `tako docs list`,
 `tako docs <topic>` (e.g. `tako docs entity`, `tako docs api`,
-`tako docs llms.txt`), and `tako docs search <query>` print Markdown
-directly to stdout without starting a server.
+`tako docs llms.txt`), `tako docs search <query>`, and
+`tako docs explain <rule>` (e.g. `tako docs explain entity-id`) print
+Markdown directly to stdout without starting a server.
+
+`tako call` executes any declared handler (`tako.API`, `tako.Page`,
+`tako.Worker`, `tako.Subscribe`, `tako.Cron`, or `tako.Runner`) in-process
+against local `.tako/data` via `TAKO_ONESHOT` without binding a TCP port,
+and returns the response body alongside recorded trace spans. `tako mcp`
+runs a built-in Model Context Protocol (MCP) JSON-RPC 2.0 server over
+`stdio` exposing the live `AppGraph`, `AGENTS.md`, OpenAPI 3.1 spec,
+embedded documentation, handler invocation (`tako_call`), and local
+`.tako/data` inspection to coding agents.
 
 `tako check` runs static analysis, site-shadow checks, and `.tako/gen/`
 code generation (including the test harness overlay) in under a second
 without starting the dev server or running the test suite. Pass `--json`
-for structured machine-readable diagnostics (`errors`, `warnings`,
-`written`).
+for structured machine-readable diagnostics (`errors` with `hint` and
+`doc` fields, `warnings`, `written`).
 
 `tako new` writes the smallest app that runs (including a starter test
 and `AGENTS.md`), then resolves it and generates, so `tako dev` and
@@ -121,6 +142,11 @@ tako secrets                          what this app declares, and which have a v
 tako secrets set <name>               value read whole from stdin, or an
                                       echo-off prompt
 tako secrets rm  <name>               delete it
+tako flags list                       every declared flag/experiment and its active rule
+tako flags set <name> <val>           set a literal value or JSON override
+tako flags rollout <name> <pct> <val> deterministic percentage rollout (0-100)
+tako flags split <name> <v1:p1> ...   deterministic multi-variant experiment split
+tako flags reset <name>               remove override and revert to code default
 ```
 
 The values behind `tako.Secret`. `set` writes `.env` locally (keeping
@@ -144,6 +170,10 @@ or an orphan (the safe case). Locally it just drops the line.
 
 ```
 tako logs [service] [--since 15m]     recent logs for the deployed services
+tako trace <id> [--since 24h] [--json]
+                                      distributed trace waterfall and correlated logs
+tako audit [stream] [--actor <id>] [--action <a>] [--target <t>] [--cloud]
+                                      structured compliance & Cloud Audit Logs
 tako dlq [service]                    peek dead-lettered messages per async service
 tako dlq <service> --replay <id>      put one dead letter back into delivery
 tako dlq --local [carrier]            the same, against .tako/data

@@ -55,6 +55,10 @@ type Client struct {
 	IP string
 	// UserAgent is the header, unparsed.
 	UserAgent string
+	// DeviceID is the client-supplied device identifier from the
+	// X-Tako-Device-ID header (empty when absent), used for pre-auth
+	// device profiles and anonymous experiment bucketing.
+	DeviceID string
 }
 
 // User is an authenticated identity as established by the app's Auth

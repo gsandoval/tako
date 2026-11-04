@@ -205,6 +205,14 @@ func tako_c_mount_json(pattern *C.char, cb C.tako_http_cb, userData unsafe.Point
 	}
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Tako-Test-User")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
 		ctxID := registerCtx(r.Context(), r)
 		defer unregisterCtx(ctxID)
 
@@ -248,7 +256,31 @@ func tako_c_mount_json(pattern *C.char, cb C.tako_http_cb, userData unsafe.Point
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		var goBytes []byte
+		if res.data != nil && res.len > 0 {
+			goBytes = C.GoBytes(unsafe.Pointer(res.data), res.len)
+		}
+
+		trimmed := bytes.TrimSpace(goBytes)
+		if bytes.HasPrefix(trimmed, []byte("__tako_redirect:")) {
+			parts := strings.SplitN(string(trimmed), ":", 3)
+			if len(parts) == 3 {
+				code := 302
+				if parts[1] == "301" {
+					code = 301
+				}
+				http.Redirect(w, r, parts[2], code)
+				return
+			}
+		}
+
+		contentType := "application/json"
+		if bytes.HasPrefix(trimmed, []byte("<!DOCTYPE html")) || bytes.HasPrefix(trimmed, []byte("<html")) || bytes.HasPrefix(trimmed, []byte("<div")) || bytes.HasPrefix(trimmed, []byte("<p")) {
+			contentType = "text/html; charset=utf-8"
+		} else if bytes.HasPrefix(trimmed, []byte("<?xml")) {
+			contentType = "application/xml; charset=utf-8"
+		}
+		w.Header().Set("Content-Type", contentType)
 		if cacheSec > 0 {
 			w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d", int(cacheSec)))
 		}
@@ -257,8 +289,7 @@ func tako_c_mount_json(pattern *C.char, cb C.tako_http_cb, userData unsafe.Point
 		} else {
 			w.WriteHeader(http.StatusOK)
 		}
-		if res.data != nil && res.len > 0 {
-			goBytes := C.GoBytes(unsafe.Pointer(res.data), res.len)
+		if len(goBytes) > 0 {
 			_, _ = w.Write(goBytes)
 		}
 	})
@@ -346,6 +377,9 @@ func tako_c_req_param(ctxID C.uint64_t, kind *C.char, name *C.char) C.tako_buf_t
 		val = r.URL.Query().Get(n)
 	case "header":
 		val = r.Header.Get(n)
+		if val == "" && strings.EqualFold(n, "host") {
+			val = r.Host
+		}
 	case "form":
 		val = r.FormValue(n)
 	default:
@@ -536,7 +570,11 @@ func tako_c_entity_query(ctxID C.uint64_t, entityName *C.char, querySpecJson *C.
 		return makeErrBuf(500, err.Error())
 	}
 
-	out, err := json.Marshal(docs)
+	rawDocs := make([]json.RawMessage, len(docs))
+	for i, d := range docs {
+		rawDocs[i] = json.RawMessage(d)
+	}
+	out, err := json.Marshal(rawDocs)
 	if err != nil {
 		return makeErrBuf(500, err.Error())
 	}

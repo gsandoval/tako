@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -23,11 +24,15 @@ type TopicHandle[T any] struct {
 // Publish broadcasts event to every subscriber of the topic. A topic with
 // no subscribers is legal — events broadcast into silence.
 func (t *TopicHandle[T]) Publish(ctx Ctx, event T) error {
+	sctx, finish := trace.StartSpan(ctx, "topic", t.name+".Publish", "topic", t.name, "op", "Publish")
 	raw, err := json.Marshal(event)
 	if err != nil {
+		finish(err)
 		return err
 	}
-	return topicBackend(ctx).Publish(ctx, t.name, raw)
+	err = topicBackend(ctx).Publish(sctx, t.name, raw)
+	finish(err)
+	return err
 }
 
 func (t *TopicHandle[T]) eventSource(T) {}

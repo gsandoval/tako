@@ -281,9 +281,56 @@ inline HttpRes json_res(int32_t status, std::string body) {
     return HttpRes{.status = status, .body = std::move(body), .content_type = "application/json"};
 }
 
+template <typename T>
+inline HttpRes page_res(int32_t status, const T& val) {
+    using D = std::decay_t<T>;
+    if constexpr (std::is_same_v<D, std::string> || std::is_same_v<D, std::string_view> || std::is_same_v<D, const char*>) {
+        std::string s(val);
+        if (s.starts_with("__tako_redirect:")) {
+            return HttpRes{.status = status, .body = std::move(s), .content_type = "text/plain; charset=utf-8"};
+        }
+        if (s.starts_with("<?xml")) {
+            return HttpRes{.status = status, .body = std::move(s), .content_type = "application/xml; charset=utf-8"};
+        }
+        return HttpRes{.status = status, .body = std::move(s), .content_type = "text/html; charset=utf-8"};
+    } else {
+        return HttpRes{.status = status, .body = cfire::json::stringify(val), .content_type = "application/json"};
+    }
+}
+
+inline std::string redirect(int32_t status_code, std::string_view location) {
+    return std::format("__tako_redirect:{}:{}", status_code, location);
+}
+
 struct Ctx {
     uint64_t id{0};
     std::optional<User> current_user{};
+    std::unordered_map<std::string, std::string> headers{};
+
+    std::string header(std::string_view name) const {
+#ifdef CFIRE_HAS_LIBTAKO
+        if (id != 0) {
+            tako_buf_t res = tako_c_req_param(id, "header", std::string(name).c_str());
+            std::string s;
+            if (res.data && res.len > 0) s.assign(res.data, res.len);
+            tako_c_free(res);
+            if (!s.empty()) return s;
+        }
+#endif
+        for (const auto& [k, v] : headers) {
+            if (k.size() == name.size()) {
+                bool eq = true;
+                for (std::size_t i = 0; i < k.size(); ++i) {
+                    if (std::tolower(static_cast<unsigned char>(k[i])) != std::tolower(static_cast<unsigned char>(name[i]))) {
+                        eq = false;
+                        break;
+                    }
+                }
+                if (eq) return v;
+            }
+        }
+        return "";
+    }
 
     std::optional<User> user() const {
         if (current_user.has_value()) return current_user;
@@ -323,7 +370,7 @@ struct Ctx {
 };
 
 inline Ctx ctx_from_req(const HttpReq& req) {
-    return Ctx{.id = req.ctx_id};
+    return Ctx{.id = req.ctx_id, .headers = req.headers};
 }
 
 // Error constructors
@@ -404,10 +451,16 @@ inline void mount_json(std::string_view pattern, Fn&& fn, MountOpts opts = {}) {
         auto res = (*fp)(hreq);
         if (!res.has_value()) {
             auto msg = res.error().message();
+            int32_t err_status = 500;
+            if (msg.starts_with("__tako_status:") && msg.size() >= 18 && msg[17] == ':') {
+                err_status = static_cast<int32_t>(std::strtol(msg.substr(14, 3).c_str(), nullptr, 10));
+                if (err_status < 400 || err_status > 599) err_status = 500;
+                msg = msg.substr(18);
+            }
             char* cErr = (char*)std::malloc(msg.size() + 1);
             std::memcpy(cErr, msg.data(), msg.size());
             cErr[msg.size()] = '\0';
-            return tako_buf_t{.data = nullptr, .len = 0, .status = 500, .err = cErr};
+            return tako_buf_t{.data = nullptr, .len = 0, .status = err_status, .err = cErr};
         }
         char* cData = (char*)std::malloc(res->body.size());
         if (res->body.size() > 0) std::memcpy(cData, res->body.data(), res->body.size());
@@ -555,16 +608,38 @@ public:
 template <typename T>
 class Query {
 public:
+    struct FilterClause {
+        std::string field;
+        std::string op;
+        std::string val_json;
+        std::string val_str;
+    };
     std::string kind_;
     int32_t limit_{0};
+    std::string order_{};
+    std::vector<FilterClause> filters_{};
 
     explicit Query(std::string kind) : kind_(std::move(kind)) {}
 
-    Query& where(std::string_view /*field*/, std::string_view /*op*/, auto&& /*val*/) {
+    Query& where(std::string_view field, std::string_view op, auto&& val) {
+        std::string vj = cfire::json::stringify(val);
+        std::string vs;
+        if constexpr (std::is_convertible_v<decltype(val), std::string_view>) {
+            vs = std::string(val);
+        } else {
+            vs = vj;
+        }
+        filters_.push_back(FilterClause{
+            .field = std::string(field),
+            .op = std::string(op),
+            .val_json = std::move(vj),
+            .val_str = std::move(vs),
+        });
         return *this;
     }
 
-    Query& order_by(std::string_view /*field*/) {
+    Query& order_by(std::string_view field) {
+        order_ = std::string(field);
         return *this;
     }
 
@@ -576,16 +651,30 @@ public:
     std::expected<std::vector<T>, cfire::Error> all(Ctx ctx) const {
 #ifdef CFIRE_HAS_LIBTAKO
         if (ctx.id != 0) {
-            std::string qSpec = "{\"limit\":" + std::to_string(limit_) + "}";
+            std::string f_json = "[";
+            for (std::size_t i = 0; i < filters_.size(); ++i) {
+                if (i > 0) f_json += ",";
+                f_json += std::format("{{\"field\":\"{}\",\"op\":\"{}\",\"value\":{}}}",
+                    cfire::json::escape_string(filters_[i].field),
+                    cfire::json::escape_string(filters_[i].op),
+                    filters_[i].val_json);
+            }
+            f_json += "]";
+            std::string qSpec = std::format("{{\"filters\":{},\"order\":\"{}\",\"limit\":{}}}",
+                f_json, cfire::json::escape_string(order_), limit_);
             tako_buf_t res = tako_c_entity_query(ctx.id, kind_.c_str(), qSpec.c_str());
             if (res.status != 0) {
                 std::string err = res.err ? res.err : "error";
                 tako_c_free(res);
                 return cfire::make_error(err);
             }
+            if (!res.data || res.len <= 0) {
+                tako_c_free(res);
+                return std::vector<T>{};
+            }
             std::string raw(res.data, res.len);
             tako_c_free(res);
-            return std::vector<T>{};
+            return cfire::json::parse<std::vector<T>>(raw);
         }
 #else
         (void)ctx;
@@ -593,6 +682,26 @@ public:
         std::vector<T> out;
         auto& tbl = detail::local_store().entities[kind_];
         for (const auto& [k, v] : tbl) {
+            if (!filters_.empty()) {
+                auto dyn = cfire::json::parse_dynamic(v);
+                if (!dyn || !dyn->is_object()) continue;
+                bool match = true;
+                for (const auto& fc : filters_) {
+                    auto fv = dyn->get(fc.field);
+                    if (!fv) { match = false; break; }
+                    std::string actual_s;
+                    if (fv->is_string()) actual_s = std::string(fv->as_str());
+                    else if (fv->is_bool()) actual_s = fv->as_bool() ? "true" : "false";
+                    else if (fv->is_int()) actual_s = std::to_string(fv->as_int());
+                    else if (fv->is_float()) actual_s = std::format("{}", fv->as_float());
+                    if (fc.op == "==" || fc.op == "=") {
+                        if (actual_s != fc.val_str) { match = false; break; }
+                    } else if (fc.op == "!=") {
+                        if (actual_s == fc.val_str) { match = false; break; }
+                    }
+                }
+                if (!match) continue;
+            }
             auto parsed = cfire::json::parse<T>(v);
             if (parsed.has_value()) {
                 out.push_back(std::move(*parsed));

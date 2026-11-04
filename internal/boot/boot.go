@@ -13,6 +13,8 @@ import (
 
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/secrets"
+	"github.com/gsandoval/tako/internal/trace"
+	"github.com/gsandoval/tako/pkg/backends"
 	"github.com/gsandoval/tako/pkg/backends/local"
 )
 
@@ -43,6 +45,10 @@ type App struct {
 	Cache      *local.MemoryCache
 	Metrics    *local.MetricsLog
 	Lease      *local.MemoryLease
+	Flags      *local.FlagStore
+	Audits     *backends.AuditCollector
+	Push       *local.PushStore
+	Traces     *trace.MemoryCollector
 }
 
 type appKey struct{}
@@ -50,6 +56,9 @@ type appKey struct{}
 // WithApp returns a derived context carrying app, isolating operations
 // under this context from the process-global hooks.
 func WithApp(ctx context.Context, app *App) context.Context {
+	if app != nil && app.Traces != nil {
+		ctx = trace.WithSink(ctx, app.Traces)
+	}
 	return context.WithValue(ctx, appKey{}, app)
 }
 
@@ -100,7 +109,12 @@ func Local(opts Options) (*App, error) {
 		Cache:      local.NewMemoryCache(),
 		Metrics:    local.NewMetricsLog(),
 		Lease:      local.NewMemoryLease(),
+		Flags:      local.NewFlagStore(opts.Dir),
+		Audits:     backends.NewAuditCollector(),
+		Push:       local.NewPushStore(),
+		Traces:     trace.NewMemoryCollector(5000),
 	}
+	trace.SetGlobalSink(app.Traces)
 	hooks.DataDir = opts.Dir
 	hooks.Entity = store
 	// Accounts share the entity database: one file for `tako dev`, and
@@ -115,6 +129,9 @@ func Local(opts Options) (*App, error) {
 	// One lease table per process: dev's whole app IS one instance, and
 	// TestApp goroutines contend on it for real.
 	hooks.Lease = app.Lease
+	hooks.Flags = app.Flags
+	hooks.Audits = app.Audits
+	hooks.Push = app.Push
 	hooks.LeaseOwner = leaseOwner()
 	return app, nil
 }

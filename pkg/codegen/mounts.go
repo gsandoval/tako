@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/schemagen"
 )
 
 // qual qualifies a symbol with the app package's alias. The harness
@@ -65,11 +67,62 @@ func writeMounts(b *strings.Builder, g *analyzer.AppGraph, svc analyzer.Service,
 		if h.MaxAge > 0 && (h.Kind == "page" || h.ResBlob) {
 			opts += fmt.Sprintf(", runtime.CacheFor(%d)", h.MaxAge)
 		}
+		if h.Idempotent {
+			opts += ", runtime.Idempotent()"
+		}
+		if h.RateLimitRequests > 0 && h.RateLimitWindowSeconds > 0 {
+			opts += fmt.Sprintf(", runtime.WithRateLimit(%d, %d)", h.RateLimitRequests, h.RateLimitWindowSeconds)
+		}
 		fmt.Fprintf(b, "\t// %s\n", analyzer.HandlerLine(h))
 		fmt.Fprintf(b, "\tmux.Handle(%q, runtime.%s(%s, %s%s))\n\n",
 			muxPattern(h.Route), wrapper, qual(alias, analyzer.ShortVar(h)), decode, opts)
 	}
+	writeMCPMount(b, g, svc)
 	return decoders
+}
+
+func writeMCPMount(b *strings.Builder, g *analyzer.AppGraph, svc analyzer.Service) {
+	var tools []analyzer.Handler
+	for _, h := range g.Handlers {
+		if h.Service == svc.Name && h.Kind == "api" && h.Tool != "" {
+			tools = append(tools, h)
+		}
+	}
+	if len(tools) == 0 {
+		return
+	}
+	multi := len(g.Services) > 1
+	fmt.Fprintf(b, "\t// Model Context Protocol (MCP) tools declared via Route{Tool: ...}\n")
+	fmt.Fprintf(b, "\ttakoMux.Handle(%q, runtime.MCPHandler(mux,\n", routes.PatternMCP)
+	for _, h := range tools {
+		var pathParams, queryParams []string
+		for _, bind := range h.Bindings {
+			switch bind.Kind {
+			case "path":
+				pathParams = append(pathParams, fmt.Sprintf("%q", bind.Name))
+			case "query":
+				queryParams = append(queryParams, fmt.Sprintf("%q", bind.Name))
+			}
+		}
+		fmt.Fprintf(b, "\t\truntime.MCPToolSpec{\n")
+		fmt.Fprintf(b, "\t\t\tName:        %q,\n", schemagen.ToolName(h, multi))
+		fmt.Fprintf(b, "\t\t\tDescription: %q,\n", h.Tool)
+		fmt.Fprintf(b, "\t\t\tRoute:       %q,\n", h.Route)
+		if h.ToolSchema != "" {
+			fmt.Fprintf(b, "\t\t\tInputSchema: %q,\n", h.ToolSchema)
+		}
+		if len(pathParams) > 0 {
+			fmt.Fprintf(b, "\t\t\tPathParams:  []string{%s},\n", strings.Join(pathParams, ", "))
+		}
+		if len(queryParams) > 0 {
+			fmt.Fprintf(b, "\t\t\tQueryParams: []string{%s},\n", strings.Join(queryParams, ", "))
+		}
+		if h.HasBody {
+			fmt.Fprintf(b, "\t\t\tHasBody:     true,\n")
+		}
+		fmt.Fprintf(b, "\t\t},\n")
+	}
+	fmt.Fprintf(b, "\t))\n\n")
 }
 
 // writeDecoder renders the static request-binding function for one

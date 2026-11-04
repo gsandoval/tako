@@ -30,11 +30,17 @@ type Config struct {
 type Error struct {
 	// Pos is the diagnostic position as path:line:col, relative to the
 	// module directory.
-	Pos string
+	Pos string `json:"pos"`
 	// Msg is the human message.
-	Msg string
+	Msg string `json:"msg"`
 	// Rule is the lower-kebab rule ID within the tako/ namespace.
-	Rule string
+	Rule string `json:"rule"`
+	// Hint is a concise, actionable fix instruction for developers and
+	// coding agents (included in JSON output).
+	Hint string `json:"hint,omitempty"`
+	// Doc is the CLI command or documentation anchor that explains this
+	// rule (e.g. "tako docs errors#const-route").
+	Doc string `json:"doc,omitempty"`
 }
 
 func (e *Error) Error() string {
@@ -184,7 +190,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					topicVars[pkg.TypesInfo.Defs[d.name]] = r.Name
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "topic"}
 				}
-			case "Cache", "Secret", "Counter", "Histogram":
+			case "Cache", "Secret", "Counter", "Histogram", "Flag", "Audit", "Push":
 				if r := extractCarrier(strings.ToLower(d.ctor), "tako."+d.ctor, cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					// All four register, not just Secret. Counters and
@@ -430,6 +436,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	}
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
+		PopulateErrorHints(errs)
 		return nil, errs
 	}
 
@@ -503,6 +510,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	// Go itself refuses before analysis ever runs.
 	if len(errs) > 0 {
 		sort.SliceStable(errs, func(i, j int) bool { return posLess(errs[i].Pos, errs[j].Pos) })
+		PopulateErrorHints(errs)
 		return nil, errs
 	}
 	// go/packages shares one FileSet across the load when none is given.

@@ -15,6 +15,7 @@ import (
 
 	tako "github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -194,11 +195,34 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 			// local's dispatcher; the broker owns the actual count.
 			log = log.With("attempt", fmt.Sprintf("%d/5", attempt))
 		}
-		pctx := &requestCtx{Context: r.Context(), log: log}
-		switch err := fn(pctx, payload); {
+		reqID := attrs[trace.AttrRequest]
+		if reqID != "" {
+			log = log.With("req", reqID)
+		}
+		traceHdr := attrs[trace.AttrTrace]
+		if traceHdr == "" {
+			traceHdr = r.Header.Get(trace.CloudTraceHeader)
+		}
+		if tAttrs := traceAttrsFromHeader(traceHdr); len(tAttrs) > 0 {
+			log = log.With(tAttrs...)
+		}
+		baseCtx := r.Context()
+		if reqID != "" {
+			baseCtx = context.WithValue(baseCtx, requestIDKey, reqID)
+		}
+		baseCtx, _, finishRoot := trace.StartRoot(baseCtx, kind, name, os.Getenv("TAKO_SERVICE"), reqID, traceHdr, attrs[trace.AttrParentSpan])
+		if flags := trace.DecodeFlagsHeader(attrs[trace.AttrFlags]); len(flags) > 0 {
+			baseCtx = trace.WithPropagatedFlags(baseCtx, flags)
+		}
+		baseCtx = pinFlagsOnCtx(baseCtx)
+		pctx := &requestCtx{Context: baseCtx, log: log}
+		err = fn(pctx, payload)
+		switch {
 		case err == nil:
+			finishRoot(http.StatusNoContent, nil)
 			w.WriteHeader(http.StatusNoContent)
 		case backends.IsPermanent(err):
+			finishRoot(http.StatusBadRequest, err)
 			// In the cloud, route the message to this service's own dead
 			// topic and ACK: a 400 nack would be retried like any other
 			// (Pub/Sub has no "permanent" nack). Locally the dispatcher
@@ -215,6 +239,7 @@ func PushHandler(name string, h tako.Handler) http.Handler {
 			}
 			http.Error(w, err.Error(), http.StatusBadRequest)
 		default:
+			finishRoot(http.StatusInternalServerError, err)
 			// The broker owns the retry; the narration is ours — the
 			// cloud face of local's "attempt n/5" retry lines.
 			log.Warn("delivery failed — nacked for retry", "err", err)

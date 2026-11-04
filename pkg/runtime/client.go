@@ -40,7 +40,11 @@ const trustedHops = 1
 // With no proxy in front at all — `tako dev`, a test, a bare binary —
 // there is no list to read and the answer is the socket.
 func clientOf(r *http.Request) tako.Client {
-	return tako.Client{IP: clientIP(r), UserAgent: r.Header.Get("User-Agent")}
+	return tako.Client{
+		IP:        clientIP(r),
+		UserAgent: r.Header.Get("User-Agent"),
+		DeviceID:  strings.TrimSpace(r.Header.Get("X-Tako-Device-ID")),
+	}
 }
 
 func clientIP(r *http.Request) string {

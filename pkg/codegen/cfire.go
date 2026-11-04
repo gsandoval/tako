@@ -58,7 +58,11 @@ func GenerateCfire(g *analyzer.AppGraph, dir string) ([]string, error) {
 				fmt.Fprintf(&b, "        decoded := try %s(req)\n", decName)
 				fmt.Fprintf(&b, "        ctx := tako.ctx_from_req(req)\n")
 				fmt.Fprintf(&b, "        res := try %s.%s(ctx, decoded)\n", svc.Package, analyzer.ShortVar(h))
-				fmt.Fprintf(&b, "        return tako.json_res(200, json.stringify(res))\n")
+				if h.Kind == "page" {
+					fmt.Fprintf(&b, "        return tako.page_res(200, res)\n")
+				} else {
+					fmt.Fprintf(&b, "        return tako.json_res(200, json.stringify(res))\n")
+				}
 				fmt.Fprintf(&b, "    }, tako.MountOpts{})\n\n")
 			} else if h.Kind == "worker" || h.Kind == "subscribe" || h.Kind == "job" {
 				msgType := h.ReqType

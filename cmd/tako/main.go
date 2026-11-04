@@ -30,23 +30,38 @@ Local — nothing outside this directory is touched:
                        start without (--replace points at a tako
                        checkout, which is required until tako is tagged
                        and published)
-  tako check [--json]  analyze declarations, check site shadows, and
-                       refresh generated code under .tako/gen/
+  tako check [--json] [--skew <graph.json>]
+                       analyze declarations, check site shadows and
+                       version skew, and refresh generated code under
+                       .tako/gen/
+  tako ci [init]       generate a GitHub Actions CI/CD workflow with
+                       PR plan + version skew checks and main deploy
   tako dev [--chaos]   run the app locally with reload (--chaos: seeded
                        duplicate/reordered deliveries)
   tako test [args]     analyze, refresh generated code and site builds,
                        then go test ./...
+  tako call <HandlerVar|route> [json-input] [--as <user>] [--roles r1,r2] [--flag k=v] [--json]
+                       invoke any declared handler in-process against
+                       .tako/data without starting a server
+  tako mcp             run Tako's Model Context Protocol (MCP) server
+                       over stdio for coding agents and IDEs
   tako gen graph [--json | --mermaid]
                        print the app's AppGraph: human summary (default),
                        pipeable JSON, or a mermaid diagram
   tako gen client ts [--out <path>]
                        generate a typed TypeScript client for the app's
                        api endpoints (default .tako/gen/client/ts/api.ts)
-  tako alerts [name] [--env prod]
+  tako gen openapi [--out <path>] [--stdout]
+                       generate an OpenAPI 3.1.0 specification from
+                       compile-time handler types (default .tako/gen/openapi.json)
+  tako gen agents [--out <path>] [--stdout]
+                       synthesize or refresh AGENTS.md with live service,
+                       handler, entity, flag, and tool tables
+  tako alerts [name] [--env prod] [--json]
                        what every declared alert compiles to: the PromQL,
                        the notification sentence, and the constructor it
                        came from — so a preset can be read and forked
-  tako docs [list | <topic> | search <q> | --port 8090 | --open | --export <dir>]
+  tako docs [list | <topic> | search <q> | explain <rule> | --port 8090 | --open | --export <dir>]
                        serve or print the guide, the reference and the
                        SDK's exported signatures from this binary — no
                        network, no checkout needed
@@ -64,10 +79,20 @@ Your data — local unless you type a project:
                        the values declared with tako.Secret: which have
                        one, and putting one there. Never prints a value
                        and never takes one from a flag
+  tako flags [list|set|rollout|split|reset]
+                       the flags and experiments declared with tako.Flag.
+                       Works on .tako/data by default; --project <id>
+                       [--env] updates the deployed app's flag manifest
 
 Cloud, read-only:
   tako logs [service] [--since 15m]
                        recent logs for the deployed services
+  tako trace <id> [--since 1h]
+                       distributed trace span waterfall and correlated
+                       logs across services, queues, topics, and jobs
+  tako audit [stream] [--cloud] [--actor <id>] [--since 24h]
+                       security and compliance audit entries from
+                       tako.Audit streams or native Cloud Audit Logs
   tako metrics <search> [--limit 20]
                        search the project's metric descriptors for a type
                        to name in tako.ServiceMetric / tako.PlatformMetric
@@ -140,6 +165,10 @@ func main() {
 		if err := runCheck(subArgs); err != nil {
 			fail(err)
 		}
+	case "ci":
+		if err := runCI(subArgs); err != nil {
+			fail(err)
+		}
 	case "dev":
 		opts := devserver.Options{Dir: "."}
 		for _, arg := range subArgs {
@@ -158,6 +187,10 @@ func main() {
 		}
 	case "secrets":
 		if err := runSecrets(subArgs); err != nil {
+			fail(err)
+		}
+	case "flags":
+		if err := runFlags(subArgs); err != nil {
 			fail(err)
 		}
 	case "users":
@@ -200,6 +233,14 @@ func main() {
 		if err := runLogs(subArgs); err != nil {
 			fail(err)
 		}
+	case "trace":
+		if err := runTrace(subArgs); err != nil {
+			fail(err)
+		}
+	case "audit":
+		if err := runAudit(subArgs); err != nil {
+			fail(err)
+		}
 	case "alerts":
 		if err := runAlerts(subArgs); err != nil {
 			fail(err)
@@ -216,20 +257,43 @@ func main() {
 		if err := runDestroy(subArgs); err != nil {
 			fail(err)
 		}
+	case "call":
+		if err := runCall(subArgs); err != nil {
+			fail(err)
+		}
+	case "mcp":
+		if err := runMCP(subArgs); err != nil {
+			fail(err)
+		}
 	case "gen":
-		if len(subArgs) >= 1 && subArgs[0] == "client" {
-			if err := runGenClient(subArgs[1:]); err != nil {
-				fail(err)
+		if len(subArgs) >= 1 {
+			switch subArgs[0] {
+			case "client":
+				if err := runGenClient(subArgs[1:]); err != nil {
+					fail(err)
+				}
+				return
+			case "openapi":
+				if err := runGenOpenAPI(subArgs[1:]); err != nil {
+					fail(err)
+				}
+				return
+			case "agents":
+				if err := runGenAgents(subArgs[1:]); err != nil {
+					fail(err)
+				}
+				return
 			}
-			return
 		}
 		if len(subArgs) < 1 || subArgs[0] != "graph" {
 			// The gen NAMESPACE gets its own help — a bare or unknown
 			// gen should list the generators, not dump everything.
 			fmt.Fprint(os.Stderr, `tako gen — code and artifact generators (local, no cloud touched)
 
-  tako gen graph [--json | --mermaid]   the app's AppGraph
-  tako gen client ts [--out <path>]     typed TypeScript client
+  tako gen graph [--json | --mermaid]        the app's AppGraph
+  tako gen client ts [--out <path>]          typed TypeScript client
+  tako gen openapi [--out <path>] [--stdout] OpenAPI 3.1.0 specification
+  tako gen agents [--out <path>] [--stdout]  live AGENTS.md architecture context
 `)
 			os.Exit(2)
 		}

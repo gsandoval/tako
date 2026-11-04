@@ -32,7 +32,10 @@ type handlerConf struct {
 	// maxAge is Route.MaxAge in seconds: how long a shared cache may
 	// keep this page. Zero is no-cache, which is every page that does
 	// not ask otherwise.
-	maxAge int
+	maxAge                 int
+	idempotent             bool
+	rateLimitRequests      int
+	rateLimitWindowSeconds int
 }
 
 // RequireAuth enforces Route.SignIn: no valid session → 401 before
@@ -152,53 +155,42 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 			ctx.Context = rctx
 		}
 
-		var req Req
-		if decode != nil {
-			var err error
-			if req, err = decode(r); err != nil {
+		runWithSafety(w, r, rctx, session, reqID, true, conf, func(w http.ResponseWriter) {
+			var req Req
+			if decode != nil {
+				var err error
+				if req, err = decode(r); err != nil {
+					pageError(w, r, ctx, reqID, err, conf.policy)
+					return
+				}
+			}
+			res, err := e.Call(ctx, req)
+			if err != nil {
 				pageError(w, r, ctx, reqID, err, conf.policy)
 				return
 			}
-		}
-		res, err := e.Call(ctx, req)
-		if err != nil {
-			pageError(w, r, ctx, reqID, err, conf.policy)
-			return
-		}
-		markup, redirect, status, fragment := hooks.HTMLParts(res)
-		if redirect != "" {
-			// Dual-mode: htmx cannot follow a 303 into a swap, so it
-			// gets 200 + HX-Redirect (full-page client navigation);
-			// plain requests keep the POST-redirect-GET 303.
-			//
-			// The htmx arm is deliberately identical for a PERMANENT
-			// redirect. Permanence is a statement to crawlers and
-			// caches about a URL; a client-side navigation is neither,
-			// and a 301 htmx cannot follow would be a regression
-			// dressed as correctness.
-			if ctx.isHTMX {
-				w.Header().Set("HX-Redirect", redirect)
-				w.WriteHeader(http.StatusOK)
+			markup, redirect, status, fragment := hooks.HTMLParts(res)
+			if redirect != "" {
+				if ctx.isHTMX {
+					w.Header().Set("HX-Redirect", redirect)
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				if status == 0 {
+					status = http.StatusSeeOther
+				}
+				http.Redirect(w, r, redirect, status)
 				return
 			}
-			if status == 0 {
-				status = http.StatusSeeOther
+			h := w.Header()
+			h.Set("Content-Type", "text/html; charset=utf-8")
+			h.Set("Cache-Control", cacheControl(conf.maxAge))
+			if fragment {
+				markFragment(r)
 			}
-			http.Redirect(w, r, redirect, status)
-			return
-		}
-		h := w.Header()
-		h.Set("Content-Type", "text/html; charset=utf-8")
-		// A page that declared no MaxAge answers no-cache, which is
-		// what every page did before Route.MaxAge existed.
-		h.Set("Cache-Control", cacheControl(conf.maxAge))
-		if fragment {
-			// The same signal, told to the one other thing that needs
-			// it: the dev bar belongs on documents, not on partials.
-			markFragment(r)
-		}
-		securityHeaders(h, fragment)
-		_, _ = w.Write(markup)
+			securityHeaders(h, fragment)
+			_, _ = w.Write(markup)
+		})
 	})
 }
 

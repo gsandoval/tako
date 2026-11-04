@@ -49,12 +49,13 @@ func extractEntity(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		return nil, "", nil
 	}
 	res := &Resource{
-		Kind:    "entity",
-		Name:    resName,
-		Var:     pkg.Name + "." + name.Name,
-		Package: pkg.PkgPath,
-		Type:    et.display,
-		Pos:     relPos(dir, pkg.Fset, name.Pos()),
+		Kind:     "entity",
+		Name:     resName,
+		Var:      pkg.Name + "." + name.Name,
+		Package:  pkg.PkgPath,
+		Type:     et.display,
+		TTLField: et.ttlField,
+		Pos:      relPos(dir, pkg.Fset, name.Pos()),
 	}
 	return res, payload.String(), et
 }
@@ -235,8 +236,13 @@ func extractCarrier(kind, ctor, dir string, pkg *packages.Package, name *ast.Ide
 	if tv, ok := pkg.TypesInfo.Types[call]; ok {
 		if ptr, ok := tv.Type.(*types.Pointer); ok {
 			if named, ok := ptr.Elem().(*types.Named); ok && named.TypeArgs().Len() == 1 {
-				if p, ok := named.TypeArgs().At(0).(*types.Named); ok {
+				ta := named.TypeArgs().At(0)
+				if p, ok := ta.(*types.Named); ok {
 					res.Type = p.Obj().Name()
+				} else if kind == "flag" {
+					if b, ok := ta.(*types.Basic); ok {
+						res.Type = b.Name()
+					}
 				}
 			}
 		}

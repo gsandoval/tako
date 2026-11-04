@@ -55,20 +55,22 @@ func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Requ
 			ctx.user = &u
 		}
 
-		var req Req
-		if decode != nil {
-			var err error
-			if req, err = decode(r); err != nil {
+		runWithSafety(w, r, base, session, reqID, false, conf, func(w http.ResponseWriter) {
+			var req Req
+			if decode != nil {
+				var err error
+				if req, err = decode(r); err != nil {
+					writeError(w, ctx, reqID, err)
+					return
+				}
+			}
+			res, err := e.Call(ctx, req)
+			if err != nil {
 				writeError(w, ctx, reqID, err)
 				return
 			}
-		}
-		res, err := e.Call(ctx, req)
-		if err != nil {
-			writeError(w, ctx, reqID, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, res)
+			writeJSON(w, http.StatusOK, res)
+		})
 	})
 }
 
@@ -111,6 +113,10 @@ func newRequestID() string {
 // A second signal exits immediately, for the handler that will not let
 // go.
 func Serve(h http.Handler) {
+	if rawSpec := os.Getenv("TAKO_ONESHOT"); rawSpec != "" {
+		runOneShot(h, rawSpec)
+		return
+	}
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"

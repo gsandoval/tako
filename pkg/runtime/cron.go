@@ -17,6 +17,7 @@ import (
 	"github.com/gsandoval/tako/internal/hooks"
 	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/internal/schedule"
+	"github.com/gsandoval/tako/internal/trace"
 )
 
 // cronInert, set by BootGCP, keeps crons from ticking in-process in
@@ -93,11 +94,15 @@ func RegisterCron(name string, h tako.Handler) {
 			go func() {
 				defer running.Store(false)
 				start := time.Now()
-				cctx := &requestCtx{Context: context.Background(), log: slog.Default().With("cron", name)}
+				baseCtx, _, finishRoot := trace.StartRoot(context.Background(), "cron", name, os.Getenv("TAKO_SERVICE"), newRequestID(), "", "")
+				baseCtx = pinFlagsOnCtx(baseCtx)
+				cctx := &requestCtx{Context: baseCtx, log: slog.Default().With("cron", name)}
 				if err := runCron(cctx, nil); err != nil {
+					finishRoot(500, err)
 					fmt.Printf("⏰ cron %s failed: %v — next run on schedule\n", name, err)
 					return
 				}
+				finishRoot(200, nil)
 				fmt.Printf("⏰ cron %s ok (%s)\n", name, time.Since(start).Round(time.Millisecond))
 			}()
 		}
@@ -133,14 +138,19 @@ func CronDispatch() http.Handler {
 			return
 		}
 		start := time.Now()
-		cctx := &requestCtx{Context: r.Context(), log: slog.Default().With("cron", name)}
+		reqID := incomingRequestID(r)
+		baseCtx, _, finishRoot := trace.StartRoot(r.Context(), "cron", name, os.Getenv("TAKO_SERVICE"), reqID, r.Header.Get(trace.CloudTraceHeader), r.Header.Get(trace.ParentSpanHeader))
+		baseCtx = pinFlagsOnCtx(baseCtx)
+		cctx := &requestCtx{Context: baseCtx, log: slog.Default().With("cron", name, "req", reqID)}
 		if err := v.(func(tako.Ctx, []byte) error)(cctx, nil); err != nil {
+			finishRoot(http.StatusInternalServerError, err)
 			// A 500 makes Scheduler retry per its policy; the error is
 			// the run's, already logged with the cron's label.
 			slog.Default().Error("cron run failed", "cron", name, "err", err)
 			http.Error(w, "cron run failed", http.StatusInternalServerError)
 			return
 		}
+		finishRoot(http.StatusOK, nil)
 		slog.Default().Info("cron ok", "cron", name, "took", time.Since(start).Round(time.Millisecond).String())
 		w.WriteHeader(http.StatusOK)
 	})

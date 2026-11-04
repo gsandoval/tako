@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -27,10 +28,14 @@ type BucketHandle struct {
 
 // Get returns the object stored under key. tako.IsNotFound reports absence.
 func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
-	data, err := bucketBackend(ctx).Get(ctx, b.name, key)
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".Get", "bucket", b.name, "op", "Get", "key", key)
+	data, err := bucketBackend(ctx).Get(sctx, b.name, key)
 	if err != nil {
-		return Blob{}, mapNotFound(err)
+		err = mapNotFound(err)
+		finish(err)
+		return Blob{}, err
 	}
+	finish(nil)
 	// The ETag rides along, so a handler that returns this blob answers
 	// If-None-Match without knowing the header exists (FL25).
 	return Blob{Reader: data.Reader, ContentType: data.ContentType, Size: data.Size, ETag: data.ETag}, nil
@@ -38,26 +43,37 @@ func (b *BucketHandle) Get(ctx Ctx, key string) (Blob, error) {
 
 // Put stores blob under key, replacing any existing object.
 func (b *BucketHandle) Put(ctx Ctx, key string, blob Blob) error {
-	return bucketBackend(ctx).Put(ctx, b.name, key, backends.BlobData{
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".Put", "bucket", b.name, "op", "Put", "key", key)
+	err := bucketBackend(ctx).Put(sctx, b.name, key, backends.BlobData{
 		Reader: blob.Reader, ContentType: blob.ContentType, Size: blob.Size,
 	})
+	finish(err)
+	return err
 }
 
 // Delete removes the object stored under key; deleting an absent key is
 // not an error.
 func (b *BucketHandle) Delete(ctx Ctx, key string) error {
-	return bucketBackend(ctx).Delete(ctx, b.name, key)
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".Delete", "bucket", b.name, "op", "Delete", "key", key)
+	err := bucketBackend(ctx).Delete(sctx, b.name, key)
+	finish(err)
+	return err
 }
 
 // Exists reports whether an object is stored under key.
 func (b *BucketHandle) Exists(ctx Ctx, key string) (bool, error) {
-	return bucketBackend(ctx).Exists(ctx, b.name, key)
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".Exists", "bucket", b.name, "op", "Exists", "key", key)
+	ok, err := bucketBackend(ctx).Exists(sctx, b.name, key)
+	finish(err)
+	return ok, err
 }
 
 // List iterates the objects whose keys start with prefix, in
 // lexicographic key order.
 func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
-	metas, err := bucketBackend(ctx).List(ctx, b.name, prefix)
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".List", "bucket", b.name, "op", "List", "prefix", prefix)
+	metas, err := bucketBackend(ctx).List(sctx, b.name, prefix)
+	finish(err)
 	if err != nil {
 		return Iter[ObjectInfo]{err: err}
 	}
@@ -74,18 +90,24 @@ func (b *BucketHandle) List(ctx Ctx, prefix string) Iter[ObjectInfo] {
 // uploads, not when the URL is minted — and PutPolicy.Headers gives the
 // uploader exactly what this URL was signed to expect.
 func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error) {
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".SignedPut", "bucket", b.name, "op", "SignedPut", "key", key)
 	var c backends.SignConstraints
 	for _, p := range policy {
 		c.MaxSize = p.MaxSize
 		c.ContentType = p.ContentType
 	}
-	return signerBackend(ctx).SignPut(ctx, b.name, key, ttl, c)
+	u, err := signerBackend(ctx).SignPut(sctx, b.name, key, ttl, c)
+	finish(err)
+	return u, err
 }
 
 // SignedGet returns a URL that lets a client download key directly for the
 // given duration.
 func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error) {
-	return signerBackend(ctx).SignGet(ctx, b.name, key, ttl)
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".SignedGet", "bucket", b.name, "op", "SignedGet", "key", key)
+	u, err := signerBackend(ctx).SignGet(sctx, b.name, key, ttl)
+	finish(err)
+	return u, err
 }
 
 // BucketEvent is a bucket's event source, usable as a Subscribe binding.

@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gsandoval/tako/internal/trace"
 	"github.com/gsandoval/tako/pkg/backends"
 )
 
@@ -80,9 +81,10 @@ type topicSub struct {
 // delivery identifies one message's destination for narration and
 // dead-lettering.
 type delivery struct {
-	source   string // queue or topic name
-	consumer string // subscriber name; "" for queue workers
-	dlDir    string // dead-letter dir, relative to the dispatcher root
+	source   string          // queue or topic name
+	consumer string          // subscriber name; "" for queue workers
+	dlDir    string          // dead-letter dir, relative to the dispatcher root
+	traceCtx context.Context // detached trace + flag context from publisher
 }
 
 // NewQueueDispatcher roots a dispatcher's dead letters at dir.
@@ -216,7 +218,7 @@ func (d *QueueDispatcher) Publish(ctx context.Context, queue string, payload []b
 	if !ok {
 		return fmt.Errorf("queue %q has no worker registered", queue)
 	}
-	to := delivery{source: queue, dlDir: filepath.Join("deadletter", queue)}
+	to := delivery{source: queue, dlDir: filepath.Join("deadletter", queue), traceCtx: trace.Detach(ctx)}
 	now := time.Now().UTC()
 	task, taskPath := d.persistNewTask(persistedTask{
 		Kind:      "queue",
@@ -357,6 +359,7 @@ func (v topicView) Publish(ctx context.Context, topic string, payload []byte) er
 			source:   topic,
 			consumer: sub.name,
 			dlDir:    filepath.Join("deadletter", topic, sub.name),
+			traceCtx: trace.Detach(ctx),
 		}, sub.deliver, payload, task, taskPath)
 	}
 	return nil
@@ -422,7 +425,11 @@ func (d *QueueDispatcher) deliverLoop(to delivery, deliver func(context.Context,
 		if closed {
 			return
 		}
-		lastErr = deliver(context.Background(), payload)
+		dCtx := to.traceCtx
+		if dCtx == nil {
+			dCtx = context.Background()
+		}
+		lastErr = deliver(dCtx, payload)
 		if lastErr == nil {
 			d.removeTask(taskPath)
 			d.mu.Lock()

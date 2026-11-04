@@ -426,7 +426,7 @@ import (
 	}
 
 	served := "mux"
-	if hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc) {
+	if hasAuth(g) || hasBucket(g, svc) || hasCron(g, svc) || hasMCP(g, svc) {
 		served = "runtime.Reserved(takoMux, mux)"
 	}
 	if hasAuth(g) {

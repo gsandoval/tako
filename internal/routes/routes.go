@@ -98,6 +98,9 @@ const (
 	// Cron is Cloud Scheduler's trigger. One mount serves every cron in
 	// the service, named by the {cron} wildcard.
 	Cron = API + "cron/"
+	// MCP is the Model Context Protocol (Streamable HTTP JSON-RPC 2.0)
+	// endpoint mounted when a service declares API routes with Route.Tool.
+	MCP = API + "mcp"
 	// SignIn is the framework-owned sign-in page — the one thing here a
 	// person looks at rather than a program posts to, which is why it
 	// sits at the namespace root and not in API.
@@ -125,6 +128,7 @@ const (
 	PatternPush    = "POST " + Push
 	PatternSigned  = Signed
 	PatternCron    = "POST " + Cron + "{cron}"
+	PatternMCP     = "POST " + MCP
 	PatternSignIn  = "GET " + SignIn
 )
 
@@ -155,6 +159,7 @@ var All = []struct {
 	{"Push", PatternPush},
 	{"Signed", PatternSigned},
 	{"Cron", PatternCron},
+	{"MCP", PatternMCP},
 	{"SignIn", PatternSignIn},
 }
 

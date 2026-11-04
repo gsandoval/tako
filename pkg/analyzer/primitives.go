@@ -98,6 +98,24 @@ var Registry = map[string]PrimitiveSpec{
 	"AlertEmail":   {Ctor: "AlertEmail", Kind: "channel", RejectLocalDecl: true, MermaidShape: "stadium"},
 	"AlertTopic":   {Ctor: "AlertTopic", Kind: "channel", RejectLocalDecl: true, MermaidShape: "stadium"},
 	"AlertWebhook": {Ctor: "AlertWebhook", Kind: "channel", RejectLocalDecl: true, MermaidShape: "stadium"},
+	"Flag": {
+		Ctor: "Flag", Kind: "flag", RejectLocalDecl: true, MermaidShape: "stadium",
+		MethodVerbs: map[string]string{
+			"Get": "read", "GetFor": "read",
+		},
+	},
+	"Audit": {
+		Ctor: "Audit", Kind: "audit", RejectLocalDecl: true, MermaidShape: "stadium",
+		MethodVerbs: map[string]string{
+			"Record": "write",
+		},
+	},
+	"Push": {
+		Ctor: "Push", Kind: "push", RejectLocalDecl: true, MermaidShape: "stadium",
+		MethodVerbs: map[string]string{
+			"Send": "write",
+		},
+	},
 }
 
 // ByKind indexes Registry by resource/handler kind. Resource specs take
