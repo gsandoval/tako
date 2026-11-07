@@ -1,45 +1,29 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" width="160" height="160" fill="none">
-  <!-- Outer Kamon Ring with Double Concentric Hairline (丸に八つ足蛸紋) -->
-  <circle cx="80" cy="80" r="74" stroke="#E11D48" stroke-width="3.5" />
-  <circle cx="80" cy="80" r="67" stroke="#E11D48" stroke-width="1.25" stroke-dasharray="3.5 3.5" opacity="0.65" />
+  <!-- Outer Kamon Ring with Concentric Hairline (波濤八足紋 — Geometric Wave Octopus Crest) -->
+  <circle cx="80" cy="80" r="73.5" stroke="#E11D48" stroke-width="4.5" />
+  <circle cx="80" cy="80" r="67.5" stroke="#E11D48" stroke-width="0.9" opacity="0.4" />
 
-  <!-- Central Octopus Mantle (蛸頭) with Even-Odd Cutout Eyes -->
+  <!-- Optically Centered Octopus Mantle (蛸頭) with Even-Odd Cutout Eyes -->
   <path fill-rule="evenodd" clip-rule="evenodd" d="
-    M58 72 C58 50, 102 50, 102 72 C102 85, 92 90, 80 90 C68 90, 58 85, 58 72 Z
-    M69 66.5 A3.5 3.5 0 1 0 69 73.5 A3.5 3.5 0 1 0 69 66.5 Z
-    M91 66.5 A3.5 3.5 0 1 0 91 73.5 A3.5 3.5 0 1 0 91 66.5 Z
+    M55 49 C55 25, 105 25, 105 49 C105 62, 95 68, 80 68 C65 68, 55 62, 55 49 Z
+    M68 43.8 A4.2 4.2 0 1 0 68 52.2 A4.2 4.2 0 1 0 68 43.8 Z
+    M92 43.8 A4.2 4.2 0 1 0 92 52.2 A4.2 4.2 0 1 0 92 43.8 Z
   " fill="#E11D48" />
 
-  <!-- 8 Radial Tentacle Circuit Pathways with Terminating Micro-Nodes -->
-  <!-- 1: Top-Left (North-West) -->
-  <path d="M60 64 L42 46 L30 46" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="28" cy="46" r="4" fill="#E11D48" />
+  <!-- 8 Sucker-Free Seigaiha (青海波) Wave-Ribbon Tentacles Originating Beneath Mantle Collar -->
+  <!-- Pair 1: Left & Right Upper Horizon Wave Arcs -->
+  <path d="M60 64 C38 60 21 69 20 85 C19 101 36 109 47 98" stroke="#E11D48" stroke-width="8" stroke-linecap="round" />
+  <path d="M100 64 C122 60 139 69 140 85 C141 101 124 109 113 98" stroke="#E11D48" stroke-width="8" stroke-linecap="round" />
 
-  <!-- 2: Top-Right (North-East) -->
-  <path d="M100 64 L118 46 L130 46" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="132" cy="46" r="4" fill="#E11D48" />
+  <!-- Pair 2: Left & Right Mid Flank Wave Arcs -->
+  <path d="M65 68 C46 75 36 94 40 112 C43 124 59 125 67 114" stroke="#E11D48" stroke-width="7.5" stroke-linecap="round" />
+  <path d="M95 68 C114 75 124 94 120 112 C117 124 101 125 93 114" stroke="#E11D48" stroke-width="7.5" stroke-linecap="round" />
 
-  <!-- 3: Mid-Left (West) -->
-  <path d="M57 77 L38 77 L26 88" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="24" cy="90" r="4" fill="#E11D48" />
+  <!-- Pair 3: Left & Right Deep Ocean Base Wave Arcs -->
+  <path d="M71 69 C60 84 50 104 63 122 C69 130 81 126 81 115" stroke="#E11D48" stroke-width="7" stroke-linecap="round" />
+  <path d="M89 69 C100 84 110 104 97 122 C91 130 79 126 79 115" stroke="#E11D48" stroke-width="7" stroke-linecap="round" />
 
-  <!-- 4: Mid-Right (East) -->
-  <path d="M103 77 L122 77 L134 88" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="136" cy="90" r="4" fill="#E11D48" />
-
-  <!-- 5: Bot-Outer-Left (South-West) -->
-  <path d="M72 90 L66 110 L48 122" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="45" cy="124" r="4" fill="#E11D48" />
-
-  <!-- 6: Bot-Outer-Right (South-East) -->
-  <path d="M88 90 L94 110 L112 122" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="115" cy="124" r="4" fill="#E11D48" />
-
-  <!-- 7: Bot-Inner-Left (South-South-West) -->
-  <path d="M77 90 L74 124 L66 134" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="65" cy="136" r="4" fill="#E11D48" />
-
-  <!-- 8: Bot-Inner-Right (South-South-East) -->
-  <path d="M83 90 L86 124 L94 134" stroke="#E11D48" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
-  <circle cx="95" cy="136" r="4" fill="#E11D48" />
+  <!-- Pair 4: Central Symmetrical Anchor Pair -->
+  <path d="M76 69 C75 82 67 98 73 110" stroke="#E11D48" stroke-width="6.5" stroke-linecap="round" />
+  <path d="M84 69 C85 82 93 98 87 110" stroke="#E11D48" stroke-width="6.5" stroke-linecap="round" />
 </svg>

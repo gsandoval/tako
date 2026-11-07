@@ -1,15 +1,15 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 230 32" width="230" height="32" fill="none">
   <rect x="0.5" y="0.5" width="229" height="31" rx="4" fill="#0D1117" stroke="#30363D" />
   <rect x="0.5" y="0.5" width="88" height="31" rx="4" fill="#161B22" stroke="#30363D" />
-  <!-- Mini Kamon -->
+  <!-- Mini Centered Wave Kamon -->
   <g transform="translate(8, 4) scale(0.15)">
-    <circle cx="80" cy="80" r="74" stroke="#F43F5E" stroke-width="8" />
+    <circle cx="80" cy="80" r="73.5" stroke="#F43F5E" stroke-width="7" />
     <path fill-rule="evenodd" clip-rule="evenodd" d="
-      M58 72 C58 50, 102 50, 102 72 C102 85, 92 90, 80 90 C68 90, 58 85, 58 72 Z
-      M69 65 A5 5 0 1 0 69 75 A5 5 0 1 0 69 65 Z
-      M91 65 A5 5 0 1 0 91 75 A5 5 0 1 0 91 65 Z
+      M55 49 C55 25, 105 25, 105 49 C105 62, 95 68, 80 68 C65 68, 55 62, 55 49 Z
+      M68 43.3 A4.7 4.7 0 1 0 68 52.7 A4.7 4.7 0 1 0 68 43.3 Z
+      M92 43.3 A4.7 4.7 0 1 0 92 52.7 A4.7 4.7 0 1 0 92 43.3 Z
     " fill="#F43F5E" />
-    <path d="M60 64 L42 46 L28 46 M100 64 L118 46 L132 46 M57 77 L38 77 L24 90 M103 77 L122 77 L136 90 M72 90 L66 110 L45 124 M88 90 L94 110 L115 124 M77 90 L74 124 L65 136 M83 90 L86 124 L95 136" stroke="#F43F5E" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" />
+    <path d="M60 64 C38 60 21 69 20 85 C19 101 36 109 47 98 M100 64 C122 60 139 69 140 85 C141 101 124 109 113 98 M65 68 C46 75 36 94 40 112 C43 124 59 125 67 114 M95 68 C114 75 124 94 120 112 C117 124 101 125 93 114 M71 69 C60 84 50 104 63 122 M89 69 C100 84 110 104 97 122 M76 69 C75 82 67 98 73 110 M84 69 C85 82 93 98 87 110" stroke="#F43F5E" stroke-width="8" stroke-linecap="round" />
   </g>
   <text x="36" y="20" fill="#F0F6FC" font-family="ui-monospace, 'JetBrains Mono', SFMono-Regular, Menlo, monospace" font-size="12" font-weight="700">tako</text>
   <text x="70" y="20" fill="#F43F5E" font-family="'Hiragino Mincho ProN', serif" font-size="11" font-weight="700">蛸</text>

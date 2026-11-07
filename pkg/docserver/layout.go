@@ -1662,14 +1662,13 @@ var tmpl = template.Must(template.New("docs").Parse(`
   <div class="header-top-row">
     <a href="/" class="brand-link" title="tako docs — Polyglot Cloud Framework (蛸)">
       <svg class="brand-kamon" viewBox="0 0 160 160" fill="none" aria-hidden="true">
-        <circle cx="80" cy="80" r="74" stroke="var(--primary)" stroke-width="5"/>
-        <circle cx="80" cy="80" r="65" stroke="var(--primary)" stroke-width="2" stroke-dasharray="5 5" opacity="0.65"/>
-        <path fill-rule="evenodd" clip-rule="evenodd" d="M58 72 C58 50, 102 50, 102 72 C102 85, 92 90, 80 90 C68 90, 58 85, 58 72 Z M69 65 A4.5 4.5 0 1 0 69 74 A4.5 4.5 0 1 0 69 65 Z M91 65 A4.5 4.5 0 1 0 91 74 A4.5 4.5 0 1 0 91 65 Z" fill="var(--primary)"/>
-        <path d="M60 64 L42 46 L28 46 M100 64 L118 46 L132 46 M57 77 L38 77 L24 90 M103 77 L122 77 L136 90 M72 90 L66 110 L45 124 M88 90 L94 110 L115 124 M77 90 L74 124 L65 136 M83 90 L86 124 L95 136" stroke="var(--primary)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-        <circle cx="28" cy="46" r="5" fill="var(--primary)"/><circle cx="132" cy="46" r="5" fill="var(--primary)"/>
-        <circle cx="24" cy="90" r="5" fill="var(--primary)"/><circle cx="136" cy="90" r="5" fill="var(--primary)"/>
-        <circle cx="45" cy="124" r="5" fill="var(--primary)"/><circle cx="115" cy="124" r="5" fill="var(--primary)"/>
-        <circle cx="65" cy="136" r="5" fill="var(--primary)"/><circle cx="95" cy="136" r="5" fill="var(--primary)"/>
+        <circle cx="80" cy="80" r="73.5" stroke="var(--primary)" stroke-width="5.5"/>
+        <circle cx="80" cy="80" r="67.5" stroke="var(--primary)" stroke-width="1.2" opacity="0.4"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M55 49 C55 25, 105 25, 105 49 C105 62, 95 68, 80 68 C65 68, 55 62, 55 49 Z M68 43.5 A4.5 4.5 0 1 0 68 52.5 A4.5 4.5 0 1 0 68 43.5 Z M92 43.5 A4.5 4.5 0 1 0 92 52.5 A4.5 4.5 0 1 0 92 43.5 Z" fill="var(--primary)"/>
+        <path d="M60 64 C38 60 21 69 20 85 C19 101 36 109 47 98 M100 64 C122 60 139 69 140 85 C141 101 124 109 113 98" stroke="var(--primary)" stroke-width="8" stroke-linecap="round"/>
+        <path d="M65 68 C46 75 36 94 40 112 C43 124 59 125 67 114 M95 68 C114 75 124 94 120 112 C117 124 101 125 93 114" stroke="var(--primary)" stroke-width="7.5" stroke-linecap="round"/>
+        <path d="M71 69 C60 84 50 104 63 122 C69 130 81 126 81 115 M89 69 C100 84 110 104 97 122 C91 130 79 126 79 115" stroke="var(--primary)" stroke-width="7" stroke-linecap="round"/>
+        <path d="M76 69 C75 82 67 98 73 110 M84 69 C85 82 93 98 87 110" stroke="var(--primary)" stroke-width="6.5" stroke-linecap="round"/>
       </svg>
       <span class="brand">tako</span>
       <span class="hanko-stamp" title="Tako (蛸) — Octopus in Japanese">蛸</span>
