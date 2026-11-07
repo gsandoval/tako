@@ -521,6 +521,18 @@ func desiredBucketsAndStorage(g *analyzer.AppGraph, cfg Config) []Object {
 				Name: gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
 				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": false},
 			})
+		case "docs":
+			objs = append(objs, Object{
+				Kind: KindBucket,
+				Name: gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
+				Spec: map[string]any{
+					"location": cfg.Region,
+					"uniform":  true,
+					"cors":     false,
+					"website":  true,
+					"public":   r.Config["public"] == "true",
+				},
+			})
 		}
 	}
 	return objs

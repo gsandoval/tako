@@ -401,6 +401,18 @@ func runDeploy(args []string) error {
 			_ = client.EnsureEntityTTL(ctx, r.Name, r.TTLField)
 		}
 	}
+	docsUploaded := map[string]int{}
+	for _, r := range graph.Resources {
+		if r.Kind == "docs" {
+			bname := gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
+			docsDir := filepath.Join(".tako", "gen", "docs", r.Name)
+			n, err := client.SyncDir(ctx, bname, docsDir)
+			if err != nil {
+				return err
+			}
+			docsUploaded[r.Name] = n
+		}
+	}
 	_ = lease.SaveDeployedGraph(ctx, graph)
 
 	fmt.Println()
@@ -416,6 +428,17 @@ func runDeploy(args []string) error {
 		}
 		liveHosts = append(liveHosts, strings.TrimPrefix(url, "https://"))
 		fmt.Printf("✓ %s → %s\n", cfg.Name(svc.Name), url)
+	}
+	for _, r := range graph.Resources {
+		if r.Kind == "docs" {
+			bname := gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
+			vis := "private bucket"
+			if r.Config["public"] == "true" {
+				vis = fmt.Sprintf("public → https://storage.googleapis.com/%s/index.html", bname)
+			}
+			fmt.Printf("✓ docs:%s → gs://%s (%d files, %s, slices: %s)\n",
+				r.Name, bname, docsUploaded[r.Name], vis, strings.Join(r.DocsSlices, ", "))
+		}
 	}
 	// Cloud Run answers on TWO hosts per service — the deterministic
 	// projectNumber form (authorized pre-deploy) and the legacy uri the

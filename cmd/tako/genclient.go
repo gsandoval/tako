@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/clientgen"
+	"github.com/gsandoval/tako/pkg/projdocs"
 	"github.com/gsandoval/tako/pkg/schemagen"
 )
 
@@ -150,4 +152,139 @@ func plural(n int) string {
 		return ""
 	}
 	return "s"
+}
+
+// runGenDocs is `tako gen docs [<name>] [--level public|internal|full] [--include s1,s2] [--out <dir>]`.
+func runGenDocs(args []string) error {
+	args = normalizeArgs(args)
+	var nameArg, levelFlag, includeFlag, outFlag string
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--level":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--level needs a value (public, internal, or full)")
+			}
+			levelFlag = strings.ToLower(strings.TrimSpace(args[i]))
+			if levelFlag != "public" && levelFlag != "internal" && levelFlag != "full" {
+				return fmt.Errorf("unknown --level %q (expected public, internal, or full)", args[i])
+			}
+		case "--include":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--include needs a comma-separated list of slices (%s)", strings.Join(analyzer.AllDocsSlices, ", "))
+			}
+			includeFlag = args[i]
+		case "--out":
+			i++
+			if i >= len(args) {
+				return fmt.Errorf("--out needs a directory path")
+			}
+			outFlag = args[i]
+		default:
+			if strings.HasPrefix(args[i], "-") {
+				return fmt.Errorf("unknown flag %q (tako gen docs accepts [<name>] [--level public|internal|full] [--include s1,s2] [--out <dir>])", args[i])
+			}
+			if nameArg != "" {
+				return fmt.Errorf("unexpected extra argument %q", args[i])
+			}
+			nameArg = args[i]
+		}
+	}
+
+	cherry := map[string]bool{}
+	if includeFlag != "" {
+		validSlice := map[string]bool{}
+		for _, s := range analyzer.AllDocsSlices {
+			validSlice[s] = true
+		}
+		for _, part := range strings.Split(includeFlag, ",") {
+			s := strings.ToLower(strings.TrimSpace(part))
+			if s == "" {
+				continue
+			}
+			if !validSlice[s] {
+				return fmt.Errorf("unknown documentation slice %q (valid slices: %s)", part, strings.Join(analyzer.AllDocsSlices, ", "))
+			}
+			cherry[s] = true
+		}
+	}
+
+	tg, err := analyzer.AnalyzeTyped(analyzer.Config{Dir: "."})
+	if err != nil {
+		return err
+	}
+	g := tg.Graph
+
+	var declared []analyzer.Resource
+	for _, r := range g.Resources {
+		if r.Kind == "docs" {
+			declared = append(declared, r)
+		}
+	}
+
+	// Case 1: No flags or name, and project declares one or more tako.Docs instances.
+	if nameArg == "" && levelFlag == "" && includeFlag == "" && outFlag == "" && len(declared) > 0 {
+		for _, r := range declared {
+			outDir := filepath.Join(".tako", "gen", "docs", r.Name)
+			opts := projdocs.OptionsFromResource(r, outDir)
+			files, err := projdocs.GenerateInstance(g, tg, opts)
+			if err != nil {
+				return err
+			}
+			fmt.Printf("  docs     %s — %d file%s (level: %s; slices: %s)\n",
+				outDir, len(files), plural(len(files)), opts.Level, strings.Join(opts.Slices, ", "))
+		}
+		return nil
+	}
+
+	// Case 2: Named declared instance (with optional flag overrides) or ad-hoc generation.
+	instName := nameArg
+	if instName == "" {
+		if len(declared) == 1 {
+			instName = declared[0].Name
+		} else {
+			instName = "docs"
+		}
+	}
+	outDir := outFlag
+	if outDir == "" {
+		outDir = filepath.Join(".tako", "gen", "docs", instName)
+	}
+
+	var opts projdocs.Options
+	matched := false
+	for _, r := range declared {
+		if r.Name == instName {
+			opts = projdocs.OptionsFromResource(r, outDir)
+			matched = true
+			break
+		}
+	}
+	if !matched && nameArg != "" && levelFlag == "" && includeFlag == "" && len(declared) > 0 {
+		var names []string
+		for _, r := range declared {
+			names = append(names, r.Name)
+		}
+		return fmt.Errorf("no declared tako.Docs(%q) found (declared: %s)", nameArg, strings.Join(names, ", "))
+	}
+
+	if !matched || levelFlag != "" || includeFlag != "" {
+		slices, effLevel := analyzer.ResolveDocsSlices(levelFlag, levelFlag != "", cherry)
+		opts = projdocs.Options{
+			Name:   instName,
+			Public: opts.Public,
+			Level:  effLevel,
+			Slices: slices,
+			OutDir: outDir,
+		}
+	}
+
+	files, err := projdocs.GenerateInstance(g, tg, opts)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  docs     %s — %d file%s (level: %s; slices: %s)\n",
+		outDir, len(files), plural(len(files)), opts.Level, strings.Join(opts.Slices, ", "))
+	return nil
 }

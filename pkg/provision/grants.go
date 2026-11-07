@@ -75,6 +75,8 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 				continue
 			}
 			ensure(target{TargetBucket, gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)})
+		case "docs":
+			ensure(target{TargetBucket, gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)})
 		case "queue", "topic":
 			ensure(target{TargetTopic, cfg.Name(r.Name)})
 			if r.Kind == "queue" && (r.RateLimit > 0 || r.Delayed) {
@@ -281,6 +283,11 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 				add(target{TargetBucket, b}, "roles/storage.objectViewer", member)
 			case "write":
 				add(target{TargetBucket, b}, "roles/storage.objectAdmin", member)
+			}
+		case "docs":
+			b := gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, e.To)
+			if e.Verb == "read" {
+				add(target{TargetBucket, b}, "roles/storage.objectViewer", member)
 			}
 		case "queue", "topic":
 			if e.Verb == "publish" {

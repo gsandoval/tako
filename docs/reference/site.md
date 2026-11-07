@@ -390,6 +390,39 @@ At render time, `site.Render` on a fragments-only site:
 site.Render needs templates/layout.html (the shell every page renders inside) — a site whose shell is generated (Hugo, etc.) renders fragments via site.Fragment instead
 ```
 
+## Project Documentation (`tako.Docs`)
+
+Project documentation is disabled by default. Declare one or more `tako.Docs` bundles (`*tako.DocsHandle`) with `tako.DocsConfig` to generate multi-page HTML documentation into `.tako/gen/docs/<name>/`, provision a dedicated GCS bucket (`<project>-<app>-docs-<env>-<name>`), and serve it on any route via `DocsHandle.Serve` (`tako.DocsReq` with `DocsReq.Path`) or `DocsHandle.Render`:
+
+**Go**
+```go
+var publicDocs = tako.Docs("public", tako.DocsConfig{
+	Level: tako.DocsPublic, // or DocsInternal, DocsFull
+})
+
+var opsDocs = tako.Docs("ops", tako.DocsConfig{
+	Public:       false,
+	APIs:         true,
+	Schedules:    true,
+	Architecture: true,
+	Resources:    true,
+	Roles:        true,
+	Footprints:   true,
+	Permissions:  true,
+})
+
+var PublicDocsPage = tako.Page("GET /docs/{path...}", publicDocs.Serve)
+var OpsDocsPage    = tako.Page("GET /ops/docs/{path...}", opsDocs.Serve, tako.Route{Allow: Admins})
+```
+
+**cfire**
+```cfire
+PublicDocs := tako.docs("public", .level = "public")
+OpsDocs    := tako.docs("ops", .apis = true, .schedules = true, .permissions = true)
+```
+
+`DocsConfig.Level` (`tako.DocsLevel`) accepts `tako.DocsPublic` (`DocsConfig.APIs` only, omitting `Route.Private` endpoints), `tako.DocsInternal` (`DocsConfig.APIs`, `DocsConfig.Schedules`, `DocsConfig.Architecture`, `DocsConfig.Resources`), or `tako.DocsFull` (adds `DocsConfig.Roles`, `DocsConfig.Footprints`, and `DocsConfig.Permissions`). `DocsConfig.Public` controls whether the dedicated GCS bucket grants `allUsers` `roles/storage.objectViewer` (`false` by default).
+
 ## Not yet
 
 Every site is embedded in the app service's binary — one service, one

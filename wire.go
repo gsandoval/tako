@@ -56,4 +56,11 @@ func init() {
 		}
 		return html.markup, html.redirect, html.status, html.fragment
 	}
+	hooks.HTMLContentType = func(h any) string {
+		html, ok := h.(HTML)
+		if !ok {
+			return ""
+		}
+		return html.contentType
+	}
 }

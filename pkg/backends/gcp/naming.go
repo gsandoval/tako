@@ -60,3 +60,10 @@ func DiskMountPath(name string) string {
 	return "/mnt/tako/" + name
 }
 
+// DocsBucketName is the physical GCS bucket backing a declared tako.Docs
+// documentation bundle. The "-docs-" segment keeps a docs instance named
+// "public" distinct from a bucket or disk named "public".
+func DocsBucketName(project, app, env, base string) string {
+	return project + "-" + app + "-docs-" + Prefixed(env, base)
+}
+

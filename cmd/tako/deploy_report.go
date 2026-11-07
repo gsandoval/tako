@@ -150,6 +150,16 @@ func printSecuritySummary(graph *analyzer.AppGraph, cfg provision.Config, desire
 		sort.Strings(callLines)
 		fmt.Printf("  call graph: %s\n", strings.Join(callLines, " · "))
 	}
+	for _, r := range graph.Resources {
+		if r.Kind == "docs" {
+			vis := "private (IAM-gated to services with a read edge)"
+			if r.Config["public"] == "true" {
+				vis = "public (allUsers roles/storage.objectViewer)"
+			}
+			fmt.Printf("  docs %s — %s; slices: %s\n",
+				r.Name, vis, strings.Join(r.DocsSlices, ", "))
+		}
+	}
 }
 
 // warnCallEdges surfaces Cloud Run's sync-call costs at deploy time

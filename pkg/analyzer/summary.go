@@ -120,6 +120,18 @@ func ResourceLine(r Resource) string {
 			line += " (" + strings.Join(details, ", ") + ")"
 		}
 	}
+	if r.Kind == "docs" {
+		var details []string
+		if r.Config["public"] == "true" {
+			details = append(details, "public")
+		} else {
+			details = append(details, "private")
+		}
+		if len(r.DocsSlices) > 0 {
+			details = append(details, "slices: "+strings.Join(r.DocsSlices, ", "))
+		}
+		line += " (" + strings.Join(details, "; ") + ")"
+	}
 	if r.Kind == "auth" {
 		return "auth (" + strings.Join(r.Providers, ", ") + ")"
 	}

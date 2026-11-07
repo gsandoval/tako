@@ -76,8 +76,9 @@ type HTML struct {
 	// status is the redirect status for plain requests. Zero means
 	// 303 See Other, so Redirect needs no change and a handler that
 	// returns a bare HTML{} is not accidentally a redirect.
-	status   int
-	fragment bool
+	status      int
+	fragment    bool
+	contentType string
 }
 
 // Redirect makes a Page handler respond with a redirect to target — a

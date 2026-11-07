@@ -322,3 +322,130 @@ func checkResourceName(kind, ctor, name, dir string, pkg *packages.Package, arg 
 func validResourceName(kind, name string) bool {
 	return !ByKind[kind].PhysicalName || physicalName.MatchString(name)
 }
+
+// AllDocsSlices lists the 7 project documentation slices in presentation order.
+var AllDocsSlices = []string{
+	"architecture",
+	"apis",
+	"schedules",
+	"resources",
+	"roles",
+	"footprints",
+	"permissions",
+}
+
+// ResolveDocsSlices computes the enabled documentation slices from a security
+// preset level ("public", "internal", "full", or "" when omitted) and
+// explicit per-slice boolean flags.
+func ResolveDocsSlices(level string, hasExplicitLevel bool, cherry map[string]bool) ([]string, string) {
+	set := map[string]bool{}
+	anyCherry := false
+	for k, v := range cherry {
+		if v {
+			set[k] = true
+			anyCherry = true
+		}
+	}
+	effectiveLevel := level
+	if !hasExplicitLevel {
+		if anyCherry {
+			effectiveLevel = "custom"
+		} else {
+			effectiveLevel = "public"
+			set["apis"] = true
+		}
+	} else {
+		switch level {
+		case "public", "":
+			effectiveLevel = "public"
+			set["apis"] = true
+		case "internal":
+			set["architecture"] = true
+			set["apis"] = true
+			set["schedules"] = true
+			set["resources"] = true
+		case "full":
+			for _, s := range AllDocsSlices {
+				set[s] = true
+			}
+		}
+	}
+	var out []string
+	for _, s := range AllDocsSlices {
+		if set[s] {
+			out = append(out, s)
+		}
+	}
+	return out, effectiveLevel
+}
+
+// extractDocs validates one tako.Docs declaration and its optional DocsConfig.
+func extractDocs(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+	if name.Name == "_" || len(call.Args) < 1 {
+		return nil
+	}
+	resName, err := constString(pkg, call.Args[0])
+	if err != nil {
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, call.Args[0].Pos()),
+			Msg: fmt.Sprintf("tako.Docs name must be a string constant — names are read at analysis time, not run time; got %s",
+				describeExpr(call.Args[0])),
+			Rule: "const-name",
+		})
+		return nil
+	}
+	if !checkResourceName("docs", "tako.Docs", resName, dir, pkg, call.Args[0], errs) {
+		return nil
+	}
+	cfg, ok := configFields(dir, pkg, call.Args[1:], "DocsConfig", errs)
+	if !ok {
+		return nil
+	}
+	bad := false
+	public := boolField(dir, pkg, cfg, "Public", "DocsConfig", errs)
+	_, hasLevel := fieldOf(cfg, "Level")
+	level := ""
+	if hasLevel {
+		lv, lok := stringField(dir, pkg, cfg, "Level", "DocsConfig", errs)
+		if !lok {
+			bad = true
+		} else if lv != "public" && lv != "internal" && lv != "full" {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, cfg["Level"].Pos()),
+				Msg:  fmt.Sprintf("tako.DocsConfig.Level must be tako.DocsPublic, tako.DocsInternal, or tako.DocsFull; got %q", lv),
+				Rule: "config-literal",
+			})
+			bad = true
+		} else {
+			level = lv
+		}
+	}
+	cherry := map[string]bool{
+		"apis":         boolField(dir, pkg, cfg, "APIs", "DocsConfig", errs),
+		"schedules":    boolField(dir, pkg, cfg, "Schedules", "DocsConfig", errs),
+		"architecture": boolField(dir, pkg, cfg, "Architecture", "DocsConfig", errs),
+		"resources":    boolField(dir, pkg, cfg, "Resources", "DocsConfig", errs),
+		"roles":        boolField(dir, pkg, cfg, "Roles", "DocsConfig", errs),
+		"footprints":   boolField(dir, pkg, cfg, "Footprints", "DocsConfig", errs),
+		"permissions":  boolField(dir, pkg, cfg, "Permissions", "DocsConfig", errs),
+	}
+	if bad {
+		return nil
+	}
+	slices, effectiveLevel := ResolveDocsSlices(level, hasLevel, cherry)
+	cfgMap := map[string]string{
+		"level": effectiveLevel,
+	}
+	if public {
+		cfgMap["public"] = "true"
+	}
+	return &Resource{
+		Kind:       "docs",
+		Name:       resName,
+		Var:        pkg.Name + "." + name.Name,
+		Package:    pkg.PkgPath,
+		Config:     cfgMap,
+		DocsSlices: slices,
+		Pos:        relPos(dir, pkg.Fset, name.Pos()),
+	}
+}

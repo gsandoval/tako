@@ -198,8 +198,12 @@ type Resource struct {
 	Providers []string       `json:"providers,omitempty"`
 	Redirects []SiteRedirect `json:"redirects,omitempty"`
 	// Config holds key/value configuration for resources such as Disk
-	// ("readonly", "ephemeral", "size_limit").
+	// ("readonly", "ephemeral", "size_limit") and Docs ("public", "level").
 	Config map[string]string `json:"config,omitempty"`
+	// DocsSlices are the enabled documentation slices on a Kind "docs"
+	// resource ("apis", "architecture", "footprints", "permissions",
+	// "resources", "roles", "schedules").
+	DocsSlices []string `json:"docs_slices,omitempty"`
 	// Pos is the declaration position as path:line:col.
 	Pos string `json:"pos"`
 }

@@ -57,6 +57,9 @@ Local — nothing outside this directory is touched:
   tako gen agents [--out <path>] [--stdout]
                        synthesize or refresh AGENTS.md with live service,
                        handler, entity, flag, and tool tables
+  tako gen docs [<name>] [--level public|internal|full] [--include s1,s2] [--out <dir>]
+                       generate multi-page HTML project documentation
+                       scoped by security level or component slices
   tako alerts [name] [--env prod] [--json]
                        what every declared alert compiles to: the PromQL,
                        the notification sentence, and the constructor it
@@ -283,6 +286,11 @@ func main() {
 					fail(err)
 				}
 				return
+			case "docs":
+				if err := runGenDocs(subArgs[1:]); err != nil {
+					fail(err)
+				}
+				return
 			}
 		}
 		if len(subArgs) < 1 || subArgs[0] != "graph" {
@@ -294,6 +302,7 @@ func main() {
   tako gen client ts [--out <path>]          typed TypeScript client
   tako gen openapi [--out <path>] [--stdout] OpenAPI 3.1.0 specification
   tako gen agents [--out <path>] [--stdout]  live AGENTS.md architecture context
+  tako gen docs [<name>] [flags]             multi-page HTML project documentation
 `)
 			os.Exit(2)
 		}

@@ -1,10 +1,15 @@
 package gcp
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/gsandoval/tako/pkg/provision"
 )
@@ -24,6 +29,7 @@ type bucketBody struct {
 	Labels           map[string]string `json:"labels"`
 	IamConfiguration map[string]any    `json:"iamConfiguration,omitempty"`
 	Cors             []map[string]any  `json:"cors,omitempty"`
+	Website          map[string]any    `json:"website,omitempty"`
 }
 
 // corsForSignedTransfers lets browsers execute signed URLs directly
@@ -82,6 +88,9 @@ func (b *Buckets) body(o provision.Object) bucketBody {
 	if cors, _ := o.Spec["cors"].(bool); cors {
 		body.Cors = corsForSignedTransfers
 	}
+	if website, _ := o.Spec["website"].(bool); website {
+		body.Website = map[string]any{"mainPageSuffix": "index.html", "notFoundPage": "404.html"}
+	}
 	return body
 }
 
@@ -89,6 +98,11 @@ func (b *Buckets) Create(ctx context.Context, o provision.Object) error {
 	u := b.C.url(storageHost, "/storage/v1/b?project="+b.C.Project)
 	if err := b.C.do(ctx, http.MethodPost, u, b.body(o), nil); err != nil {
 		return Classify(err, b.C.Project, "create the bucket", "roles/storage.admin")
+	}
+	if pub, hasPub := o.Spec["public"].(bool); hasPub && pub {
+		if err := b.setPublic(ctx, o.Name, true); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -99,10 +113,81 @@ func (b *Buckets) Update(ctx context.Context, o provision.Object) error {
 	if cors, _ := o.Spec["cors"].(bool); cors {
 		body["cors"] = corsForSignedTransfers
 	}
+	if website, _ := o.Spec["website"].(bool); website {
+		body["website"] = map[string]any{"mainPageSuffix": "index.html", "notFoundPage": "404.html"}
+	}
 	if err := b.C.do(ctx, http.MethodPatch, u, body, nil); err != nil {
 		return Classify(err, b.C.Project, "update the bucket", "roles/storage.admin")
 	}
+	if pub, hasPub := o.Spec["public"].(bool); hasPub {
+		if err := b.setPublic(ctx, o.Name, pub); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+func (b *Buckets) setPublic(ctx context.Context, bucket string, public bool) error {
+	iamURL := b.C.url(storageHost, "/storage/v1/b/%s/iam", bucket)
+	var live policy
+	if err := b.C.do(ctx, http.MethodGet, iamURL, nil, &live); err != nil {
+		return Classify(err, b.C.Project, "get bucket IAM policy", "roles/storage.admin")
+	}
+	next, changed := withPublicBucketViewer(live, public)
+	if !changed {
+		return nil
+	}
+	if err := b.C.do(ctx, http.MethodPut, iamURL, next, nil); err != nil {
+		return Classify(err, b.C.Project, "set bucket IAM policy", "roles/storage.admin")
+	}
+	return nil
+}
+
+func withPublicBucketViewer(live policy, public bool) (policy, bool) {
+	const role = "roles/storage.objectViewer"
+	const member = "allUsers"
+	has := false
+	for _, b := range live.Bindings {
+		if b.Role == role {
+			for _, m := range b.Members {
+				if m == member {
+					has = true
+				}
+			}
+		}
+	}
+	if has == public {
+		return live, false
+	}
+	next := policy{Etag: live.Etag}
+	added := false
+	for _, b := range live.Bindings {
+		if b.Role != role {
+			next.Bindings = append(next.Bindings, b)
+			continue
+		}
+		var ms []string
+		for _, m := range b.Members {
+			if m != member {
+				ms = append(ms, m)
+			}
+		}
+		if public {
+			ms = append(ms, member)
+			added = true
+		}
+		if len(ms) > 0 {
+			b.Members = ms
+			next.Bindings = append(next.Bindings, b)
+		}
+	}
+	if public && !added {
+		next.Bindings = append(next.Bindings, struct {
+			Role    string   `json:"role"`
+			Members []string `json:"members"`
+		}{Role: role, Members: []string{member}})
+	}
+	return next, true
 }
 
 // Delete removes the bucket's objects, then the bucket. Only destroy
@@ -151,4 +236,69 @@ func (c *Client) ListObjects(ctx context.Context, bucket string, max int) ([]str
 		names = append(names, it.Name)
 	}
 	return names, nil
+}
+
+// SyncDir uploads every file under dir into the named GCS bucket and removes
+// any stale objects in the bucket that are not present in dir.
+func (c *Client) SyncDir(ctx context.Context, bucket, dir string) (int, error) {
+	uploaded := map[string]bool{}
+	count := 0
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		key := filepath.ToSlash(rel)
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		ct := "application/octet-stream"
+		switch {
+		case strings.HasSuffix(key, ".html"):
+			ct = "text/html; charset=utf-8"
+		case strings.HasSuffix(key, ".json"):
+			ct = "application/json; charset=utf-8"
+		case strings.HasSuffix(key, ".txt"):
+			ct = "text/plain; charset=utf-8"
+		}
+		u := c.url(storageHost, "/upload/storage/v1/b/%s/o?uploadType=media&name=%s", bucket, url.QueryEscape(key))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(data))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", ct)
+		resp, err := c.HC.Do(req)
+		if err != nil {
+			return Classify(err, c.Project, "upload docs object", "roles/storage.objectAdmin")
+		}
+		resp.Body.Close()
+		if resp.StatusCode/100 != 2 {
+			return fmt.Errorf("upload %s to bucket %s: HTTP %d", key, bucket, resp.StatusCode)
+		}
+		uploaded[key] = true
+		count++
+		return nil
+	})
+	if err != nil {
+		return count, err
+	}
+
+	// Remove stale objects from the bucket that are no longer in dir.
+	existing, err := c.ListObjects(ctx, bucket, 1000)
+	if err == nil {
+		for _, name := range existing {
+			if !uploaded[name] {
+				du := c.url(storageHost, "/storage/v1/b/%s/o/%s", bucket, url.PathEscape(name))
+				_ = c.do(ctx, http.MethodDelete, du, nil, nil)
+			}
+		}
+	}
+	return count, nil
 }

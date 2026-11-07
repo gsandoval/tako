@@ -14,7 +14,7 @@ import (
 // every symbol is unqualified — the one difference between the two
 // files that mount the same routes.
 func qual(alias, name string) string {
-	if alias == "" {
+	if alias == "" || strings.HasPrefix(name, "tako.") {
 		return name
 	}
 	return alias + "." + name

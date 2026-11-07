@@ -27,6 +27,8 @@
     func (*DiskHandle).Remove(ctx context.Context, name string) error
     func (*DiskHandle).Stat(ctx context.Context, name string) (io/fs.FileInfo, error)
     func (*DiskHandle).WriteFile(ctx context.Context, name string, data []byte, perm io/fs.FileMode) error
+    func (*DocsHandle).Render(ctx Ctx, pagePath string) (HTML, error)
+    func (*DocsHandle).Serve(ctx Ctx, req DocsReq) (HTML, error)
     func (*EntityHandle[T]).Delete(ctx Ctx, id string) error
     func (*EntityHandle[T]).Exists(ctx Ctx, id string) (bool, error)
     func (*EntityHandle[T]).Get(ctx Ctx, id string) (T, error)
@@ -126,6 +128,9 @@
     func (context.Context).Done() <-chan struct{}
     func (context.Context).Err() error
     func (context.Context).Value(key any) any
+const DocsFull DocsLevel
+const DocsInternal DocsLevel
+const DocsPublic DocsLevel
 const EnvCloud Env
 const EnvLocal Env
 const ProfileBatch Profile
@@ -149,6 +154,7 @@ func CronFailed(cron Handler, times int, w ...Window) Condition
 func CronMissed(cron Handler, w ...Window) Condition
 func Deny(msg string) error
 func Disk(name string, cfg ...DiskConfig) *DiskHandle
+func Docs(name string, cfg ...DocsConfig) *DocsHandle
 func Entity[T any](name string) *EntityHandle[T]
 func Environment() Env
 func Errorf(status int, format string, args ...any) error
@@ -221,6 +227,10 @@ type Ctx interface{Client() Client; IsHTMX() bool; Log() *log/slog.Logger; Maybe
 type Delivery struct{MaxAttempts int; MinBackoff time.Duration; MaxBackoff time.Duration; RateLimit int}
 type DiskConfig struct{ReadOnly bool; Ephemeral bool; SizeLimit string}
 type DiskHandle struct{}
+type DocsConfig struct{Public bool; Level DocsLevel; APIs bool; Schedules bool; Architecture bool; Resources bool; Roles bool; Footprints bool; Permissions bool}
+type DocsHandle struct{}
+type DocsLevel string
+type DocsReq struct{Path string}
 type Endpoint[Req any, Res any] struct{}
 type EntityHandle[T any] struct{}
 type EntityPage[T any] struct{Items []T; Cursor string; More bool}

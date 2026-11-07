@@ -60,11 +60,13 @@ func (s *BucketStore) objectPath(bucket, key string) (string, error) {
 	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "..") {
 		return "", fmt.Errorf("invalid object key %q", key)
 	}
-	return filepath.Join(s.dir, "buckets", bucket, filepath.FromSlash(key)), nil
+	safeBucket := strings.ReplaceAll(bucket, ":", "_")
+	return filepath.Join(s.dir, "buckets", safeBucket, filepath.FromSlash(key)), nil
 }
 
 func (s *BucketStore) metaPath(bucket, key string) string {
-	return filepath.Join(s.dir, "buckets", bucket, ".meta", filepath.FromSlash(key))
+	safeBucket := strings.ReplaceAll(bucket, ":", "_")
+	return filepath.Join(s.dir, "buckets", safeBucket, ".meta", filepath.FromSlash(key))
 }
 
 func (s *BucketStore) Get(ctx context.Context, bucket, key string) (backends.BlobData, error) {

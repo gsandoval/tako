@@ -30,6 +30,7 @@ tako gen graph [--json | --mermaid]
 tako gen client ts [--out <path>]
 tako gen openapi [--out <path>] [--stdout]
 tako gen agents [--out <path>] [--stdout]
+tako gen docs [<name>] [--level public|internal|full] [--include s1,s2] [--out <dir>]
 tako alerts [name] [--env prod] [--json]
                          what each declared alert compiles to — PromQL,
                          notification sentence, and the call it came from

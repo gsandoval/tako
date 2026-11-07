@@ -516,6 +516,9 @@ func reqStruct(pkg *packages.Package, fnExpr ast.Expr) (reqInfo, string) {
 		obj := named.Obj()
 		info.name = obj.Name()
 		info.ref = obj.Name()
+		if obj.Pkg() != nil && obj.Pkg().Path() == sdkPath {
+			info.ref = "tako." + obj.Name()
+		}
 		if isStruct && st.NumFields() > 0 && !obj.Exported() {
 			return info, fmt.Sprintf(
 				"request type %s must be exported — generated services construct it outside the package",

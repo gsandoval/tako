@@ -117,8 +117,26 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	endpointVars := map[types.Object]string{} // Endpoint vars (API/Page) → Var, for call edges
 	channelVars := map[types.Object]string{}  // alert destination vars → Var
 	handlerFuncs := map[string]*types.Func{}  // handler var → its root function
+	directHandlerEdges := map[string][]Edge{} // handler var → direct resource edges from method-value arg
 	pkgHandlerLits := map[*packages.Package][]*ast.FuncDecl{}
 	recordHandlerFunc := func(pkg *packages.Package, v string, d varDecl, idx int) {
+		if idx < len(d.call.Args) {
+			if sel, ok := d.call.Args[idx].(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok {
+					if r, ok := resourceVars[pkg.TypesInfo.Uses[id]]; ok {
+						if verb := verbOf(r.kind, sel.Sel.Name); verb != "" {
+							directHandlerEdges[v] = append(directHandlerEdges[v], Edge{
+								From:   v,
+								To:     r.name,
+								ToKind: r.kind,
+								Kind:   "resource",
+								Verb:   verb,
+							})
+						}
+					}
+				}
+			}
+		}
 		fn, lit := funcArg(pkg, d.name, d.call, idx)
 		handlerFuncs[v] = fn
 		if lit != nil && lit.Body != nil {
@@ -177,6 +195,11 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 				if r := extractDisk(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "disk"}
+				}
+			case "Docs":
+				if r := extractDocs(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+					graph.Resources = append(graph.Resources, *r)
+					resourceVars[pkg.TypesInfo.Defs[d.name]] = resRef{r.Name, "docs"}
 				}
 			case "Queue":
 				if r := extractQueue(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
@@ -493,7 +516,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 	applyDomains(graph, &errs)
 	var edgeErrs ErrorList
 	var delayedQueues map[string]bool
-	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, pkgHandlerLits, graph.Handlers)
+	graph.Edges, delayedQueues, edgeErrs = deriveEdges(cfg.Dir, pkgs, resourceVars, endpointVars, handlerFuncs, directHandlerEdges, pkgHandlerLits, graph.Handlers)
 	for i := range graph.Resources {
 		if graph.Resources[i].Kind == "queue" && delayedQueues[graph.Resources[i].Name] {
 			graph.Resources[i].Delayed = true

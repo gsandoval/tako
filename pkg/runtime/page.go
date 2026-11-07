@@ -183,7 +183,13 @@ func PageHandler[Req any](e tako.Endpoint[Req, tako.HTML], decode func(*http.Req
 				return
 			}
 			h := w.Header()
-			h.Set("Content-Type", "text/html; charset=utf-8")
+			ct := "text/html; charset=utf-8"
+			if hooks.HTMLContentType != nil {
+				if custom := hooks.HTMLContentType(res); custom != "" {
+					ct = custom
+				}
+			}
+			h.Set("Content-Type", ct)
 			h.Set("Cache-Control", cacheControl(conf.maxAge))
 			if fragment {
 				markFragment(r)

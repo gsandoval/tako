@@ -116,6 +116,12 @@ var Registry = map[string]PrimitiveSpec{
 			"Send": "write",
 		},
 	},
+	"Docs": {
+		Ctor: "Docs", Kind: "docs", RejectLocalDecl: true, PhysicalName: true, MermaidShape: "cylinder",
+		MethodVerbs: map[string]string{
+			"Serve": "read", "Render": "read",
+		},
+	},
 }
 
 // ByKind indexes Registry by resource/handler kind. Resource specs take

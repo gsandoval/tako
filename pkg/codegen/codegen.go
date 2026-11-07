@@ -9,6 +9,7 @@ import (
 
 	"github.com/gsandoval/tako/internal/routes"
 	"github.com/gsandoval/tako/pkg/analyzer"
+	"github.com/gsandoval/tako/pkg/projdocs"
 )
 
 // Generate writes one main package per service under dir/.tako/gen/ and
@@ -17,7 +18,14 @@ import (
 // function per request struct, stdlib routing, no reflection.
 func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 	if analyzer.IsCfireProject(dir) {
-		return GenerateCfire(g, dir)
+		written, err := GenerateCfire(g, dir)
+		if err != nil {
+			return nil, err
+		}
+		if _, err := projdocs.GenerateAll(g, nil, dir); err != nil {
+			return nil, err
+		}
+		return written, nil
 	}
 	var written []string
 	for _, svc := range g.Services {
@@ -69,6 +77,9 @@ func Generate(g *analyzer.AppGraph, dir string) ([]string, error) {
 			}
 			written = append(written, hrel)
 		}
+	}
+	if _, err := projdocs.GenerateAll(g, nil, dir); err != nil {
+		return nil, err
 	}
 	return written, nil
 }
@@ -344,7 +355,14 @@ import (
 		b.WriteString("\t\"time\"\n")
 	}
 	b.WriteString("\n")
-	if len(callees) > 0 {
+	needsTako := len(callees) > 0
+	for _, h := range g.Handlers {
+		if h.Service == svc.Name && (h.Kind == "api" || h.Kind == "page") && needsDecode(h) && strings.HasPrefix(h.ReqType, "tako.") {
+			needsTako = true
+			break
+		}
+	}
+	if needsTako {
 		b.WriteString("\ttako \"github.com/gsandoval/tako\"\n")
 	}
 	b.WriteString("\truntime \"github.com/gsandoval/tako/pkg/runtime\"\n")

@@ -67,6 +67,9 @@ func funcArg(pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, idx int
 		}
 	case *ast.SelectorExpr:
 		if fn, ok := pkg.TypesInfo.Uses[e.Sel].(*types.Func); ok {
+			if fn.Pkg() != nil && fn.Pkg().Path() == sdkPath {
+				return nil, nil
+			}
 			return fn, nil
 		}
 	case *ast.FuncLit:
@@ -86,7 +89,7 @@ func funcArg(pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, idx int
 // resource var; a `.Call` on another handler's Endpoint var is a call
 // edge (§2.12). Raw cross-package handler-function calls — the hidden
 // RPC boundary — are diagnosed here, where the scan already looks.
-func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, pkgHandlerLits map[*packages.Package][]*ast.FuncDecl, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
+func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]resRef, endpoints map[types.Object]string, handlerFuncs map[string]*types.Func, directEdges map[string][]Edge, pkgHandlerLits map[*packages.Package][]*ast.FuncDecl, handlers []Handler) ([]Edge, map[string]bool, ErrorList) {
 	// The declared auth resource, if this app has one: account usage
 	// attaches its edges to it, because auth.Users() is how accounts are
 	// reached and tako.Auth is what declares them.
@@ -253,19 +256,29 @@ func deriveEdges(dir string, pkgs []*packages.Package, vars map[types.Object]res
 	edges := []Edge{}
 	for _, h := range handlers {
 		fn := handlerFuncs[h.Var]
-		if fn == nil {
+		set := map[ref]bool{}
+		for _, de := range directEdges[h.Var] {
+			set[ref{res: resRef{name: de.To, kind: de.ToKind}, verb: de.Verb}] = true
+		}
+		if fn != nil {
+			for r := range reach(fn, map[*types.Func]bool{}) {
+				set[r] = true
+			}
+		}
+		if len(set) == 0 && fn == nil {
 			continue
 		}
-		set := reach(fn, map[*types.Func]bool{})
 		hs := make([]Edge, 0, len(set))
 		for r := range set {
 			hs = append(hs, Edge{From: h.Var, To: r.res.name, ToKind: r.res.kind, Kind: "resource", Verb: r.verb})
 		}
-		for t := range epReach(fn, map[*types.Func]bool{}) {
-			if t == h.Var {
-				continue // self-calls are just recursion
+		if fn != nil {
+			for t := range epReach(fn, map[*types.Func]bool{}) {
+				if t == h.Var {
+					continue // self-calls are just recursion
+				}
+				hs = append(hs, Edge{From: h.Var, To: t, Kind: "call", Verb: "call"})
 			}
-			hs = append(hs, Edge{From: h.Var, To: t, Kind: "call", Verb: "call"})
 		}
 		sort.Slice(hs, func(i, j int) bool {
 			if hs[i].To != hs[j].To {

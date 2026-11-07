@@ -21,6 +21,9 @@ type BucketStore struct {
 func NewBucketStore(c *Client) *BucketStore { return &BucketStore{c: c} }
 
 func (s *BucketStore) physical(bucket string) string {
+	if strings.HasPrefix(bucket, "docs:") {
+		return DocsBucketName(s.c.Opts.Project, s.c.Opts.App, s.c.Opts.Env, strings.TrimPrefix(bucket, "docs:"))
+	}
 	return BucketName(s.c.Opts.Project, s.c.Opts.App, s.c.Opts.Env, bucket)
 }
 

@@ -33,6 +33,9 @@ func CheckNames(g *analyzer.AppGraph, cfg Config) error {
 			}
 			name = gcpb.DiskBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
 			kindLabel = "disk"
+		case "docs":
+			name = gcpb.DocsBucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name)
+			kindLabel = "docs"
 		default:
 			continue
 		}
@@ -101,6 +104,14 @@ func checkCollisions(g *analyzer.AppGraph) error {
 					"    tako names a persistent disk's bucket with a disk- prefix, so a\n"+
 					"    bucket named %q addresses the same storage as disk %q. Rename one.",
 					"disk-"+r.Name, r.Name, "disk-"+r.Name, r.Name)
+			}
+		}
+		if r.Kind == "docs" {
+			if buckets["docs-"+r.Name] {
+				return fmt.Errorf("bucket %q and docs %q become the same GCS bucket\n\n"+
+					"    tako names a documentation bundle's bucket with a docs- prefix, so a\n"+
+					"    bucket named %q addresses the same storage as docs %q. Rename one.",
+					"docs-"+r.Name, r.Name, "docs-"+r.Name, r.Name)
 			}
 		}
 		// M and P-M: P is the env in which they are the same resource.

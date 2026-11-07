@@ -199,6 +199,10 @@ var RenderFragment func(ctx context.Context, name string, data any) ([]byte, err
 // redirect.
 var HTMLParts func(h any) (markup []byte, redirect string, status int, fragment bool)
 
+// HTMLContentType reads an optional custom Content-Type on a tako.HTML
+// response (empty means default "text/html; charset=utf-8").
+var HTMLContentType func(h any) string
+
 // PrepareTemplates, UseTemplates and RenderTemplateSet are the
 // replaceable-template-set seam (FL23): pkg/runtime sets them, the SDK's
 // SiteHandle calls through. The set travels as `any` for the same reason

@@ -123,7 +123,7 @@ type cfireOutlineFunc struct {
 	Async   bool                `json:"async"`
 }
 
-var pathParamRegex = regexp.MustCompile(`\{([a-zA-Z0-9_]+)\}`)
+var pathParamRegex = regexp.MustCompile(`\{([a-zA-Z0-9_]+)(?:\.\.\.)?\}`)
 
 // analyzeCfire runs cfire outline --json and builds an AppGraph or ErrorList.
 func analyzeCfire(cfg Config) (*TypedGraph, error) {
@@ -250,7 +250,7 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 					Pos:     pos,
 				})
 
-			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site", "job", "disk", "flag", "audit", "push":
+			case "bucket", "queue", "topic", "cache", "lock", "secret", "counter", "histogram", "site", "job", "disk", "flag", "audit", "push", "docs":
 				resName := ""
 				if len(gv.Args) > 0 {
 					resName = gv.Args[0]
@@ -284,6 +284,10 @@ func analyzeCfire(cfg Config) (*TypedGraph, error) {
 				if ctor == "disk" {
 					rawOpts := strings.Join(gv.Args[1:], " ") + " " + cfireDeclSource(p, gv.Line)
 					res.Config = parseCfireDiskOpts(rawOpts, resName, pos, &errs)
+				}
+				if ctor == "docs" {
+					rawOpts := strings.Join(gv.Args[1:], " ") + " " + cfireDeclSource(p, gv.Line)
+					res.Config, res.DocsSlices = parseCfireDocsOpts(rawOpts)
 				}
 				graph.Resources = append(graph.Resources, res)
 
@@ -702,4 +706,35 @@ func parseCfireDiskOpts(raw, resName, pos string, errs *ErrorList) map[string]st
 		cfg["size_limit"] = sizeLimit
 	}
 	return cfg
+}
+
+var (
+	cfirePublicRe = regexp.MustCompile(`(?:\.?public)\s*[:=]\s*true\b`)
+	cfireLevelRe  = regexp.MustCompile(`(?:\.?level)\s*[:=]\s*"?([a-z_]+)"?`)
+)
+
+func parseCfireDocsOpts(raw string) (map[string]string, []string) {
+	public := cfirePublicRe.MatchString(raw)
+	hasLevel := false
+	level := ""
+	if m := cfireLevelRe.FindStringSubmatch(raw); len(m) > 1 {
+		hasLevel = true
+		lv := strings.TrimPrefix(m[1], "docs_")
+		if lv == "public" || lv == "internal" || lv == "full" {
+			level = lv
+		}
+	}
+	cherry := map[string]bool{}
+	for _, s := range AllDocsSlices {
+		re := regexp.MustCompile(fmt.Sprintf(`(?i)(?:\.?%s)\s*[:=]\s*true\b`, s))
+		if re.MatchString(raw) {
+			cherry[s] = true
+		}
+	}
+	slices, effLevel := ResolveDocsSlices(level, hasLevel, cherry)
+	cfg := map[string]string{"level": effLevel}
+	if public {
+		cfg["public"] = "true"
+	}
+	return cfg, slices
 }
