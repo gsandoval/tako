@@ -334,10 +334,21 @@ func TestDualThemeAndRightRailTOC(t *testing.T) {
 		`On This Page`,
 		`class="group"`,
 		`tako docs entity`,
+		`class="header-top-row"`,
+		`class="mobile-doc-bar"`,
+		`id="mobile-nav-toggle"`,
+		`id="mobile-toc-select"`,
+		`class="side-nav-grid"`,
+		`@media (min-width: 640px)`,
+		`@media (min-width: 900px)`,
+		`@media (min-width: 1180px)`,
 	} {
 		if !strings.Contains(entityHTML, want) {
 			t.Errorf("/reference/entity missing expected UI feature %q", want)
 		}
+	}
+	if strings.Contains(entityHTML, "@media (max-width: 768px)") {
+		t.Errorf("/reference/entity still contains desktop-first @media (max-width: 768px) patch instead of mobile-first min-width rules")
 	}
 }
 

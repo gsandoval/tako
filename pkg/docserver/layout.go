@@ -5,8 +5,11 @@ import (
 )
 
 // One stylesheet, inlined. Works offline on an airplane with system fonts,
-// with optional web fonts when online. Supports both Technical Paper Light
-// Mode (:root / [data-theme="light"]) and Obsidian Dark Mode ([data-theme="dark"]).
+// with optional web fonts when online. Authored mobile-first (base rules target
+// 320px–430px viewports with strict overflow containment) and progressively
+// enhanced via @media (min-width: ...) breakpoints. Supports both Technical
+// Paper Light Mode (:root / [data-theme="light"]) and Obsidian Dark Mode
+// ([data-theme="dark"]).
 const style = `
 @import url('https://fonts.googleapis.com/css2?family=Geist+Mono:wght@100..900&family=Inter:ital,opsz,wght@0,14..32,100..900;1,14..32,100..900&family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
 
@@ -121,44 +124,65 @@ const style = `
   --story-cloud-border: rgba(56, 189, 248, 0.35);
 }
 
-* { box-sizing: border-box; }
+/* ============================================================================
+   1. MOBILE-FIRST BASE RESET & STRICT VIEWPORT CONTAINMENT (320px+)
+   ============================================================================ */
+*, *::before, *::after { box-sizing: border-box; }
 ::selection { background: var(--primary); color: #ffffff; }
-body {
+
+html, body {
   margin: 0;
+  padding: 0;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
   background: var(--bg);
   color: var(--ink);
-  font: 15px/1.65 var(--font-sans);
+  font: 15px/1.62 var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
 }
 
-/* Sticky Top Navigation Bar */
+/* ============================================================================
+   2. TWO-TIER STICKY MOBILE HEADER (Collapses to 1 Row at min-width: 900px)
+   ============================================================================ */
 header.top-nav {
-  border-bottom: 1px solid var(--rule);
-  padding: 0 1.5rem;
-  height: 3.5rem;
-  display: flex;
-  gap: 1.25rem;
-  align-items: center;
   position: sticky;
   top: 0;
-  background: var(--bg);
   z-index: 60;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
+
+.header-top-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  height: 2.9rem;
+  padding: 0 0.85rem;
+  border-bottom: 1px solid var(--rule);
+  min-width: 0;
+}
+
 header .brand-link {
   display: inline-flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.45rem;
   text-decoration: none !important;
   color: var(--ink) !important;
   font-weight: 800;
   font-family: var(--font-mono);
-  font-size: 1.08rem;
+  font-size: 1.02rem;
   letter-spacing: -0.03em;
   flex-shrink: 0;
 }
 header .brand-kamon {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
   display: block;
 }
@@ -167,16 +191,17 @@ header .hanko-stamp {
   align-items: center;
   justify-content: center;
   font-family: var(--font-serif-jp);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   line-height: 1;
   color: var(--primary);
   background: var(--primary-bg);
   border: 1px solid var(--primary-border);
-  padding: 0.18rem 0.32rem;
+  padding: 0.16rem 0.28rem;
   border-radius: 3px;
 }
 header .brand-docs-sub {
+  display: none;
   font-family: var(--font-mono);
   font-size: 0.72rem;
   font-weight: 600;
@@ -184,62 +209,13 @@ header .brand-docs-sub {
   border-left: 1px solid var(--rule);
   padding-left: 0.55rem;
 }
-header .nav-links {
-  display: flex;
-  align-items: center;
-  gap: 0.25rem;
-  height: 100%;
-  margin-left: 0.25rem;
-}
-header .nav-links a {
-  color: var(--dim);
-  text-decoration: none;
-  font-family: var(--font-mono);
-  font-size: 0.82rem;
-  font-weight: 500;
-  padding: 0 0.7rem;
-  height: 100%;
-  display: inline-flex;
-  align-items: center;
-  border-bottom: 2px solid transparent;
-  transition: color 0.12s ease, border-color 0.12s ease;
-}
-header .nav-links a:hover {
-  color: var(--ink);
-  text-decoration: none;
-}
-header .nav-links a.on {
-  color: var(--ink);
-  font-weight: 700;
-  border-bottom-color: var(--primary);
-}
+
 header .header-right {
-  margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.35rem;
+  flex-shrink: 0;
 }
-header .github-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--dim);
-  font-size: 0.78rem;
-  font-weight: 600;
-  text-decoration: none !important;
-  padding: 0.28rem 0.6rem;
-  border-radius: 4px;
-  border: 1px solid var(--rule);
-  background: var(--surface);
-  transition: all 0.12s ease;
-  font-family: var(--font-mono);
-}
-header .github-link:hover {
-  color: var(--ink);
-  border-color: var(--rule-dark);
-  background: var(--surface-hover);
-}
-header .github-link svg { flex-shrink: 0; }
 
 /* Segmented Controls (Go / cfire & Light / Dark) */
 .code-tabs-switch, .header-lang-switch, .header-theme-switch {
@@ -250,19 +226,21 @@ header .github-link svg { flex-shrink: 0; }
   padding: 2px;
   border-radius: 4px;
   gap: 2px;
+  flex-shrink: 0;
 }
 .code-tab-btn, .header-lang-btn, .header-theme-btn {
   border: 0;
   background: transparent;
   color: var(--dim);
-  font: 600 0.73rem/1 var(--font-mono);
-  padding: 0.28rem 0.55rem;
+  font: 600 0.72rem/1 var(--font-mono);
+  padding: 0.28rem 0.48rem;
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.12s ease;
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
+  gap: 0.22rem;
+  white-space: nowrap;
 }
 .code-tab-btn:hover, .header-lang-btn:hover, .header-theme-btn:hover {
   color: var(--ink);
@@ -275,11 +253,283 @@ header .github-link svg { flex-shrink: 0; }
 .header-lang-btn.on {
   color: var(--primary);
 }
+/* Compact icon-first theme buttons on mobile; full text label on desktop */
+.header-theme-btn .theme-lbl {
+  display: none;
+}
 
-/* Unified Go / cfire Code Block Switch */
+header .github-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  color: var(--dim);
+  font-size: 0.76rem;
+  font-weight: 600;
+  text-decoration: none !important;
+  padding: 0.3rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid var(--rule);
+  background: var(--surface);
+  transition: all 0.12s ease;
+  font-family: var(--font-mono);
+  flex-shrink: 0;
+}
+header .github-link:hover {
+  color: var(--ink);
+  border-color: var(--rule-dark);
+  background: var(--surface-hover);
+}
+header .github-link svg { flex-shrink: 0; }
+header .github-link .github-lbl { display: none; }
+
+/* Row 2 on Mobile: 4-Column Full-Width Section Tab Bar */
+header .nav-links {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  width: 100%;
+  height: 2.3rem;
+  background: var(--surface);
+}
+header .nav-links a {
+  color: var(--dim);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 600;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-bottom: 2px solid transparent;
+  border-right: 1px solid var(--rule);
+  transition: color 0.12s ease, border-color 0.12s ease, background-color 0.12s ease;
+  white-space: nowrap;
+}
+header .nav-links a:last-child {
+  border-right: 0;
+}
+header .nav-links a:hover {
+  color: var(--ink);
+  text-decoration: none;
+}
+header .nav-links a.on {
+  color: var(--ink);
+  font-weight: 700;
+  border-bottom-color: var(--primary);
+  background: var(--primary-bg);
+}
+
+/* ============================================================================
+   3. MOBILE READER SUB-HEADER & COLLAPSIBLE 2-COL GROUPED DRAWER
+   ============================================================================ */
+.layout {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 88rem;
+  margin: 0 auto;
+  padding: 0 0.9rem;
+  min-width: 0;
+}
+.layout.layout-home {
+  max-width: 78rem;
+}
+.layout.layout-home nav.side,
+.layout.layout-home aside.toc,
+.layout.layout-home .mobile-doc-bar {
+  display: none !important;
+}
+
+/* Sticky Sub-Header Bar on Doc Pages (< 900px) */
+.mobile-doc-bar {
+  position: sticky;
+  top: 5.2rem;
+  z-index: 50;
+  background: var(--bg);
+  border-bottom: 1px solid var(--rule);
+  margin: 0 -0.9rem;
+  padding: 0.45rem 0.9rem;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.mobile-nav-toggle {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.38rem 0.6rem;
+  color: var(--ink);
+  font: 600 0.75rem/1.2 var(--font-mono);
+  cursor: pointer;
+  text-align: left;
+}
+.mobile-nav-toggle:hover,
+.mobile-nav-toggle[aria-expanded="true"] {
+  border-color: var(--primary);
+}
+.mobile-nav-icon {
+  color: var(--primary);
+  font-size: 0.82rem;
+  flex-shrink: 0;
+}
+.mobile-nav-label {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mobile-nav-sec {
+  color: var(--primary);
+  font-weight: 700;
+  text-transform: uppercase;
+  margin-right: 0.2rem;
+}
+.mobile-nav-caret {
+  color: var(--dim);
+  font-size: 0.72rem;
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.mobile-nav-toggle[aria-expanded="true"] .mobile-nav-caret {
+  transform: rotate(180deg);
+}
+
+.mobile-toc-select {
+  flex: 0 1 44%;
+  max-width: 44%;
+  min-width: 7.5rem;
+  background: var(--surface-alt);
+  color: var(--ink);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.36rem 0.5rem;
+  font: 600 0.73rem/1.2 var(--font-mono);
+  cursor: pointer;
+  outline: none;
+  text-overflow: ellipsis;
+}
+.mobile-toc-select:focus {
+  border-color: var(--primary);
+}
+
+/* Collapsible Grouped Topic Drawer on Mobile (< 900px) */
+nav.side {
+  display: none;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--rule-dark);
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin: 0.5rem 0 0.25rem;
+  max-height: 68vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+nav.side.is-open {
+  display: block;
+}
+.side-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.35rem;
+  border-bottom: 1px solid var(--rule);
+  font: 700 0.68rem/1 var(--font-mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--tertiary);
+}
+.side-drawer-close {
+  border: 1px solid var(--rule);
+  background: var(--bg);
+  color: var(--dim);
+  border-radius: 3px;
+  padding: 0.15rem 0.4rem;
+  font: 600 0.72rem/1 var(--font-mono);
+  cursor: pointer;
+}
+.side-nav-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem;
+}
+nav.side .group {
+  grid-column: 1 / -1;
+  margin: 0.65rem 0 0.15rem;
+  padding: 0 0.2rem 0.2rem;
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--primary);
+  font-weight: 700;
+  border-bottom: 1px solid var(--rule);
+}
+nav.side .group:first-child {
+  margin-top: 0.1rem;
+}
+nav.side a {
+  display: flex;
+  align-items: center;
+  padding: 0.38rem 0.55rem;
+  color: var(--dim);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  background: var(--bg);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: all 0.12s ease;
+}
+nav.side a:hover {
+  color: var(--ink);
+  border-color: var(--rule-dark);
+  text-decoration: none;
+}
+nav.side a.on {
+  color: #ffffff;
+  background: var(--primary);
+  border-color: var(--primary);
+  font-weight: 700;
+}
+
+main {
+  min-width: 0;
+  width: 100%;
+  max-width: 100%;
+  flex: 1;
+  padding: 1.15rem 0 3.5rem;
+}
+.layout.layout-home main {
+  padding-top: 0;
+}
+
+/* Right-Rail "On This Page" TOC (Hidden on Mobile/Tablet; Shown at min-width: 1180px) */
+aside.toc {
+  display: none;
+}
+
+/* ============================================================================
+   4. UNIFIED GO / CFIRE CODE TABS & PROSE TYPOGRAPHY (Mobile-First)
+   ============================================================================ */
 .code-tabs {
+  width: 100%;
   max-width: 54rem;
-  margin: 1.1rem 0;
+  min-width: 0;
+  margin: 1rem 0;
   border: 1px solid var(--rule);
   border-radius: 6px;
   background: var(--code);
@@ -289,33 +539,45 @@ header .github-link svg { flex-shrink: 0; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
-  padding: 0.35rem 0.7rem;
+  gap: 0.45rem;
+  padding: 0.35rem 0.6rem;
   background: var(--code-header);
   border-bottom: 1px solid var(--rule);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  min-width: 0;
 }
 .code-tabs-meta {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   color: var(--dim);
   margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 .code-tab-caption { display: none; }
 .code-tab-caption.on { display: inline; }
-.code-tab-pane { display: none; }
+.code-tab-pane { display: none; min-width: 0; }
 .code-tab-pane.on { display: block; }
-.code-tab-pane pre { margin: 0; border: 0; border-radius: 0; max-width: none; background: var(--code); }
+.code-tab-pane pre {
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  max-width: 100%;
+  background: var(--code);
+}
 
 .code-copy-btn {
   border: 1px solid var(--rule);
   background: var(--surface);
   color: var(--dim);
   font: 600 0.7rem/1 var(--font-mono);
-  padding: 0.24rem 0.5rem;
+  padding: 0.25rem 0.5rem;
   border-radius: 3px;
   cursor: pointer;
   transition: all 0.12s ease;
+  flex-shrink: 0;
 }
 .code-copy-btn:hover {
   color: var(--ink);
@@ -326,169 +588,20 @@ header .github-link svg { flex-shrink: 0; }
   border-color: var(--accent-emerald-border);
 }
 
-/* 3-Column Documentation Chassis */
-.layout {
-  display: flex;
-  align-items: flex-start;
-  gap: 2.25rem;
-  max-width: 88rem;
-  margin: 0 auto;
-  padding: 0 1.5rem;
-}
-.layout.layout-home {
-  max-width: 78rem;
-}
-.layout.layout-home nav.side,
-.layout.layout-home aside.toc {
-  display: none;
-}
-
-nav.side {
-  width: 15.5rem;
-  flex: none;
-  position: sticky;
-  top: 3.5rem;
-  padding: 1.5rem 0.75rem 2.5rem 0;
-  font-size: 0.86rem;
-  max-height: calc(100vh - 3.5rem);
-  overflow-y: auto;
-  border-right: 1px solid var(--rule);
-}
-nav.side a {
-  display: block;
-  padding: 0.28rem 0.65rem;
-  margin: 1px 0;
-  color: var(--dim);
-  text-decoration: none;
-  font-family: var(--font-mono);
-  font-size: 0.81rem;
-  border-left: 2px solid transparent;
-  border-radius: 0 4px 4px 0;
-  transition: all 0.12s ease;
-}
-nav.side a:hover {
-  color: var(--ink);
-  background: var(--surface-hover);
-  text-decoration: none;
-}
-nav.side a.on {
-  color: var(--primary);
-  background: var(--primary-bg);
-  border-left-color: var(--primary);
-  font-weight: 700;
-}
-nav.side .group {
-  margin: 1.15rem 0 0.35rem;
-  padding: 0 0.65rem;
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--tertiary);
-  font-weight: 700;
-}
-nav.side .group:first-child {
-  margin-top: 0.2rem;
-}
-
-main {
-  min-width: 0;
-  flex: 1;
-  padding: 1.75rem 0 5rem;
-  max-width: 52rem;
-}
-.layout.layout-home main {
-  max-width: none;
-  padding-top: 0;
-}
-
-/* Right-Rail "On This Page" TOC */
-aside.toc {
-  width: 14rem;
-  flex: none;
-  position: sticky;
-  top: 3.5rem;
-  padding: 1.75rem 0 2rem 1.25rem;
-  max-height: calc(100vh - 3.5rem);
-  overflow-y: auto;
-  border-left: 1px solid var(--rule);
-  font-size: 0.8rem;
-}
-aside.toc .toc-header {
-  font-family: var(--font-mono);
-  font-size: 0.68rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--tertiary);
-  margin-bottom: 0.6rem;
-}
-aside.toc .toc-list {
-  list-style: none;
-  padding: 0;
-  margin: 0 0 1.5rem;
-}
-aside.toc .toc-list li {
-  margin: 0.15rem 0;
-}
-aside.toc .toc-list a {
-  display: block;
-  padding: 0.2rem 0 0.2rem 0.65rem;
-  color: var(--dim);
-  text-decoration: none;
-  border-left: 2px solid transparent;
-  font-size: 0.78rem;
-  line-height: 1.4;
-  transition: all 0.12s ease;
-}
-aside.toc .toc-list a.toc-h3 {
-  padding-left: 1.25rem;
-  font-size: 0.74rem;
-}
-aside.toc .toc-list a:hover {
-  color: var(--ink);
-  text-decoration: none;
-}
-aside.toc .toc-list a.active {
-  color: var(--primary);
-  border-left-color: var(--primary);
-  font-weight: 600;
-}
-aside.toc .toc-tools {
-  border-top: 1px solid var(--rule);
-  padding-top: 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-aside.toc .toc-tool-link {
-  font-family: var(--font-mono);
-  font-size: 0.73rem;
-  color: var(--dim);
-  text-decoration: none;
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-aside.toc .toc-tool-link:hover {
-  color: var(--ink);
-  text-decoration: none;
-}
-
 /* Breadcrumb & CLI Topic Bar on Doc Pages */
 .doc-meta-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   flex-wrap: wrap;
   margin-bottom: 0.85rem;
-  padding-bottom: 0.65rem;
+  padding-bottom: 0.6rem;
   border-bottom: 1px solid var(--rule);
 }
 .doc-breadcrumb {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -498,15 +611,16 @@ aside.toc .toc-tool-link:hover {
 .doc-cli-pill {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.4rem;
   background: var(--code);
   border: 1px solid var(--rule);
   border-radius: 4px;
-  padding: 0.2rem 0.55rem;
+  padding: 0.22rem 0.55rem;
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--dim);
   cursor: pointer;
+  max-width: 100%;
 }
 .doc-cli-pill:hover {
   border-color: var(--rule-dark);
@@ -519,24 +633,26 @@ aside.toc .toc-tool-link:hover {
 
 /* Typography & Prose */
 h1 {
-  font-size: 1.9rem;
-  line-height: 1.22;
+  font-size: clamp(1.55rem, 4.5vw, 1.95rem);
+  line-height: 1.2;
   letter-spacing: -0.03em;
-  margin: 0.2rem 0 1.15rem;
+  margin: 0.2rem 0 1rem;
   font-weight: 700;
+  overflow-wrap: break-word;
 }
 h2 {
-  font-size: 1.32rem;
+  font-size: clamp(1.18rem, 3.2vw, 1.35rem);
   letter-spacing: -0.02em;
-  margin: 2.25rem 0 0.75rem;
+  margin: 1.85rem 0 0.65rem;
   padding-bottom: 0.35rem;
   border-bottom: 1px solid var(--rule);
   font-weight: 650;
+  overflow-wrap: break-word;
 }
 h3 {
-  font-size: 1.06rem;
+  font-size: 1.04rem;
   letter-spacing: -0.01em;
-  margin: 1.6rem 0 0.5rem;
+  margin: 1.45rem 0 0.45rem;
   font-weight: 600;
 }
 a {
@@ -548,40 +664,49 @@ a:hover {
 }
 p, li {
   max-width: 48rem;
+  overflow-wrap: break-word;
+}
+ul, ol {
+  padding-left: 1.35rem;
 }
 code {
   background: var(--surface-alt);
   border: 1px solid var(--rule);
   border-radius: 3px;
-  padding: 0.1rem 0.32rem;
-  font-size: 0.85em;
+  padding: 0.1rem 0.3rem;
+  font-size: 0.84em;
   font-family: var(--font-mono);
+  overflow-wrap: break-word;
 }
 pre {
   background: var(--code);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  padding: 0.9rem 1.1rem;
-  overflow: auto;
+  padding: 0.75rem 0.9rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  width: 100%;
   max-width: 54rem;
-  margin: 1rem 0;
+  margin: 0.9rem 0;
   position: relative;
 }
 pre code {
   background: none;
   border: 0;
   padding: 0;
-  font-size: 0.82rem;
-  line-height: 1.6;
+  font-size: 0.78rem;
+  line-height: 1.58;
+  overflow-wrap: normal;
+  word-break: normal;
 }
 pre.mermaid {
   text-align: center;
-  padding: 1.25rem;
+  padding: 1rem;
   background: var(--surface);
 }
 blockquote {
-  margin: 1.1rem 0;
-  padding: 0.65rem 1rem;
+  margin: 1rem 0;
+  padding: 0.65rem 0.9rem;
   background: var(--surface);
   border: 1px solid var(--rule);
   border-left: 3px solid var(--accent-blue);
@@ -589,44 +714,51 @@ blockquote {
   color: var(--dim);
 }
 blockquote p { margin: 0.25rem 0; }
+
+/* Mobile-First Scrollable Tables */
 table {
-  border-collapse: collapse;
-  margin: 1.2rem 0;
-  font-size: 0.88rem;
+  display: block;
   width: 100%;
   max-width: 54rem;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-collapse: collapse;
+  margin: 1.1rem 0;
+  font-size: 0.82rem;
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  overflow: hidden;
 }
 th, td {
   border: 1px solid var(--rule);
-  padding: 0.5rem 0.75rem;
+  padding: 0.48rem 0.65rem;
   text-align: left;
   vertical-align: top;
 }
 th {
   background: var(--surface-alt);
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--dim);
   font-weight: 700;
+  white-space: nowrap;
 }
 hr {
   border: 0;
   border-top: 1px solid var(--rule);
-  margin: 2rem 0;
+  margin: 1.75rem 0;
 }
 .repo { color: var(--dim); }
 .repo code { font-size: 0.82em; }
 .lede {
   color: var(--dim);
-  font-size: 1.02rem;
-  line-height: 1.65;
+  font-size: 0.98rem;
+  line-height: 1.62;
 }
+
+/* API Surface Lock List (Contained Horizontal Scroll on Mobile) */
 .sym {
   list-style: none;
   padding: 0;
@@ -635,29 +767,34 @@ hr {
   border-radius: 6px;
   background: var(--surface);
   overflow: hidden;
+  width: 100%;
 }
 .sym li {
   margin: 0;
-  padding: 0.42rem 0.85rem;
+  padding: 0.42rem 0.75rem;
   border-bottom: 1px solid var(--rule);
-  max-width: none;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  white-space: nowrap;
 }
 .sym li:last-child { border-bottom: 0; }
 .sym .m {
-  padding-left: 2rem;
+  padding-left: 1.5rem;
   background: var(--code);
 }
 .sym code {
   background: none;
   border: 0;
   padding: 0;
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  white-space: nowrap;
 }
 .api-filter-bar {
   display: flex;
   align-items: center;
   gap: 0.75rem;
-  margin: 1rem 0 1.5rem;
+  margin: 0.9rem 0 1.35rem;
 }
 .api-filter-input {
   width: 100%;
@@ -665,7 +802,7 @@ hr {
   background: var(--code);
   border: 1px solid var(--rule);
   border-radius: 4px;
-  padding: 0.5rem 0.85rem;
+  padding: 0.5rem 0.8rem;
   color: var(--ink);
   font: 0.84rem var(--font-mono);
 }
@@ -673,135 +810,146 @@ hr {
   outline: none;
   border-color: var(--accent-blue);
 }
+
 footer {
   color: var(--dim);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   border-top: 1px solid var(--rule);
-  padding: 1.5rem 0;
-  margin-top: 3.5rem;
+  padding: 1.35rem 0;
+  margin-top: 3rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 0.75rem;
+  gap: 0.65rem;
 }
 footer .footer-brand {
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
   font-family: var(--font-mono);
-  font-size: 0.78rem;
+  font-size: 0.75rem;
 }
 
-/* Landing Page (Tako Kamon & Dual-Theme Engineering Layout) */
+/* ============================================================================
+   5. LANDING PAGE: MOBILE-FIRST HERO, CODE SYNTHESIS & CARDS (320px+)
+   ============================================================================ */
 .memo-container {
   max-width: 74rem;
   margin: 0 auto;
   width: 100%;
+  min-width: 0;
 }
 .memo-section-header {
   font-family: var(--font-mono);
-  font-size: 0.76rem;
+  font-size: 0.72rem;
   font-weight: 700;
   text-transform: uppercase;
   color: var(--dim);
   letter-spacing: 0.07em;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.55rem;
   display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.45rem;
 }
 .memo-hero {
-  padding: 2.75rem 0 3rem;
+  padding: 1.25rem 0 1.85rem;
   border-bottom: 1px solid var(--rule);
 }
 .hero-split-grid {
   display: grid;
-  grid-template-columns: 1.08fr 0.92fr;
-  gap: 2.25rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1.35rem;
   align-items: start;
+}
+.hero-left, .hero-right {
+  min-width: 0;
+  width: 100%;
 }
 .hero-eyebrow-row {
   display: flex;
   align-items: center;
-  gap: 0.6rem;
+  gap: 0.45rem;
   flex-wrap: wrap;
-  margin-bottom: 1rem;
+  margin-bottom: 0.75rem;
 }
 .eyebrow-badge {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
+  gap: 0.4rem;
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
-  padding: 0.25rem 0.6rem;
+  letter-spacing: 0.05em;
+  padding: 0.22rem 0.5rem;
   border-radius: 4px;
   background: var(--surface);
   border: 1px solid var(--rule);
   color: var(--dim);
 }
 .eyebrow-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent-emerald);
+  flex-shrink: 0;
 }
 .handwritten-sticker {
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 700;
   color: var(--primary);
   background: var(--primary-bg);
   border: 1px solid var(--primary-border);
-  padding: 0.22rem 0.6rem;
+  padding: 0.2rem 0.5rem;
   border-radius: 4px;
   white-space: nowrap;
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
 }
 .memo-hero-title {
-  font-size: clamp(2.1rem, 4.5vw, 3.1rem);
+  font-size: clamp(1.85rem, 6vw, 3.1rem);
   font-weight: 800;
   letter-spacing: -0.04em;
   line-height: 1.12;
-  margin: 0 0 1.1rem;
+  margin: 0 0 0.85rem;
 }
 .flat-vermilion {
   color: var(--primary);
   border-bottom: 2px solid var(--primary);
 }
 .memo-hero-desc {
-  font-size: 1.02rem;
-  line-height: 1.65;
+  font-size: 0.94rem;
+  line-height: 1.58;
   color: var(--dim);
   max-width: 40rem;
-  margin: 0 0 1.5rem;
+  margin: 0 0 1.1rem;
 }
 .memo-hero-desc strong { color: var(--ink); }
 
+/* Mobile-First 2-Column Action Grid (Keeps Install + Code Card Above the Fold) */
 .memo-actions {
-  display: flex;
-  gap: 0.65rem;
-  align-items: center;
-  flex-wrap: wrap;
-  margin-bottom: 1.35rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 1rem;
 }
 .m-btn {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
-  padding: 0.62rem 1.15rem;
+  justify-content: center;
+  gap: 0.35rem;
+  padding: 0.58rem 0.75rem;
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
   font-weight: 600;
   border-radius: 4px;
   text-decoration: none !important;
   transition: all 0.12s ease;
   cursor: pointer;
   border: 1px solid transparent;
+  white-space: nowrap;
+  min-width: 0;
 }
 .m-btn-primary {
   background-color: var(--primary);
@@ -822,34 +970,40 @@ footer .footer-brand {
   border-color: var(--rule-dark);
 }
 .m-btn-link {
+  background-color: var(--surface-alt);
+  border-color: var(--rule);
   color: var(--accent-blue) !important;
   font-weight: 600;
-  padding: 0.62rem 0.4rem;
 }
-.m-btn-link:hover { text-decoration: underline !important; }
 
 .memo-install-box {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 0.75rem;
+  gap: 0.5rem;
   background-color: var(--code);
   border: 1px solid var(--rule);
-  padding: 0.55rem 0.85rem;
+  padding: 0.48rem 0.65rem;
   border-radius: 6px;
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.76rem;
+  width: 100%;
   max-width: 36rem;
-  overflow: hidden;
-  margin-bottom: 0.9rem;
+  min-width: 0;
+  margin-bottom: 0.8rem;
 }
 .terminal-bar {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
+  gap: 0.45rem;
+  min-width: 0;
+  flex: 1;
   overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
   white-space: nowrap;
 }
+.terminal-bar::-webkit-scrollbar { display: none; }
 .terminal-prompt {
   color: var(--accent-emerald);
   font-weight: 700;
@@ -860,14 +1014,15 @@ footer .footer-brand {
   border: 0 !important;
   padding: 0 !important;
   color: var(--ink) !important;
-  font-size: 0.8rem;
+  font-size: 0.75rem;
+  white-space: nowrap;
 }
 .hero-guarantees-strip {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.85rem;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.35rem 0.65rem;
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
   color: var(--dim);
 }
 .hero-guarantees-strip span strong {
@@ -880,6 +1035,8 @@ footer .footer-brand {
   border-radius: 6px;
   background: var(--code);
   overflow: hidden;
+  width: 100%;
+  min-width: 0;
 }
 .hero-synth-card .code-tabs {
   margin: 0;
@@ -888,90 +1045,101 @@ footer .footer-brand {
   max-width: none;
 }
 .hero-synth-card pre {
-  padding: 0.85rem 1rem;
-  font-size: 0.78rem;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.76rem;
 }
 .synth-drawer {
   border-top: 1px solid var(--rule);
   background: var(--surface);
-  padding: 0.75rem 0.95rem;
+  padding: 0.65rem 0.75rem;
   font-family: var(--font-mono);
-  font-size: 0.74rem;
+  font-size: 0.72rem;
 }
 .synth-drawer-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 0.4rem;
   color: var(--tertiary);
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.45rem;
 }
 .synth-drawer-header .status {
   color: var(--accent-emerald);
+  flex-shrink: 0;
+}
+.synth-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
 }
 .synth-row {
   display: flex;
-  align-items: baseline;
-  gap: 0.55rem;
-  padding: 0.32rem 0.55rem;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.55rem;
   border: 1px solid var(--rule);
   border-radius: 4px;
   background: var(--code);
-  margin-top: 0.35rem;
-  line-height: 1.45;
+  line-height: 1.4;
+  min-width: 0;
 }
 .synth-row .lbl-local {
   color: var(--accent-emerald);
   font-weight: 700;
-  flex-shrink: 0;
+  font-size: 0.68rem;
 }
 .synth-row .lbl-cloud {
   color: var(--accent-blue);
   font-weight: 700;
-  flex-shrink: 0;
+  font-size: 0.68rem;
 }
 .synth-row .val {
   color: var(--dim);
+  font-size: 0.7rem;
+  overflow-wrap: break-word;
 }
 
 .memo-section {
-  padding: 2.75rem 0;
+  padding: 2rem 0;
   border-bottom: 1px solid var(--rule);
 }
 .memo-section-title {
-  font-size: 1.55rem;
+  font-size: clamp(1.32rem, 4vw, 1.55rem);
   font-weight: 750;
   letter-spacing: -0.03em;
   color: var(--ink);
-  margin: 0 0 0.4rem;
+  margin: 0 0 0.35rem;
   border: none !important;
   padding: 0 !important;
 }
 .memo-section-sub {
   color: var(--dim);
-  font-size: 0.94rem;
+  font-size: 0.9rem;
   max-width: 46rem;
-  margin: 0 0 1.6rem;
-  line-height: 1.6;
+  margin: 0 0 1.25rem;
+  line-height: 1.58;
 }
 
+/* Mobile-First 1-Column Primitive Card Grid */
 .memo-project-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
-  gap: 1rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.85rem;
 }
 .memo-card {
   background-color: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  padding: 1.25rem;
+  padding: 1.05rem;
   text-decoration: none !important;
   color: inherit !important;
   display: flex;
   flex-direction: column;
+  min-width: 0;
   transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 .memo-card:hover {
@@ -988,23 +1156,23 @@ footer .footer-brand {
 .card-top {
   display: flex;
   align-items: center;
-  gap: 0.55rem;
-  margin-bottom: 0.7rem;
+  gap: 0.45rem;
+  margin-bottom: 0.55rem;
 }
 .card-id {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   color: var(--tertiary);
   border: 1px solid var(--rule);
   background: var(--code);
-  padding: 0.12rem 0.4rem;
+  padding: 0.1rem 0.38rem;
   border-radius: 3px;
 }
 .badge {
   display: inline-block;
-  padding: 0.16rem 0.48rem;
-  font-size: 0.68rem;
+  padding: 0.14rem 0.44rem;
+  font-size: 0.66rem;
   font-family: var(--font-mono);
   font-weight: 700;
   letter-spacing: 0.04em;
@@ -1020,12 +1188,12 @@ footer .footer-brand {
 .card-status {
   margin-left: auto;
   font-family: var(--font-mono);
-  font-size: 0.66rem;
+  font-size: 0.64rem;
   color: var(--tertiary);
 }
 .card-title {
-  margin: 0 0 0.4rem !important;
-  font-size: 1.1rem !important;
+  margin: 0 0 0.35rem !important;
+  font-size: 1.05rem !important;
   font-weight: 700;
   border: none !important;
   padding: 0 !important;
@@ -1039,21 +1207,21 @@ footer .footer-brand {
 }
 .card-desc {
   color: var(--dim);
-  font-size: 0.85rem;
+  font-size: 0.84rem;
   line-height: 1.55;
   flex: 1;
-  margin: 0 0 1rem;
+  margin: 0 0 0.85rem;
 }
 .card-tags {
   display: flex;
-  gap: 0.35rem;
+  gap: 0.3rem;
   flex-wrap: wrap;
-  margin-bottom: 0.85rem;
+  margin-bottom: 0.75rem;
 }
 .tag {
   display: inline-block;
-  padding: 0.14rem 0.42rem;
-  font-size: 0.7rem;
+  padding: 0.12rem 0.38rem;
+  font-size: 0.68rem;
   background-color: var(--code);
   color: var(--dim);
   border: 1px solid var(--rule);
@@ -1061,30 +1229,42 @@ footer .footer-brand {
   border-radius: 3px;
 }
 .card-footer-meta {
-  display: flex;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem;
   border-top: 1px solid var(--rule);
-  padding-top: 0.65rem;
+  padding-top: 0.55rem;
   font-family: var(--font-mono);
-  font-size: 0.7rem;
+  font-size: 0.68rem;
   color: var(--tertiary);
+}
+.card-footer-meta span {
+  background: var(--code);
+  border: 1px solid var(--rule);
+  border-radius: 3px;
+  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .card-footer-meta span:first-child { color: var(--accent-emerald); }
 .card-footer-meta span:last-child { color: var(--accent-blue); }
 
+/* Mobile-First Two Stories & Compact 3-Col Stat Row */
 .two-stories-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 1.15rem;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0.9rem;
 }
 .story-panel {
   border-radius: 6px;
-  padding: 1.5rem;
+  padding: 1.15rem;
   text-decoration: none !important;
   color: inherit !important;
   display: flex;
   flex-direction: column;
   border: 1px solid var(--rule);
+  min-width: 0;
   transition: border-color 0.12s ease;
 }
 .local-panel {
@@ -1103,62 +1283,69 @@ footer .footer-brand {
 .panel-header {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  margin-bottom: 0.65rem;
+  gap: 0.45rem;
+  margin-bottom: 0.5rem;
 }
-.pill-dot { width: 8px; height: 8px; border-radius: 50%; }
+.pill-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot-emerald { background-color: var(--accent-emerald); }
 .dot-blue { background-color: var(--accent-blue); }
 .panel-tag {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.7rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--dim);
 }
 .story-panel h3 {
-  font-size: 1.25rem;
+  font-size: 1.15rem;
   font-weight: 700;
-  margin: 0 0 0.6rem;
+  margin: 0 0 0.5rem;
   border: none !important;
   padding: 0 !important;
   color: var(--ink);
 }
 .story-panel p {
   color: var(--dim);
-  font-size: 0.88rem;
-  line-height: 1.6;
+  font-size: 0.85rem;
+  line-height: 1.58;
   flex: 1;
-  margin: 0 0 1.15rem;
+  margin: 0 0 0.95rem;
 }
 .panel-stat-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 0.65rem;
-  margin-bottom: 1rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.4rem;
+  margin-bottom: 0.85rem;
 }
 .p-stat {
   font-family: var(--font-mono);
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   color: var(--dim);
   background: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 4px;
-  padding: 0.5rem 0.65rem;
+  padding: 0.4rem 0.45rem;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .p-stat strong {
   display: block;
   color: var(--ink);
-  font-size: 0.92rem;
-  margin-bottom: 0.1rem;
+  font-size: 0.82rem;
+  margin-bottom: 0.08rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .panel-link {
   font-family: var(--font-mono);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   font-weight: 600;
   color: var(--accent-blue);
 }
 
+/* Mobile-First Worked Examples List */
 .tutorial-list {
   display: flex;
   flex-direction: column;
@@ -1168,12 +1355,13 @@ footer .footer-brand {
   background-color: var(--surface);
   border: 1px solid var(--rule);
   border-radius: 6px;
-  padding: 0.85rem 1.1rem;
+  padding: 0.8rem 0.9rem;
   display: flex;
-  align-items: center;
-  gap: 1rem;
+  align-items: flex-start;
+  gap: 0.75rem;
   text-decoration: none !important;
   color: inherit !important;
+  min-width: 0;
   transition: border-color 0.12s ease, background-color 0.12s ease;
 }
 .tutorial-item:hover {
@@ -1182,114 +1370,273 @@ footer .footer-brand {
 }
 .t-num {
   font-family: var(--font-mono);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
   font-weight: 700;
   color: var(--primary);
   background: var(--primary-bg);
   border: 1px solid var(--primary-border);
-  width: 2rem;
-  height: 2rem;
+  width: 1.85rem;
+  height: 1.85rem;
   border-radius: 4px;
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
+  margin-top: 0.1rem;
 }
 .t-body { flex: 1; min-width: 0; }
 .t-title {
   font-family: var(--font-mono);
   font-weight: 650;
-  font-size: 0.9rem;
+  font-size: 0.86rem;
   color: var(--ink);
-  margin-bottom: 0.15rem;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  margin-bottom: 0.2rem;
+  line-height: 1.35;
 }
 .t-desc {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: var(--dim);
   line-height: 1.45;
 }
-.t-tags { display: flex; gap: 0.35rem; flex-shrink: 0; }
+.t-tags {
+  display: none;
+}
 
-/* Responsive Reflow */
-@media (max-width: 1180px) {
-  aside.toc { display: none !important; }
+/* ============================================================================
+   6. PROGRESSIVE ENHANCEMENT BREAKPOINTS (min-width: 640px / 900px / 1180px)
+   ============================================================================ */
+
+/* Tablet Small (640px+): 2-Column Grids, Inline CTA Row, Normal Tables */
+@media (min-width: 640px) {
+  .layout { padding: 0 1.25rem; }
+  .mobile-doc-bar { margin: 0 -1.25rem; padding: 0.5rem 1.25rem; }
+  .memo-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin-bottom: 1.25rem;
+  }
+  .m-btn { padding: 0.6rem 1.1rem; font-size: 0.8rem; }
+  .m-btn-link { background: transparent; border-color: transparent; padding: 0.6rem 0.4rem; }
+  .hero-guarantees-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.85rem;
+  }
+  .memo-project-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .two-stories-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.1rem;
+  }
+  .tutorial-item {
+    align-items: center;
+    padding: 0.85rem 1.1rem;
+  }
+  .t-tags {
+    display: flex;
+    gap: 0.35rem;
+    flex-shrink: 0;
+  }
+  table { display: table; font-size: 0.86rem; }
 }
-@media (max-width: 960px) {
-  .hero-split-grid { grid-template-columns: 1fr; gap: 1.5rem; }
-}
-@media (max-width: 768px) {
-  .layout { flex-direction: column !important; padding: 0 1rem !important; gap: 0.75rem !important; }
-  .layout.layout-home nav.side { display: none !important; }
-  main { padding: 1rem 0 3.5rem !important; width: 100% !important; max-width: 100% !important; }
+
+/* Desktop & Landscape Tablet (900px+): Single-Row Header, Sticky Left Sidebar, Split Hero */
+@media (min-width: 900px) {
   header.top-nav {
-    padding: 0 0.85rem !important;
-    gap: 0.55rem !important;
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    scrollbar-width: none !important;
-    white-space: nowrap !important;
+    flex-direction: row;
+    align-items: center;
+    height: 3.5rem;
+    padding: 0 1.5rem;
+    gap: 1.25rem;
   }
-  header.top-nav::-webkit-scrollbar { display: none; }
-  header .brand-docs-sub { display: none; }
-  header .nav-links a { padding: 0 0.5rem; font-size: 0.78rem; }
-  header .github-link span { display: none; }
-  header .github-link { padding: 0.28rem 0.45rem; }
-  .memo-hero { padding: 1.5rem 0 2rem; }
-  .memo-hero-title { font-size: 2rem; line-height: 1.16; }
-  .memo-hero-desc { font-size: 0.95rem; line-height: 1.55; }
-  .memo-actions { flex-direction: column; width: 100%; gap: 0.55rem; }
-  .m-btn { width: 100%; justify-content: center; padding: 0.75rem 1rem; }
-  .memo-install-box { width: 100%; max-width: 100%; font-size: 0.75rem; padding: 0.5rem 0.65rem; }
-  .memo-install-box code { font-size: 0.74rem; }
-  .synth-row { flex-direction: column; gap: 0.2rem; }
-  .memo-project-grid { grid-template-columns: 1fr; }
-  .two-stories-grid { grid-template-columns: 1fr; }
-  .panel-stat-row { grid-template-columns: 1fr; gap: 0.45rem; }
-  .tutorial-item { flex-direction: column; align-items: flex-start; gap: 0.55rem; padding: 0.9rem; }
-  .t-title { white-space: normal; }
-  .t-tags { flex-wrap: wrap; }
+  .header-top-row {
+    display: contents;
+  }
+  header .brand-link {
+    order: 0;
+    font-size: 1.08rem;
+    gap: 0.55rem;
+  }
+  header .brand-kamon { width: 28px; height: 28px; }
+  header .brand-docs-sub { display: inline; }
+  header .nav-links {
+    order: 1;
+    display: flex;
+    align-items: center;
+    width: auto;
+    height: 100%;
+    background: transparent;
+    gap: 0.25rem;
+    margin-left: 0.25rem;
+  }
+  header .nav-links a {
+    padding: 0 0.7rem;
+    font-size: 0.82rem;
+    border-right: 0;
+    background: transparent !important;
+  }
+  header .header-right {
+    order: 2;
+    margin-left: auto;
+    gap: 0.55rem;
+  }
+  .header-theme-btn .theme-lbl { display: inline; }
+  header .github-link { padding: 0.28rem 0.6rem; }
+  header .github-link .github-lbl { display: inline; }
 
-  nav.side {
-    width: 100% !important;
-    position: sticky !important;
-    top: 3.5rem !important;
-    background: var(--bg) !important;
-    z-index: 40 !important;
-    display: flex !important;
-    overflow-x: auto !important;
-    -webkit-overflow-scrolling: touch !important;
-    gap: 0.4rem !important;
-    padding: 0.55rem 0 !important;
-    border-right: 0 !important;
-    border-bottom: 1px solid var(--rule) !important;
-    scrollbar-width: none !important;
-    white-space: nowrap !important;
+  .mobile-doc-bar { display: none !important; }
+  .side-drawer-header { display: none !important; }
+
+  .layout {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 2.25rem;
+    padding: 0 1.5rem;
   }
-  nav.side::-webkit-scrollbar { display: none; }
+  nav.side {
+    display: block !important;
+    width: 15.5rem;
+    flex: none;
+    position: sticky;
+    top: 3.5rem;
+    margin: 0;
+    padding: 1.5rem 0.75rem 2.5rem 0;
+    max-height: calc(100vh - 3.5rem);
+    overflow-y: auto;
+    background: transparent;
+    border: 0;
+    border-right: 1px solid var(--rule);
+    border-radius: 0;
+  }
+  .side-nav-grid {
+    display: block;
+  }
+  nav.side .group {
+    margin: 1.15rem 0 0.35rem;
+    padding: 0 0.65rem;
+    color: var(--tertiary);
+    border-bottom: 0;
+  }
+  nav.side .group:first-child { margin-top: 0.2rem; }
   nav.side a {
-    display: inline-flex !important;
-    align-items: center !important;
-    padding: 0.3rem 0.7rem !important;
-    margin: 0 !important;
-    background-color: var(--surface) !important;
-    border: 1px solid var(--rule) !important;
-    border-radius: 4px !important;
-    font-size: 0.78rem !important;
-    flex-shrink: 0 !important;
+    display: block;
+    padding: 0.28rem 0.65rem;
+    margin: 1px 0;
+    font-size: 0.81rem;
+    background: transparent;
+    border: 0;
+    border-left: 2px solid transparent;
+    border-radius: 0 4px 4px 0;
+  }
+  nav.side a:hover {
+    color: var(--ink);
+    background: var(--surface-hover);
   }
   nav.side a.on {
-    background-color: var(--primary) !important;
-    color: #ffffff !important;
-    border-color: var(--primary) !important;
+    color: var(--primary);
+    background: var(--primary-bg);
+    border-left-color: var(--primary);
   }
-  nav.side .group { display: none !important; }
-  h1 { font-size: 1.55rem !important; }
-  h2 { font-size: 1.2rem !important; margin: 1.75rem 0 0.6rem !important; }
-  pre { max-width: 100% !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; padding: 0.75rem !important; font-size: 0.78rem !important; }
-  table { display: block !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch !important; max-width: 100% !important; font-size: 0.8rem !important; }
+
+  main {
+    padding: 1.75rem 0 5rem;
+    max-width: 52rem;
+  }
+  .layout.layout-home main {
+    max-width: none;
+    padding-top: 0;
+  }
+
+  .memo-hero { padding: 2.6rem 0 2.9rem; }
+  .hero-split-grid {
+    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
+    gap: 2.25rem;
+  }
+  .memo-section { padding: 2.65rem 0; }
+}
+
+/* Wide Desktop (1024px+): 3-Column Primitive Card Grid */
+@media (min-width: 1024px) {
+  .memo-project-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Full 3-Column Documentation Chassis (1180px+): Sticky Right-Rail TOC */
+@media (min-width: 1180px) {
+  aside.toc {
+    display: block;
+    width: 14rem;
+    flex: none;
+    position: sticky;
+    top: 3.5rem;
+    padding: 1.75rem 0 2rem 1.25rem;
+    max-height: calc(100vh - 3.5rem);
+    overflow-y: auto;
+    border-left: 1px solid var(--rule);
+    font-size: 0.8rem;
+  }
+  aside.toc .toc-header {
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--tertiary);
+    margin-bottom: 0.6rem;
+  }
+  aside.toc .toc-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 1.5rem;
+  }
+  aside.toc .toc-list li { margin: 0.15rem 0; }
+  aside.toc .toc-list a {
+    display: block;
+    padding: 0.2rem 0 0.2rem 0.65rem;
+    color: var(--dim);
+    text-decoration: none;
+    border-left: 2px solid transparent;
+    font-size: 0.78rem;
+    line-height: 1.4;
+    transition: all 0.12s ease;
+  }
+  aside.toc .toc-list a.toc-h3 {
+    padding-left: 1.25rem;
+    font-size: 0.74rem;
+  }
+  aside.toc .toc-list a:hover {
+    color: var(--ink);
+    text-decoration: none;
+  }
+  aside.toc .toc-list a.active {
+    color: var(--primary);
+    border-left-color: var(--primary);
+    font-weight: 600;
+  }
+  aside.toc .toc-tools {
+    border-top: 1px solid var(--rule);
+    padding-top: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+  aside.toc .toc-tool-link {
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    color: var(--dim);
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  aside.toc .toc-tool-link:hover {
+    color: var(--ink);
+    text-decoration: none;
+  }
 }
 `
 
@@ -1312,44 +1659,72 @@ var tmpl = template.Must(template.New("docs").Parse(`
 </script>
 <style>{{.Style}}</style></head><body>
 <header class="top-nav">
-  <a href="/" class="brand-link" title="tako docs — Polyglot Cloud Framework (蛸)">
-    <svg class="brand-kamon" viewBox="0 0 160 160" fill="none" aria-hidden="true">
-      <circle cx="80" cy="80" r="74" stroke="var(--primary)" stroke-width="5"/>
-      <circle cx="80" cy="80" r="65" stroke="var(--primary)" stroke-width="2" stroke-dasharray="5 5" opacity="0.65"/>
-      <path fill-rule="evenodd" clip-rule="evenodd" d="M58 72 C58 50, 102 50, 102 72 C102 85, 92 90, 80 90 C68 90, 58 85, 58 72 Z M69 65 A4.5 4.5 0 1 0 69 74 A4.5 4.5 0 1 0 69 65 Z M91 65 A4.5 4.5 0 1 0 91 74 A4.5 4.5 0 1 0 91 65 Z" fill="var(--primary)"/>
-      <path d="M60 64 L42 46 L28 46 M100 64 L118 46 L132 46 M57 77 L38 77 L24 90 M103 77 L122 77 L136 90 M72 90 L66 110 L45 124 M88 90 L94 110 L115 124 M77 90 L74 124 L65 136 M83 90 L86 124 L95 136" stroke="var(--primary)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <circle cx="28" cy="46" r="5" fill="var(--primary)"/><circle cx="132" cy="46" r="5" fill="var(--primary)"/>
-      <circle cx="24" cy="90" r="5" fill="var(--primary)"/><circle cx="136" cy="90" r="5" fill="var(--primary)"/>
-      <circle cx="45" cy="124" r="5" fill="var(--primary)"/><circle cx="115" cy="124" r="5" fill="var(--primary)"/>
-      <circle cx="65" cy="136" r="5" fill="var(--primary)"/><circle cx="95" cy="136" r="5" fill="var(--primary)"/>
-    </svg>
-    <span class="brand">tako</span>
-    <span class="hanko-stamp" title="Tako (蛸) — Octopus in Japanese">蛸</span>
-    <span class="brand-docs-sub">tako docs</span>
-  </a>
+  <div class="header-top-row">
+    <a href="/" class="brand-link" title="tako docs — Polyglot Cloud Framework (蛸)">
+      <svg class="brand-kamon" viewBox="0 0 160 160" fill="none" aria-hidden="true">
+        <circle cx="80" cy="80" r="74" stroke="var(--primary)" stroke-width="5"/>
+        <circle cx="80" cy="80" r="65" stroke="var(--primary)" stroke-width="2" stroke-dasharray="5 5" opacity="0.65"/>
+        <path fill-rule="evenodd" clip-rule="evenodd" d="M58 72 C58 50, 102 50, 102 72 C102 85, 92 90, 80 90 C68 90, 58 85, 58 72 Z M69 65 A4.5 4.5 0 1 0 69 74 A4.5 4.5 0 1 0 69 65 Z M91 65 A4.5 4.5 0 1 0 91 74 A4.5 4.5 0 1 0 91 65 Z" fill="var(--primary)"/>
+        <path d="M60 64 L42 46 L28 46 M100 64 L118 46 L132 46 M57 77 L38 77 L24 90 M103 77 L122 77 L136 90 M72 90 L66 110 L45 124 M88 90 L94 110 L115 124 M77 90 L74 124 L65 136 M83 90 L86 124 L95 136" stroke="var(--primary)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="28" cy="46" r="5" fill="var(--primary)"/><circle cx="132" cy="46" r="5" fill="var(--primary)"/>
+        <circle cx="24" cy="90" r="5" fill="var(--primary)"/><circle cx="136" cy="90" r="5" fill="var(--primary)"/>
+        <circle cx="45" cy="124" r="5" fill="var(--primary)"/><circle cx="115" cy="124" r="5" fill="var(--primary)"/>
+        <circle cx="65" cy="136" r="5" fill="var(--primary)"/><circle cx="95" cy="136" r="5" fill="var(--primary)"/>
+      </svg>
+      <span class="brand">tako</span>
+      <span class="hanko-stamp" title="Tako (蛸) — Octopus in Japanese">蛸</span>
+      <span class="brand-docs-sub">tako docs</span>
+    </a>
+    <div class="header-right">
+      <div class="header-lang-switch" role="tablist" aria-label="Preferred code language" title="Switch all code examples between Go and cfire">
+        <button type="button" class="header-lang-btn on" data-lang="go" role="tab" aria-selected="true">Go</button>
+        <button type="button" class="header-lang-btn" data-lang="cfire" role="tab" aria-selected="false">cfire</button>
+      </div>
+      <div class="header-theme-switch" role="group" aria-label="Color theme" title="Toggle between Technical Paper Light and Obsidian Dark theme">
+        <button type="button" class="header-theme-btn" data-theme-btn="light" aria-label="Light theme">☀<span class="theme-lbl"> Light</span></button>
+        <button type="button" class="header-theme-btn on" data-theme-btn="dark" aria-label="Dark theme">☾<span class="theme-lbl"> Dark</span></button>
+      </div>
+      <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub Repository">
+        <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        <span class="github-lbl">GitHub</span>
+      </a>
+    </div>
+  </div>
   <nav class="nav-links" aria-label="Primary sections">
     <a href="/guide/"{{if eq .Section "guide"}} class="on"{{end}}>guide</a>
     <a href="/reference/"{{if eq .Section "reference"}} class="on"{{end}}>reference</a>
     <a href="/api"{{if eq .Section "api"}} class="on"{{end}}>api</a>
     <a href="/llms.txt">llms.txt</a>
   </nav>
-  <div class="header-right">
-    <div class="header-lang-switch" role="tablist" aria-label="Preferred code language" title="Switch all code examples between Go and cfire">
-      <button type="button" class="header-lang-btn on" data-lang="go" role="tab" aria-selected="true">Go</button>
-      <button type="button" class="header-lang-btn" data-lang="cfire" role="tab" aria-selected="false">cfire</button>
-    </div>
-    <div class="header-theme-switch" role="group" aria-label="Color theme" title="Toggle between Technical Paper Light and Obsidian Dark theme">
-      <button type="button" class="header-theme-btn" data-theme-btn="light" aria-label="Light theme">☀ Light</button>
-      <button type="button" class="header-theme-btn on" data-theme-btn="dark" aria-label="Dark theme">☾ Dark</button>
-    </div>
-    <a href="https://github.com/gsandoval/tako" target="_blank" rel="noopener noreferrer" class="github-link" title="GitHub Repository">
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      <span>GitHub</span>
-    </a>
-  </div>
 </header>
 <div class="layout{{if eq .Section ""}} layout-home{{end}}">
-<nav class="side" aria-label="Section navigation">{{range .Nav}}{{if .Group}}<div class="group">{{.Title}}</div>{{else}}<a href="{{.Route}}"{{if .On}} class="on"{{end}}>{{.Title}}</a>{{end}}{{end}}</nav>
+{{if ne .Section ""}}
+<div class="mobile-doc-bar">
+  <button type="button" class="mobile-nav-toggle" id="mobile-nav-toggle" aria-expanded="false" aria-controls="doc-side-nav">
+    <span class="mobile-nav-icon">☰</span>
+    <span class="mobile-nav-label"><span class="mobile-nav-sec">{{.Section}}:</span> {{if .Name}}{{.Name}}{{else if .Title}}{{.Title}}{{else}}overview{{end}}</span>
+    <span class="mobile-nav-caret">▾</span>
+  </button>
+  {{if .TOC}}
+  <select class="mobile-toc-select" id="mobile-toc-select" aria-label="Jump to section on this page">
+    <option value="">On this page ▾</option>
+    {{range .TOC}}<option value="#{{.ID}}">{{if eq .Level 3}}↳ {{end}}{{.Title}}</option>{{end}}
+  </select>
+  {{else if eq .Section "api"}}
+  <select class="mobile-toc-select" id="mobile-toc-select" aria-label="Jump to API group">
+    <option value="">Jump to group ▾</option>
+    {{range .Groups}}<option value="#{{.Anchor}}">{{.Section}}</option>{{end}}
+  </select>
+  {{end}}
+</div>
+{{end}}
+<nav class="side" id="doc-side-nav" aria-label="Section navigation">
+  <div class="side-drawer-header">
+    <span>MODULE &amp; TOPIC INDEX ({{.Section}})</span>
+    <button type="button" class="side-drawer-close" id="side-drawer-close" aria-label="Close navigation drawer">✕</button>
+  </div>
+  <div class="side-nav-grid">{{range .Nav}}{{if .Group}}<div class="group">{{.Title}}</div>{{else}}<a href="{{.Route}}"{{if .On}} class="on"{{end}}>{{.Title}}</a>{{end}}{{end}}</div>
+</nav>
 <main>{{end}}
 
 {{define "foot"}}<footer>
@@ -1430,7 +1805,43 @@ try {
 } catch (_) {}
 setDocLang(initialLang, null);
 
+// Mobile Collapsible Topic Drawer & On-This-Page Jumper
+const navToggle = document.getElementById('mobile-nav-toggle');
+const sideNav = document.getElementById('doc-side-nav');
+const drawerClose = document.getElementById('side-drawer-close');
+const tocSelect = document.getElementById('mobile-toc-select');
+
+function setDrawerOpen(open) {
+  if (!navToggle || !sideNav) return;
+  sideNav.classList.toggle('is-open', open);
+  navToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+if (navToggle && sideNav) {
+  navToggle.addEventListener('click', () => {
+    setDrawerOpen(!sideNav.classList.contains('is-open'));
+  });
+}
+if (drawerClose) {
+  drawerClose.addEventListener('click', () => setDrawerOpen(false));
+}
+if (tocSelect) {
+  tocSelect.addEventListener('change', () => {
+    if (tocSelect.value) {
+      window.location.hash = tocSelect.value;
+      tocSelect.selectedIndex = 0;
+    }
+  });
+}
+
 document.addEventListener('click', async (e) => {
+  if (sideNav && sideNav.classList.contains('is-open')) {
+    if (e.target.closest('nav.side a')) {
+      setDrawerOpen(false);
+    } else if (!e.target.closest('nav.side') && !e.target.closest('#mobile-nav-toggle')) {
+      setDrawerOpen(false);
+    }
+  }
   const themeBtn = e.target.closest('.header-theme-btn');
   if (themeBtn) {
     setDocTheme(themeBtn.getAttribute('data-theme-btn'));
@@ -1561,10 +1972,10 @@ if (blocks.length > 0) {
 
         <div class="memo-actions">
           <a href="/guide/01-hello" class="m-btn m-btn-primary">
-            ⚡ Get Started (5 min)
+            ⚡ Get Started (5m)
           </a>
-          <a href="/guide/00-mental-model" class="m-btn m-btn-secondary">Mental Model</a>
           <a href="/reference/" class="m-btn m-btn-secondary">Explore Reference</a>
+          <a href="/guide/00-mental-model" class="m-btn m-btn-secondary">Mental Model</a>
           <a href="/guide/local" class="m-btn m-btn-link">The Local Story →</a>
         </div>
 
@@ -1632,13 +2043,15 @@ fn greet_handler(ctx: tako.Ctx, req: GreetReq) -&gt; Greeting! {
               <span>● STATIC ANALYSIS SYNTHESIS (tako check)</span>
               <span class="status">DETERMINISTIC</span>
             </div>
-            <div class="synth-row">
-              <span class="lbl-local">LOCAL:</span>
-              <span class="val">1 process · embedded bbolt (.tako/data) · in-memory channels</span>
-            </div>
-            <div class="synth-row">
-              <span class="lbl-cloud">CLOUD:</span>
-              <span class="val">Cloud Run (hello) + GCP Datastore (links) + Least-Privilege IAM</span>
+            <div class="synth-grid">
+              <div class="synth-row">
+                <span class="lbl-local">▪ LOCAL (CLI)</span>
+                <span class="val">1 process · embedded bbolt (.tako/data) · in-memory channels</span>
+              </div>
+              <div class="synth-row">
+                <span class="lbl-cloud">▪ CLOUD TARGET</span>
+                <span class="val">Cloud Run (hello) + GCP Datastore (links) + Least-Privilege IAM</span>
+              </div>
             </div>
           </div>
         </div>
@@ -1920,7 +2333,7 @@ fn greet_handler(ctx: tako.Ctx, req: GreetReq) -&gt; Greeting! {
         <div class="panel-stat-row">
           <div class="p-stat"><strong>1</strong>single process</div>
           <div class="p-stat"><strong>0</strong>emulators needed</div>
-          <div class="p-stat"><strong>.tako/data</strong>one-command reset</div>
+          <div class="p-stat"><strong>.tako/data</strong>one-cmd reset</div>
         </div>
         <span class="panel-link">Read the local story →</span>
       </a>
