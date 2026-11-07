@@ -95,16 +95,21 @@ func parseDataTarget(cmd, writes, local string, raw []string) (accountsTarget, [
 	var rest []string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--project", "--env":
+		case "--project", "--env", "-C", "--dir":
 			flag := args[i]
 			if i+1 >= len(args) {
 				return t, nil, fmt.Errorf("%s needs a value", flag)
 			}
 			i++
-			if flag == "--project" {
+			switch flag {
+			case "--project":
 				t.project = args[i]
-			} else {
+			case "--env":
 				t.env, envGiven = args[i], true
+			case "-C", "--dir":
+				if err := os.Chdir(args[i]); err != nil {
+					return t, nil, err
+				}
 			}
 		default:
 			rest = append(rest, args[i])

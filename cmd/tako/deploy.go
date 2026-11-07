@@ -55,7 +55,7 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 			t.planOnly = true
 		case "--yes":
 			t.yes = true
-		case "--project", "--region", "--env":
+		case "--project", "--region", "--env", "-C", "--dir":
 			flag := args[i]
 			if i+1 >= len(args) {
 				return t, nil, fmt.Errorf("%s needs a value", flag)
@@ -68,6 +68,10 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 				t.region = args[i]
 			case "--env":
 				t.env = args[i]
+			case "-C", "--dir":
+				if err := os.Chdir(args[i]); err != nil {
+					return t, nil, err
+				}
 			}
 		default:
 			rest = append(rest, args[i])
@@ -301,6 +305,11 @@ func runDeploy(args []string) error {
 	// idempotent and removes the ordering question entirely.
 	if hasPubSubChannel(graph) {
 		if _, err := client.EnsureServiceIdentity(ctx, gcp.MonitoringNotificationAgent); err != nil {
+			return err
+		}
+	}
+	if hasBucketSubscription(graph) {
+		if _, err := client.EnsureStorageServiceAccount(ctx); err != nil {
 			return err
 		}
 	}
@@ -613,6 +622,15 @@ func entityKinds(graph *analyzer.AppGraph) []string {
 func hasPubSubChannel(g *analyzer.AppGraph) bool {
 	for _, r := range g.Resources {
 		if r.Kind == "channel" && r.ChannelKind == "pubsub" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasBucketSubscription(g *analyzer.AppGraph) bool {
+	for _, h := range g.Handlers {
+		if h.Kind == "subscribe" && strings.HasSuffix(h.Binding, ".Uploaded") {
 			return true
 		}
 	}

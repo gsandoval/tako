@@ -47,3 +47,19 @@ func (c *Client) EnsureServiceIdentity(ctx context.Context, service string) (str
 // alert channels. Named here so the deploy and the grant derivation
 // cannot disagree about which service to provision.
 const MonitoringNotificationAgent = "monitoring.googleapis.com"
+
+// EnsureStorageServiceAccount provisions the Cloud Storage project service
+// agent (service-<projectNumber>@gs-project-accounts.iam.gserviceaccount.com)
+// by reading the project's GCS serviceAccount resource, which lazily
+// initializes the identity in a fresh project before Pub/Sub topic IAM
+// bindings reference it.
+func (c *Client) EnsureStorageServiceAccount(ctx context.Context) (string, error) {
+	url := c.url(storageHost, "/storage/v1/projects/%s/serviceAccount", c.Project)
+	var out struct {
+		EmailAddress string `json:"email_address"`
+	}
+	if err := c.do(ctx, http.MethodGet, url, nil, &out); err != nil {
+		return "", Classify(err, c.Project, "provision the Cloud Storage service agent", "roles/storage.admin")
+	}
+	return out.EmailAddress, nil
+}

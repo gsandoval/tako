@@ -284,6 +284,8 @@ func (c *Client) BillingEnabled(ctx context.Context) (enabled, known bool) {
 // consequence outlives every later decision, so the region is typed by
 // a human rather than defaulted (SC2 D4, owner 2026-08-10).
 func (c *Client) CreateDatastore(ctx context.Context, location string) error {
+	_ = c.enableAPIs(ctx, []string{firestoreHost, datastoreHost})
+	c.WaitForAPIs(ctx, []string{firestoreHost, datastoreHost}, 90*time.Second)
 	url := c.url(firestoreHost, "/v1/projects/%s/databases?databaseId=(default)", c.Project)
 	body := map[string]any{"type": "DATASTORE_MODE", "locationId": location}
 	if err := c.do(ctx, http.MethodPost, url, body, nil); err != nil {

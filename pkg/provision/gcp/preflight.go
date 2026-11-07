@@ -90,7 +90,7 @@ func Requirements(needs Needs) ([]string, []Perm) {
 	apis := append([]string{}, preflightAPIs...)
 	perms := append([]Perm{}, preflightPerms...)
 	if needs.Datastore {
-		apis = append(apis, datastoreHost)
+		apis = append(apis, datastoreHost, firestoreHost)
 		perms = append(perms, Perm{"datastore.indexes.create", "roles/datastore.indexAdmin"})
 	}
 	if needs.Scheduler {
