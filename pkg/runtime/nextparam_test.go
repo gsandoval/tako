@@ -90,10 +90,13 @@ func TestTakosOwnSignInPagesEnforceAScriptPolicy(t *testing.T) {
 	if csp == "" {
 		t.Fatal("no enforcing CSP on the one page where a reflected script reads a password")
 	}
-	for _, want := range []string{"script-src", "https://www.gstatic.com", "'nonce-", "object-src 'none'", "base-uri 'none'"} {
+	for _, want := range []string{"script-src", "https://www.gstatic.com", "https://apis.google.com", "'nonce-", "object-src 'none'", "base-uri 'none'"} {
 		if !strings.Contains(csp, want) {
 			t.Errorf("CSP %q is missing %q", csp, want)
 		}
+	}
+	if !strings.Contains(w.Body.String(), `<meta name="viewport" content="width=device-width, initial-scale=1">`) {
+		t.Error("cloud sign-in page is missing responsive viewport meta tag")
 	}
 	// The nonce is per response, or it is not a nonce.
 	first := w.Header().Get("Content-Security-Policy")
