@@ -207,6 +207,42 @@ func referenceOrder(readme string, byRoute map[string]*Page) []*Page {
 	return append(out, rest...)
 }
 
+// referenceSections groups the reference pages by the headings in
+// reference/README.md so the sidebar can render section labels while
+// preserving every page in allPages.
+func referenceSections(readme string, byRoute map[string]*Page, allPages []*Page) []RefSection {
+	var out []RefSection
+	listed := map[string]bool{}
+	if idx := byRoute["/reference/"]; idx != nil {
+		listed[idx.Route] = true
+		out = append(out, RefSection{Name: "Overview", Pages: []*Page{idx}})
+	}
+	for _, s := range sections(readme) {
+		var pages []*Page
+		for _, file := range s.Pages {
+			p := byRoute[routeFor("reference/"+file)]
+			if p != nil && !listed[p.Route] {
+				listed[p.Route] = true
+				pages = append(pages, p)
+			}
+		}
+		if len(pages) > 0 {
+			out = append(out, RefSection{Name: s.Name, Pages: pages})
+		}
+	}
+	var rest []*Page
+	for _, p := range allPages {
+		if !listed[p.Route] {
+			listed[p.Route] = true
+			rest = append(rest, p)
+		}
+	}
+	if len(rest) > 0 {
+		out = append(out, RefSection{Name: "More", Pages: rest})
+	}
+	return out
+}
+
 // group lays the symbols out the way the reference lays out its pages.
 func group(symbols []Symbol, readme string, byRoute map[string]*Page) []Group {
 	byPage := map[string][]Symbol{}

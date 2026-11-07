@@ -31,6 +31,11 @@ func TestExportGeneratesCompleteStaticSite(t *testing.T) {
 		"reference/entity.html",
 		"reference/cfire/index.html",
 		"reference/cfire.html",
+		"favicon.svg",
+		"assets/tako_logo_emblem.svg",
+		"assets/tako_logo_emblem.png",
+		"assets/tako_logo_horizontal.svg",
+		"assets/tako_logo_badge.svg",
 	} {
 		p := filepath.Join(tmpDir, rel)
 		data, err := os.ReadFile(p)

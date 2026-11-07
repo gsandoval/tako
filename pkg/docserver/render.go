@@ -120,6 +120,7 @@ func render(src string, page *Page, byRoute map[string]*Page) (string, map[strin
 	doc := md.Parser().Parse(text.NewReader(source))
 
 	anchors := map[string]bool{}
+	var toc []TOCItem
 	err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
@@ -127,7 +128,14 @@ func render(src string, page *Page, byRoute map[string]*Page) (string, map[strin
 		if h, ok := n.(*ast.Heading); ok {
 			if id, found := h.AttributeString("id"); found {
 				if b, ok := id.([]byte); ok {
-					anchors[string(b)] = true
+					idStr := string(b)
+					anchors[idStr] = true
+					if h.Level == 2 || h.Level == 3 {
+						title := strings.TrimSpace(nodeText(h, source))
+						if title != "" {
+							toc = append(toc, TOCItem{ID: idStr, Title: title, Level: h.Level})
+						}
+					}
 				}
 			}
 		}
@@ -135,6 +143,9 @@ func render(src string, page *Page, byRoute map[string]*Page) (string, map[strin
 	})
 	if err != nil {
 		return "", nil, nil, err
+	}
+	if page != nil {
+		page.TOC = toc
 	}
 
 	var buf bytes.Buffer
@@ -182,6 +193,7 @@ func combineCodeTabs(htmlStr string) string {
 			b.WriteString(`</span>`)
 			b.WriteString(`</div>`)
 		}
+		b.WriteString(`<button type="button" class="code-copy-btn" title="Copy active snippet">Copy</button>`)
 		b.WriteString(`</div>`)
 		b.WriteString(`<div class="code-tab-pane on" data-lang="go">`)
 		b.WriteString(goPre)

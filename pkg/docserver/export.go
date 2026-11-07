@@ -89,7 +89,22 @@ func Export(site *Site, outDir string) error {
 		return err
 	}
 
-	// 7. .nojekyll to prevent GitHub Pages from ignoring underscore folders or files
+	// 7. Brand & logo assets
+	if err := fetchAndSave("/favicon.svg", "favicon.svg"); err != nil {
+		return err
+	}
+	for _, asset := range []string{
+		"tako_logo_emblem.svg",
+		"tako_logo_emblem.png",
+		"tako_logo_horizontal.svg",
+		"tako_logo_badge.svg",
+	} {
+		if err := fetchAndSave("/assets/"+asset, filepath.Join("assets", asset)); err != nil {
+			return err
+		}
+	}
+
+	// 8. .nojekyll to prevent GitHub Pages from ignoring underscore folders or files
 	if err := os.WriteFile(filepath.Join(outDir, ".nojekyll"), []byte{}, 0644); err != nil {
 		return err
 	}

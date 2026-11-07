@@ -19,11 +19,11 @@ package docs
 
 import "embed"
 
-// FS holds guide/, reference/ and api/ exactly as they sit on disk.
+// FS holds guide/, reference/, api/, and assets/ exactly as they sit on disk.
 //
 // This package is importable because Go has no other way to hand the
 // CLI its own documentation; it is tako's internals, not API, like
 // everything else outside the root package.
 //
-//go:embed guide reference api
+//go:embed guide reference api assets
 var FS embed.FS

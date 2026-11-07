@@ -23,6 +23,19 @@ const (
 	SectionAPI       = "api"
 )
 
+// TOCItem is a heading (H2 or H3) on a page, rendered in the right-rail TOC.
+type TOCItem struct {
+	ID    string
+	Title string
+	Level int // 2 or 3
+}
+
+// RefSection is a named group of reference pages from reference/README.md.
+type RefSection struct {
+	Name  string
+	Pages []*Page
+}
+
 // A Page is one rendered markdown file.
 type Page struct {
 	Section  string // "guide" or "reference"
@@ -33,13 +46,15 @@ type Page struct {
 	Markdown string // raw markdown source
 	Body     string // sanitized HTML
 	Anchors  map[string]bool
+	TOC      []TOCItem
 }
 
 // A Site is the whole documentation set, rendered.
 type Site struct {
-	Guide     []*Page // in reading order: index, then chapters, then the stories
-	Reference []*Page // in the order reference/README.md groups them
-	byRoute   map[string]*Page
+	Guide       []*Page      // in reading order: index, then chapters, then the stories
+	Reference   []*Page      // in the order reference/README.md groups them
+	RefSections []RefSection // grouped reference pages for the sidebar nav
+	byRoute     map[string]*Page
 
 	Surface string   // raw api/surface.txt
 	Symbols []Symbol // every exported symbol, in lock order
@@ -136,6 +151,7 @@ func Build(fsys fs.FS) (*Site, error) {
 		return nil, fmt.Errorf("the reference has no README.md, which is where its grouping is written")
 	}
 	site.Reference = referenceOrder(refIndex, site.byRoute)
+	site.RefSections = referenceSections(refIndex, site.byRoute, site.Reference)
 	site.Guide = guideOrder(site.byRoute)
 	site.Groups = group(site.Symbols, refIndex, site.byRoute)
 	return site, nil

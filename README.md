@@ -1,8 +1,12 @@
+<p align="center">
+  <img src="docs/assets/tako_logo_horizontal.svg" alt="Tako — Polyglot Cloud Framework (蛸)" width="360">
+</p>
+
 # Tako
 
 Write Go or cfire. Get a cloud.
 
-📖 **Documentation:** [tako.memo.engineer](https://tako.memo.engineer)
+📖 **Documentation:** [tako.memo.engineer](https://tako.memo.engineer) · ![Tako Badge](docs/assets/tako_logo_badge.svg)
 
 Tako is a polyglot cloud framework over Google Cloud Run: write business
 logic as plain **Go** packages or native **[cfire](https://cfire.memo.engineer)** (`.cf`) systems

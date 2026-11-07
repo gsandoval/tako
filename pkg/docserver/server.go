@@ -5,9 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io/fs"
 	"net"
 	"net/http"
 	"os/exec"
+	"path"
 	"runtime"
 	"strings"
 	"syscall"
@@ -121,7 +123,12 @@ func Handler(site *Site) http.Handler {
 			render := view{
 				Title:   p.Title,
 				Section: p.Section,
+				Name:    p.Name,
+				File:    p.File,
+				Route:   p.Route,
+				CLIHint: cliTopicHint(p),
 				Nav:     nav(site, p.Section, p.Route),
+				TOC:     p.TOC,
 				Body:    template.HTML(p.Body), //nolint:gosec // sanitized in render()
 				Style:   template.CSS(style),
 				Footer:  footer,
@@ -129,10 +136,42 @@ func Handler(site *Site) http.Handler {
 			write(w, "page", render)
 		})
 	}
+	mux.HandleFunc("GET /assets/{file...}", func(w http.ResponseWriter, r *http.Request) {
+		clean := path.Clean(r.PathValue("file"))
+		if strings.Contains(clean, "..") || clean == "." || clean == "" {
+			notFound(w, site)
+			return
+		}
+		data, err := fs.ReadFile(docs.FS, path.Join("assets", clean))
+		if err != nil {
+			notFound(w, site)
+			return
+		}
+		switch {
+		case strings.HasSuffix(clean, ".svg"):
+			w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		case strings.HasSuffix(clean, ".png"):
+			w.Header().Set("Content-Type", "image/png")
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		_, _ = w.Write(data)
+	})
+	mux.HandleFunc("GET /favicon.svg", func(w http.ResponseWriter, r *http.Request) {
+		data, err := fs.ReadFile(docs.FS, "assets/tako_logo_emblem.svg")
+		if err != nil {
+			notFound(w, site)
+			return
+		}
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		_, _ = w.Write(data)
+	})
 	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
 		write(w, "api", view{
 			Title:   "API",
 			Section: SectionAPI,
+			Route:   "/api",
+			CLIHint: "tako docs api",
 			Nav:     nav(site, SectionAPI, ""),
 			Groups:  apiGroups(site),
 			Style:   template.CSS(style),
@@ -175,19 +214,60 @@ func nav(site *Site, section, current string) []navItem {
 	var out []navItem
 	switch section {
 	case SectionGuide:
+		var chapters, stories []*Page
 		for _, p := range site.Guide {
-			out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+			switch {
+			case p.Name == "":
+				out = append(out, navItem{Title: "Overview", Group: true})
+				out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+			case p.Name[0] >= '0' && p.Name[0] <= '9':
+				chapters = append(chapters, p)
+			default:
+				stories = append(stories, p)
+			}
+		}
+		if len(chapters) > 0 {
+			out = append(out, navItem{Title: "Chapters", Group: true})
+			for _, p := range chapters {
+				out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+			}
+		}
+		if len(stories) > 0 {
+			out = append(out, navItem{Title: "Stories", Group: true})
+			for _, p := range stories {
+				out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+			}
 		}
 	case SectionReference:
-		for _, p := range site.Reference {
-			out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+		if len(site.RefSections) > 0 {
+			for _, rs := range site.RefSections {
+				out = append(out, navItem{Title: rs.Name, Group: true})
+				for _, p := range rs.Pages {
+					out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+				}
+			}
+		} else {
+			for _, p := range site.Reference {
+				out = append(out, navItem{Title: navTitle(p), Route: p.Route, On: p.Route == current})
+			}
 		}
 	case SectionAPI:
+		out = append(out, navItem{Title: "SDK Surface", Group: true})
 		for _, g := range apiGroups(site) {
 			out = append(out, navItem{Title: g.Section, Route: "/api#" + g.Anchor})
 		}
 	}
 	return out
+}
+
+func cliTopicHint(p *Page) string {
+	if p == nil {
+		return "tako docs"
+	}
+	if p.Name == "" {
+		return "tako docs " + p.Section
+	}
+	return "tako docs " + p.Name
 }
 
 // navTitle keeps the sidebar narrow: a reference page is named by its

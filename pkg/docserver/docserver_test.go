@@ -181,6 +181,11 @@ func TestRoutes(t *testing.T) {
 		{"/api", 200, "Every exported symbol"},
 		{"/llms.txt", 200, "# Tako"},
 		{"/llms-full.txt", 200, "FILE: api/surface.txt"},
+		{"/favicon.svg", 200, "<svg"},
+		{"/assets/tako_logo_emblem.svg", 200, "<svg"},
+		{"/assets/tako_logo_horizontal.svg", 200, "tako"},
+		{"/assets/tako_logo_badge.svg", 200, "Go · cfire · GCP"},
+		{"/assets/nope.svg", 404, "No page here"},
 		{"/guide", 301, ""},
 		{"/reference/nope", 404, "No page here"},
 		{"/nope", 404, "No page here"},
@@ -317,5 +322,24 @@ func TestEveryCodeBlockUsesUnifiedGoCfireSwitchAndValidCfireSyntax(t *testing.T)
 		t.Fatal("expected unified .code-tabs switches across embedded docs")
 	}
 }
+
+func TestDualThemeAndRightRailTOC(t *testing.T) {
+	site := built(t)
+	entityHTML := get(t, site, "/reference/entity")
+	for _, want := range []string{
+		`data-theme-btn="light"`,
+		`data-theme-btn="dark"`,
+		`[data-theme="dark"]`,
+		`aside class="toc"`,
+		`On This Page`,
+		`class="group"`,
+		`tako docs entity`,
+	} {
+		if !strings.Contains(entityHTML, want) {
+			t.Errorf("/reference/entity missing expected UI feature %q", want)
+		}
+	}
+}
+
 
 
