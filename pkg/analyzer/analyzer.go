@@ -522,6 +522,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 			graph.Resources[i].Delayed = true
 		}
 	}
+	deriveEntityBlobEdges(graph)
 	errs = append(errs, edgeErrs...)
 	checkReadOnlyDisks(graph, pkgs[0].Fset, &errs)
 	// Two routes Go's mux cannot order are a service that panics at
@@ -811,4 +812,55 @@ func checkQuantiles(dir string, pkg *packages.Package, errs *ErrorList) {
 // user's own Percentile(0.5) is never mistaken for a reading.
 func isSDKMethod(fn *types.Func) bool {
 	return fn.Pkg() != nil && fn.Pkg().Path() == sdkPath
+}
+
+// deriveEntityBlobEdges propagates a "write" bucket edge for any handler
+// that accesses an entity with linked `entity:"blob:<bucket>"` fields, so
+// cascading Delete / ReapExpired / TTL cleanup automatically receives
+// roles/storage.objectAdmin on the linked bucket.
+func deriveEntityBlobEdges(graph *AppGraph) {
+	declaredBuckets := map[string]bool{}
+	entityBlobs := map[string][]string{}
+	for _, r := range graph.Resources {
+		switch r.Kind {
+		case "bucket":
+			declaredBuckets[r.Name] = true
+		case "entity":
+			if len(r.BlobBuckets) > 0 {
+				entityBlobs[r.Name] = r.BlobBuckets
+			}
+		}
+	}
+	if len(entityBlobs) == 0 {
+		return
+	}
+	haveWrite := map[string]bool{}
+	for _, e := range graph.Edges {
+		if e.Kind == "resource" && e.ToKind == "bucket" && (e.Verb == "write" || e.Verb == "sign") {
+			haveWrite[e.From+"|"+e.To] = true
+		}
+	}
+	var extra []Edge
+	for _, e := range graph.Edges {
+		if e.Kind != "resource" || e.ToKind != "entity" || e.Verb != "write" {
+			continue
+		}
+		for _, b := range entityBlobs[e.To] {
+			if !declaredBuckets[b] {
+				continue
+			}
+			key := e.From + "|" + b
+			if !haveWrite[key] {
+				haveWrite[key] = true
+				extra = append(extra, Edge{
+					From:   e.From,
+					To:     b,
+					ToKind: "bucket",
+					Kind:   "resource",
+					Verb:   "write",
+				})
+			}
+		}
+	}
+	graph.Edges = append(graph.Edges, extra...)
 }

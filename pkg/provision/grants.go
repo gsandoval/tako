@@ -325,14 +325,15 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	}
 
 	// Singleflight crons and singleton loops hold the same kind of
-	// lease without a Lock var; Idempotent and RateLimit routes use
-	// Datastore framework kinds (_tako_idempotency, _tako_ratelimit).
+	// lease without a Lock var; Idempotent/RateLimit routes and parallel
+	// jobs (tako.Gather) use Datastore framework kinds (_tako_idempotency,
+	// _tako_ratelimit, _tako_shard).
 	for _, h := range g.Handlers {
 		if (h.Kind == "cron" && h.Singleflight) || h.Kind == "singleton" {
 			add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin",
 				"serviceAccount:"+cfg.SAEmail(h.Service))
 		}
-		if h.Idempotent || h.RateLimitRequests > 0 {
+		if h.Idempotent || h.RateLimitRequests > 0 || (h.Kind == "job" && h.Parallel > 1) {
 			add(target{TargetProject, cfg.Project}, "roles/datastore.user",
 				"serviceAccount:"+cfg.SAEmail(h.Service))
 		}

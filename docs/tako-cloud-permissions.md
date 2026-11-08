@@ -70,6 +70,7 @@ Deployer role bundle (granted to the human/CI principal, project-scoped
 | `roles/identitytoolkit.admin` | `tako users` against a project: create the first admin, hand out roles (SC1) |
 | `roles/resourcemanager.projectIamAdmin` | write the DERIVED runtime grants — every service's own identity gets its edges from the graph, and that is a policy write on the project |
 | `roles/serviceusage.serviceUsageAdmin` | needed by `tako setup` itself, to turn the APIs above on |
+| `roles/dns.admin` | reconcile custom domain A/AAAA/CNAME records in Cloud DNS when `--dns-project` / `TAKO_DNS_PROJECT` is set |
 
 **Three of these are corrections the SC1/SC2 work surfaced**, and they
 are worth naming because a bundle that is subtly short is worse than

@@ -77,6 +77,13 @@ type Needs struct {
 	// exact console steps when not — tako never mutates auth config
 	// (the OAuth consent screen is genuinely interactive).
 	AuthProviders []string
+	// EntityTTL is set when any entity declares an entity:"ttl" field,
+	// which requires datastore.indexes.update to enable native Firestore
+	// in Datastore mode TTL policies.
+	EntityTTL bool
+	// DNSProject is set when --dns-project or TAKO_DNS_PROJECT asks
+	// tako to reconcile custom-domain records in Cloud DNS.
+	DNSProject string
 }
 
 // Requirements is what THIS graph needs on a project: the APIs to
@@ -92,6 +99,13 @@ func Requirements(needs Needs) ([]string, []Perm) {
 	if needs.Datastore {
 		apis = append(apis, datastoreHost, firestoreHost)
 		perms = append(perms, Perm{"datastore.indexes.create", "roles/datastore.indexAdmin"})
+	}
+	if needs.EntityTTL {
+		perms = append(perms, Perm{"datastore.indexes.update", "roles/datastore.indexAdmin"})
+	}
+	if needs.DNSProject != "" {
+		apis = append(apis, dnsHost)
+		perms = append(perms, Perm{"dns.changes.create", "roles/dns.admin"})
 	}
 	if needs.Scheduler {
 		apis = append(apis, schedulerHost)
@@ -215,6 +229,14 @@ func (c *Client) Preflight(ctx context.Context, needs Needs) ([]string, error) {
 		}
 	}
 
+	for _, p := range needs.AuthProviders {
+		if p == "google" {
+			if ok, msg := c.GoogleProviderReady(ctx); !ok {
+				gaps = append(gaps, msg)
+			}
+		}
+	}
+
 	if len(gaps) > 0 {
 		return nil, fmt.Errorf("preflight found %d gap(s):\n  %s", len(gaps), strings.Join(gaps, "\n  "))
 	}
@@ -296,6 +318,36 @@ type AuthClient struct {
 // consoles).
 func googleProviderSteps(project string) string {
 	return fmt.Sprintf("enable the Google provider (the one manual step): https://console.firebase.google.com/project/%s/authentication/providers → Google → Enable (pick a support email) → Save — the Firebase console auto-provisions the OAuth client. Manual alternative: APIs & Services → OAuth consent screen, then Credentials → OAuth client ID (Web application, redirect URI https://%s.firebaseapp.com/__/auth/handler), pasted into Identity Platform → Providers → Google", project, project)
+}
+
+// GoogleProviderReady reports whether the Google sign-in provider in
+// Identity Platform is enabled with a real OAuth web client ID.
+func (c *Client) GoogleProviderReady(ctx context.Context) (bool, string) {
+	base := c.url(identityHost, "/admin/v2/projects/"+c.Project)
+	var idps struct {
+		Configs []struct {
+			Name     string `json:"name"`
+			Enabled  bool   `json:"enabled"`
+			ClientID string `json:"clientId"`
+		} `json:"defaultSupportedIdpConfigs"`
+	}
+	if err := c.doIdentity(ctx, http.MethodGet, base+"/defaultSupportedIdpConfigs", nil, &idps); err != nil {
+		return false, fmt.Sprintf("the Google sign-in provider is not configured in %s — %s", c.Project, googleProviderSteps(c.Project))
+	}
+	enabled, clientID := false, ""
+	for _, cfg := range idps.Configs {
+		if strings.HasSuffix(cfg.Name, "google.com") && cfg.Enabled {
+			enabled, clientID = true, cfg.ClientID
+		}
+	}
+	switch {
+	case !enabled:
+		return false, fmt.Sprintf("the Google sign-in provider is not configured in %s — %s", c.Project, googleProviderSteps(c.Project))
+	case !strings.HasSuffix(clientID, ".apps.googleusercontent.com"):
+		return false, fmt.Sprintf("the Google provider in %s has client id %q, which is not a real OAuth web client — sign-in will fail with invalid_client; %s", c.Project, clientID, googleProviderSteps(c.Project))
+	default:
+		return true, ""
+	}
 }
 
 // EnsureAuthClient makes the app's declared sign-in REAL, automating

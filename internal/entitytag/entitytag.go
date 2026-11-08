@@ -25,10 +25,37 @@ import (
 	"unicode"
 )
 
-// Kind returns the entity role a field declares: "id", "index", or ""
-// for a field tako does not treat specially.
+// Kind returns the primary entity role a field declares: "id", "index", "ttl",
+// or "" for a field without a primary role (or only carrying a "blob:<bucket>" modifier).
 func Kind(rawTag string) string {
-	return reflect.StructTag(rawTag).Get("entity")
+	val := reflect.StructTag(rawTag).Get("entity")
+	if !strings.Contains(val, ",") {
+		if strings.HasPrefix(val, "blob:") {
+			return ""
+		}
+		return val
+	}
+	for _, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		switch part {
+		case "id", "index", "ttl":
+			return part
+		}
+	}
+	return ""
+}
+
+// BlobBucket returns the bucket name from an `entity:"blob:<bucket>"` or
+// `entity:"id,blob:<bucket>"` struct tag, or "" when none is declared.
+func BlobBucket(rawTag string) string {
+	val := reflect.StructTag(rawTag).Get("entity")
+	for _, part := range strings.Split(val, ",") {
+		part = strings.TrimSpace(part)
+		if b, ok := strings.CutPrefix(part, "blob:"); ok {
+			return b
+		}
+	}
+	return ""
 }
 
 // Omitted reports whether encoding/json leaves the field out of the

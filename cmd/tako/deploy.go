@@ -163,7 +163,11 @@ func runDeploy(args []string) error {
 	if err != nil {
 		return err
 	}
-	probed, err := client.Preflight(ctx, needsOf(graph, t.env))
+	needs := needsOf(graph, t.env)
+	if t.dnsProject == t.project && len(needs.Domains) > 0 {
+		needs.DNSProject = t.dnsProject
+	}
+	probed, err := client.Preflight(ctx, needs)
 	if err != nil {
 		return err
 	}
@@ -504,6 +508,9 @@ func needsOf(graph *analyzer.AppGraph, env string) gcp.Needs {
 		switch r.Kind {
 		case "entity":
 			n.Datastore = true
+			if r.TTLField != "" {
+				n.EntityTTL = true
+			}
 		case "auth":
 			// Sessions are entity records: auth alone needs Datastore,
 			// plus Identity Platform initialized with the declared

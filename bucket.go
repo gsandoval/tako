@@ -156,6 +156,25 @@ func (b *BucketHandle) SignedPut(ctx Ctx, key string, ttl time.Duration, policy 
 	return u, err
 }
 
+// SignedUpload returns a presigned upload URL alongside the exact headers
+// the client must send to satisfy the given PutPolicy constraints.
+func (b *BucketHandle) SignedUpload(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (SignedUpload, error) {
+	u, err := b.SignedPut(ctx, key, ttl, policy...)
+	if err != nil {
+		return SignedUpload{}, err
+	}
+	var hdrs map[string]string
+	for _, p := range policy {
+		for k, v := range p.Headers() {
+			if hdrs == nil {
+				hdrs = map[string]string{}
+			}
+			hdrs[k] = v
+		}
+	}
+	return SignedUpload{URL: u, Headers: hdrs}, nil
+}
+
 // SignedGet returns a URL that lets a client download key directly for the
 // given duration.
 func (b *BucketHandle) SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error) {

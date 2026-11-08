@@ -29,7 +29,7 @@ var Registry = map[string]PrimitiveSpec{
 		Ctor: "Entity", Kind: "entity", RejectLocalDecl: true, MermaidShape: "cylinder",
 		MethodVerbs: map[string]string{
 			"Get": "read", "Exists": "read", "Query": "read",
-			"Put": "write", "Delete": "write", "Update": "write", "Tx": "write",
+			"Put": "write", "Delete": "write", "Update": "write", "Upsert": "write", "Tx": "write", "ReapExpired": "write",
 		},
 	},
 	"Bucket": {
@@ -37,7 +37,7 @@ var Registry = map[string]PrimitiveSpec{
 		MethodVerbs: map[string]string{
 			"Get": "read", "Exists": "read", "List": "read",
 			"Put": "write", "Delete": "write", "Take": "write",
-			"SignedPut": "sign", "SignedGet": "sign",
+			"SignedPut": "sign", "SignedUpload": "sign", "SignedGet": "sign",
 		},
 	},
 	"Disk": {

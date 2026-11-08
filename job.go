@@ -86,3 +86,57 @@ func Runner[T any](job *JobHandle[T], fn func(Ctx, T) error, cfg ...RunnerConfig
 		},
 	})
 }
+
+// Gather records this parallel job task's shard result under key and reports
+// whether all tasks (0..count-1) of the current job execution have now
+// reported. Exactly one task receives complete == true along with the full
+// slice of shards in task-index order (0..count-1); all earlier tasks receive
+// complete == false. When count <= 1, Gather immediately returns
+// ([]S{shard}, true, nil).
+func Gather[S any](ctx Ctx, key string, shard S) (all []S, complete bool, err error) {
+	idx, count := ctx.Task()
+	if count <= 1 {
+		return []S{shard}, true, nil
+	}
+	doc, err := json.Marshal(shard)
+	if err != nil {
+		return nil, false, fmt.Errorf("tako.Gather: marshal shard: %w", err)
+	}
+	eb := entityBackend(ctx)
+	shardID := fmt.Sprintf("%s#%d", key, idx)
+	if err := eb.Put(ctx, "_tako_shard", shardID, doc, nil); err != nil {
+		return nil, false, err
+	}
+	won := false
+	err = eb.Tx(ctx, "_tako_shard", nil, func(ops backends.EntityTxOps) error {
+		won = false
+		candidate := make([]S, count)
+		for i := range count {
+			raw, gerr := ops.Get(fmt.Sprintf("%s#%d", key, i))
+			if gerr == backends.ErrNotFound {
+				return nil
+			}
+			if gerr != nil {
+				return gerr
+			}
+			if uerr := json.Unmarshal(raw, &candidate[i]); uerr != nil {
+				return uerr
+			}
+		}
+		for i := range count {
+			if derr := ops.Delete(fmt.Sprintf("%s#%d", key, i)); derr != nil {
+				return derr
+			}
+		}
+		all = candidate
+		won = true
+		return nil
+	})
+	if err != nil {
+		return nil, false, err
+	}
+	if !won {
+		return nil, false, nil
+	}
+	return all, true, nil
+}

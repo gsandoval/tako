@@ -33,9 +33,14 @@ type EntityHandle[T any] struct {
 	schemaErr  error
 }
 
+type blobField struct {
+	fieldIndex int
+	bucket     string
+}
+
 // entitySchema is T's declared schema, computed once per handle at first
-// use (never per request): the id field, optional ttl field, and the indexed
-// fields, with their JSON document names.
+// use (never per request): the id field, optional ttl field, linked blob
+// fields, and the indexed fields, with their JSON document names.
 type entitySchema struct {
 	idField  string            // Go name of the entity:"id" field
 	idIndex  int               // struct field index of idField
@@ -43,6 +48,7 @@ type entitySchema struct {
 	ttlField string            // Go name of the entity:"ttl" field, if any
 	ttlIndex int               // struct field index of ttlField (-1 when none)
 	ttlJSON  string            // its JSON document name
+	blobs    []blobField       // fields tagged entity:"blob:<bucket>"
 	indexed  map[string]string // Go field name → JSON name, entity:"index" fields
 	// indexedJSON is the same set as a sorted slice — the shape every
 	// write hands to the backend. Built here, once, rather than
@@ -110,13 +116,59 @@ func (e *EntityHandle[T]) indexedFields() ([]string, error) {
 	return s.indexedJSON, nil
 }
 
-// Delete removes the entity stored under id; deleting an absent id is not
+// Delete removes the entity stored under id (and any bucket objects linked
+// via `entity:"blob:<bucket>"` struct tags); deleting an absent id is not
 // an error.
 func (e *EntityHandle[T]) Delete(ctx Ctx, id string) error {
 	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Delete", "entity", e.name, "op", "Delete", "id", id)
+	if s, err := e.loadSchema(); err == nil && len(s.blobs) > 0 {
+		if doc, gerr := entityBackend(ctx).Get(sctx, e.name, id); gerr == nil {
+			var v T
+			if json.Unmarshal(doc, &v) == nil {
+				e.deleteBlobsOf(ctx, v)
+			}
+		}
+	}
 	err := entityBackend(ctx).Delete(sctx, e.name, id)
 	finish(err)
 	return err
+}
+
+// ReapExpired scans the store for entities whose `entity:"ttl"` timestamp has
+// passed, deletes any bucket objects linked via `entity:"blob:<bucket>"`, and
+// removes the expired entity records. It returns the number of reaped entities.
+func (e *EntityHandle[T]) ReapExpired(ctx Ctx) (int, error) {
+	s, err := e.loadSchema()
+	if err != nil {
+		return 0, err
+	}
+	if s.ttlIndex < 0 {
+		return 0, nil
+	}
+	var retErr error
+	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".ReapExpired", "entity", e.name, "op", "ReapExpired")
+	defer func() { finish(retErr) }()
+	docs, err := entityBackend(ctx).Query(sctx, e.name, backends.EntityQuery{})
+	if err != nil {
+		retErr = err
+		return 0, err
+	}
+	reaped := 0
+	for _, doc := range docs {
+		var item T
+		if err := json.Unmarshal(doc, &item); err != nil {
+			continue
+		}
+		if !e.isExpiredValue(item) {
+			continue
+		}
+		e.deleteBlobsOf(ctx, item)
+		if id := e.idOfValue(item); id != "" {
+			_ = entityBackend(ctx).Delete(sctx, e.name, id)
+		}
+		reaped++
+	}
+	return reaped, nil
 }
 
 // Exists reports whether an entity is stored under id.
@@ -194,6 +246,7 @@ func (e *EntityHandle[T]) Upsert(ctx Ctx, id string, mutate func(*T)) error {
 				return err
 			}
 			if e.isExpiredValue(v) {
+				e.deleteBlobsOf(ctx, v)
 				var zero T
 				v = zero
 			}
@@ -223,6 +276,50 @@ func (e *EntityHandle[T]) populateID(v *T, id string) {
 	}
 }
 
+func (e *EntityHandle[T]) idOfValue(v T) string {
+	s, err := e.loadSchema()
+	if err != nil || s.idIndex < 0 {
+		return ""
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return ""
+	}
+	f := rv.Field(s.idIndex)
+	if f.Kind() == reflect.String {
+		return f.String()
+	}
+	return ""
+}
+
+func (e *EntityHandle[T]) deleteBlobsOf(ctx Ctx, v T) {
+	s, err := e.loadSchema()
+	if err != nil || len(s.blobs) == 0 {
+		return
+	}
+	var bb backends.Bucket
+	if a := appFrom(ctx); a != nil && a.Buckets != nil {
+		bb = a.Buckets
+	} else if hooks.Bucket != nil {
+		bb = hooks.Bucket
+	}
+	if bb == nil {
+		return
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Struct {
+		return
+	}
+	for _, bf := range s.blobs {
+		f := rv.Field(bf.fieldIndex)
+		if f.Kind() == reflect.String {
+			if key := f.String(); key != "" {
+				_ = bb.Delete(ctx, bf.bucket, key)
+			}
+		}
+	}
+}
+
 func (e *EntityHandle[T]) isExpiredValue(v T) bool {
 	s, err := e.loadSchema()
 	if err != nil || s.ttlIndex < 0 {
@@ -246,7 +343,7 @@ func (e *EntityHandle[T]) Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error {
 	}
 	sctx, finish := trace.StartSpan(ctx, "entity", e.name+".Tx", "entity", e.name, "op", "Tx")
 	err = entityBackend(ctx).Tx(sctx, e.name, indexed, func(ops backends.EntityTxOps) error {
-		return fn(&entityTx[T]{h: e, ops: ops})
+		return fn(&entityTx[T]{h: e, ctx: ctx, ops: ops})
 	})
 	finish(err)
 	return err
@@ -325,6 +422,14 @@ func (e *EntityHandle[T]) loadSchema() (*entitySchema, error) {
 					return
 				}
 				s.indexed[f.Name] = entitytag.Name(string(f.Tag), f.Name)
+			}
+			if bucket := entitytag.BlobBucket(string(f.Tag)); bucket != "" {
+				if f.Type.Kind() != reflect.String {
+					e.schemaErr = fmt.Errorf("tako: entity %q: field %s is tagged entity:\"blob:%s\" with type %s — blob key fields must be string",
+						e.name, f.Name, bucket, f.Type)
+					return
+				}
+				s.blobs = append(s.blobs, blobField{fieldIndex: i, bucket: bucket})
 			}
 		}
 		if s.idField == "" {
@@ -571,6 +676,7 @@ type EntityTx[T any] interface {
 
 type entityTx[T any] struct {
 	h   *EntityHandle[T]
+	ctx Ctx
 	ops backends.EntityTxOps
 }
 
@@ -598,7 +704,17 @@ func (t *entityTx[T]) Put(entity T) error {
 	return t.ops.Put(id, doc)
 }
 
-func (t *entityTx[T]) Delete(id string) error { return t.ops.Delete(id) }
+func (t *entityTx[T]) Delete(id string) error {
+	if s, err := t.h.loadSchema(); err == nil && len(s.blobs) > 0 {
+		if doc, gerr := t.ops.Get(id); gerr == nil {
+			var v T
+			if json.Unmarshal(doc, &v) == nil {
+				t.h.deleteBlobsOf(t.ctx, v)
+			}
+		}
+	}
+	return t.ops.Delete(id)
+}
 
 // entityBackend returns the wired entity backend, which boot (generated
 // mains, tako dev, and — from F7 — NewTestApp) is responsible for

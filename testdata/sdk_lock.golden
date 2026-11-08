@@ -10,6 +10,7 @@
     func (*BucketHandle).Put(ctx Ctx, key string, blob Blob) error
     func (*BucketHandle).SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error)
     func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error)
+    func (*BucketHandle).SignedUpload(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (SignedUpload, error)
     func (*BucketHandle).Take(ctx Ctx, key string) (Blob, error)
     func (*CacheHandle[T]).Delete(ctx Ctx, key string) error
     func (*CacheHandle[T]).Exists(ctx Ctx, key string) (bool, error)
@@ -38,6 +39,7 @@
     func (*EntityHandle[T]).Get(ctx Ctx, id string) (T, error)
     func (*EntityHandle[T]).Put(ctx Ctx, entity T) error
     func (*EntityHandle[T]).Query(ctx Ctx) *EntityQuery[T]
+    func (*EntityHandle[T]).ReapExpired(ctx Ctx) (int, error)
     func (*EntityHandle[T]).Tx(ctx Ctx, fn func(tx EntityTx[T]) error) error
     func (*EntityHandle[T]).Update(ctx Ctx, id string, mutate func(*T)) error
     func (*EntityHandle[T]).Upsert(ctx Ctx, id string, mutate func(*T)) error
@@ -163,6 +165,7 @@ func Entity[T any](name string) *EntityHandle[T]
 func Environment() Env
 func Errorf(status int, format string, args ...any) error
 func Flag[T any](name string, defaultVal T) *FlagHandle[T]
+func Gather[S any](ctx Ctx, key string, shard S) (all []S, complete bool, err error)
 func Histogram(name string) *HistogramHandle
 func IsDenied(err error) bool
 func IsEmailTaken(err error) bool
@@ -270,6 +273,7 @@ type RunnerConfig struct{Parallel int; Attempts int; Timeout time.Duration; Prof
 type SecretHandle struct{}
 type ServiceConfig struct{Domain string; Profile Profile; Footprint Footprint; Traffic Traffic}
 type ServiceHandle struct{}
+type SignedUpload struct{URL string; Headers map[string]string}
 type SingletonConfig struct{Timeout time.Duration; Footprint Footprint}
 type SiteConfig struct{SPA bool; Build Build; DevProxy string; Redirects map[string]string; TrustedHTML bool; NotFound string}
 type SiteHandle struct{}

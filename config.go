@@ -343,6 +343,13 @@ type Traffic struct {
 	HTTP2 Toggle
 }
 
+// SignedUpload bundles a presigned PUT URL with the exact HTTP headers
+// the uploader must send so the server and browser cannot drift apart.
+type SignedUpload struct {
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
 // PutPolicy constrains what a SignedPut URL will accept. The same value
 // mints the URL and produces the headers the uploader must send, so the
 // two cannot drift apart.

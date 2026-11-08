@@ -139,6 +139,10 @@ type Resource struct {
 	// optional entity:"ttl" time.Time field, used to configure
 	// Firestore/Datastore native TTL garbage collection.
 	TTLField string `json:"ttl_field,omitempty"`
+	// BlobBuckets are the bucket names linked to this entity via
+	// entity:"blob:<bucket>" struct tags, used to derive storage
+	// cleanup grants and cascade object deletions.
+	BlobBuckets []string `json:"blob_buckets,omitempty"`
 	// Composites are the derived Datastore composite indexes, one
 	// tuple PER QUERY SHAPE (grouped per function): filter fields
 	// first (struct order, ascending), then OrderBy fields in call

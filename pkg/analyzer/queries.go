@@ -20,6 +20,7 @@ type entityType struct {
 	declared    []string          // entity:"index" fields, struct order
 	indexed     map[string]bool   // membership set of declared
 	ttlField    string            // marshaled property name of entity:"ttl" field, if any
+	blobBuckets []string          // linked bucket names declared via entity:"blob:<bucket>"
 	wire        map[string]string // Go field → marshaled property name (json tag rule)
 	wireToField map[string]string // marshaled property name → Go field (when json tag differs)
 	used        map[string]bool   // fields seen in Where/OrderBy call sites
@@ -169,6 +170,19 @@ func entitySchemaOf(dir string, pkg *packages.Package, payload types.Type, errs 
 				continue
 			}
 			et.ttlField = entitytag.Name(st.Tag(i), f.Name())
+		}
+		if bucket := entitytag.BlobBucket(st.Tag(i)); bucket != "" {
+			if f.Type().String() != "string" {
+				*errs = append(*errs, &Error{
+					Pos: relPos(dir, pkg.Fset, f.Pos()),
+					Msg: fmt.Sprintf("entity id field %s must be a string; got %s",
+						f.Name(), types.TypeString(f.Type(), types.RelativeTo(pkg.Types))),
+					Rule: "entity-id",
+				})
+				bad = true
+				continue
+			}
+			et.blobBuckets = appendUnique(et.blobBuckets, bucket)
 		}
 	}
 	if idCount != 1 {

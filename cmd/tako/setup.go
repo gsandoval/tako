@@ -79,6 +79,9 @@ func runSetup(args []string) error {
 	}
 	ctx := context.Background()
 	needs := needsOf(graph, t.env)
+	if t.dnsProject == t.project && len(needs.Domains) > 0 {
+		needs.DNSProject = t.dnsProject
+	}
 
 	// Billing before anything else. Without it every call after this
 	// fails with a message about an API or a quota, and the reader has
@@ -182,6 +185,9 @@ func setupRemainder(ctx context.Context, client *gcp.Client, t target, graph *an
 	}
 	for _, p := range needs.AuthProviders {
 		if p != "google" {
+			continue
+		}
+		if ready, _ := client.GoogleProviderReady(ctx); ready {
 			continue
 		}
 		out = append(out, fmt.Sprintf("the Google sign-in provider: Google exposes no public API for\n"+

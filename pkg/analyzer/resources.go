@@ -51,13 +51,14 @@ func extractEntity(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 		return nil, "", nil
 	}
 	res := &Resource{
-		Kind:     "entity",
-		Name:     resName,
-		Var:      pkg.Name + "." + name.Name,
-		Package:  pkg.PkgPath,
-		Type:     et.display,
-		TTLField: et.ttlField,
-		Pos:      relPos(dir, pkg.Fset, name.Pos()),
+		Kind:        "entity",
+		Name:        resName,
+		Var:         pkg.Name + "." + name.Name,
+		Package:     pkg.PkgPath,
+		Type:        et.display,
+		TTLField:    et.ttlField,
+		BlobBuckets: et.blobBuckets,
+		Pos:         relPos(dir, pkg.Fset, name.Pos()),
 	}
 	return res, payload.String(), et
 }
