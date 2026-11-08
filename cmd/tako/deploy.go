@@ -28,13 +28,18 @@ import (
 // target is a parsed deploy destination.
 type target struct {
 	project, region, env string
+	dnsProject, dnsZone  string
 	planOnly             bool
 	yes                  bool
 	canary               int
 }
 
 func parseTarget(rawArgs []string) (target, []string, error) {
-	t := target{env: provision.DefaultEnv}
+	t := target{
+		env:        provision.DefaultEnv,
+		dnsProject: os.Getenv("TAKO_DNS_PROJECT"),
+		dnsZone:    os.Getenv("TAKO_DNS_ZONE"),
+	}
 	args := normalizeArgs(rawArgs)
 	var rest []string
 	for i := 0; i < len(args); i++ {
@@ -55,7 +60,7 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 			t.planOnly = true
 		case "--yes":
 			t.yes = true
-		case "--project", "--region", "--env", "-C", "--dir":
+		case "--project", "--region", "--env", "--dns-project", "--dns-zone", "-C", "--dir":
 			flag := args[i]
 			if i+1 >= len(args) {
 				return t, nil, fmt.Errorf("%s needs a value", flag)
@@ -68,6 +73,10 @@ func parseTarget(rawArgs []string) (target, []string, error) {
 				t.region = args[i]
 			case "--env":
 				t.env = args[i]
+			case "--dns-project":
+				t.dnsProject = args[i]
+			case "--dns-zone":
+				t.dnsZone = args[i]
 			case "-C", "--dir":
 				if err := os.Chdir(args[i]); err != nil {
 					return t, nil, err
@@ -250,12 +259,15 @@ func runDeploy(args []string) error {
 		return nil
 	}
 	if !plan.Changed() {
+		if err := ensureEntityTTLs(ctx, client, graph); err != nil {
+			return err
+		}
 		fmt.Printf("\n✓ no changes (%s)\n", time.Since(start).Round(time.Second))
 		// A converged deploy is exactly the run the DNS instructions tell
 		// you to make ("re-run tako deploy"), so it must still report
 		// where the certificate got to — the mapping is unchanged, its
 		// STATUS is not.
-		return narrateDomains(ctx, graph, domains)
+		return narrateDomains(ctx, graph, domains, t.dnsProject, t.dnsZone)
 	}
 	// §4.6a "plan before apply": anything beyond additive/in-place —
 	// replaces, rename suspects, or dangerous version/config skew —
@@ -405,10 +417,8 @@ func runDeploy(args []string) error {
 	if err := provision.Apply(ctx, plan.Filter(provision.KindAlertPolicy), desired, applier); err != nil {
 		return err
 	}
-	for _, r := range graph.Resources {
-		if r.Kind == "entity" && r.TTLField != "" {
-			_ = client.EnsureEntityTTL(ctx, r.Name, r.TTLField)
-		}
+	if err := ensureEntityTTLs(ctx, client, graph); err != nil {
+		return err
 	}
 	docsUploaded := map[string]int{}
 	for _, r := range graph.Resources {
@@ -459,7 +469,7 @@ func runDeploy(args []string) error {
 			return err
 		}
 	}
-	if err := narrateDomains(ctx, graph, domains); err != nil {
+	if err := narrateDomains(ctx, graph, domains, t.dnsProject, t.dnsZone); err != nil {
 		return err
 	}
 	if t.canary > 0 {
@@ -635,4 +645,15 @@ func hasBucketSubscription(g *analyzer.AppGraph) bool {
 		}
 	}
 	return false
+}
+
+func ensureEntityTTLs(ctx context.Context, client *gcp.Client, graph *analyzer.AppGraph) error {
+	for _, r := range graph.Resources {
+		if r.Kind == "entity" && r.TTLField != "" {
+			if err := client.EnsureEntityTTL(ctx, r.Name, r.TTLField); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

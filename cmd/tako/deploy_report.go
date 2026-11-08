@@ -284,7 +284,7 @@ func warnSiteShadows(dir string, graph *analyzer.AppGraph) {
 // certificate is issued. Deploys are stateless and resumable, so this
 // re-reads live status rather than remembering anything — a re-run after
 // DNS propagates picks up exactly where the certificate got to.
-func narrateDomains(ctx context.Context, graph *analyzer.AppGraph, domains *gcp.DomainMappings) error {
+func narrateDomains(ctx context.Context, graph *analyzer.AppGraph, domains *gcp.DomainMappings, dnsProject, dnsZone string) error {
 	for _, svc := range graph.Services {
 		if svc.Domain == "" {
 			continue
@@ -305,10 +305,26 @@ func narrateDomains(ctx context.Context, graph *analyzer.AppGraph, domains *gcp.
 			}
 			time.Sleep(2 * time.Second)
 		}
+		if dnsProject != "" {
+			recs := st.Records
+			if len(recs) == 0 && strings.Count(svc.Domain, ".") > 1 {
+				sub := strings.SplitN(svc.Domain, ".", 2)[0]
+				recs = []gcp.Record{{Name: sub, Type: "CNAME", Data: "ghs.googlehosted.com."}}
+			}
+			if len(recs) > 0 {
+				if err := domains.C.EnsureDNSRecords(ctx, dnsProject, dnsZone, svc.Domain, recs, sayf); err != nil {
+					return err
+				}
+			}
+		}
 		switch {
 		case st.Ready:
 			fmt.Printf("\n  domain  %-24s certificate ACTIVE → https://%s\n", svc.Domain, svc.Domain)
 		case len(st.Records) > 0:
+			if dnsProject != "" {
+				fmt.Printf("\n  domain  %-24s DNS records provisioned in Cloud DNS (%s) — certificate provisioning (~15m)\n", svc.Domain, dnsProject)
+				continue
+			}
 			fmt.Printf("\n  domain  %-24s awaiting DNS\n", svc.Domain)
 			// Record names come back RELATIVE to the zone ("blog", not
 			// "blog.ker.gs"), which is what a registrar's host field wants

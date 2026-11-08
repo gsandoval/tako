@@ -1,10 +1,12 @@
 package projdocs_test
 
 import (
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gsandoval/tako"
 	"github.com/gsandoval/tako/internal/hooks"
@@ -351,5 +353,82 @@ func TestDocsHandleServeAndRender(t *testing.T) {
 	}
 	if _, err := handle.Serve(ctx, tako.DocsReq{Path: "../secret"}); !tako.IsNotFound(err) {
 		t.Errorf("expected NotFound for path traversal, got %v", err)
+	}
+
+	// 5. LLMsTxt serves llms.txt as plain text Blob
+	blob, err := handle.LLMsTxt(ctx, struct{}{})
+	if err != nil {
+		t.Fatalf("LLMsTxt: %v", err)
+	}
+	if blob.ContentType != "text/plain; charset=utf-8" {
+		t.Errorf("LLMsTxt ContentType = %q, want text/plain; charset=utf-8", blob.ContentType)
+	}
+	rawLLMs, _ := io.ReadAll(blob.Reader)
+	if !strings.Contains(string(rawLLMs), "GET /api/items") {
+		t.Errorf("expected LLMsTxt output to include GET /api/items, got %s", string(rawLLMs))
+	}
+}
+
+func TestBucketTakeAndPutPolicyHeadersAndInviteOnly(t *testing.T) {
+	app := tako.NewTestApp(t)
+	ctx := app.Ctx()
+
+	// 1. PutPolicy.Headers includes exact ContentType and x-goog-content-length-range
+	pol := tako.PutPolicy{MaxSize: 50 << 20, ContentType: "application/octet-stream"}
+	hdrs := pol.Headers()
+	if hdrs["x-goog-content-length-range"] != "0,52428800" {
+		t.Errorf("unexpected length range header: %v", hdrs)
+	}
+	if hdrs["Content-Type"] != "application/octet-stream" {
+		t.Errorf("expected Content-Type header, got %v", hdrs)
+	}
+	wildPol := tako.PutPolicy{MaxSize: 1024, ContentType: "image/*"}
+	if _, has := wildPol.Headers()["Content-Type"]; has {
+		t.Errorf("wildcard ContentType should not emit exact Content-Type header")
+	}
+
+	// 2. Bucket.Take streams and deletes on Close
+	b := tako.Bucket("ephemeral-files", tako.BucketConfig{TTL: 30 * 24 * time.Hour})
+	if err := b.Put(ctx, "secret.bin", tako.Blob{
+		Reader:      strings.NewReader("burn-after-reading"),
+		ContentType: "application/octet-stream",
+		Size:        int64(len("burn-after-reading")),
+	}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	taken, err := b.Take(ctx, "secret.bin")
+	if err != nil {
+		t.Fatalf("Take: %v", err)
+	}
+	data, err := io.ReadAll(taken.Reader)
+	if err != nil || string(data) != "burn-after-reading" {
+		t.Fatalf("ReadAll = %q, err = %v", string(data), err)
+	}
+	if c, ok := taken.Reader.(io.Closer); ok {
+		_ = c.Close()
+	}
+	if _, err := b.Get(ctx, "secret.bin"); !tako.IsNotFound(err) {
+		t.Errorf("expected object to be deleted after Take Close(), got err=%v", err)
+	}
+
+	// 3. Auth.IsInviteOnly / SetInviteOnly
+	adminRole := tako.Role("admin")
+	posterRole := tako.Role("poster")
+	auth := tako.Auth(tako.AuthConfig{
+		Google:          true,
+		Password:        true,
+		FirstAdmin:      adminRole,
+		FirstAdminEmail: "yo@memo.engineer",
+		DefaultRole:     posterRole,
+		InviteOnly:      true,
+	})
+	if !auth.IsInviteOnly(ctx) {
+		t.Errorf("expected IsInviteOnly=true from AuthConfig default")
+	}
+	if err := auth.SetInviteOnly(ctx, false); err != nil {
+		t.Fatalf("SetInviteOnly(false): %v", err)
+	}
+	if auth.IsInviteOnly(ctx) {
+		t.Errorf("expected IsInviteOnly=false after SetInviteOnly(false)")
 	}
 }

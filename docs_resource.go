@@ -1,6 +1,7 @@
 package tako
 
 import (
+	"bytes"
 	"errors"
 	"io"
 	"os"
@@ -103,6 +104,38 @@ func (d *DocsHandle) Serve(ctx Ctx, req DocsReq) (HTML, error) {
 // dedicated bucket (for example, "index.html", "apis", or "architecture").
 func (d *DocsHandle) Render(ctx Ctx, pagePath string) (HTML, error) {
 	return d.render(ctx, "docs.Render", pagePath)
+}
+
+// LLMsTxt is a tako.API handler method that serves the generated llms.txt
+// reference for this documentation bundle as text/plain; charset=utf-8:
+//
+//	var LLMsTxt = tako.API("GET /llms.txt", publicDocs.LLMsTxt)
+func (d *DocsHandle) LLMsTxt(ctx Ctx, _ struct{}) (Blob, error) {
+	sctx, finish := trace.StartSpan(ctx, "docs", "docs.LLMsTxt", "docs", d.name, "key", "llms.txt")
+	defer finish(nil)
+	bucketName := "docs:" + d.name
+	blob, err := bucketBackend(ctx).Get(sctx, bucketName, "llms.txt")
+	if errors.Is(err, backends.ErrNotFound) && Environment() == EnvLocal {
+		if fallback, ferr := readLocalDocsFallback(d.name, "llms.txt"); ferr == nil {
+			return Blob{
+				Reader:      bytes.NewReader(fallback),
+				ContentType: "text/plain; charset=utf-8",
+				Size:        int64(len(fallback)),
+			}, nil
+		}
+	}
+	if errors.Is(err, backends.ErrNotFound) {
+		return Blob{}, NotFound()
+	}
+	if err != nil {
+		return Blob{}, err
+	}
+	return Blob{
+		Reader:      blob.Reader,
+		ContentType: "text/plain; charset=utf-8",
+		Size:        blob.Size,
+		ETag:        blob.ETag,
+	}, nil
 }
 
 func (d *DocsHandle) render(ctx Ctx, op, pagePath string) (HTML, error) {

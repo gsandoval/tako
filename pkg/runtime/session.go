@@ -98,6 +98,118 @@ func flagStore(ctx context.Context) backends.Flags {
 	return hooks.Flags
 }
 
+func isRuntimeInviteOnly(ctx context.Context) bool {
+	if store := entityStore(ctx); store != nil {
+		if raw, err := store.Get(ctx, hooks.AuthSettingsKind, hooks.AuthSettingsID); err == nil {
+			var doc struct {
+				InviteOnly bool `json:"inviteOnly"`
+			}
+			if json.Unmarshal(raw, &doc) == nil {
+				return doc.InviteOnly
+			}
+		}
+	}
+	return hooks.AuthConfig.InviteOnly
+}
+
+func showCloudSignUpTabs(ctx context.Context) bool {
+	if store := entityStore(ctx); store != nil {
+		if raw, err := store.Get(ctx, hooks.AuthSettingsKind, hooks.AuthSettingsID); err == nil {
+			var doc struct {
+				InviteOnly bool `json:"inviteOnly"`
+			}
+			if json.Unmarshal(raw, &doc) == nil {
+				return !doc.InviteOnly
+			}
+		}
+	}
+	if hooks.AuthConfig.InviteOnly {
+		return false
+	}
+	return os.Getenv("TAKO_AUTH_PUBLIC_SIGNUP") == "1"
+}
+
+func applyAuthBootstrapAndPolicy(ctx context.Context, u *tako.User, explicitDevRoles bool) {
+	if explicitDevRoles || u == nil || u.ID == "" {
+		return
+	}
+	cfg := hooks.AuthConfig
+	if cfg.FirstAdmin == "" && cfg.DefaultRole == "" {
+		return
+	}
+	users := usersStore(ctx)
+	if users == nil {
+		return
+	}
+	runWithLease := func(fn func(context.Context) error) error {
+		lease := hooks.Lease
+		if app := boot.FromContext(ctx); app != nil && app.Lease != nil {
+			lease = app.Lease
+		}
+		if lease != nil {
+			return backends.DoLease(ctx, lease, "auth-bootstrap", hooks.LeaseOwner, backends.LeaseTTL, fn)
+		}
+		return fn(ctx)
+	}
+	grantRoles := func(ctx context.Context, rolesToAdd ...string) error {
+		current := slices.Clone(u.Roles)
+		if acct, err := users.Get(ctx, u.ID); err == nil {
+			for _, r := range acct.Roles {
+				if !slices.Contains(current, r) {
+					current = append(current, r)
+				}
+			}
+		}
+		changed := false
+		for _, r := range rolesToAdd {
+			if r != "" && !slices.Contains(current, r) {
+				current = append(current, r)
+				changed = true
+			}
+		}
+		if changed {
+			if err := users.SetRoles(ctx, u.ID, current); err != nil {
+				return err
+			}
+		}
+		u.Roles = current
+		return nil
+	}
+
+	if cfg.FirstAdmin != "" {
+		if cfg.FirstAdminEmail != "" {
+			if strings.EqualFold(strings.TrimSpace(u.Email), strings.TrimSpace(cfg.FirstAdminEmail)) {
+				_ = runWithLease(func(ctx context.Context) error {
+					return grantRoles(ctx, cfg.FirstAdmin, cfg.DefaultRole)
+				})
+				return
+			}
+		} else {
+			grantedAdmin := false
+			_ = runWithLease(func(ctx context.Context) error {
+				accts, _, err := users.List(ctx, 200, "")
+				if err != nil {
+					return err
+				}
+				for _, acct := range accts {
+					if acct.ID != u.ID && slices.Contains(acct.Roles, cfg.FirstAdmin) {
+						return nil
+					}
+				}
+				grantedAdmin = true
+				return grantRoles(ctx, cfg.FirstAdmin, cfg.DefaultRole)
+			})
+			if grantedAdmin || slices.Contains(u.Roles, cfg.FirstAdmin) {
+				return
+			}
+		}
+	}
+
+	if cfg.DefaultRole != "" && !slices.Contains(u.Roles, cfg.DefaultRole) && !isRuntimeInviteOnly(ctx) {
+		_ = grantRoles(ctx, cfg.DefaultRole)
+	}
+}
+
 // mintSession stores a new session record and returns it.
 func mintSession(ctx context.Context, u tako.User) (*sessionRecord, error) {
 	store := entityStore(ctx)
@@ -481,6 +593,9 @@ func SessionHandler(providers ...string) http.Handler {
 					u = verified
 				}
 			}
+			explicitDevRoles := r.PostFormValue("dev_user") != "" && isLocalBackend() &&
+				(r.PostFormValue("dev_roles_form") != "" || len(r.PostForm["dev_role"]) > 0 || r.PostFormValue("dev_toggle_role") != "")
+			applyAuthBootstrapAndPolicy(r.Context(), &u, explicitDevRoles)
 			rec, err := mintSession(r.Context(), u)
 			if err != nil {
 				http.Error(w, "session store error", http.StatusInternalServerError)

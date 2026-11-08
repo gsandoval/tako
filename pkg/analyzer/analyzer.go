@@ -254,7 +254,7 @@ func AnalyzeTyped(cfg Config) (*TypedGraph, error) {
 					graph.Resources = append(graph.Resources, *r)
 				}
 			case "Auth":
-				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, &errs); r != nil {
+				if r := extractAuth(cfg.Dir, pkg, d.name, d.call, roleVars, &errs); r != nil {
 					graph.Resources = append(graph.Resources, *r)
 					// Registered for the edge scan: auth.Users() is how
 					// accounts are reached, and the grant it derives —

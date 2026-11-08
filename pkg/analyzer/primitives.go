@@ -36,7 +36,7 @@ var Registry = map[string]PrimitiveSpec{
 		Ctor: "Bucket", Kind: "bucket", RejectLocalDecl: true, PhysicalName: true, MermaidShape: "cylinder",
 		MethodVerbs: map[string]string{
 			"Get": "read", "Exists": "read", "List": "read",
-			"Put": "write", "Delete": "write",
+			"Put": "write", "Delete": "write", "Take": "write",
 			"SignedPut": "sign", "SignedGet": "sign",
 		},
 	},
@@ -83,8 +83,8 @@ var Registry = map[string]PrimitiveSpec{
 	"Auth": {
 		Ctor: "Auth", Kind: "auth", RejectLocalDecl: true, MermaidShape: "stadium",
 		MethodVerbs: map[string]string{
-			"Get": "read", "ByEmail": "read", "List": "read", "Page": "read",
-			"Create": "write", "Grant": "write", "Revoke": "write",
+			"Get": "read", "ByEmail": "read", "List": "read", "Page": "read", "IsInviteOnly": "read",
+			"Create": "write", "Grant": "write", "Revoke": "write", "SetInviteOnly": "write",
 			"Disable": "write", "Enable": "write", "Delete": "write",
 		},
 	},
@@ -119,7 +119,7 @@ var Registry = map[string]PrimitiveSpec{
 	"Docs": {
 		Ctor: "Docs", Kind: "docs", RejectLocalDecl: true, PhysicalName: true, MermaidShape: "cylinder",
 		MethodVerbs: map[string]string{
-			"Serve": "read", "Render": "read",
+			"Serve": "read", "Render": "read", "LLMsTxt": "read",
 		},
 	},
 }

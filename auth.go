@@ -1,11 +1,25 @@
 package tako
 
-import "github.com/gsandoval/tako/internal/hooks"
+import (
+	"encoding/json"
+
+	"github.com/gsandoval/tako/internal/hooks"
+)
 
 // Auth declares the app's authentication: which sign-in providers exist
 // (AuthConfig.Google, AuthConfig.Password) and, implicitly, the session endpoint the
 // framework injects. Routes opt into requiring a user with Route{SignIn: true}.
 func Auth(cfg AuthConfig) *AuthHandle {
+	firstAdmin := cfg.FirstAdmin.Name()
+	defaultRole := cfg.DefaultRole.Name()
+	if firstAdmin != "" || defaultRole != "" || cfg.InviteOnly || hooks.AuthConfig.FirstAdmin == "" {
+		hooks.AuthConfig = hooks.AuthSettings{
+			FirstAdmin:      firstAdmin,
+			FirstAdminEmail: cfg.FirstAdminEmail,
+			DefaultRole:     defaultRole,
+			InviteOnly:      cfg.InviteOnly,
+		}
+	}
 	return &AuthHandle{
 		cfg:         cfg,
 		Registered:  AuthEvent{name: authRegisteredSource},
@@ -68,3 +82,35 @@ const (
 	authRegisteredSource  = hooks.AuthRegisteredSource
 	authFirstSignInSource = hooks.AuthFirstSignInSource
 )
+
+type storedAuthSettings struct {
+	ID         string `json:"id"`
+	InviteOnly bool   `json:"inviteOnly"`
+}
+
+// IsInviteOnly reports whether the application is currently in invite-only
+// registration mode. If SetInviteOnly has been called, the persisted setting
+// takes precedence; otherwise it returns AuthConfig.InviteOnly once a
+// FirstAdmin account exists (or immediately when FirstAdmin is not configured).
+func (a *AuthHandle) IsInviteOnly(ctx Ctx) bool {
+	if doc, err := entityBackend(ctx).Get(ctx, hooks.AuthSettingsKind, hooks.AuthSettingsID); err == nil {
+		var s storedAuthSettings
+		if json.Unmarshal(doc, &s) == nil {
+			return s.InviteOnly
+		}
+	}
+	return a.cfg.InviteOnly || hooks.AuthConfig.InviteOnly
+}
+
+// SetInviteOnly updates the live invite-only registration posture in the
+// framework's entity store, taking immediate effect across all running instances.
+func (a *AuthHandle) SetInviteOnly(ctx Ctx, inviteOnly bool) error {
+	doc, err := json.Marshal(storedAuthSettings{
+		ID:         hooks.AuthSettingsID,
+		InviteOnly: inviteOnly,
+	})
+	if err != nil {
+		return err
+	}
+	return entityBackend(ctx).Put(ctx, hooks.AuthSettingsKind, hooks.AuthSettingsID, doc, nil)
+}

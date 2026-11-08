@@ -71,7 +71,21 @@ var DataDir string
 const (
 	AuthRegisteredSource  = "tako-auth-registered"
 	AuthFirstSignInSource = "tako-auth-first-signin"
+	AuthSettingsKind      = "_tako_auth"
+	AuthSettingsID        = "settings"
 )
+
+// AuthSettings holds the application's declared Founding-Admin and
+// Invite-Only configuration from tako.Auth(tako.AuthConfig{...}).
+type AuthSettings struct {
+	FirstAdmin      string
+	FirstAdminEmail string
+	DefaultRole     string
+	InviteOnly      bool
+}
+
+// AuthConfig is the active AuthSettings registered by tako.Auth.
+var AuthConfig AuthSettings
 
 // StaleSessions and EndSessions are pkg/runtime's, wired at boot.
 //

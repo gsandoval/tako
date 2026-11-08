@@ -412,6 +412,7 @@ var symbolPage = map[string]string{
 	"EventSource":  "topic.md",
 	"Bucket":       "bucket.md",
 	"BucketHandle": "bucket.md",
+	"BucketConfig": "bucket.md",
 	"BucketEvent":  "bucket.md",
 	"Blob":         "bucket.md",
 	"ObjectInfo":   "bucket.md",

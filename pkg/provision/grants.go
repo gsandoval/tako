@@ -48,6 +48,7 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 	// even when nothing is desired on it.
 	hasEntity := false
 	hasAuth := false
+	authInlineBootstrap := false
 	hasMetrics := false
 	events := map[string]bool{} // buckets with Uploaded subscribers
 	for _, h := range g.Handlers {
@@ -86,6 +87,9 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			hasEntity = true
 		case "auth":
 			hasAuth = true
+			if r.Config["first_admin"] != "" || r.Config["default_role"] != "" || r.Config["invite_only"] == "true" {
+				authInlineBootstrap = true
+			}
 		case "counter", "histogram":
 			hasMetrics = true
 		case "secret":
@@ -129,7 +133,12 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 			}
 		}
 		for svc := range routeServices {
-			add(target{TargetProject, cfg.Project}, "roles/datastore.user", "serviceAccount:"+cfg.SAEmail(svc))
+			member := "serviceAccount:" + cfg.SAEmail(svc)
+			add(target{TargetProject, cfg.Project}, "roles/datastore.user", member)
+			if authInlineBootstrap {
+				add(target{TargetProject, cfg.Project}, "roles/identitytoolkit.admin", member)
+				add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin", member)
+			}
 		}
 		// Account events (AB10d): whoever can announce one needs to be
 		// able to publish it. FirstSignIn is announced by the session

@@ -290,13 +290,25 @@ func (c *Client) EnsureEntityTTL(ctx context.Context, kind, field string) error 
 	if kind == "" || field == "" {
 		return nil
 	}
-	u := c.url(firestoreHost, fmt.Sprintf(
-		"/v1/projects/%s/databases/(default)/collectionGroups/%s/fields/%s?updateMask=ttlConfig",
+	fieldURL := c.url(firestoreHost, fmt.Sprintf(
+		"/v1/projects/%s/databases/(default)/collectionGroups/%s/fields/%s",
 		c.Project, kind, field,
 	))
+	var existing struct {
+		TTLConfig *struct {
+			State string `json:"state"`
+		} `json:"ttlConfig"`
+	}
+	if err := c.do(ctx, http.MethodGet, fieldURL, nil, &existing); err == nil && existing.TTLConfig != nil {
+		return nil
+	}
+	u := fieldURL + "?updateMask=ttlConfig"
 	body := map[string]any{"ttlConfig": map[string]any{}}
 	if err := c.do(ctx, http.MethodPatch, u, body, nil); err != nil {
 		if disabledAPI(err) {
+			return nil
+		}
+		if ae, ok := asAPIError(err); ok && (ae.Status == http.StatusConflict || strings.Contains(strings.ToLower(ae.Message), "ttl")) {
 			return nil
 		}
 		return Classify(err, c.Project, "configure entity TTL policy", "roles/datastore.owner")

@@ -6,6 +6,8 @@ import (
 	"go/constant"
 	"go/types"
 	"regexp"
+	"strconv"
+	"time"
 
 	"golang.org/x/tools/go/packages"
 )
@@ -78,11 +80,30 @@ func extractBucket(dir string, pkg *packages.Package, name *ast.Ident, call *ast
 	if !checkResourceName("bucket", "tako.Bucket", resName, dir, pkg, call.Args[0], errs) {
 		return nil
 	}
+	cfg, ok := configFields(dir, pkg, call.Args[1:], "BucketConfig", errs)
+	if !ok {
+		return nil
+	}
+	var cfgMap map[string]string
+	if te, set := fieldOf(cfg, "TTL"); set {
+		n, tok := constInt(pkg, te)
+		if !tok || n < int(24*time.Hour) {
+			*errs = append(*errs, &Error{
+				Pos:  relPos(dir, pkg.Fset, te.Pos()),
+				Msg:  fmt.Sprintf("bucket %q BucketConfig.TTL must be a constant duration of at least 24h (Cloud Storage object lifecycle rules have 1-day granularity)", resName),
+				Rule: "config-literal",
+			})
+			return nil
+		}
+		days := (n + int(24*time.Hour) - 1) / int(24*time.Hour)
+		cfgMap = map[string]string{"ttl_days": strconv.Itoa(days)}
+	}
 	return &Resource{
 		Kind:    "bucket",
 		Name:    resName,
 		Var:     pkg.Name + "." + name.Name,
 		Package: pkg.PkgPath,
+		Config:  cfgMap,
 		Pos:     relPos(dir, pkg.Fset, name.Pos()),
 	}
 }

@@ -180,3 +180,76 @@ func TestTheDevPageOffersThePasswordFormOnlyWhenDeclared(t *testing.T) {
 		}
 	}
 }
+
+func TestInlineFirstAdminAndInviteOnlyInSessionHandler(t *testing.T) {
+	h := signInHandler(t, "email")
+	adminRole := tako.Role("admin")
+	posterRole := tako.Role("poster")
+	auth := tako.Auth(tako.AuthConfig{
+		Password:        true,
+		FirstAdmin:      adminRole,
+		FirstAdminEmail: "founder@example.com",
+		DefaultRole:     posterRole,
+		InviteOnly:      true,
+	})
+	t.Cleanup(func() {
+		_ = tako.Auth(tako.AuthConfig{Password: true})
+	})
+	ctx := takoCtx(context.Background())
+	founder, err := auth.Users().Create(ctx, tako.NewUser{
+		Email:    "founder@example.com",
+		Password: "correct horse battery",
+	})
+	if err != nil {
+		t.Fatalf("Create founder: %v", err)
+	}
+	outsider, err := auth.Users().Create(ctx, tako.NewUser{
+		Email:    "outsider@example.com",
+		Password: "correct horse battery",
+	})
+	if err != nil {
+		t.Fatalf("Create outsider: %v", err)
+	}
+
+	// 1. Founder signs in -> granted both FirstAdmin ("admin") and DefaultRole ("poster") inline.
+	w := postSignIn(h, url.Values{"email": {"founder@example.com"}, "password": {"correct horse battery"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("founder sign-in = %d: %s", w.Code, w.Body.String())
+	}
+	gotFounder, err := auth.Users().Get(ctx, founder.ID)
+	if err != nil {
+		t.Fatalf("Get founder: %v", err)
+	}
+	if !gotFounder.HasRole(adminRole) || !gotFounder.HasRole(posterRole) {
+		t.Errorf("founder roles = %v, want [admin poster]", gotFounder.Roles)
+	}
+
+	// 2. Outsider signs in while InviteOnly is true -> does NOT receive DefaultRole ("poster").
+	w2 := postSignIn(h, url.Values{"email": {"outsider@example.com"}, "password": {"correct horse battery"}})
+	if w2.Code != http.StatusOK {
+		t.Fatalf("outsider sign-in = %d: %s", w2.Code, w2.Body.String())
+	}
+	gotOutsider, err := auth.Users().Get(ctx, outsider.ID)
+	if err != nil {
+		t.Fatalf("Get outsider: %v", err)
+	}
+	if gotOutsider.HasRole(posterRole) || gotOutsider.HasRole(adminRole) {
+		t.Errorf("outsider roles under InviteOnly=true = %v, want empty", gotOutsider.Roles)
+	}
+
+	// 3. Admin disables InviteOnly at runtime -> outsider signs in again and receives DefaultRole ("poster").
+	if err := auth.SetInviteOnly(ctx, false); err != nil {
+		t.Fatalf("SetInviteOnly(false): %v", err)
+	}
+	w3 := postSignIn(h, url.Values{"email": {"outsider@example.com"}, "password": {"correct horse battery"}})
+	if w3.Code != http.StatusOK {
+		t.Fatalf("outsider sign-in after SetInviteOnly(false) = %d: %s", w3.Code, w3.Body.String())
+	}
+	gotOutsider, err = auth.Users().Get(ctx, outsider.ID)
+	if err != nil {
+		t.Fatalf("Get outsider: %v", err)
+	}
+	if !gotOutsider.HasRole(posterRole) {
+		t.Errorf("outsider roles after SetInviteOnly(false) = %v, want [poster]", gotOutsider.Roles)
+	}
+}

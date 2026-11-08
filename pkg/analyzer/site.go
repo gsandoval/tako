@@ -3,6 +3,7 @@ package analyzer
 import (
 	"fmt"
 	"go/ast"
+	"go/types"
 	"os"
 	"path/filepath"
 	"sort"
@@ -142,7 +143,7 @@ func dirExists(path string) bool {
 }
 
 // extractAuth validates one tako.Auth declaration.
-func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, errs *ErrorList) *Resource {
+func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.CallExpr, roleVars map[types.Object]string, errs *ErrorList) *Resource {
 	if name.Name == "_" {
 		return nil
 	}
@@ -172,6 +173,57 @@ func extractAuth(dir string, pkg *packages.Package, name *ast.Ident, call *ast.C
 		})
 		bad = true
 	}
+	var cfgMap map[string]string
+	setCfg := func(k, v string) {
+		if cfgMap == nil {
+			cfgMap = map[string]string{}
+		}
+		cfgMap[k] = v
+	}
+	resolveAuthRole := func(field string, arg ast.Expr) (string, bool) {
+		var obj types.Object
+		switch e := arg.(type) {
+		case *ast.Ident:
+			obj = pkg.TypesInfo.Uses[e]
+		case *ast.SelectorExpr:
+			obj = pkg.TypesInfo.Uses[e.Sel]
+		}
+		if obj != nil {
+			if role, ok := roleVars[obj]; ok {
+				return role, true
+			}
+		}
+		*errs = append(*errs, &Error{
+			Pos: relPos(dir, pkg.Fset, arg.Pos()),
+			Msg: fmt.Sprintf("tako.AuthConfig.%s names a role that is not a declared var in this package — write `var Admin = tako.Role(\"admin\")` and pass Admin; got %s",
+				field, describeExpr(arg)),
+			Rule: "role-var",
+		})
+		return "", false
+	}
+	if e, set := fieldOf(cfg, "FirstAdmin"); set {
+		if role, ok := resolveAuthRole("FirstAdmin", e); ok {
+			setCfg("first_admin", role)
+		} else {
+			bad = true
+		}
+	}
+	if s, set := stringField(dir, pkg, cfg, "FirstAdminEmail", "AuthConfig", errs); set {
+		if s != "" {
+			setCfg("first_admin_email", s)
+		}
+	}
+	if e, set := fieldOf(cfg, "DefaultRole"); set {
+		if role, ok := resolveAuthRole("DefaultRole", e); ok {
+			setCfg("default_role", role)
+		} else {
+			bad = true
+		}
+	}
+	if boolField(dir, pkg, cfg, "InviteOnly", "AuthConfig", errs) {
+		setCfg("invite_only", "true")
+	}
+	r.Config = cfgMap
 	if bad {
 		return nil
 	}

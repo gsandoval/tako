@@ -47,7 +47,7 @@ func SignInPage(providers ...string) http.Handler {
 		}
 		if prov["email"] {
 			tabs := ""
-			if os.Getenv("TAKO_AUTH_PUBLIC_SIGNUP") == "1" {
+			if showCloudSignUpTabs(r.Context()) {
 				tabs = `  <div class="mode-tabs" role="tablist" aria-label="Account mode">
     <button type="button" id="mode-signin" class="mode-tab active" aria-selected="true">Sign in</button>
     <button type="button" id="mode-signup" class="mode-tab" aria-selected="false">Create account</button>

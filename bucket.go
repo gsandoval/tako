@@ -1,6 +1,8 @@
 package tako
 
 import (
+	"io"
+	"sync"
 	"time"
 
 	"github.com/gsandoval/tako/internal/hooks"
@@ -10,20 +12,73 @@ import (
 
 // Bucket declares an object store. The name is the bucket's stable identity
 // and must be a string constant (analyzer-enforced).
-func Bucket(name string) *BucketHandle {
-	b := &BucketHandle{name: name}
+func Bucket(name string, cfg ...BucketConfig) *BucketHandle {
+	b := &BucketHandle{name: name, cfg: cfg}
 	b.Uploaded = BucketEvent{bucket: b}
 	return b
 }
 
 // BucketHandle is a declared object store. Keyed like every keyed store:
-// Get, Put, Delete, Exists.
+// Get, Put, Delete, Exists, Take.
 type BucketHandle struct {
 	// Uploaded is the event source that fires when an object finishes
 	// uploading; bind a handler with tako.Subscribe(bucket.Uploaded, fn).
 	Uploaded BucketEvent
 
 	name string
+	cfg  []BucketConfig
+}
+
+type deleteOnCloseReader struct {
+	r      io.Reader
+	once   sync.Once
+	onDone func()
+}
+
+func (d *deleteOnCloseReader) Read(p []byte) (int, error) {
+	n, err := d.r.Read(p)
+	if err == io.EOF {
+		_ = d.Close()
+	}
+	return n, err
+}
+
+func (d *deleteOnCloseReader) Close() error {
+	var closeErr error
+	d.once.Do(func() {
+		if c, ok := d.r.(io.Closer); ok {
+			closeErr = c.Close()
+		}
+		if d.onDone != nil {
+			d.onDone()
+		}
+	})
+	return closeErr
+}
+
+// Take returns the object stored under key as a streaming Blob that
+// automatically deletes the object from the bucket when the stream reaches
+// EOF or is closed by the HTTP server.
+func (b *BucketHandle) Take(ctx Ctx, key string) (Blob, error) {
+	sctx, finish := trace.StartSpan(ctx, "bucket", b.name+".Take", "bucket", b.name, "op", "Take", "key", key)
+	data, err := bucketBackend(ctx).Get(sctx, b.name, key)
+	if err != nil {
+		err = mapNotFound(err)
+		finish(err)
+		return Blob{}, err
+	}
+	finish(nil)
+	return Blob{
+		Reader: &deleteOnCloseReader{
+			r: data.Reader,
+			onDone: func() {
+				_ = bucketBackend(ctx).Delete(ctx, b.name, key)
+			},
+		},
+		ContentType: data.ContentType,
+		Size:        data.Size,
+		ETag:        data.ETag,
+	}, nil
 }
 
 // Get returns the object stored under key. tako.IsNotFound reports absence.

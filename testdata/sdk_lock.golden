@@ -1,5 +1,7 @@
     func (*AuditHandle[E]).Name() string
     func (*AuditHandle[E]).Record(ctx Ctx, event E)
+    func (*AuthHandle).IsInviteOnly(ctx Ctx) bool
+    func (*AuthHandle).SetInviteOnly(ctx Ctx, inviteOnly bool) error
     func (*AuthHandle).Users() *UsersHandle
     func (*BucketHandle).Delete(ctx Ctx, key string) error
     func (*BucketHandle).Exists(ctx Ctx, key string) (bool, error)
@@ -8,6 +10,7 @@
     func (*BucketHandle).Put(ctx Ctx, key string, blob Blob) error
     func (*BucketHandle).SignedGet(ctx Ctx, key string, ttl time.Duration) (string, error)
     func (*BucketHandle).SignedPut(ctx Ctx, key string, ttl time.Duration, policy ...PutPolicy) (string, error)
+    func (*BucketHandle).Take(ctx Ctx, key string) (Blob, error)
     func (*CacheHandle[T]).Delete(ctx Ctx, key string) error
     func (*CacheHandle[T]).Exists(ctx Ctx, key string) (bool, error)
     func (*CacheHandle[T]).Get(ctx Ctx, key string) (T, error)
@@ -27,6 +30,7 @@
     func (*DiskHandle).Remove(ctx context.Context, name string) error
     func (*DiskHandle).Stat(ctx context.Context, name string) (io/fs.FileInfo, error)
     func (*DiskHandle).WriteFile(ctx context.Context, name string, data []byte, perm io/fs.FileMode) error
+    func (*DocsHandle).LLMsTxt(ctx Ctx, _ struct{}) (Blob, error)
     func (*DocsHandle).Render(ctx Ctx, pagePath string) (HTML, error)
     func (*DocsHandle).Serve(ctx Ctx, req DocsReq) (HTML, error)
     func (*EntityHandle[T]).Delete(ctx Ctx, id string) error
@@ -146,7 +150,7 @@ func AlertTopic[T any](topic *TopicHandle[T]) *ChannelHandle
 func AlertWebhook(url string) *ChannelHandle
 func Audit[E any](name string) *AuditHandle[E]
 func Auth(cfg AuthConfig) *AuthHandle
-func Bucket(name string) *BucketHandle
+func Bucket(name string, cfg ...BucketConfig) *BucketHandle
 func Cache[T any](name string, ttl time.Duration) *CacheHandle[T]
 func Counter(name string) *CounterHandle
 func Cron(schedule string, fn func(Ctx) error, cfg ...CronConfig) Handler
@@ -208,10 +212,11 @@ func Worker[T any](queue *QueueHandle[T], fn func(Ctx, T) error, cfg ...Compute)
 type AlertHandle struct{}
 type AuditHandle[E any] struct{}
 type AuditRecord struct{Stream string; ActorID string; ActorEmail string; CallerIP string; CallerAgent string; DeviceID string; TraceID string; Event encoding/json.RawMessage; RecordedAt time.Time}
-type AuthConfig struct{Google bool; Password bool}
+type AuthConfig struct{Google bool; Password bool; FirstAdmin RoleHandle; FirstAdminEmail string; DefaultRole RoleHandle; InviteOnly bool}
 type AuthEvent struct{}
 type AuthHandle struct{Registered AuthEvent; FirstSignIn AuthEvent}
-type Blob struct{Reader io.Reader; ContentType string; Size int64; ETag string}
+type Blob struct{Reader io.Reader; ContentType string; Size int64; ETag string; Filename string}
+type BucketConfig struct{TTL time.Duration}
 type BucketEvent struct{}
 type BucketHandle struct{Uploaded BucketEvent}
 type Build struct{Command string; Out string}

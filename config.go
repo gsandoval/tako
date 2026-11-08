@@ -2,6 +2,7 @@ package tako
 
 import (
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -227,14 +228,30 @@ type SiteConfig struct {
 	NotFound string
 }
 
-// AuthConfig declares which sign-in providers the app offers. At least
-// one is required — an auth declaration with no provider cannot
-// authenticate anyone.
+// AuthConfig declares which sign-in providers the app offers and optional
+// founding-admin / invite-only access policies. At least one provider is
+// required — an auth declaration with no provider cannot authenticate anyone.
 type AuthConfig struct {
 	// Google enables Google sign-in.
 	Google bool
 	// Password enables email-and-password sign-in.
 	Password bool
+	// FirstAdmin, when set, grants this role inline during session creation
+	// to the founding administrator (either FirstAdminEmail when specified,
+	// or the first account to sign in while zero accounts hold FirstAdmin).
+	FirstAdmin RoleHandle
+	// FirstAdminEmail pins the founding administrator to a specific email
+	// address. When empty and FirstAdmin is set, the first user to sign in
+	// while zero accounts hold FirstAdmin becomes the founding administrator.
+	FirstAdminEmail string
+	// DefaultRole is granted automatically to the founding administrator
+	// and to new sign-ins when InviteOnly mode is not active.
+	DefaultRole RoleHandle
+	// InviteOnly starts the application in invite-only mode: the self-signup
+	// tab on /_tako/signin is hidden and DefaultRole is not auto-granted to
+	// uninvited sign-ins unless an admin opens public registration via
+	// auth.SetInviteOnly(ctx, false).
+	InviteOnly bool
 }
 
 // Delivery shapes how a queue's or topic's messages reach their
@@ -339,16 +356,28 @@ type PutPolicy struct {
 
 // Headers returns the headers a client MUST send with its PUT to a URL
 // minted with this policy. A policy carrying MaxSize signs a size-range
-// condition into the request — a PUT without the header (or exceeding
-// the range) is refused by the storage backend itself, local and cloud
-// alike. Hand the map to the uploader alongside the URL; it is empty
-// when the policy needs none.
+// condition into the request, and an exact ContentType signs the MIME
+// type — a PUT without the signed headers (or exceeding the range) is
+// refused by the storage backend itself, local and cloud alike. Hand the
+// map to the uploader alongside the URL; it is empty when the policy
+// needs none.
 func (p PutPolicy) Headers() map[string]string {
 	h := map[string]string{}
+	if p.ContentType != "" && !strings.Contains(p.ContentType, "*") {
+		h["Content-Type"] = p.ContentType
+	}
 	if p.MaxSize > 0 {
 		h["x-goog-content-length-range"] = "0," + strconv.FormatInt(p.MaxSize, 10)
 	}
 	return h
+}
+
+// BucketConfig configures an object storage bucket declared with tako.Bucket.
+type BucketConfig struct {
+	// TTL automatically deletes objects in this bucket older than the
+	// given duration (reconciled as a Cloud Storage object lifecycle
+	// Delete rule rounded up to whole days).
+	TTL time.Duration
 }
 
 // DiskConfig configures a remote filesystem disk mounted into the

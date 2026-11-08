@@ -505,12 +505,16 @@ func desiredBucketsAndStorage(g *analyzer.AppGraph, cfg Config) []Object {
 	for _, r := range g.Resources {
 		switch r.Kind {
 		case "bucket":
+			spec := map[string]any{"location": cfg.Region, "uniform": true, "cors": true}
+			if days, err := strconv.Atoi(r.Config["ttl_days"]); err == nil && days > 0 {
+				spec["ttlDays"] = days
+			}
 			objs = append(objs, Object{
 				Kind: KindBucket,
 				Name: gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, r.Name),
 				// cors: browsers execute signed URLs directly against
 				// the bucket (SignedPut's whole point).
-				Spec: map[string]any{"location": cfg.Region, "uniform": true, "cors": true},
+				Spec: spec,
 			})
 		case "disk":
 			if r.Config["ephemeral"] == "true" {

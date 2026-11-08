@@ -47,6 +47,19 @@ func (o Options) HidePrivateRoutes() bool {
 // resource in g under <dir>/.tako/gen/docs/<name>/. If no tako.Docs resource
 // is declared, GenerateAll is a no-op and returns nil, nil.
 func GenerateAll(g *analyzer.AppGraph, tg *analyzer.TypedGraph, dir string) ([]string, error) {
+	hasDocs := false
+	for _, r := range g.Resources {
+		if r.Kind == "docs" {
+			hasDocs = true
+			break
+		}
+	}
+	if !hasDocs {
+		return nil, nil
+	}
+	if tg == nil && dir != "" {
+		tg, _ = analyzer.AnalyzeTyped(analyzer.Config{Dir: dir})
+	}
 	var written []string
 	for _, r := range g.Resources {
 		if r.Kind != "docs" {
@@ -133,7 +146,7 @@ func GenerateInstance(g *analyzer.AppGraph, tg *analyzer.TypedGraph, opts Option
 	// 2. Enabled slice pages (<slice>.html and <slice>/index.html for clean URLs)
 	sliceRenderers := map[string]func(*analyzer.AppGraph, Options) []byte{
 		"architecture": renderArchitecturePage,
-		"apis":         renderAPIsPage,
+		"apis":         func(g *analyzer.AppGraph, o Options) []byte { return renderAPIsPage(g, tg, o) },
 		"schedules":    renderSchedulesPage,
 		"resources":    renderResourcesPage,
 		"roles":        renderRolesPage,
@@ -166,7 +179,7 @@ func GenerateInstance(g *analyzer.AppGraph, tg *analyzer.TypedGraph, opts Option
 	}
 
 	// 4. llms.txt scoped strictly to the enabled slices
-	if err := writeFile("llms.txt", renderLLMsTxt(g, opts)); err != nil {
+	if err := writeFile("llms.txt", renderLLMsTxt(g, tg, opts)); err != nil {
 		return nil, err
 	}
 

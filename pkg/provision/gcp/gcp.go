@@ -40,6 +40,7 @@ const (
 	iamCredsHost   = "iamcredentials.googleapis.com"
 	firestoreHost  = "firestore.googleapis.com"
 	billingHost    = "cloudbilling.googleapis.com"
+	dnsHost        = "dns.googleapis.com"
 )
 
 // Client is one authenticated deploy target.

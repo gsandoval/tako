@@ -30,6 +30,29 @@ type bucketBody struct {
 	IamConfiguration map[string]any    `json:"iamConfiguration,omitempty"`
 	Cors             []map[string]any  `json:"cors,omitempty"`
 	Website          map[string]any    `json:"website,omitempty"`
+	Lifecycle        map[string]any    `json:"lifecycle,omitempty"`
+}
+
+func bucketLifecycleRule(ttlDays int) map[string]any {
+	return map[string]any{
+		"rule": []map[string]any{{
+			"action":    map[string]any{"type": "Delete"},
+			"condition": map[string]any{"age": ttlDays},
+		}},
+	}
+}
+
+func specInt(v any) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	default:
+		return 0
+	}
 }
 
 // corsForSignedTransfers lets browsers execute signed URLs directly
@@ -125,6 +148,9 @@ func (b *Buckets) body(o provision.Object) bucketBody {
 	if website, _ := o.Spec["website"].(bool); website {
 		body.Website = map[string]any{"mainPageSuffix": "index.html", "notFoundPage": "404.html"}
 	}
+	if ttlDays := specInt(o.Spec["ttlDays"]); ttlDays > 0 {
+		body.Lifecycle = bucketLifecycleRule(ttlDays)
+	}
 	return body
 }
 
@@ -149,6 +175,9 @@ func (b *Buckets) Update(ctx context.Context, o provision.Object) error {
 	}
 	if website, _ := o.Spec["website"].(bool); website {
 		body["website"] = map[string]any{"mainPageSuffix": "index.html", "notFoundPage": "404.html"}
+	}
+	if ttlDays := specInt(o.Spec["ttlDays"]); ttlDays > 0 {
+		body["lifecycle"] = bucketLifecycleRule(ttlDays)
 	}
 	if err := b.C.do(ctx, http.MethodPatch, u, body, nil); err != nil {
 		return Classify(err, b.C.Project, "update the bucket", "roles/storage.admin")

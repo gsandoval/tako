@@ -3,11 +3,13 @@ package projdocs
 import (
 	"fmt"
 	"html"
+	"sort"
 	"strings"
 
 	"github.com/gsandoval/tako/internal/schedule"
 	"github.com/gsandoval/tako/pkg/analyzer"
 	"github.com/gsandoval/tako/pkg/provision"
+	"github.com/gsandoval/tako/pkg/schemagen"
 )
 
 var sliceTitles = map[string]string{
@@ -342,10 +344,60 @@ func isAsyncWorkerService(g *analyzer.AppGraph, svc analyzer.Service) bool {
 	return true
 }
 
-func renderAPIsPage(g *analyzer.AppGraph, opts Options) []byte {
+func hasAuthResource(g *analyzer.AppGraph) bool {
+	for _, r := range g.Resources {
+		if r.Kind == "auth" {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSignedBucketEdge(g *analyzer.AppGraph) bool {
+	for _, e := range g.Edges {
+		if e.ToKind == "bucket" && e.Verb == "sign" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatSchemaFields(s *schemagen.Schema) string {
+	if s == nil || len(s.Properties) == 0 {
+		return "—"
+	}
+	reqSet := map[string]bool{}
+	for _, r := range s.Required {
+		reqSet[r] = true
+	}
+	keys := make([]string, 0, len(s.Properties))
+	for k := range s.Properties {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var parts []string
+	for _, k := range keys {
+		p := s.Properties[k]
+		typ := p.Type
+		if typ == "array" && p.Items != nil && p.Items.Type != "" {
+			typ = "[]" + p.Items.Type
+		}
+		if typ == "" {
+			typ = "any"
+		}
+		if reqSet[k] {
+			parts = append(parts, fmt.Sprintf("%s: %s (required)", k, typ))
+		} else {
+			parts = append(parts, fmt.Sprintf("%s: %s", k, typ))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+func renderAPIsPage(g *analyzer.AppGraph, tg *analyzer.TypedGraph, opts Options) []byte {
 	var b strings.Builder
 	b.WriteString("<h1>APIs &amp; Routes</h1>\n")
-	b.WriteString("<p>HTTP JSON endpoints (<code>tako.API</code>) and HTML pages (<code>tako.Page</code>). Download <a href=\"openapi.json\"><code>openapi.json</code></a> for the OpenAPI 3.1 specification.</p>\n")
+	b.WriteString("<p>HTTP JSON endpoints (<code>tako.API</code>) and HTML pages (<code>tako.Page</code>). Download <a href=\"openapi.json\"><code>openapi.json</code></a> for the OpenAPI 3.1 specification or <a href=\"llms.txt\"><code>llms.txt</code></a> for the plain-text agent reference.</p>\n")
 
 	routes := visibleRoutes(g, opts)
 	if len(routes) == 0 {
@@ -353,7 +405,51 @@ func renderAPIsPage(g *analyzer.AppGraph, opts Options) []byte {
 		return pageShell(g, opts, "apis", "APIs & Routes", b.String())
 	}
 
-	b.WriteString("<table>\n<thead><tr><th>Method &amp; Path</th><th>Kind</th><th>Handler</th><th>Service</th><th>Request / Response</th><th>Bindings &amp; Options</th></tr></thead>\n<tbody>\n")
+	if hasAuthResource(g) {
+		b.WriteString("<h2>Agent &amp; API Authentication (<code>POST /_tako/api/session</code>)</h2>\n")
+		b.WriteString("<p>Exchange email &amp; password credentials (or an Identity Platform ID token) for a session bearer token, then pass <code>Authorization: Bearer &lt;token&gt;</code> on authenticated HTTP API or MCP requests:</p>\n")
+		b.WriteString(`<pre>POST /_tako/api/session
+Content-Type: application/json
+
+{"email": "agent@example.com", "password": "..."}
+
+# Response (200 OK):
+{"uid": "...", "email": "agent@example.com", "token": "&lt;session-token&gt;"}
+
+# Authenticated request header:
+Authorization: Bearer &lt;session-token&gt;</pre>` + "\n")
+	}
+
+	var mcpRoutes []analyzer.Handler
+	for _, h := range routes {
+		if h.Tool != "" {
+			mcpRoutes = append(mcpRoutes, h)
+		}
+	}
+	if len(mcpRoutes) > 0 {
+		b.WriteString("<h2>Model Context Protocol (MCP) Server (<code>POST /_tako/mcp</code>)</h2>\n")
+		b.WriteString("<p>JSON-RPC 2.0 MCP endpoint supporting <code>initialize</code>, <code>tools/list</code>, and <code>tools/call</code>. Pass <code>Authorization: Bearer &lt;session-token&gt;</code> for authenticated tools.</p>\n")
+		b.WriteString("<table>\n<thead><tr><th>Tool Name</th><th>Route</th><th>Description</th><th>Input Schema Fields</th><th>Output Schema Fields</th></tr></thead>\n<tbody>\n")
+		multi := len(g.Services) > 1
+		for _, h := range mcpRoutes {
+			inS, outS := schemagen.HandlerSchemas(tg, h)
+			fmt.Fprintf(&b, "<tr><td><code>%s</code></td><td><code>%s</code></td><td>%s</td><td><code>%s</code></td><td><code>%s</code></td></tr>\n",
+				html.EscapeString(schemagen.ToolName(h, multi)),
+				html.EscapeString(h.Route),
+				html.EscapeString(h.Tool),
+				html.EscapeString(formatSchemaFields(inS)),
+				html.EscapeString(formatSchemaFields(outS)))
+		}
+		b.WriteString("</tbody>\n</table>\n")
+	}
+
+	if hasSignedBucketEdge(g) {
+		b.WriteString("<h2>Direct Cloud Storage Uploads (<code>SignedPut</code>)</h2>\n")
+		b.WriteString("<p>Endpoints that return a signed Cloud Storage <code>PUT</code> upload URL (via <code>bucket.SignedPut</code>) also return required upload headers from <code>PutPolicy.Headers()</code> (such as <code>x-goog-content-length-range: 0,&lt;maxBytes&gt;</code> and any exact <code>Content-Type</code>). Clients and agents must include every returned header in the <code>PUT &lt;upload_url&gt;</code> request.</p>\n")
+	}
+
+	b.WriteString("<h2>HTTP Routes</h2>\n")
+	b.WriteString("<table>\n<thead><tr><th>Method &amp; Path</th><th>Kind</th><th>Handler</th><th>Service</th><th>Request / Response</th><th>Fields &amp; Options</th></tr></thead>\n<tbody>\n")
 	for _, h := range routes {
 		reqRes := "—"
 		if h.ReqRef != "" || h.ResRef != "" {
@@ -365,6 +461,13 @@ func renderAPIsPage(g *analyzer.AppGraph, opts Options) []byte {
 		}
 		if h.HasBody {
 			details = append(details, "json-body")
+		}
+		inS, outS := schemagen.HandlerSchemas(tg, h)
+		if inFields := formatSchemaFields(inS); inFields != "—" {
+			details = append(details, "in:{"+inFields+"}")
+		}
+		if outFields := formatSchemaFields(outS); outFields != "—" {
+			details = append(details, "out:{"+outFields+"}")
 		}
 		if h.RequiresAuth {
 			details = append(details, "sign-in")
@@ -681,7 +784,7 @@ func renderPermissionsPage(g *analyzer.AppGraph, opts Options) []byte {
 	return pageShell(g, opts, "permissions", "IAM Permissions", b.String())
 }
 
-func renderLLMsTxt(g *analyzer.AppGraph, opts Options) []byte {
+func renderLLMsTxt(g *analyzer.AppGraph, tg *analyzer.TypedGraph, opts Options) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# %s — Project Documentation (%s)\n\n", g.Module, opts.Name)
 	fmt.Fprintf(&b, "- Security Level: `%s`\n", opts.Level)
@@ -697,10 +800,45 @@ func renderLLMsTxt(g *analyzer.AppGraph, opts Options) []byte {
 	}
 
 	if opts.HasSlice("apis") {
+		routes := visibleRoutes(g, opts)
+		if hasAuthResource(g) {
+			b.WriteString("## Agent & API Authentication (`POST /_tako/api/session`)\n\n")
+			b.WriteString("- Exchange credentials for a session bearer token:\n")
+			b.WriteString("  `POST /_tako/api/session` with JSON `{\"email\": \"<email>\", \"password\": \"<password>\"}` -> returns `{\"uid\": \"...\", \"email\": \"...\", \"token\": \"<session-token>\"}`\n")
+			b.WriteString("- Send `Authorization: Bearer <session-token>` (or `Cookie: _session=<session-token>`) on authenticated requests.\n\n")
+		}
+		var mcpRoutes []analyzer.Handler
+		for _, h := range routes {
+			if h.Tool != "" {
+				mcpRoutes = append(mcpRoutes, h)
+			}
+		}
+		if len(mcpRoutes) > 0 {
+			b.WriteString("## MCP Server (`POST /_tako/mcp`) & Tools\n\n")
+			b.WriteString("- Endpoint: `POST /_tako/mcp` (JSON-RPC 2.0 `initialize`, `tools/list`, `tools/call`; pass `Authorization: Bearer <session-token>` for authenticated tools)\n")
+			multi := len(g.Services) > 1
+			for _, h := range mcpRoutes {
+				inS, outS := schemagen.HandlerSchemas(tg, h)
+				fmt.Fprintf(&b, "- Tool `%s` (`%s`): %s | input: {%s} | output: {%s}\n",
+					schemagen.ToolName(h, multi), h.Route, h.Tool, formatSchemaFields(inS), formatSchemaFields(outS))
+			}
+			b.WriteString("\n")
+		}
+		if hasSignedBucketEdge(g) {
+			b.WriteString("## Direct Cloud Storage Uploads (`SignedPut`)\n\n")
+			b.WriteString("- When an endpoint returns a signed `PUT` URL and `upload_headers` (from `PutPolicy.Headers()`, e.g. `x-goog-content-length-range: 0,<maxBytes>` and any exact `Content-Type`), include every returned header in the `PUT <upload_url>` request to Cloud Storage.\n\n")
+		}
 		b.WriteString("## APIs & Routes\n\n")
-		for _, h := range visibleRoutes(g, opts) {
-			fmt.Fprintf(&b, "- `%s` -> `%s` (%s, service `%s`)\n",
-				h.Route, h.Var, h.Kind, h.Service)
+		for _, h := range routes {
+			inS, outS := schemagen.HandlerSchemas(tg, h)
+			inStr := formatSchemaFields(inS)
+			outStr := formatSchemaFields(outS)
+			extra := ""
+			if inStr != "—" || outStr != "—" {
+				extra = fmt.Sprintf(" | request: {%s} -> response: {%s}", inStr, outStr)
+			}
+			fmt.Fprintf(&b, "- `%s` -> `%s` (%s, service `%s`, signIn=%v)%s\n",
+				h.Route, h.Var, h.Kind, h.Service, h.RequiresAuth, extra)
 		}
 		b.WriteString("\n")
 	}
