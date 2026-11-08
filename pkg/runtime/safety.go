@@ -61,11 +61,11 @@ func callerSubject(r *http.Request, session *sessionRecord) string {
 	if session != nil && session.UID != "" {
 		return "uid:" + session.UID
 	}
-	if dev := strings.TrimSpace(r.Header.Get("X-Tako-Device-ID")); dev != "" {
-		return "dev:" + dev
-	}
 	if ip := clientOf(r).IP; ip != "" {
 		return "ip:" + ip
+	}
+	if dev := strings.TrimSpace(r.Header.Get("X-Tako-Device-ID")); dev != "" {
+		return "dev:" + dev
 	}
 	return "anon"
 }

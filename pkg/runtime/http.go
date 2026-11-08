@@ -35,6 +35,10 @@ func JSONHandler[Req, Res any](e tako.Endpoint[Req, Res], decode func(*http.Requ
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqID := incomingRequestID(r)
+		if unsafeMethod(r.Method) && isCrossSiteCookieRequest(r) {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "cross-site cookie request refused"})
+			return
+		}
 		session := loadSession(r)
 		if conf.requireAuth && session == nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": authRequired})

@@ -104,27 +104,31 @@ func TestSafetyGlobalRateLimitAcrossTasks(t *testing.T) {
 	})
 	h := JSONHandler(ep, nil, WithRateLimit(2, 60))
 
-	send := func(device string) *httptest.ResponseRecorder {
+	send := func(ip, device string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest("POST", "/login", nil)
-		req.Header.Set("X-Tako-Device-ID", device)
+		req.RemoteAddr = ip + ":1234"
+		if device != "" {
+			req.Header.Set("X-Tako-Device-ID", device)
+		}
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
 		return rec
 	}
 
-	// Task 1: request 1 and 2 from dev-A succeed.
-	if r := send("dev-A"); r.Code != http.StatusOK {
+	// Task 1: request 1 and 2 from 203.0.113.10 succeed.
+	if r := send("203.0.113.10", "dev-A"); r.Code != http.StatusOK {
 		t.Fatalf("req 1 status = %d", r.Code)
 	}
 	// Simulate request 2 arriving at a different Cloud Run task (clear local exhaustion cache).
 	exhaustedRateBuckets = sync.Map{}
-	if r := send("dev-A"); r.Code != http.StatusOK {
+	if r := send("203.0.113.10", "dev-A"); r.Code != http.StatusOK {
 		t.Fatalf("req 2 status = %d", r.Code)
 	}
 
 	// Simulate request 3 arriving at a third Cloud Run task (empty local cache, but shared Datastore counter is at 2).
+	// Rotating X-Tako-Device-ID from the same IP must NOT bypass the rate limit.
 	exhaustedRateBuckets = sync.Map{}
-	r3 := send("dev-A")
+	r3 := send("203.0.113.10", "spoofed-dev-999")
 	if r3.Code != http.StatusTooManyRequests {
 		t.Fatalf("req 3 across task boundary: status = %d, want 429", r3.Code)
 	}
@@ -133,13 +137,13 @@ func TestSafetyGlobalRateLimitAcrossTasks(t *testing.T) {
 	}
 
 	// Request 4 on the same task hits the local exhaustion fast-path and still returns 429.
-	r4 := send("dev-A")
+	r4 := send("203.0.113.10", "dev-A")
 	if r4.Code != http.StatusTooManyRequests {
 		t.Fatalf("req 4 status = %d, want 429", r4.Code)
 	}
 
-	// Another device has its own independent quota.
-	if rB := send("dev-B"); rB.Code != http.StatusOK {
-		t.Fatalf("dev-B status = %d, want 200", rB.Code)
+	// Another client IP has its own independent quota.
+	if rB := send("198.51.100.22", "dev-B"); rB.Code != http.StatusOK {
+		t.Fatalf("client B status = %d, want 200", rB.Code)
 	}
 }

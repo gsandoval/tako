@@ -76,6 +76,10 @@ func BlobHandler[Req any](e tako.Endpoint[Req, tako.Blob], decode func(*http.Req
 		// and nosniff is what stops a browser from going looking for a
 		// better answer than the one it was given.
 		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		if fn := sanitizeDispositionFilename(blob.Filename); fn != "" {
+			h.Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fn))
+		}
 		// Route.MaxAge, the same field pages read. A blob route that
 		// declares none answers no-cache, which is what every blob
 		// answered by omission before this — so nothing starts being
@@ -115,6 +119,21 @@ func closeBlob(r io.Reader) {
 	if c, ok := r.(io.Closer); ok {
 		_ = c.Close()
 	}
+}
+
+func sanitizeDispositionFilename(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f || r == '"' || r == '\\' || r == '/' || r == ';' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // etagMatches implements If-None-Match against one entity tag: a

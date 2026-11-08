@@ -28,6 +28,9 @@ type Blob struct {
 	//
 	// Empty sends no validator, which is what every blob did before.
 	ETag string
+	// Filename, when non-empty, sets Content-Disposition: attachment; filename="..."
+	// so browsers download the bytes to disk instead of rendering them inline.
+	Filename string
 }
 
 // ObjectInfo describes an object in a Bucket. It is the payload of bucket

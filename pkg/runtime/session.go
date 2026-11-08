@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -333,6 +334,20 @@ func loadSession(r *http.Request) *sessionRecord {
 	return &rec
 }
 
+// isCrossSiteCookieRequest reports whether an HTTP request carries a browser
+// _session cookie without an explicit Authorization/X-Tako-Session header and
+// was initiated from a cross-site origin (Sec-Fetch-Site: cross-site).
+func isCrossSiteCookieRequest(r *http.Request) bool {
+	if !strings.EqualFold(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site")), "cross-site") {
+		return false
+	}
+	if r.Header.Get(sessionHeader) != "" || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		return false
+	}
+	c, err := r.Cookie(sessionCookie)
+	return err == nil && c.Value != ""
+}
+
 func setSessionCookie(w http.ResponseWriter, r *http.Request, id string, expires time.Time) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -391,6 +406,11 @@ func SessionHandler(providers ...string) http.Handler {
 					return
 				}
 			} else if email := r.PostFormValue("email"); email != "" && isLocalBackend() {
+				if ok, retryAfter := checkRateLimit(r.Context(), r, nil, handlerConf{rateLimitRequests: 10, rateLimitWindowSeconds: 60}); !ok {
+					w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+					http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+					return
+				}
 				// AB10c: signing in with an email and a password, on a
 				// laptop.
 				//
@@ -427,6 +447,11 @@ func SessionHandler(providers ...string) http.Handler {
 					return
 				}
 				if body.IDToken == "" && body.Email != "" {
+					if ok, retryAfter := checkRateLimit(r.Context(), r, nil, handlerConf{rateLimitRequests: 10, rateLimitWindowSeconds: 60}); !ok {
+						w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
+						http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
+						return
+					}
 					if isLocalBackend() {
 						verified, err := passwordSignIn(r.Context(), body.Email, body.Password)
 						if err != nil {
@@ -488,6 +513,10 @@ func SessionHandler(providers ...string) http.Handler {
 			}
 			writeJSON(w, http.StatusOK, map[string]string{"uid": u.ID, "email": u.Email, "token": rec.ID})
 		case http.MethodDelete:
+			if isCrossSiteCookieRequest(r) {
+				http.Error(w, "cross-site cookie request refused", http.StatusForbidden)
+				return
+			}
 			if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 				if store := entityStore(r.Context()); store != nil {
 					_ = store.Delete(r.Context(), sessionKind, c.Value)

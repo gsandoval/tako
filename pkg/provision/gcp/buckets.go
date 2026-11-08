@@ -37,7 +37,7 @@ type bucketBody struct {
 var corsForSignedTransfers = []map[string]any{{
 	"origin":         []string{"*"},
 	"method":         []string{"GET", "PUT", "HEAD"},
-	"responseHeader": []string{"Content-Type"},
+	"responseHeader": []string{"Content-Type", "X-Goog-Content-Length-Range"},
 	"maxAgeSeconds":  3600,
 }}
 
