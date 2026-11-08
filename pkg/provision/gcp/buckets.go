@@ -63,10 +63,14 @@ func (b *Buckets) List(ctx context.Context) ([]provision.Observed, error) {
 			if bk.Name == b.C.Project+"-tako" {
 				continue
 			}
+			specHash := bk.Labels["tako-spec-hash"]
+			if len(bk.Cors) > 0 && !corsHasSignedTransferHeaders(bk.Cors) {
+				specHash = "stale-cors"
+			}
 			observed = append(observed, provision.Observed{
 				Kind:     provision.KindBucket,
 				Name:     bk.Name,
-				SpecHash: bk.Labels["tako-spec-hash"],
+				SpecHash: specHash,
 			})
 		}
 		if out.NextPageToken == "" {
@@ -74,6 +78,36 @@ func (b *Buckets) List(ctx context.Context) ([]provision.Observed, error) {
 		}
 		pageToken = out.NextPageToken
 	}
+}
+
+func corsHasSignedTransferHeaders(cors []map[string]any) bool {
+	if len(cors) == 0 {
+		return false
+	}
+	foundCT := false
+	foundRange := false
+	switch hdrs := cors[0]["responseHeader"].(type) {
+	case []any:
+		for _, h := range hdrs {
+			s := fmt.Sprint(h)
+			if strings.EqualFold(s, "Content-Type") {
+				foundCT = true
+			}
+			if strings.EqualFold(s, "X-Goog-Content-Length-Range") {
+				foundRange = true
+			}
+		}
+	case []string:
+		for _, s := range hdrs {
+			if strings.EqualFold(s, "Content-Type") {
+				foundCT = true
+			}
+			if strings.EqualFold(s, "X-Goog-Content-Length-Range") {
+				foundRange = true
+			}
+		}
+	}
+	return foundCT && foundRange
 }
 
 func (b *Buckets) body(o provision.Object) bucketBody {
