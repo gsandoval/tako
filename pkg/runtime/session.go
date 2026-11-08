@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -10,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -300,6 +303,11 @@ func loadSession(r *http.Request) *sessionRecord {
 		// revocation kills the identity mid-chain.
 		id = r.Header.Get(sessionHeader)
 	}
+	if id == "" {
+		if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+			id = strings.TrimSpace(strings.TrimPrefix(auth, "Bearer "))
+		}
+	}
 	store := entityStore(r.Context())
 	if id == "" || store == nil {
 		return nil
@@ -409,19 +417,44 @@ func SessionHandler(providers ...string) http.Handler {
 				u = verified
 			} else {
 				var body struct {
-					IDToken string `json:"idToken"`
+					IDToken  string `json:"idToken"`
+					Email    string `json:"email"`
+					Password string `json:"password"`
 				}
 				raw, _ := io.ReadAll(http.MaxBytesReader(w, r.Body, 1<<20))
-				if json.Unmarshal(raw, &body) != nil || body.IDToken == "" {
-					http.Error(w, "POST {\"idToken\": …} (the Identity Platform sign-in result)", http.StatusBadRequest)
+				if json.Unmarshal(raw, &body) != nil || (body.IDToken == "" && body.Email == "") {
+					http.Error(w, "POST {\"idToken\": …} or {\"email\": …, \"password\": …} (the Identity Platform sign-in result)", http.StatusBadRequest)
 					return
 				}
-				verified, err := verifyIDToken(r.Context(), body.IDToken)
-				if err != nil {
-					http.Error(w, "the ID token did not verify: "+err.Error(), http.StatusUnauthorized)
-					return
+				if body.IDToken == "" && body.Email != "" {
+					if isLocalBackend() {
+						verified, err := passwordSignIn(r.Context(), body.Email, body.Password)
+						if err != nil {
+							http.Error(w, signInRefused, http.StatusUnauthorized)
+							return
+						}
+						u = verified
+					} else {
+						idTok, err := exchangeCloudPassword(r.Context(), body.Email, body.Password)
+						if err != nil {
+							http.Error(w, signInRefused, http.StatusUnauthorized)
+							return
+						}
+						verified, err := verifyIDToken(r.Context(), idTok)
+						if err != nil {
+							http.Error(w, "the ID token did not verify: "+err.Error(), http.StatusUnauthorized)
+							return
+						}
+						u = verified
+					}
+				} else {
+					verified, err := verifyIDToken(r.Context(), body.IDToken)
+					if err != nil {
+						http.Error(w, "the ID token did not verify: "+err.Error(), http.StatusUnauthorized)
+						return
+					}
+					u = verified
 				}
-				u = verified
 			}
 			rec, err := mintSession(r.Context(), u)
 			if err != nil {
@@ -453,7 +486,7 @@ func SessionHandler(providers ...string) http.Handler {
 				http.Redirect(w, r, to, http.StatusSeeOther)
 				return
 			}
-			writeJSON(w, http.StatusOK, map[string]string{"uid": u.ID})
+			writeJSON(w, http.StatusOK, map[string]string{"uid": u.ID, "email": u.Email, "token": rec.ID})
 		case http.MethodDelete:
 			if c, err := r.Cookie(sessionCookie); err == nil && c.Value != "" {
 				if store := entityStore(r.Context()); store != nil {
@@ -514,4 +547,47 @@ func safeNext(raw string) string {
 		return "/"
 	}
 	return raw
+}
+
+// exchangeCloudPassword exchanges email and password credentials against
+// Identity Platform's accounts:signInWithPassword endpoint for programmatic
+// API and agent sign-in when the app declared Password: true.
+func exchangeCloudPassword(ctx context.Context, email, password string) (string, error) {
+	if !slices.Contains(declaredProviders, "email") {
+		return "", errors.New("this app does not declare tako.AuthConfig{Password: true}")
+	}
+	apiKey := os.Getenv("TAKO_AUTH_APIKEY")
+	if apiKey == "" {
+		return "", errors.New("sign-in is not configured")
+	}
+	payload, err := json.Marshal(map[string]any{
+		"email":             strings.TrimSpace(email),
+		"password":          password,
+		"returnSecureToken": true,
+	})
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key="+url.QueryEscape(apiKey),
+		bytes.NewReader(payload))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return "", errors.New("invalid credentials")
+	}
+	var out struct {
+		IDToken string `json:"idToken"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil || out.IDToken == "" {
+		return "", errors.New("invalid response from identity provider")
+	}
+	return out.IDToken, nil
 }

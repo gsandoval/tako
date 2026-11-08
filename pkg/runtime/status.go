@@ -171,6 +171,9 @@ func statusCtx(r *http.Request) tako.Ctx {
 	if session != nil {
 		u := session.user()
 		ctx.user = &u
+		rctx := context.WithValue(r.Context(), csrfTokenKey{}, session.CSRF)
+		rctx = context.WithValue(rctx, sessionUserKey{}, ctx.user)
+		ctx.Context = rctx
 	}
 	return ctx
 }

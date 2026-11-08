@@ -257,6 +257,8 @@ func deriveGrants(g *analyzer.AppGraph, cfg Config) []Object {
 				add(target{TargetProject, cfg.Project}, "roles/identitytoolkit.viewer", member)
 			case "write":
 				add(target{TargetProject, cfg.Project}, "roles/identitytoolkit.admin", member)
+				add(target{TargetProject, cfg.Project}, "roles/datastore.user", member)
+				add(target{TargetBucket, cfg.Project + "-tako"}, "roles/storage.objectAdmin", member)
 			}
 		case "bucket":
 			b := gcpb.BucketName(cfg.Project, cfg.AppID(), cfg.Env, e.To)

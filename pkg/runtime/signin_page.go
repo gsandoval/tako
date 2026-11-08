@@ -46,12 +46,16 @@ func SignInPage(providers ...string) http.Handler {
 			divider = `<div class="divider"><span>OR EMAIL CREDENTIALS</span></div>`
 		}
 		if prov["email"] {
-			email = `<div class="email-block">
-  <div class="mode-tabs" role="tablist" aria-label="Account mode">
+			tabs := ""
+			if os.Getenv("TAKO_AUTH_PUBLIC_SIGNUP") == "1" {
+				tabs = `  <div class="mode-tabs" role="tablist" aria-label="Account mode">
     <button type="button" id="mode-signin" class="mode-tab active" aria-selected="true">Sign in</button>
     <button type="button" id="mode-signup" class="mode-tab" aria-selected="false">Create account</button>
   </div>
-  <form id="e" class="auth-form">
+`
+			}
+			email = `<div class="email-block">
+` + tabs + `  <form id="e" class="auth-form">
     <label class="field-label">
       <span>EMAIL ADDRESS</span>
       <input name="email" type="email" autocomplete="email" placeholder="you@domain.com" required>
@@ -523,7 +527,9 @@ function friendlyError(ex) {
     case "auth/invalid-credential":
     case "auth/wrong-password":
     case "auth/user-not-found":
-      return "Invalid email or password. If you don't have an account yet, switch to Create account.";
+      return modeSignUp
+        ? "Invalid email or password. If you don't have an account yet, switch to Create account."
+        : "Invalid email or password. Accounts are provisioned by a vault administrator.";
     case "auth/email-already-in-use":
       return "An account with this email already exists. Switch to Sign in.";
     case "auth/weak-password":
